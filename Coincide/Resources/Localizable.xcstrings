@@ -140,6 +140,26 @@
     "%@ refused to continue this request." : {
 
     },
+    "%@ runs %@ instead." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ runs %2$@ instead."
+          }
+        }
+      }
+    },
+    "%@ stays with %@, so this command has no shortcut." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ stays with %2$@, so this command has no shortcut."
+          }
+        }
+      }
+    },
     "%@ stopped after reaching its output limit." : {
 
     },
@@ -257,6 +277,26 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$@: “%2$@”"
+          }
+        }
+      }
+    },
+    "%@: “%@” isn’t a shortcut." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: “%2$@” isn’t a shortcut."
+          }
+        }
+      }
+    },
+    "%@: “%@” needs ⌘ or ⌃." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: “%2$@” needs ⌘ or ⌃."
           }
         }
       }
@@ -487,6 +527,9 @@
     "Add “%@” as a Project" : {
 
     },
+    "Add ⌘ or ⌃" : {
+
+    },
     "Added" : {
 
     },
@@ -598,6 +641,9 @@
     "Already up to date" : {
 
     },
+    "Also assigned to %@." : {
+
+    },
     "Always allow" : {
 
     },
@@ -644,7 +690,13 @@
         }
       }
     },
+    "App Shortcuts added for Coincide in System Settings › Keyboard take priority over these." : {
+
+    },
     "Appearance" : {
+
+    },
+    "Application windows" : {
 
     },
     "Approval" : {
@@ -666,6 +718,9 @@
 
     },
     "Archive Thread" : {
+
+    },
+    "Archive or Unarchive Thread" : {
 
     },
     "Ask %@" : {
@@ -793,6 +848,9 @@
 
     },
     "Change Appearance…" : {
+
+    },
+    "Change the way Tab moves focus" : {
 
     },
     "Changed %lld files" : {
@@ -1003,6 +1061,12 @@
     "Clear todos" : {
 
     },
+    "Click a shortcut, then press the keys you want. Standard macOS shortcuts such as Copy and Close Window stay as they are." : {
+
+    },
+    "Click to record a new shortcut" : {
+
+    },
     "Close" : {
 
     },
@@ -1209,6 +1273,9 @@
     "Composer" : {
 
     },
+    "Composer › %@" : {
+
+    },
     "Confirm before deleting threads" : {
 
     },
@@ -1283,6 +1350,12 @@
 
     },
     "Copy Version Info" : {
+
+    },
+    "Copy a screenshot" : {
+
+    },
+    "Copy a screenshot of an area" : {
 
     },
     "Copy code" : {
@@ -1552,6 +1625,9 @@
     "Default model" : {
 
     },
+    "Default: %@" : {
+
+    },
     "Delete" : {
 
     },
@@ -1677,7 +1753,13 @@
     "Edit this message?" : {
 
     },
+    "Emoji & Symbols" : {
+
+    },
     "Enable a provider in Settings to send a message" : {
+
+    },
+    "End" : {
 
     },
     "Enter" : {
@@ -1705,6 +1787,9 @@
 
     },
     "Escape" : {
+
+    },
+    "Every menu command goes back to its default shortcut." : {
 
     },
     "Executable" : {
@@ -1849,6 +1934,9 @@
         }
       }
     },
+    "Finder search window" : {
+
+    },
     "Find…" : {
 
     },
@@ -1871,6 +1959,9 @@
 
     },
     "Font size" : {
+
+    },
+    "Force Quit" : {
 
     },
     "Forward Delete" : {
@@ -1915,10 +2006,10 @@
     "Git's index is locked. Wait for other Git operations to finish, then try again." : {
 
     },
-    "Go to Thread %lld" : {
+    "Go to Thread" : {
 
     },
-    "Go to Thread 1–9" : {
+    "Go to Thread %lld" : {
 
     },
     "Google requires an eligible Antigravity subscription for this account." : {
@@ -1993,6 +2084,9 @@
     "Hold" : {
 
     },
+    "Home" : {
+
+    },
     "Hotkeys" : {
 
     },
@@ -2010,6 +2104,16 @@
     },
     "Implement the plan." : {
 
+    },
+    "In a focused terminal, %@ does “%@” instead." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "In a focused terminal, %1$@ does “%2$@” instead."
+          }
+        }
+      }
     },
     "Include %@" : {
 
@@ -2178,6 +2282,12 @@
     "Location" : {
 
     },
+    "Lock Screen" : {
+
+    },
+    "Log Out" : {
+
+    },
     "Look for %@ again and reload its models" : {
 
     },
@@ -2232,6 +2342,9 @@
     "Minimize" : {
 
     },
+    "Mission Control" : {
+
+    },
     "Model" : {
 
     },
@@ -2277,6 +2390,9 @@
     "More Git actions" : {
 
     },
+    "More options for %@" : {
+
+    },
     "Move %@ to %@" : {
       "localizations" : {
         "en" : {
@@ -2298,6 +2414,36 @@
       }
     },
     "Move by word" : {
+
+    },
+    "Move focus to status menus" : {
+
+    },
+    "Move focus to the Dock" : {
+
+    },
+    "Move focus to the active or next window" : {
+
+    },
+    "Move focus to the floating window" : {
+
+    },
+    "Move focus to the menu bar" : {
+
+    },
+    "Move focus to the next window" : {
+
+    },
+    "Move focus to the previous window" : {
+
+    },
+    "Move focus to the window toolbar" : {
+
+    },
+    "Move left a space" : {
+
+    },
+    "Move right a space" : {
 
     },
     "Move to the composer" : {
@@ -2390,6 +2536,9 @@
     "No Changes on This Branch" : {
 
     },
+    "No Conflicts" : {
+
+    },
     "No Files Changed" : {
 
     },
@@ -2445,6 +2594,12 @@
 
     },
     "No prefix" : {
+
+    },
+    "No shortcut by default" : {
+
+    },
+    "No shortcuts conflict." : {
 
     },
     "No terminal sessions for this thread yet." : {
@@ -2619,10 +2774,19 @@
     "Option" : {
 
     },
+    "Other Menu Commands" : {
+
+    },
     "Output tokens" : {
 
     },
     "Overview" : {
+
+    },
+    "Page Down" : {
+
+    },
+    "Page Up" : {
 
     },
     "Parts of a branch name can’t start with “.” or end with “.lock”." : {
@@ -2738,6 +2902,9 @@
     "Pin Thread" : {
 
     },
+    "Pin or Unpin Thread" : {
+
+    },
     "Pinned" : {
 
     },
@@ -2769,6 +2936,9 @@
 
     },
     "Preparing worktree…" : {
+
+    },
+    "Press the new shortcut. Delete removes it; Escape cancels." : {
 
     },
     "Preview %@" : {
@@ -2982,6 +3152,12 @@
     "Recent Threads" : {
 
     },
+    "Recording. Type the new shortcut." : {
+
+    },
+    "Records a new shortcut. Escape cancels; Delete removes the shortcut." : {
+
+    },
     "Redo" : {
 
     },
@@ -3007,6 +3183,12 @@
 
     },
     "Remove Custom Model" : {
+
+    },
+    "Remove Shortcut" : {
+
+    },
+    "Remove Them" : {
 
     },
     "Remove custom model" : {
@@ -3058,7 +3240,22 @@
     "Report an Issue" : {
 
     },
+    "Reset All" : {
+
+    },
+    "Reset All…" : {
+
+    },
     "Reset Font Size" : {
+
+    },
+    "Reset all keyboard shortcuts?" : {
+
+    },
+    "Reset or remove the shortcut" : {
+
+    },
+    "Reset to Default" : {
 
     },
     "Resolved by the agent" : {
@@ -3177,6 +3374,15 @@
     "Save" : {
 
     },
+    "Screenshot" : {
+
+    },
+    "Screenshot and recording options" : {
+
+    },
+    "Screenshot of an area" : {
+
+    },
     "Scroll to the newest messages" : {
 
     },
@@ -3248,6 +3454,9 @@
     "Search reasoning efforts…" : {
 
     },
+    "Search the Help menu" : {
+
+    },
     "Search the web" : {
 
     },
@@ -3309,6 +3518,12 @@
     "Select an existing thread or create a new one to get started." : {
 
     },
+    "Select the next input source" : {
+
+    },
+    "Select the previous input source" : {
+
+    },
     "Send (↩)" : {
 
     },
@@ -3360,7 +3575,7 @@
     "Shift-Return inserts a new line." : {
 
     },
-    "Shortcuts for Coincide’s commands. Standard macOS shortcuts such as Copy and Close Window work as usual." : {
+    "Shortcut for %@" : {
 
     },
     "Show %@ Settings" : {
@@ -3382,6 +3597,9 @@
 
     },
     "Show Diff (⌘D)" : {
+
+    },
+    "Show Settings File in Finder" : {
 
     },
     "Show Sidebar" : {
@@ -3409,6 +3627,21 @@
 
     },
     "Show less" : {
+
+    },
+    "Show only conflicts" : {
+
+    },
+    "Show or Hide Diff" : {
+
+    },
+    "Show or Hide Sidebar" : {
+
+    },
+    "Show or Hide Terminal" : {
+
+    },
+    "Show or hide the Dock" : {
 
     },
     "Show reasoning" : {
@@ -3450,6 +3683,12 @@
     "Snapshot the working tree before each turn so you can review or revert what it changed." : {
 
     },
+    "Some saved shortcuts can’t be used, so their commands keep their defaults." : {
+
+    },
+    "Some shortcuts conflict." : {
+
+    },
     "Source Code" : {
 
     },
@@ -3478,6 +3717,9 @@
 
     },
     "Split right" : {
+
+    },
+    "Spotlight" : {
 
     },
     "Start Speaking" : {
@@ -3540,6 +3782,9 @@
     "Supports reasoning effort" : {
 
     },
+    "Switch apps" : {
+
+    },
     "Switch between Build and Plan" : {
 
     },
@@ -3581,6 +3826,16 @@
     },
     "Tab" : {
 
+    },
+    "Takes %@ from %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Takes %1$@ from %2$@."
+          }
+        }
+      }
     },
     "Task" : {
 
@@ -3823,6 +4078,9 @@
     "Threads" : {
 
     },
+    "Threads are counted from the top of the sidebar. Hold ⌘ to see their numbers." : {
+
+    },
     "Threads per Project" : {
 
     },
@@ -3836,9 +4094,6 @@
 
     },
     "Timeout" : {
-
-    },
-    "To change a menu shortcut, add an App Shortcut for Coincide in System Settings › Keyboard." : {
 
     },
     "To sign in, run `pi` in Terminal and type `/login`." : {
@@ -3913,6 +4168,9 @@
 
     },
     "Type @ to mention a file and / for commands." : {
+
+    },
+    "Type Shortcut" : {
 
     },
     "Type your answer" : {
@@ -4067,6 +4325,9 @@
     "What should we build in " : {
 
     },
+    "When two commands share a shortcut, a changed one wins over a default one. Fixed menu shortcuts such as Copy keep their keys." : {
+
+    },
     "Where is “%@” now?" : {
 
     },
@@ -4178,6 +4439,16 @@
     "in progress" : {
 
     },
+    "macOS uses %@ for %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "macOS uses %1$@ for %2$@."
+          }
+        }
+      }
+    },
     "model-id" : {
 
     },
@@ -4242,6 +4513,9 @@
 
     },
     "“%@” is still running. Closing the terminal stops it." : {
+
+    },
+    "“%@” isn’t a Coincide command." : {
 
     },
     "“%@” isn’t a valid name. Use letters, digits and underscores." : {

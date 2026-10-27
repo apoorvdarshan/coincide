@@ -586,9 +586,12 @@ public struct KeyBindings: Equatable, Sendable {
         return commands.first(where: customized.contains) ?? commands.first
     }
 
-    /// The shortcut the command's menu item gets: its shortcut, unless that runs another command (`command(runBy:)`).
-    public nonisolated func menuShortcut(for command: KeyCommand) -> KeyShortcut? {
-        guard let shortcut = shortcuts[command], self.command(runBy: shortcut) == command else { return nil }
+    /// The shortcut the command's menu item gets: its shortcut, unless that runs another command (`command(runBy:)`)
+    /// or belongs to one of the menu bar's fixed items (`fixed`), which keep theirs as AppKit's standard items do.
+    public nonisolated func menuShortcut(for command: KeyCommand, keeping fixed: Set<KeyShortcut> = []) -> KeyShortcut? {
+        guard let shortcut = shortcuts[command], self.command(runBy: shortcut) == command, !fixed.contains(shortcut) else {
+            return nil
+        }
         return shortcut
     }
 
@@ -616,8 +619,8 @@ public struct ReservedShortcut: Hashable, Sendable {
     public enum Owner: Hashable, Sendable {
         /// macOS handles it before Coincide sees it.
         case system
-        /// One of Coincide's own shortcuts that can't be changed, such as Edit › Copy or sending from the composer. A
-        /// command given it takes it, or loses it to the earlier menu item.
+        /// One of Coincide's own shortcuts that can't be changed, such as Edit › Copy or sending from the composer.
+        /// Menu items keep theirs (`KeyBindings.menuShortcut(for:keeping:)`); other keys go to the command.
         case app
         /// A key that a part of the window (named by an id such as "terminal") keeps for itself while it has focus.
         case focusedView(String)

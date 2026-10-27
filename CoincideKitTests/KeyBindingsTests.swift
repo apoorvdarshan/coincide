@@ -126,6 +126,9 @@ struct KeyShortcutMenuTests {
         #expect(KeyShortcut.recorded(keyCode: 0x28, character: "k", modifiers: [.command, .shift]) == KeyShortcut("mod+shift+k"))
         #expect(KeyShortcut.recorded(keyCode: 0x28, character: "K", modifiers: .command) == KeyShortcut("mod+k"))
         #expect(KeyShortcut.recorded(keyCode: 0x21, character: "[", modifiers: [.command, .shift]) == KeyShortcut("mod+shift+["))
+        // kVK_ANSI_F with Option: the key's own character, not the "ƒ" Option types.
+        #expect(KeyShortcut.recorded(keyCode: 0x03, character: "f", modifiers: [.command, .option]) == KeyShortcut("mod+alt+f"))
+        #expect(KeyShortcut.recorded(keyCode: 0x31, character: " ", modifiers: .control) == KeyShortcut("ctrl+space"))
         #expect(KeyShortcut.recorded(keyCode: 0x24, character: "\r", modifiers: .command) == KeyShortcut("mod+enter"))
         #expect(KeyShortcut.recorded(keyCode: 0x4C, character: "\u{3}", modifiers: .command) == KeyShortcut("mod+enter"))
         #expect(KeyShortcut.recorded(keyCode: 0x7A, character: "\u{F704}", modifiers: []) == KeyShortcut("f1"))
@@ -239,6 +242,28 @@ struct KeyBindingsTests {
         #expect(bindings.command(runBy: shortcut) == .renameThread)
         #expect(bindings.menuShortcut(for: .archiveThread) == nil)
         #expect(bindings.conflicts(for: .archiveThread, reserved: []) == [.command(.renameThread, runsInstead: true)])
+    }
+
+    @Test func aRemovedShortcutFreesItsKeys() {
+        let bindings = KeyBindings(overrides: ["commandPalette.toggle": "", "thread.rename": "mod+k"])
+        let commandK = KeyShortcut("mod+k")!
+        #expect(bindings.shortcut(for: .commandPalette) == nil)
+        #expect(bindings.menuShortcut(for: .commandPalette) == nil)
+        #expect(bindings.conflicts(for: .commandPalette, reserved: ReservedShortcut.macOS).isEmpty)
+        #expect(bindings.commands(using: commandK) == [.renameThread])
+        #expect(bindings.conflicts(for: .renameThread, reserved: []).isEmpty)
+        #expect(bindings.command(runBy: KeyShortcut("mod+shift+k")!) == nil)
+        #expect(bindings.customized == [.commandPalette, .renameThread])
+    }
+
+    @Test func fixedMenuItemsKeepTheirShortcuts() {
+        let bindings = KeyBindings(overrides: ["project.add": "mod+c", "thread.rename": "mod+w"])
+        let fixed: Set<KeyShortcut> = [KeyShortcut("mod+c")!, KeyShortcut("mod+w")!]
+        #expect(bindings.shortcut(for: .addProject) == KeyShortcut("mod+c"))
+        #expect(bindings.menuShortcut(for: .addProject, keeping: fixed) == nil)
+        #expect(bindings.menuShortcut(for: .renameThread, keeping: fixed) == nil)
+        #expect(bindings.menuShortcut(for: .addProject) == KeyShortcut("mod+c"))
+        #expect(bindings.menuShortcut(for: .newThread, keeping: fixed) == KeyShortcut("mod+n"))
     }
 
     @Test func reservedShortcutsConflict() throws {
