@@ -321,6 +321,35 @@ final class PiSessionTests {
         #expect(log.completions == [.completed])
     }
 
+    @Test func steeringHandsTheMessageToTheRunningAgent() async throws {
+        let session = makeSession()
+        #expect(session.supportsSteering)
+        try await session.start()
+        await #expect(throws: AgentError.self) { try await session.steer(input("too early")) }
+        try await session.send(input())
+        fake.emit([#"{"type":"agent_start"}"#])
+        try await session.steer(input("Also check the tests"))
+        let steer = try #require(fake.sent("prompt").last)
+        #expect(steer["message"]?.string == "Also check the tests")
+        #expect(steer["streamingBehavior"]?.string == "steer")
+        // `/compact` is not steered; it waits for the turn.
+        await #expect(throws: AgentError.self) { try await session.steer(input("/compact")) }
+        // Pi is still working on the steer when the first part settles: the turn goes on.
+        fake.busy = true
+        fake.emit([#"{"type":"agent_settled"}"#])
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(log.completions.isEmpty)
+        fake.busy = false
+        fake.emit([#"{"type":"agent_start"}"#, #"{"type":"agent_settled"}"#])
+        #expect(await finished())
+        #expect(log.completions == [.completed])
+        #expect(fake.sent("prompt").count == 2)
+        // A stopped turn takes no more messages.
+        try await session.send(input("again"))
+        session.interrupt()
+        await #expect(throws: AgentError.self) { try await session.steer(input("late")) }
+    }
+
     @Test func compactCommandUsesPisCompaction() async throws {
         fake.stats = PiFixtures.statsAfterCompaction
         let session = makeSession()

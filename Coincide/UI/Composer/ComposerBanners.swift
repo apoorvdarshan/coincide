@@ -484,10 +484,14 @@ final class ComposerHandoffBanner: ComposerBanner {
     }
 }
 
-/// Messages sent while a turn runs. Each can be edited (taken back into the composer) or removed.
+/// Messages sent while a turn runs. Each can be sent into the running turn when its agent takes messages while it
+/// works (T3 Code's "Send now"), edited (taken back into the composer) or removed.
 final class ComposerQueueBanner: ComposerBanner {
     var onEdit: ((UUID) -> Void)?
     var onRemove: ((UUID) -> Void)?
+    var onSteer: ((UUID) -> Void)?
+    /// Whether the running turn takes messages now, which offers "Send now" on each row.
+    private var canSteer = false
 
     private let rows = NSStackView()
     private static let visibleRows = 3
@@ -502,7 +506,8 @@ final class ComposerQueueBanner: ComposerBanner {
         rows.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -18).isActive = true
     }
 
-    func show(_ messages: [ThreadRunner.QueuedMessage]) {
+    func show(_ messages: [ThreadRunner.QueuedMessage], canSteer: Bool) {
+        self.canSteer = canSteer
         for view in rows.arrangedSubviews { view.removeFromSuperview() }
         for message in messages.prefix(Self.visibleRows) {
             let row = makeRow(message)
@@ -534,7 +539,14 @@ final class ComposerQueueBanner: ComposerBanner {
         label.toolTip = message.text
         let edit = rowButton("pencil", label: String(localized: "Edit queued message"), id: message.id, action: #selector(edit(_:)))
         let remove = rowButton("xmark", label: String(localized: "Remove from queue"), id: message.id, action: #selector(remove(_:)))
-        let row = NSStackView(views: [icon, label, NSView(), edit, remove])
+        var views: [NSView] = [icon, label, NSView()]
+        if canSteer {
+            views.append(
+                rowButton(
+                    "arrow.turn.up.right", label: String(localized: "Send now, into the current turn"), id: message.id,
+                    action: #selector(steer(_:))))
+        }
+        let row = NSStackView(views: views + [edit, remove])
         row.orientation = .horizontal
         row.spacing = 6
         row.setAccessibilityElement(true)
@@ -558,6 +570,10 @@ final class ComposerQueueBanner: ComposerBanner {
 
     @objc private func edit(_ sender: NSButton) {
         if let id = sender.identifier.flatMap({ UUID(uuidString: $0.rawValue) }) { onEdit?(id) }
+    }
+
+    @objc private func steer(_ sender: NSButton) {
+        if let id = sender.identifier.flatMap({ UUID(uuidString: $0.rawValue) }) { onSteer?(id) }
     }
 
     @objc private func remove(_ sender: NSButton) {

@@ -18,7 +18,9 @@ public final class CodexProvider: AgentProvider {
         do {
             let probe = try await CodexProbe.run(executable: executable, environment: environment)
             probedModels = probe.models
-            return CodexProtocol.providerStatus(account: probe.account, version: probe.version, executable: executable)
+            var status = CodexProtocol.providerStatus(account: probe.account, version: probe.version, executable: executable)
+            status.usageLimits = probe.usageLimits
+            return status
         } catch {
             probedModels = nil
             let output = await ProcessRunner.run(executable, ["--version"], environment: environment, timeout: 20)
@@ -58,6 +60,8 @@ enum CodexProbe {
         var account: JSONValue
         /// Nil when signed out (as in T3 Code) or when the catalog could not be read.
         var models: [ModelOption]?
+        /// The ChatGPT plan's usage windows; nil for other sign-ins or when Codex could not read them.
+        var usageLimits: UsageLimits?
     }
 
     static func run(executable: URL, environment: [String: String]) async throws -> Snapshot {
@@ -76,7 +80,14 @@ enum CodexProbe {
         if signedIn || account["requiresOpenaiAuth"]?.bool == false {
             models = try? await modelList(connection)
         }
-        return Snapshot(version: version, account: account, models: models)
+        // Only a ChatGPT plan has usage windows; an API key is billed per token (T3 Code reads them the same way).
+        var usageLimits: UsageLimits?
+        if account.at("account.type")?.string == "chatgpt",
+            let result = try? await connection.request("account/rateLimits/read", [:], timeout: .seconds(15))
+        {
+            usageLimits = UsageLimits(windows: CodexUsageLimits.windows(fromRead: result), checkedAt: Date())
+        }
+        return Snapshot(version: version, account: account, models: models, usageLimits: usageLimits)
     }
 
     /// Every page of `model/list`, in picker order.

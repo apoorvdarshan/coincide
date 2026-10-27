@@ -20,6 +20,10 @@ final class ScriptedSession: AgentSession, BackgroundWorkReporting {
     var onSend: (ScriptedSession, AgentTurnInput) async throws -> Void = { _, _ in }
     /// Called by `interrupt`.
     var onInterrupt: (ScriptedSession) -> Void = { $0.emit(.turnCompleted(.interrupted)) }
+    var supportsSteering = false
+    var steered: [AgentTurnInput] = []
+    /// Runs inside `steer` after the input is recorded; throwing refuses the message.
+    var onSteer: (ScriptedSession, AgentTurnInput) async throws -> Void = { _, _ in }
 
     init(provider: ProviderKind, id: String) {
         self.provider = provider
@@ -36,6 +40,11 @@ final class ScriptedSession: AgentSession, BackgroundWorkReporting {
     func send(_ input: AgentTurnInput) async throws {
         sent.append(input)
         try await onSend(self, input)
+    }
+
+    func steer(_ input: AgentTurnInput) async throws {
+        steered.append(input)
+        try await onSteer(self, input)
     }
 
     func respond(to approvalID: String, optionID: String) { responses.append((approvalID, optionID)) }
@@ -55,12 +64,14 @@ final class ScriptedProvider: AgentProvider {
     var launches: [AgentLaunch] = []
     /// Configures each new session.
     var configure: (ScriptedSession) -> Void = { _ in }
+    /// What `detect` reports.
+    var status = ProviderStatus(state: .ready)
 
     init(kind: ProviderKind) { self.kind = kind }
 
     var last: ScriptedSession? { sessions.last }
 
-    func detect(executable: URL?, environment: [String: String]) async -> ProviderStatus { ProviderStatus(state: .ready) }
+    func detect(executable: URL?, environment: [String: String]) async -> ProviderStatus { status }
     func models(status: ProviderStatus, environment: [String: String]) async -> [ModelOption] { [] }
     func makeSession(_ launch: AgentLaunch) -> AgentSession {
         launches.append(launch)
@@ -498,6 +509,204 @@ struct ThreadRunnerTests {
         #expect(claude.last?.sent.isEmpty == true)
         #expect(!runner.isRunning(threadID))
         #expect(runner.liveProviders(threadID).isEmpty)
+    }
+
+    // MARK: Steering
+
+    /// Starts a turn that runs until the test completes it, on a session that takes steering or not.
+    private func startRunningTurn(_ text: String = "one", steering: Bool = true) async -> ScriptedSession {
+        claude.configure = { $0.supportsSteering = steering }
+        await runner.send(threadID: threadID, text: text)
+        return claude.last!
+    }
+
+    @Test func steeringPutsTheMessageIntoTheRunningTurn() async {
+        let session = await startRunningTurn()
+        #expect(runner.canSteer(threadID))
+        let turnID = runner.turn(threadID)!.userItemID
+        session.emit(.assistantText(itemID: "a1", text: "Working on it"))
+
+        let delivery = await runner.steer(threadID: threadID, text: "  Also update the README  ", imagePaths: ["/tmp/a.png"])
+        #expect(delivery == .steered)
+        let input = session.steered.last
+        #expect(input?.message == "Also update the README")
+        #expect(input?.handoffRecap == nil && input?.newSessionRecap == nil)
+        #expect(input?.imagePaths == ["/tmp/a.png"])
+        // Recorded as a user item of the running turn, after what the agent wrote so far.
+        let steer = items.last!
+        #expect(steer.kind == .user && steer.text == "Also update the README" && steer.provider == .claude)
+        #expect(steer.attachments == ["/tmp/a.png"])
+        #expect(runner.turn(threadID)?.userItemID == turnID)
+        #expect(runner.turn(threadID)?.steeredItemIDs == [steer.id])
+        #expect(runner.queuedMessages(threadID).isEmpty)
+        #expect(session.sent.count == 1)
+
+        session.emit(.assistantText(itemID: "a2", text: "Done, README too"))
+        session.emit(.turnCompleted(.completed))
+        #expect(!runner.isRunning(threadID))
+        #expect(store.thread(threadID)!.sessions[.claude]!.seenItemCount == items.count)
+    }
+
+    @Test func agentsThatCannotSteerGetTheMessageAfterTheTurn() async {
+        let session = await startRunningTurn(steering: false)
+        #expect(!runner.canSteer(threadID))
+        let delivery = await runner.steer(threadID: threadID, text: "two")
+        #expect(delivery == .queued)
+        #expect(session.steered.isEmpty)
+        #expect(runner.queuedMessages(threadID).map(\.text) == ["two"])
+        session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) }
+        session.emit(.turnCompleted(.completed))
+        #expect(await eventually { session.sent.count == 2 })
+        #expect(session.sent.last?.message == "two")
+    }
+
+    @Test func aMessageTheTurnRefusesWaitsForIt() async {
+        let session = await startRunningTurn()
+        session.onSteer = { _, _ in throw AgentError.providerError("not now") }
+        let delivery = await runner.steer(threadID: threadID, text: "two")
+        #expect(delivery == .queued)
+        #expect(runner.queuedMessages(threadID).map(\.text) == ["two"])
+        #expect(!items.contains { $0.text == "two" })
+    }
+
+    @Test func aMessageRefusedBecauseTheTurnEndedStartsTheNextTurn() async {
+        let session = await startRunningTurn()
+        session.onSteer = { session, _ in
+            session.emit(.turnCompleted(.completed))
+            throw AgentError.providerError("the turn is over")
+        }
+        session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) }
+        let delivery = await runner.steer(threadID: threadID, text: "two")
+        #expect(delivery == .sent)
+        #expect(session.sent.map(\.message) == ["one", "two"])
+        #expect(runner.queuedMessages(threadID).isEmpty)
+    }
+
+    @Test func aSteerTakenAsTheTurnEndsCountsAsSeen() async {
+        let session = await startRunningTurn()
+        session.emit(.assistantText(itemID: "a1", text: "done"))
+        // The agent took the message, but its turn ended while the steer was on its way.
+        session.onSteer = { session, _ in session.emit(.turnCompleted(.completed)) }
+        let delivery = await runner.steer(threadID: threadID, text: "two")
+        #expect(delivery == .steered)
+        #expect(!runner.isRunning(threadID))
+        #expect(items.last?.kind == .user && items.last?.text == "two")
+        #expect(session.sent.map(\.message) == ["one"])
+        // The session has seen the message, so the next turn does not recap it.
+        #expect(store.thread(threadID)!.sessions[.claude]!.seenItemCount == items.count)
+    }
+
+    @Test func steeringAnIdleThreadSendsAsUsual() async {
+        claude.configure = { session in
+            session.supportsSteering = true
+            session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) }
+        }
+        #expect(await runner.steer(threadID: threadID, text: "one") == .sent)
+        #expect(await runner.steer(threadID: threadID, text: "   ") == nil)
+        #expect(claude.last?.sent.map(\.message) == ["one"])
+        #expect(claude.last?.steered.isEmpty == true)
+    }
+
+    @Test func onlyTheThreadsCurrentAgentWorkingOnAPromptCanBeSteered() async {
+        let gate = Gate()
+        claude.configure = { session in
+            session.supportsSteering = true
+            session.onStart = { _ in await gate.wait() }
+        }
+        let sending = Task { await runner.send(threadID: threadID, text: "one") }
+        #expect(await eventually { runner.isRunning(threadID) })
+        // Still starting: the agent has no prompt to steer yet.
+        #expect(!runner.canSteer(threadID))
+        #expect(await runner.steer(threadID: threadID, text: "early") == .queued)
+        gate.open()
+        await sending.value
+        #expect(runner.canSteer(threadID))
+        // A message for another agent waits for the turn instead.
+        select(.codex)
+        #expect(!runner.canSteer(threadID))
+        select(.claude)
+        runner.stop(threadID: threadID)
+        #expect(!runner.canSteer(threadID))
+    }
+
+    @Test func aTurnTheAgentStartedItselfIsNotSteered() async {
+        await completeTurn("one", reply: "done")
+        let session = claude.last!
+        session.supportsSteering = true
+        session.emit(.agentTurnStarted(note: nil))
+        #expect(!runner.canSteer(threadID))
+    }
+
+    @Test func aQueuedMessageCanBeSentIntoTheTurnAndKeepsItsPlaceIfRefused() async {
+        let session = await startRunningTurn()
+        runner.enqueue(threadID: threadID, text: "first")
+        runner.enqueue(threadID: threadID, text: "second")
+        runner.enqueue(threadID: threadID, text: "third")
+        let queued = runner.queuedMessages(threadID)
+
+        #expect(await runner.steerQueued(threadID: threadID, id: queued[1].id) == .steered)
+        #expect(session.steered.map(\.message) == ["second"])
+        #expect(runner.queuedMessages(threadID).map(\.text) == ["first", "third"])
+        #expect(items.last?.text == "second")
+
+        session.onSteer = { _, _ in throw AgentError.providerError("not now") }
+        #expect(await runner.steerQueued(threadID: threadID, id: queued[2].id) == .queued)
+        #expect(runner.queuedMessages(threadID).map(\.id) == [queued[0].id, queued[2].id])
+        #expect(await runner.steerQueued(threadID: threadID, id: UUID()) == nil)
+    }
+
+    @Test func aQueuedMessageSentWhileIdleStartsATurn() async {
+        let session = await startRunningTurn(steering: false)
+        runner.enqueue(threadID: threadID, text: "later")
+        let id = runner.queuedMessages(threadID)[0].id
+        // Stopped: the queue waits for the user.
+        runner.stop(threadID: threadID)
+        #expect(runner.queuedMessages(threadID).count == 1)
+        session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) }
+        #expect(await runner.steerQueued(threadID: threadID, id: id) == .sent)
+        #expect(session.sent.last?.message == "later")
+        #expect(runner.queuedMessages(threadID).isEmpty)
+    }
+
+    // MARK: Usage limits
+
+    private func window(_ id: String, _ used: Double, kind: UsageLimitWindow.Kind = .session) -> UsageLimitWindow {
+        UsageLimitWindow(id: id, kind: kind, label: id, usedPercent: used)
+    }
+
+    @Test func sessionsReportUsageLimitsPerProvider() async {
+        await completeTurn("one", reply: "done")
+        let session = claude.last!
+        session.emit(.rateLimits([window("five_hour", 20), window("seven_day", 40, kind: .weekly)]))
+        session.emit(.rateLimits([window("five_hour", 35)]))
+        let limits = runner.usageLimits(for: .claude)
+        #expect(limits?.windows.map(\.id) == ["five_hour", "seven_day"])
+        #expect(limits?.windows.map(\.usedPercent) == [35, 40])
+        #expect(runner.usageLimits(for: .codex) == nil)
+        // Agents repeat unchanged windows with every token count; only changes are passed on.
+        #expect(!runner.recordUsageLimits([window("five_hour", 35)], for: .claude))
+        #expect(runner.recordUsageLimits([window("five_hour", 36)], for: .claude))
+        #expect(!runner.recordUsageLimits([], for: .claude))
+    }
+
+    @Test func usageLimitsFromACheckAndFromSessionsCombine() async {
+        let registry = ProviderRegistry(store: store, providers: [claude, codex])
+        let runner = ThreadRunner(store: store, registry: registry)
+        let checkedAt = Date()
+        claude.status = ProviderStatus(
+            state: .ready,
+            usageLimits: UsageLimits(windows: [window("five_hour", 10), window("seven_day", 50, kind: .weekly)], checkedAt: checkedAt))
+        await registry.refresh(.claude)
+        #expect(runner.usageLimits(for: .claude)?.windows.map(\.usedPercent) == [10, 50])
+
+        // A later report changes the window it names; the other keeps what the check read.
+        runner.recordUsageLimits([window("five_hour", 30)], for: .claude, at: checkedAt.addingTimeInterval(60))
+        #expect(runner.usageLimits(for: .claude)?.windows.map(\.usedPercent) == [30, 50])
+
+        // A newer check reads every window afresh.
+        claude.status.usageLimits = UsageLimits(windows: [window("five_hour", 5)], checkedAt: Date().addingTimeInterval(120))
+        await registry.refresh(.claude)
+        #expect(runner.usageLimits(for: .claude)?.windows.map(\.usedPercent) == [5])
     }
 }
 

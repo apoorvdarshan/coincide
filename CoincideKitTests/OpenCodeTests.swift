@@ -500,6 +500,79 @@ struct OpenCodeEventMapperTests {
         let history = parse(#"{"id":"msg_x","type":"idle","outcome":"succeeded"}"#)
         #expect(agentEvents(mapper.backfill(newestFirst: history)) == [.turnCompleted(.interrupted)])
     }
+
+    // MARK: Steering
+
+    /// A turn whose prompt is running, steered with `msg_coincide_steer`.
+    private func steeredTurn() -> OpenCodeEventMapper {
+        var mapper = OpenCodeEventMapper(sessionID: session)
+        mapper.beginTurn(promptID: "msg_coincide_9")
+        _ = feed(
+            &mapper,
+            """
+            {"type":"session.execution.started","data":{"sessionID":"\(session)"}}
+            {"type":"session.inbox.delivered","data":{"sessionID":"\(session)","inboxID":"msg_coincide_9"}}
+            """)
+        mapper.addSteer("msg_coincide_steer")
+        return mapper
+    }
+
+    @Test func aSteerDeliveredDuringTheExecutionEndsWithIt() {
+        var mapper = steeredTurn()
+        let effects = feed(
+            &mapper,
+            """
+            {"type":"session.inbox.delivered","data":{"sessionID":"\(session)","inboxID":"msg_coincide_steer"}}
+            {"type":"session.execution.succeeded","data":{"sessionID":"\(session)"}}
+            """)
+        #expect(agentEvents(effects) == [.turnCompleted(.completed)])
+    }
+
+    @Test func anExecutionEndingBeforeItsSteerWaitsForTheSteersExecution() {
+        var mapper = steeredTurn()
+        #expect(feed(&mapper, #"{"type":"session.execution.succeeded","data":{"sessionID":"\#(session)"}}"#).isEmpty)
+        #expect(mapper.turn?.heldEnd == .completed)
+        // OpenCode wakes the session for the steer; that execution ends the turn.
+        let effects = feed(
+            &mapper,
+            """
+            {"type":"session.execution.started","data":{"sessionID":"\(session)"}}
+            {"type":"session.inbox.delivered","data":{"sessionID":"\(session)","inboxID":"msg_coincide_steer"}}
+            """)
+        #expect(effects.isEmpty)
+        #expect(mapper.turn?.heldEnd == nil)
+        #expect(agentEvents(feed(&mapper, #"{"type":"session.execution.succeeded","data":{"sessionID":"\#(session)"}}"#)) == [
+            .turnCompleted(.completed)
+        ])
+        #expect(!agentEvents(feed(&mapper, #"{"type":"session.execution.started","data":{"sessionID":"\#(session)"}}"#)).isEmpty)
+    }
+
+    @Test func aWithdrawnSteerEndsTheHeldTurn() {
+        var mapper = steeredTurn()
+        _ = feed(&mapper, #"{"type":"session.execution.succeeded","data":{"sessionID":"\#(session)"}}"#)
+        let effects = feed(
+            &mapper, #"{"type":"session.inbox.cancelled","data":{"sessionID":"\#(session)","inboxID":"msg_coincide_steer"}}"#)
+        #expect(agentEvents(effects) == [.turnCompleted(.completed)])
+        // So does a steer OpenCode refused.
+        var refused = steeredTurn()
+        _ = feed(&refused, #"{"type":"session.execution.succeeded","data":{"sessionID":"\#(session)"}}"#)
+        #expect(agentEvents(refused.dropSteer("msg_coincide_steer")) == [.turnCompleted(.completed)])
+        #expect(refused.dropSteer("msg_coincide_steer").isEmpty)
+    }
+
+    @Test func stoppingASteeredTurnWithdrawsItsUndeliveredSteers() {
+        var mapper = steeredTurn()
+        mapper.requestInterrupt()
+        let effects = feed(
+            &mapper, #"{"type":"session.execution.interrupted","data":{"sessionID":"\#(session)","reason":"user"}}"#)
+        #expect(effects == [.cancelPrompt(messageID: "msg_coincide_steer"), .event(.turnCompleted(.interrupted))])
+        // A failure ends the turn at once too.
+        var failed = steeredTurn()
+        let failure = feed(
+            &failed,
+            #"{"type":"session.execution.failed","data":{"sessionID":"\#(session)","error":{"type":"provider","message":"down"}}}"#)
+        #expect(agentEvents(failure) == [.turnCompleted(.failed("down"))])
+    }
 }
 
 struct OpenCodeCatalogTests {

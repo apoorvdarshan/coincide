@@ -1,7 +1,7 @@
 import AppKit
 
 /// The composer's bottom row: agent and model, effort, access and Build/Plan on the leading side;
-/// attach, the context meter and send/stop on the trailing side. Labels collapse to symbols,
+/// attach, the usage and context meters and send/stop on the trailing side. Labels collapse to symbols,
 /// least important first, when the composer is too narrow for them.
 final class ComposerFooterView: NSView {
     let modelButton = ComposerControlButton()
@@ -9,6 +9,7 @@ final class ComposerFooterView: NSView {
     let accessButton = ComposerControlButton()
     let modeButton = ComposerControlButton()
     let attachButton = ComposerControlButton()
+    let usageMeter = ComposerUsageMeter()
     let contextMeter = ComposerContextMeter()
     let stopButton = ComposerSendButton()
     let sendButton = ComposerSendButton()
@@ -24,10 +25,12 @@ final class ComposerFooterView: NSView {
         trailingControls.orientation = .horizontal
         trailingControls.spacing = 6
         for view in [modelButton, effortButton, accessButton, modeButton] { leadingControls.addArrangedSubview(view) }
-        for view in [attachButton, contextMeter, stopButton, implementButton, sendButton] {
+        for view in [attachButton, usageMeter, contextMeter, stopButton, implementButton, sendButton] {
             trailingControls.addArrangedSubview(view)
         }
         trailingControls.setCustomSpacing(2, after: attachButton)
+        trailingControls.setCustomSpacing(2, after: usageMeter)
+        usageMeter.isHidden = true
 
         modelButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         (modelButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail

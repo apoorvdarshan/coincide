@@ -1183,7 +1183,8 @@ struct ClaudeSessionTests {
 
     private func makeSession(
         model: String = "haiku", effort: String? = "low", access: AccessMode = .approval, interaction: InteractionMode = .build,
-        resume: String? = nil, replies: (@MainActor (Int, FakeClaudeTransport, JSONValue) -> FakeClaudeTransport.Reply?)? = nil
+        resume: String? = nil, overageIncludedName: String? = nil,
+        replies: (@MainActor (Int, FakeClaudeTransport, JSONValue) -> FakeClaudeTransport.Reply?)? = nil
     ) -> ClaudeSession {
         let launch = AgentLaunch(
             provider: .claude, executable: URL(fileURLWithPath: "/usr/bin/false"), environment: [:],
@@ -1191,7 +1192,7 @@ struct ClaudeSessionTests {
             selection: ModelSelection(provider: .claude, modelID: model, effort: effort), accessMode: access,
             interactionMode: interaction)
         let transports = self.transports
-        let session = ClaudeSession(launch: launch) { config in
+        let session = ClaudeSession(launch: launch, overageIncludedName: overageIncludedName) { config in
             let index = transports.value.count
             let transport = FakeClaudeTransport(config: config) { transport, request in
                 replies?(index, transport, request) ?? transport.defaultReply(request)
@@ -2100,5 +2101,283 @@ struct ClaudeDetectionTests {
         let prefix = "Claude Code could not be started: "
         #expect(message.hasPrefix(prefix) && message.count > prefix.count)
         #expect(message == message.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
+// MARK: - Usage limits
+
+struct ClaudeUsageLimitsTests {
+    /// A `rate_limit_event` from Claude Code 2.1.308 on a Max plan.
+    static let rateLimitEvent = #"""
+        {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1793110200,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.49,"resetsAt":1793110200},"seven_day":{"utilization":0.5,"resetsAt":1793408400}}},"uuid":"371e24ef-3b9b-4a79-9241-0a5b9c1d2e3f","session_id":"633a1fc2-da17-4835-b169-c6072eb02150"}
+        """#
+
+    /// A `get_usage` answer from Claude Code 2.1.308 on a Max plan (abridged: more unnamed buckets, all null or unused).
+    static let usage = JSONValue.parse(
+        #"""
+        {"subscription_type":"max","rate_limits_available":true,"rate_limits":{
+          "five_hour":{"utilization":49,"resets_at":"2026-10-27T14:10:00.340563+00:00","limit_dollars":null,"used_dollars":null},
+          "seven_day":{"utilization":50,"resets_at":"2026-10-31T01:00:00.340586+00:00"},
+          "seven_day_oauth_apps":null,"seven_day_opus":null,"seven_day_sonnet":null,
+          "iguana_necktie":{"utilization":100,"resets_at":"2026-11-05T07:59:00+00:00","limit_dollars":250},
+          "extra_usage":{"is_enabled":false,"monthly_limit":null,"used_credits":null,"utilization":null,"user_disabled":true},
+          "limits":[{"kind":"session","group":"session","percent":49,"resets_at":"2026-10-27T14:10:00.340563+00:00","scope":null},
+                    {"kind":"weekly_all","group":"weekly","percent":50,"resets_at":"2026-10-31T01:00:00.340586+00:00","scope":null},
+                    {"kind":"weekly_scoped","group":"weekly","percent":3,"resets_at":"2026-10-31T01:00:00+00:00","scope":{"model":{"id":null,"display_name":"Fable"},"surface":null}}],
+          "spend":{"used":{"amount_minor":0,"currency":"USD","exponent":2},"limit":null,"percent":0,"enabled":false},
+          "model_scoped":[{"display_name":"Fable","utilization":3,"resets_at":"2026-10-31T01:00:00+00:00"}]}}
+        """#)!
+
+    @Test func rateLimitEventsReportEveryUnifiedWindow() throws {
+        var mapper = testMapper()
+        let events = mapper.map(try #require(JSONValue.parse(Self.rateLimitEvent)))
+        let windows = try #require(events.first.flatMap { event -> [UsageLimitWindow]? in if case .rateLimits(let w) = event { w } else { nil } })
+        #expect(windows.map(\.id) == ["five_hour", "seven_day"])
+        #expect(windows.map(\.kind) == [.session, .weekly])
+        #expect(windows.map(\.usedPercent) == [49, 50])
+        #expect(windows.map(\.durationMinutes) == [300, 10_080])
+        #expect(windows[0].resetsAt == Date(timeIntervalSince1970: 1_793_110_200))
+    }
+
+    @Test func olderRateLimitEventsNameOneWindow() throws {
+        let frame = try #require(
+            JSONValue.parse(#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"seven_day","utilization":0.92,"resetsAt":1793408400}}"#))
+        let windows = ClaudeUsageLimits.windows(fromEvent: frame)
+        #expect(windows.map(\.id) == ["seven_day"])
+        #expect(abs(windows[0].usedPercent - 92) < 0.0001)
+        // Buckets T3 Code cannot place (overage, unnamed) are left out.
+        let overage = try #require(
+            JSONValue.parse(#"{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"seven_day_overage_included","utilization":0.5}}"#))
+        #expect(ClaudeUsageLimits.windows(fromEvent: overage).isEmpty)
+        var mapper = testMapper()
+        #expect(mapper.map(overage).isEmpty)
+    }
+
+    @Test func theOverageIncludedBucketIsTheModelTheCheckNamed() throws {
+        #expect(ClaudeUsageLimits.overageIncludedName(fromUsage: Self.usage) == "Fable")
+        let frame = try #require(
+            JSONValue.parse(
+                #"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"seven_day_overage_included","utilization":0.04,"resetsAt":1793408400,"unifiedWindows":{"five_hour":{"utilization":0.5,"resetsAt":1793110200},"seven_day_overage_included":{"utilization":0.04,"resetsAt":1793408400}}}}"#))
+        let windows = ClaudeUsageLimits.windows(fromEvent: frame, overageIncludedName: "Fable")
+        #expect(windows.map(\.id) == ["five_hour", "seven_day_fable"])
+        #expect(windows.map(\.label) == ["Session", "Weekly · Fable"])
+        #expect(abs(windows[1].usedPercent - 4) < 0.0001)
+        #expect(windows[1].resetsAt == Date(timeIntervalSince1970: 1_793_408_400))
+        // The same row the check listed, so a report replaces it.
+        #expect(try #require(ClaudeUsageLimits.windows(fromUsage: Self.usage)).contains { $0.id == windows[1].id })
+        // Unnamed, the bucket is left out rather than shown as a row no check can reconcile.
+        #expect(ClaudeUsageLimits.windows(fromEvent: frame).map(\.id) == ["five_hour"])
+        var mapper = testMapper()
+        mapper.overageIncludedName = "Fable"
+        #expect(mapper.map(frame) == [.rateLimits(windows)])
+    }
+
+    @Test func usageAnswersListThePlansWindows() throws {
+        let windows = try #require(ClaudeUsageLimits.windows(fromUsage: Self.usage))
+        #expect(windows.map(\.id) == ["five_hour", "seven_day", "seven_day_fable"])
+        #expect(windows.map(\.label) == ["Session", "Weekly", "Weekly · Fable"])
+        #expect(windows.map(\.usedPercent) == [49, 50, 3])
+        // Microseconds are dropped; the reset time is to the second.
+        #expect(windows[0].resetsAt == Date(timeIntervalSince1970: 1_793_110_200))
+        #expect(windows[2].resetsAt == Date(timeIntervalSince1970: 1_793_408_400))
+    }
+
+    @Test func modelScopedLimitsAndSpendFollowT3() throws {
+        let response = try #require(
+            JSONValue.parse(
+                #"""
+                {"rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":10,"resets_at":null},
+                 "model_scoped":[{"display_name":"Opus","utilization":70,"resets_at":"2026-10-31T01:00:00Z"},{"utilization":5}],
+                 "limits":[{"kind":"weekly_scoped","percent":3,"scope":{"model":{"display_name":"Fable"}}}],
+                 "spend":{"enabled":true,"used":{"amount_minor":2500,"currency":"USD","exponent":2},"limit":{"amount_minor":10000,"currency":"USD","exponent":2},"percent":30}}}
+                """#))
+        let windows = try #require(ClaudeUsageLimits.windows(fromUsage: response))
+        #expect(windows.map(\.id) == ["five_hour", "seven_day_opus", "monthly_spend"])
+        #expect(windows.map(\.usedPercent) == [10, 70, 25])
+        #expect(windows[0].resetsAt == nil)
+        // Extra usage counts when there is no spend budget.
+        let extra = try #require(
+            JSONValue.parse(
+                #"{"rate_limits_available":true,"rate_limits":{"extra_usage":{"is_enabled":true,"monthly_limit":200,"used_credits":50}}}"#))
+        #expect(try #require(ClaudeUsageLimits.windows(fromUsage: extra)).map(\.usedPercent) == [25])
+    }
+
+    @Test func perModelLimitsComeOnlyFromModelScopedAsInT3() throws {
+        // `limits` also lists rows Claude Code hides; an answer from cached data has no `model_scoped`.
+        let cached = try #require(
+            JSONValue.parse(
+                #"{"rate_limits_available":true,"rate_limits":{"seven_day":{"utilization":20,"resets_at":null},"limits":[{"kind":"weekly_scoped","percent":3,"scope":{"model":{"display_name":"Fable"}}}]}}"#))
+        #expect(try #require(ClaudeUsageLimits.windows(fromUsage: cached)).map(\.id) == ["seven_day"])
+        #expect(ClaudeUsageLimits.overageIncludedName(fromUsage: cached) == nil)
+    }
+
+    @Test func accountsWithoutPlanLimitsReportNone() throws {
+        let apiKey = try #require(JSONValue.parse(#"{"rate_limits_available":false,"rate_limits":null}"#))
+        #expect(ClaudeUsageLimits.windows(fromUsage: apiKey) == nil)
+        #expect(ClaudeUsageLimits.overageIncludedName(fromUsage: apiKey) == nil)
+        #expect(ClaudeUsageLimits.date(fromISO: "2026-10-31T01:00:00Z") == Date(timeIntervalSince1970: 1_793_408_400))
+        #expect(ClaudeUsageLimits.date(fromISO: "not a date") == nil)
+    }
+}
+
+// MARK: - Steering
+
+extension ClaudeSessionTests {
+    /// A result answering `uuids`, as Claude Code 2.1.308 reports one.
+    private static func result(answering uuids: [String], terminal: String = "completed", text: String = "done") -> String {
+        let list = uuids.map { "\"\($0)\"" }.joined(separator: ",")
+        return #"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"\#(terminal)","result":"\#(text)","total_cost_usd":0.01,"origin":{"kind":"human"},"user_message_uuid":"\#(uuids[0])","user_message_uuids":[\#(list)]}"#
+    }
+
+    /// Starts a turn and steers it; returns the turn's message and the steer's.
+    private func steeredTurn(_ session: ClaudeSession) async throws -> (first: String, steer: String) {
+        try await session.start()
+        let first = try await startTurn(session)
+        try await session.steer(input("Actually, just say steered."))
+        let steer = try #require(transport.userMessages.last?["uuid"]?.string)
+        transport.emit([ClaudeFixture.lifecycle(steer, "queued")])
+        return (first, steer)
+    }
+
+    @Test func steeringWritesAMessageWithPriorityNow() async throws {
+        let session = makeSession()
+        #expect(session.supportsSteering)
+        let (first, steer) = try await steeredTurn(session)
+        let message = try #require(transport.userMessages.last)
+        #expect(steer != first)
+        #expect(message["priority"] == "now")
+        #expect(message["origin"] == ["kind": "human"])
+        #expect(message.at("message.content") == "Actually, just say steered.")
+        #expect(transport.userMessages.count == 2)
+        #expect(transport.userMessages.first?["priority"] == nil)
+    }
+
+    @Test func aSteerAsksForUltrathinkLikeTheTurn() async throws {
+        let session = makeSession(model: "sonnet", effort: "ultrathink")
+        try await session.start()
+        _ = try await startTurn(session, input("fix the bug", model: "sonnet", effort: "ultrathink"))
+        try await session.steer(input("and the test", model: "sonnet", effort: "ultrathink"))
+        #expect(transport.userMessages.last?.at("message.content") == "Ultrathink:\nand the test")
+    }
+
+    @Test func aSteerTakenInWhileToolsRunIsAnsweredByTheTurnsResult() async throws {
+        let session = makeSession()
+        let (first, steer) = try await steeredTurn(session)
+        // Claude moved the running command to the background and took the steer in.
+        transport.emit([ClaudeFixture.lifecycle(steer, "started"), ClaudeFixture.lifecycle(steer, "completed")])
+        #expect(completions.isEmpty)
+        transport.emit([Self.result(answering: [first, steer]), ClaudeFixture.lifecycle(first, "completed")])
+        #expect(completions == [.completed])
+        #expect(!events.value.contains { if case .agentTurnStarted = $0 { true } else { false } })
+    }
+
+    @Test func aResultAbortedToTakeASteerEndsOnlyThePartBeforeIt() async throws {
+        let session = makeSession()
+        let (first, steer) = try await steeredTurn(session)
+        // Claude stopped streaming for the steer: a result for the first message, which is then cancelled.
+        transport.emit([
+            Self.result(answering: [first], terminal: "aborted_streaming", text: ""), ClaudeFixture.lifecycle(first, "cancelled"),
+        ])
+        #expect(completions.isEmpty)
+        transport.emit([
+            ClaudeFixture.lifecycle(steer, "started"), Self.result(answering: [steer], text: "steered"),
+            ClaudeFixture.lifecycle(steer, "completed"),
+        ])
+        #expect(completions == [.completed])
+        // The steer's reply came only with its result, so the result shows it.
+        #expect(events.value.contains { if case .assistantText(_, "steered") = $0 { true } else { false } })
+    }
+
+    @Test func aTurnThatFinishesBeforeItsSteerWaitsForTheSteer() async throws {
+        let session = makeSession()
+        let (first, steer) = try await steeredTurn(session)
+        transport.emit([Self.result(answering: [first]), ClaudeFixture.lifecycle(first, "completed")])
+        #expect(completions.isEmpty)
+        transport.emit([ClaudeFixture.lifecycle(steer, "started"), Self.result(answering: [steer])])
+        #expect(completions == [.completed])
+        #expect(!events.value.contains { if case .agentTurnStarted = $0 { true } else { false } })
+    }
+
+    @Test func stoppingASteeredTurnEndsItOnce() async throws {
+        let session = makeSession()
+        session.interruptGracePeriod = .milliseconds(200)
+        let (first, _) = try await steeredTurn(session)
+        session.interrupt()
+        await #expect(throws: AgentError.self) { try await session.steer(input("too late")) }
+        transport.emit([Self.result(answering: [first], terminal: "aborted_streaming", text: "")])
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(completions == [.interrupted])
+    }
+
+    /// An Agent call in the main conversation, as Claude Code 2.1.308 prints it.
+    private static func agentCall(_ id: String, background: Bool = false) -> String {
+        let flag = background ? #","run_in_background":true"# : ""
+        return #"{"type":"assistant","message":{"model":"claude-haiku-5-5","id":"msg_\#(id)","type":"message","role":"assistant","content":[{"type":"tool_use","id":"\#(id)","name":"Agent","input":{"description":"Run the tests","prompt":"Run the tests.","subagent_type":"general-purpose"\#(flag)}}]},"parent_tool_use_id":null}"#
+    }
+
+    @Test func runningSubagentsMoveToTheBackgroundBeforeASteer() async throws {
+        let session = makeSession()
+        try await session.start()
+        let first = try await startTurn(session)
+        transport.emit([Self.agentCall("toolu_fg"), Self.agentCall("toolu_bg", background: true)])
+        try await session.steer(input("Actually, just say steered."))
+        let moves = transport.controlRequests.filter { $0["subtype"] == "background_tasks" }
+        #expect(moves.map { $0["tool_use_id"] } == ["toolu_fg"])
+        // The move is answered before the steer goes out.
+        let moveIndex = try #require(transport.written.firstIndex { $0.at("request.subtype") == "background_tasks" })
+        let steerIndex = try #require(transport.written.lastIndex { $0["type"] == "user" })
+        #expect(moveIndex < steerIndex)
+        #expect(transport.written[steerIndex]["priority"] == "now")
+        #expect(transport.userMessages.first?["uuid"]?.string == first)
+    }
+
+    @Test func aFinishedSubagentIsNotMoved() async throws {
+        let session = makeSession()
+        try await session.start()
+        _ = try await startTurn(session)
+        transport.emit([
+            Self.agentCall("toolu_fg"),
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fg","content":"All tests pass."}]},"parent_tool_use_id":null}"#,
+        ])
+        try await session.steer(input("and the README"))
+        #expect(!transport.controlRequests.contains { $0["subtype"] == "background_tasks" })
+        #expect(transport.userMessages.last?["priority"] == "now")
+    }
+
+    @Test func aTurnThatEndsWhileSubagentsMoveRefusesTheSteer() async throws {
+        let session = makeSession { _, transport, request in
+            guard request["subtype"] == "background_tasks" else { return nil }
+            // The turn finishes while Claude answers the move.
+            let first = transport.userMessages.first?["uuid"]?.string ?? ""
+            transport.emit([
+                #"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","result":"done","origin":{"kind":"human"},"user_message_uuid":"\#(first)","user_message_uuids":["\#(first)"]}"#
+            ])
+            return .success(["backgrounded": true])
+        }
+        try await session.start()
+        _ = try await startTurn(session)
+        transport.emit([Self.agentCall("toolu_fg")])
+        await #expect(throws: AgentError.self) { try await session.steer(input("too late")) }
+        #expect(completions == [.completed])
+        #expect(transport.userMessages.count == 1)
+    }
+
+    @Test func sessionsNameTheOverageIncludedBucketAsTheCheckDid() async throws {
+        let session = makeSession(overageIncludedName: "Fable")
+        try await session.start()
+        transport.emit([
+            #"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"seven_day_overage_included","utilization":0.25,"resetsAt":1793408400}}"#
+        ])
+        let reported = events.value.compactMap { event -> [UsageLimitWindow]? in if case .rateLimits(let w) = event { w } else { nil } }
+        #expect(reported.last?.map(\.id) == ["seven_day_fable"])
+        #expect(reported.last?.first?.usedPercent == 25)
+    }
+
+    @Test func steeringNeedsATurnClaudeHas() async throws {
+        let session = makeSession()
+        await #expect(throws: AgentError.self) { try await session.steer(input()) }
+        try await session.start()
+        await #expect(throws: AgentError.self) { try await session.steer(input()) }
+        #expect(transport.userMessages.isEmpty)
     }
 }

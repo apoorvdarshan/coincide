@@ -270,6 +270,61 @@ struct ClaudeLiveTests {
         #expect(recorder.events.contains(.sessionStarted(id: id)))
         #expect(recorder.events.contains { if case .notice = $0 { true } else { false } })
     }
+
+    @Test func theCheckReadsThePlansUsageLimits() async throws {
+        let status = await ClaudeProvider().detect(executable: try Self.executable(), environment: Self.environment)
+        try #require(status.state == .ready)
+        // Only a subscription has plan limits; an API key reports none.
+        guard let limits = status.usageLimits else { return }
+        #expect(limits.windows.contains { $0.id == "five_hour" && $0.kind == .session })
+        #expect(limits.windows.contains { $0.id == "seven_day" && $0.kind == .weekly })
+        #expect(limits.windows.allSatisfy { (0...100).contains($0.usedPercent) })
+    }
+
+    /// Steers a turn while Claude streams: Claude stops that reply, takes the steer in and answers it, all in one turn.
+    @Test func steeringWhileStreamingRedirectsTheTurn() async throws {
+        let recorder = LiveRecorder()
+        let session = try makeSession(recorder: recorder)
+        defer { session.shutdown() }
+        try await session.start()
+        let start = recorder.events.count
+        try await session.send(input("Write the numbers from 1 to 300 as English words, one per line. Do not use any tools."))
+        try await recorder.wait { events in
+            events[start...].contains { if case .assistantTextDelta = $0 { true } else { false } }
+                || events[start...].contains { if case .turnCompleted = $0 { true } else { false } }
+        }
+        try #require(recorder.completions(after: start).isEmpty, "the turn ended before it could be steered")
+        try await session.steer(input("Stop counting now. Reply with exactly: steered"))
+        let outcome = try await recorder.completion(after: start)
+        try await Task.sleep(for: .seconds(1))
+        #expect(outcome == .completed)
+        #expect(recorder.completions(after: start) == [.completed])
+        #expect(recorder.reply(after: start).lowercased().hasSuffix("steered"))
+        #expect(!recorder.events[start...].contains { if case .agentTurnStarted = $0 { true } else { false } })
+        // A subscription reports its limits with the turn.
+        #expect(recorder.events.contains { if case .rateLimits(let windows) = $0 { !windows.isEmpty } else { false } })
+    }
+
+    /// Steers a turn while a command runs: Claude moves the command aside and answers the steer in the same turn.
+    @Test func steeringWhileACommandRunsRedirectsTheTurn() async throws {
+        let recorder = LiveRecorder()
+        let session = try makeSession(recorder: recorder)
+        defer { session.shutdown() }
+        try await session.start()
+        let start = recorder.events.count
+        try await session.send(
+            input("Run the shell command `sleep 8; echo done`, then reply with exactly: first", access: .fullAccess))
+        try await recorder.wait { events in
+            events[start...].contains { if case .toolStarted(let info) = $0 { info.category == .command } else { false } }
+                || events[start...].contains { if case .turnCompleted = $0 { true } else { false } }
+        }
+        try #require(recorder.completions(after: start).isEmpty, "the turn ended before it could be steered")
+        try await session.steer(input("Never mind the command. Reply with exactly: steered", access: .fullAccess))
+        let outcome = try await recorder.completion(after: start)
+        #expect(outcome == .completed)
+        #expect(recorder.reply(after: start).lowercased().contains("steered"))
+        // The command Claude moved aside may finish afterwards and start a turn of Claude's own; that one is separate.
+    }
 }
 
 @MainActor
