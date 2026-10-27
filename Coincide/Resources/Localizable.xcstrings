@@ -1,6 +1,16 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ (%@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ (%2$@)"
+          }
+        }
+      }
+    },
     "%@ (truncated)" : {
 
     },
@@ -201,12 +211,12 @@
         }
       }
     },
-    "%@ · %@. Choose the agent and model (⇧⌘M)" : {
+    "%@ · %@. Choose the agent and model" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "%1$@ · %2$@. Choose the agent and model (⇧⌘M)"
+            "value" : "%1$@ · %2$@. Choose the agent and model"
           }
         }
       }
@@ -1503,6 +1513,9 @@
     "Continue this thread with %@" : {
 
     },
+    "Continued for %@" : {
+
+    },
     "Control" : {
 
     },
@@ -2380,9 +2393,6 @@
     "Hide Diff" : {
 
     },
-    "Hide Diff (⌘D)" : {
-
-    },
     "Hide Others" : {
 
     },
@@ -2390,9 +2400,6 @@
 
     },
     "Hide Terminal" : {
-
-    },
-    "Hide Terminal (⌘J)" : {
 
     },
     "Hide value" : {
@@ -2837,9 +2844,6 @@
 
     },
     "New Thread" : {
-
-    },
-    "New Thread (⌘N)" : {
 
     },
     "New Thread in %@" : {
@@ -3566,9 +3570,6 @@
     "Reasoning effort" : {
 
     },
-    "Reasoning effort (⇧⌘E)" : {
-
-    },
     "Reasoning effort: %@" : {
 
     },
@@ -4049,9 +4050,6 @@
     "Show Diff" : {
 
     },
-    "Show Diff (⌘D)" : {
-
-    },
     "Show Settings File in Finder" : {
 
     },
@@ -4065,9 +4063,6 @@
 
     },
     "Show Terminal" : {
-
-    },
-    "Show Terminal (⌘J)" : {
 
     },
     "Show Toolbar" : {
@@ -4103,7 +4098,7 @@
     "Show this agent's usage limits" : {
 
     },
-    "Show thread numbers for ⌘1…⌘9" : {
+    "Show thread numbers for Go to Thread" : {
 
     },
     "Show value" : {
@@ -4241,6 +4236,9 @@
     "Status" : {
 
     },
+    "Steer" : {
+
+    },
     "Steer message" : {
 
     },
@@ -4250,13 +4248,13 @@
     "Steer: send into the current turn (⌘↩). ⇧⌘↩ or ⌘-click queues it for after the turn." : {
 
     },
+    "Steered the active turn" : {
+
+    },
     "Step %lld" : {
 
     },
     "Stop" : {
-
-    },
-    "Stop (⌘.)" : {
 
     },
     "Stop Agent" : {
@@ -4675,7 +4673,10 @@
     "Threads" : {
 
     },
-    "Threads are counted from the top of the sidebar. Hold ⌘ to see their numbers." : {
+    "Threads are counted from the top of the sidebar." : {
+
+    },
+    "Threads are counted from the top of the sidebar. Hold %@ to see their numbers." : {
 
     },
     "Threads per Project" : {
@@ -5026,6 +5027,9 @@
 
     },
     "You" : {
+
+    },
+    "You, steered the active turn" : {
 
     },
     "Your Google sign-in and thread history are kept. You can install the runtime again at any time." : {
