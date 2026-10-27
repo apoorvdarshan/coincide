@@ -7,7 +7,9 @@ final class RunStatusView: NSView {
     enum State: Equatable {
         case idle
         case starting
-        case running(since: Date)
+        /// `note` says why the agent works when it started the turn itself, such as
+        /// "Claude Code continued on its own."
+        case running(since: Date, note: String?)
         case approval(count: Int)
     }
 
@@ -69,6 +71,7 @@ final class RunStatusView: NSView {
     private func apply() {
         timer?.invalidate()
         timer = nil
+        toolTip = nil
         switch state {
         case .idle:
             spinner.stopAnimation(nil)
@@ -81,11 +84,12 @@ final class RunStatusView: NSView {
             stopButton.isHidden = false
             label.textColor = .secondaryLabelColor
             label.stringValue = String(localized: "Connecting…")
-        case .running:
+        case .running(_, let note):
             spinner.startAnimation(nil)
             icon.isHidden = true
             stopButton.isHidden = false
             label.textColor = .secondaryLabelColor
+            toolTip = note
             refreshElapsed()
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshElapsed() }
@@ -103,9 +107,9 @@ final class RunStatusView: NSView {
     }
 
     private func refreshElapsed() {
-        guard case .running(let since) = state else { return }
+        guard case .running(let since, let note) = state else { return }
         label.stringValue = String(localized: "Working \(Formatting.elapsed(since: since))")
-        setAccessibilityLabel(label.stringValue)
+        setAccessibilityLabel(note.map { "\(label.stringValue), \($0)" } ?? label.stringValue)
     }
 
     @objc private func stopClicked() {

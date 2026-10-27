@@ -72,6 +72,9 @@ final class TranscriptApprovalCell: TranscriptCell {
         let hasDetail = Self.detail(item) != nil
         detailPanel.isHidden = !hasDetail
         if hasDetail { detailPanel.setText(Self.detailText(item, cache: host.textCache).string, textHeight: 0) }
+        let highlights = findHighlights
+        titleView.setFindHighlights(highlights.ranges(in: .title), current: highlights.currentRange(in: .title))
+        detailPanel.textView.setFindHighlights(highlights.ranges(in: .detail), current: highlights.currentRange(in: .detail))
 
         resolutionLabel.font = .systemFont(ofSize: Theme.fontSize - 1)
         resolutionLabel.textColor = .secondaryLabelColor
@@ -92,7 +95,15 @@ final class TranscriptApprovalCell: TranscriptCell {
         setAccessibilityLabel("\(kindLabel.stringValue): \(item.title ?? ""), \(resolutionLabel.stringValue)")
     }
 
-    private static func kindLabel(_ category: ToolCategory?) -> String {
+    override func findTarget(for match: TranscriptFindMatch) -> TranscriptFindTarget? {
+        switch match.field {
+        case .title: findTarget(match.range, in: titleView)
+        case .detail where !detailPanel.isHidden: findTarget(match.range, in: detailPanel.textView, panel: detailPanel)
+        default: nil
+        }
+    }
+
+    static func kindLabel(_ category: ToolCategory?) -> String {
         switch category {
         case .command: String(localized: "Command approval")
         case .fileChange: String(localized: "File change approval")
@@ -103,14 +114,14 @@ final class TranscriptApprovalCell: TranscriptCell {
         }
     }
 
-    private static func title(_ item: TranscriptItem, cache: TranscriptTextCache) -> ChatRenderedText {
+    static func title(_ item: TranscriptItem, cache: TranscriptTextCache) -> ChatRenderedText {
         let source = item.title ?? kindLabel(item.category)
         return cache.text(for: item.id, style: .approval, source: source) { blocks in
             ChatMarkdownRenderer.render(source, style: ChatMarkdownStyle(fontSize: Theme.fontSize), cache: blocks)
         }
     }
 
-    private static func detail(_ item: TranscriptItem) -> String? {
+    static func detail(_ item: TranscriptItem) -> String? {
         let detail = item.detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return detail.isEmpty || detail == item.title ? nil : detail
     }
@@ -122,7 +133,7 @@ final class TranscriptApprovalCell: TranscriptCell {
         return request
     }
 
-    private static func detailText(_ item: TranscriptItem, cache: TranscriptTextCache) -> ChatRenderedText {
+    static func detailText(_ item: TranscriptItem, cache: TranscriptTextCache) -> ChatRenderedText {
         TranscriptToolDetail.text(for: request(item), cache: cache)
     }
 
@@ -230,7 +241,13 @@ final class TranscriptPlanCell: TranscriptCell {
         progressLabel.stringValue = progress.total > 0 ? String(localized: "\(progress.done) of \(progress.total) done") : ""
         textView.setText(TranscriptText.markdown(item, .plan, cache: host.textCache))
         textView.onOpenLink = { [weak host] link in host?.openLink(link) ?? false }
+        let highlights = findHighlights
+        textView.setFindHighlights(highlights.ranges(in: .body), current: highlights.currentRange(in: .body))
         setAccessibilityLabel(String(localized: "Plan") + (progressLabel.stringValue.isEmpty ? "" : ", \(progressLabel.stringValue)"))
+    }
+
+    override func findTarget(for match: TranscriptFindMatch) -> TranscriptFindTarget? {
+        match.field == .body ? findTarget(match.range, in: textView) : nil
     }
 
     /// Counts task items, including nested ones.
@@ -554,7 +571,7 @@ final class TranscriptErrorCell: TranscriptCell {
         fatalError("init(coder:) has not been implemented")
     }
 
-    private static func text(_ item: TranscriptItem, cache: TranscriptTextCache) -> ChatRenderedText {
+    static func text(_ item: TranscriptItem, cache: TranscriptTextCache) -> ChatRenderedText {
         cache.text(for: item.id, style: .error, source: item.text) { _ in
             ChatRenderedText(
                 string: NSAttributedString(
@@ -574,6 +591,12 @@ final class TranscriptErrorCell: TranscriptCell {
         guard let id = row.itemID, let item = host.item(id) else { return }
         self.item = item
         textView.setText(Self.text(item, cache: host.textCache).string)
+        let highlights = findHighlights
+        textView.setFindHighlights(highlights.ranges(in: .body), current: highlights.currentRange(in: .body))
+    }
+
+    override func findTarget(for match: TranscriptFindMatch) -> TranscriptFindTarget? {
+        match.field == .body ? findTarget(match.range, in: textView) : nil
     }
 
     override class var measuresText: Bool { true }
@@ -619,11 +642,27 @@ final class TranscriptNoticeCell: TranscriptCell {
         super.configure(row, host: host)
         guard let id = row.itemID, let item = host.item(id) else { return }
         self.item = item
-        label.font = .systemFont(ofSize: Theme.fontSize - 2, weight: .medium)
-        label.stringValue = item.text.split(whereSeparator: \.isNewline).first.map(String.init) ?? item.text
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byTruncatingTail
+        let text = NSAttributedString(
+            string: Self.label(item),
+            attributes: [
+                .font: NSFont.systemFont(ofSize: Theme.fontSize - 2, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: paragraph,
+            ])
+        let highlights = findHighlights
+        label.attributedStringValue = TranscriptFindStyle.highlight(
+            text, ranges: highlights.ranges(in: .body), current: highlights.currentRange(in: .body))
         label.toolTip = item.text
         setAccessibilityLabel(item.text)
+        needsLayout = true
         needsDisplay = true
+    }
+
+    /// The notice's first line, which is all the row shows.
+    static func label(_ item: TranscriptItem) -> String {
+        item.text.split(whereSeparator: \.isNewline).first.map(String.init) ?? item.text
     }
 
     override class func height(for row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> CGFloat {
@@ -631,6 +670,12 @@ final class TranscriptNoticeCell: TranscriptCell {
     }
 
     override var copyText: String? { item?.text }
+
+    override func findTarget(for match: TranscriptFindMatch) -> TranscriptFindTarget? {
+        guard match.field == .body else { return nil }
+        layoutSubtreeIfNeeded()
+        return TranscriptFindTarget(rect: label.frame, textView: nil, range: match.range)
+    }
 
     override func layout() {
         super.layout()

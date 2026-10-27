@@ -21,6 +21,8 @@ protocol TranscriptHost: AnyObject {
     func previewAttachments(_ paths: [String], selected: Int)
     func changedFiles(for turnID: UUID) -> [ChangedFile]
     func modelLabel(for meta: AssistantMeta) -> String
+    /// The find bar's matches in an item, while the find bar shows some.
+    func findHighlights(for itemID: UUID) -> TranscriptFindHighlights?
 }
 
 /// Shared transcript geometry. Everything lays out in a centered column.
@@ -68,6 +70,23 @@ class TranscriptCell: NSTableCellView {
 
     /// What ⌘C copies when the row is selected.
     var copyText: String? { nil }
+
+    /// The find bar's matches in this row's item.
+    var findHighlights: TranscriptFindHighlights {
+        guard let id = row?.itemID else { return TranscriptFindHighlights() }
+        return host?.findHighlights(for: id) ?? TranscriptFindHighlights()
+    }
+
+    /// Where the row shows a find match, after scrolling any panel inside it to the match. Rows lay out
+    /// before they are asked.
+    func findTarget(for match: TranscriptFindMatch) -> TranscriptFindTarget? { nil }
+
+    /// The target for a match drawn by `textView`, a descendant of the cell.
+    func findTarget(_ range: NSRange, in textView: ChatTextView, panel: TranscriptDetailPanel? = nil) -> TranscriptFindTarget? {
+        guard let rect = textView.rect(for: range) else { return nil }
+        panel?.reveal(rect)
+        return TranscriptFindTarget(rect: convert(rect, from: textView), textView: textView, range: range)
+    }
 
     /// Toggled by the table's row selection, for rows that reveal actions on hover.
     var isRowSelected = false {
@@ -357,6 +376,12 @@ final class TranscriptDisclosureHeader: NSView {
         needsDisplay = true
     }
 
+    /// Where the title is drawn, in the header's coordinates.
+    var titleFrame: NSRect {
+        layoutSubtreeIfNeeded()
+        return labelField.frame
+    }
+
     private func accessibilityDescription(title: String) -> String {
         switch status {
         case .running: String(localized: "\(title), running")
@@ -390,7 +415,8 @@ final class TranscriptDisclosureHeader: NSView {
         }
         let labelHeight = ceil(labelField.intrinsicContentSize.height)
         let labelX: CGFloat = 26
-        let labelWidth = min(max(0, trailing - labelX), ceil(labelField.intrinsicContentSize.width) + 2)
+        // The cell's size includes its text padding, which a short title like "Thought" needs to not truncate.
+        let labelWidth = min(max(0, trailing - labelX), ceil(labelField.cell?.cellSize.width ?? labelField.intrinsicContentSize.width))
         labelField.frame = NSRect(x: labelX, y: ((height - labelHeight) / 2).rounded(), width: max(0, labelWidth), height: labelHeight)
         if isShimmering { TranscriptShimmer.layout(labelField) }
     }
@@ -514,6 +540,19 @@ final class TranscriptDetailPanel: NSView {
         let contentWidth = max(10, bounds.width - inset * 2)
         textView.frame = NSRect(x: 0, y: 0, width: contentWidth, height: max(height, 1))
         needsLayout = true
+    }
+
+    /// Scrolls the panel's own scroller so `rect` (in the text view's coordinates) is in view, in the
+    /// middle when the panel scrolls at all. The transcript around it does not move.
+    func reveal(_ rect: NSRect) {
+        layoutSubtreeIfNeeded()
+        let clip = scrollView.contentView
+        let visible = clip.bounds
+        let maxY = max(0, textView.frame.height - visible.height)
+        guard maxY > 0, rect.minY < visible.minY || rect.maxY > visible.maxY else { return }
+        let y = min(max(0, rect.midY - visible.height / 2), maxY).rounded()
+        clip.setBoundsOrigin(NSPoint(x: visible.origin.x, y: y))
+        scrollView.reflectScrolledClipView(clip)
     }
 
     override func layout() {

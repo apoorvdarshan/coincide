@@ -4,7 +4,8 @@ import Foundation
 /// Stable identity of a transcript row, so updates can be diffed against what the table shows.
 enum TranscriptRowID: Hashable {
     case item(UUID)
-    /// The "Working…" / "Worked for…" header of the turn that starts with this user item.
+    /// The "Working…" / "Worked for…" header of the turn that starts with this item: the user's message,
+    /// or the notice of a turn the agent started on its own.
     case turnHeader(UUID)
     /// A collapsible group of consecutive tool calls, keyed by its first item.
     case group(UUID)
@@ -30,7 +31,7 @@ struct TranscriptRow: Equatable {
         case changedFiles(turnID: UUID)
         case live(LiveStatus)
         /// Breathing room above the first row and between the last row and the composer.
-        case spacer
+        case spacer(height: CGFloat)
     }
 
     var id: TranscriptRowID
@@ -80,16 +81,22 @@ enum LiveStatus: Hashable {
 /// Builds rows from a thread's transcript, the way T3 Code lays out its timeline: each turn opens
 /// with the user's message; while it runs a "Working for…" header leads its live work, and once
 /// done the tool calls, reasoning and interim replies fold under "Worked for…" above the reply.
+/// A turn the agent started on its own opens with the notice saying so and lays out the same way.
 /// Plans, questions and anything still waiting for the user stay in view.
 struct TranscriptBuilder {
     var items: [TranscriptItem]
-    /// User item of the turn that is running, if any.
+    /// The item the running turn opened with, if a turn runs: the user's message, or the notice of a
+    /// turn the agent started (`ThreadRunner.TurnState.userItemID`).
     var runningTurnID: UUID?
     var turnStartedAt: Date?
     var isStarting = false
     var runningProvider: ProviderKind?
     var showReasoning = true
     var expanded: Set<TranscriptRowID> = []
+    /// Notices that opened turns an agent started on its own (see `AgentTurns`).
+    var agentTurnIDs: Set<UUID> = []
+    /// Room kept above the first row, so the find bar does not cover it, as T3 reserves for its find bar.
+    var topReserve: CGFloat = 0
     /// Bumped per item whenever the item changes.
     var revisions: [UUID: Int] = [:]
     /// Turns (by user item) that changed files, with a signature of the change set.
@@ -98,7 +105,7 @@ struct TranscriptBuilder {
     func build() -> [TranscriptRow] {
         var rows: [TranscriptRow] = []
         var start = 0
-        for index in items.indices where index > start && items[index].kind == .user {
+        for index in items.indices where index > start && opensTurn(items[index]) {
             appendTurn(items[start..<index], to: &rows)
             start = index
         }
@@ -113,21 +120,32 @@ struct TranscriptBuilder {
             rows[index].continuesWork = true
         }
         if !rows.isEmpty {
-            rows.insert(row(.header, .spacer), at: 0)
-            rows.append(row(.footer, .spacer))
+            rows.insert(row(.header, .spacer(height: TranscriptMetrics.edgePadding + topReserve)), at: 0)
+            rows.append(row(.footer, .spacer(height: TranscriptMetrics.edgePadding)))
         }
         return rows
     }
 
     // MARK: Turns
 
-    private func appendTurn(_ turn: ArraySlice<TranscriptItem>, to rows: inout [TranscriptRow]) {
-        let user = turn.first?.kind == .user ? turn.first : nil
-        let body = turn.dropFirst(user == nil ? 0 : 1).filter(isVisible)
-        if let user { rows.append(row(.item(user.id), .user)) }
+    /// The user's messages open turns, and so do the notices of turns an agent started by itself.
+    func opensTurn(_ item: TranscriptItem) -> Bool {
+        item.kind == .user || (item.kind == .notice && agentTurnIDs.contains(item.id))
+    }
 
-        if let user, user.id == runningTurnID {
-            rows.append(row(.turnHeader(user.id), .turnHeader(.working(startedAt: turnStartedAt ?? user.createdAt))))
+    /// The item that opened the turn `itemID` belongs to, if a turn holds it.
+    func turnOpener(of itemID: UUID) -> UUID? {
+        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return nil }
+        return items[...index].last(where: opensTurn)?.id
+    }
+
+    private func appendTurn(_ turn: ArraySlice<TranscriptItem>, to rows: inout [TranscriptRow]) {
+        let opener = turn.first.flatMap { opensTurn($0) ? $0 : nil }
+        let body = turn.dropFirst(opener == nil ? 0 : 1).filter(isVisible)
+        if let opener { rows.append(row(.item(opener.id), opener.kind == .user ? .user : .notice)) }
+
+        if let opener, opener.id == runningTurnID {
+            rows.append(row(.turnHeader(opener.id), .turnHeader(.working(startedAt: turnStartedAt ?? opener.createdAt))))
             appendBody(body, terminalID: nil, meta: nil, to: &rows)
             return
         }
@@ -149,11 +167,13 @@ struct TranscriptBuilder {
                 }
             }
         }
-        if let user, !hidden.isEmpty {
-            let isExpanded = expanded.contains(.turnHeader(user.id))
-            let end = turn.map { $0.completedAt ?? $0.createdAt }.max() ?? user.createdAt
+        if let opener, !hidden.isEmpty {
+            let isExpanded = expanded.contains(.turnHeader(opener.id))
+            let end = turn.map { $0.completedAt ?? $0.createdAt }.max() ?? opener.createdAt
             rows.append(
-                row(.turnHeader(user.id), .turnHeader(.worked(duration: max(0, end.timeIntervalSince(user.createdAt)), isExpanded: isExpanded))))
+                row(
+                    .turnHeader(opener.id),
+                    .turnHeader(.worked(duration: max(0, end.timeIntervalSince(opener.createdAt)), isExpanded: isExpanded))))
             if isExpanded { hidden.removeAll() }
         }
 
@@ -161,7 +181,7 @@ struct TranscriptBuilder {
         let meta = terminal.flatMap { item in item.provider.map { AssistantMeta(provider: $0, modelID: item.modelID) } }
         appendBody(body.filter { !hidden.contains($0.id) }, terminalID: terminal?.id, meta: meta, to: &rows)
 
-        if let user, let signature = changedFiles[user.id] {
+        if let user = opener, user.kind == .user, let signature = changedFiles[user.id] {
             let filesRow = row(.changedFiles(user.id), .changedFiles(turnID: user.id), salt: signature)
             if let terminal, let replyIndex = rows.lastIndex(where: { $0.id == .item(terminal.id) }) {
                 rows.insert(filesRow, at: replyIndex + 1)

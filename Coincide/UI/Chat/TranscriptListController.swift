@@ -149,6 +149,15 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         }
     }
 
+    /// Reconfigures every row the table has prepared, on screen or just off it, for find highlights.
+    func reconfigurePreparedCells() {
+        guard let host else { return }
+        tableView.enumerateAvailableRowViews { rowView, index in
+            guard index < rows.count, let cell = rowView.view(atColumn: 0) as? TranscriptCell else { return }
+            cell.configure(rows[index], host: host)
+        }
+    }
+
     /// Forgets every measurement, for font size changes.
     func invalidateHeights() {
         heights.removeAll()
@@ -165,6 +174,28 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
 
     func index(of id: TranscriptRowID) -> Int? {
         rows.firstIndex { $0.id == id }
+    }
+
+    /// The item of the first row the reader can see below the toolbar, for searches that start where they are.
+    func firstVisibleItemID() -> UUID? {
+        let clip = scrollView.contentView
+        let top = clip.bounds.minY + clip.contentInsets.top
+        let visible = NSRect(x: 0, y: top, width: tableView.bounds.width, height: max(1, clip.bounds.maxY - top))
+        let range = tableView.rows(in: visible)
+        guard range.location != NSNotFound else { return nil }
+        for index in range.location..<min(rows.count, NSMaxRange(range)) {
+            switch rows[index].id {
+            case .item(let id), .turnHeader(let id), .group(let id), .changedFiles(let id): return id
+            case .live, .header, .footer: continue
+            }
+        }
+        return nil
+    }
+
+    /// The cell showing a row, once the row is on screen.
+    func cell(at index: Int) -> TranscriptCell? {
+        guard index < rows.count else { return nil }
+        return tableView.view(atColumn: 0, row: index, makeIfNecessary: true) as? TranscriptCell
     }
 
     // MARK: Heights
@@ -307,6 +338,51 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
                 if self.isPinnedToBottom { self.scrollToBottom() }
             }
         }
+    }
+
+    /// Scrolls a row to the middle of the visible area, or with `rect` (in the row's coordinates) that part
+    /// of it, as find does for its current match. The rows around it are measured first, so it lands where
+    /// it is drawn. Leaving the bottom stops following new output, as scrolling there yourself would.
+    func reveal(row index: Int, rect: NSRect? = nil) {
+        guard index < rows.count else { return }
+        measureExactly(around: index)
+        let clip = scrollView.contentView
+        let rowRect = tableView.rect(ofRow: index)
+        let target = rect.map { $0.offsetBy(dx: rowRect.minX, dy: rowRect.minY) } ?? rowRect
+        let top = clip.contentInsets.top
+        let visibleHeight = max(1, clip.bounds.height - top - clip.contentInsets.bottom)
+        // Something taller than most of the view starts near its top instead.
+        let y = target.height > visibleHeight * 0.7 ? target.minY - top - 24 : target.midY - top - visibleHeight / 2
+        scroll(toY: y)
+        isPinnedToBottom = distanceFromBottom <= Self.followThreshold
+        scheduleRefine()
+    }
+
+    /// Measures the rows within about a screen of `index` exactly, so scrolling there lands right.
+    private func measureExactly(around index: Int) {
+        let screen = max(200, scrollView.contentView.bounds.height)
+        var changed = IndexSet()
+        func measure(_ row: Int) -> CGFloat {
+            let previous = heights[rows[row].id]?.value
+            let value = height(at: row, exact: true)
+            if value != previous { changed.insert(row) }
+            return value
+        }
+        _ = measure(index)
+        var lower = index
+        var above: CGFloat = 0
+        while lower > 0, above < screen {
+            lower -= 1
+            above += measure(lower)
+        }
+        var upper = index
+        var below: CGFloat = 0
+        while upper < rows.count - 1, below < screen {
+            upper += 1
+            below += measure(upper)
+        }
+        exactRange = lower..<(upper + 1)
+        if !changed.isEmpty { noteHeights(changed) }
     }
 
     func scrollState() -> TranscriptScrollState {

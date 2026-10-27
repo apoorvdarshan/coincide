@@ -62,6 +62,21 @@ final class ComposerTextView: NSTextView {
         super.keyDown(with: event)
     }
 
+    /// ⌘F, ⌘G and ⌘E search the conversation above, not the message being written.
+    override func performTextFinderAction(_ sender: Any?) {
+        passTextFinderActionOn(sender)
+    }
+
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(performTextFinderAction(_:)) { return validatePassedOnTextFinderAction(menuItem) }
+        return super.validateMenuItem(menuItem)
+    }
+
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(performTextFinderAction(_:)) { return validatePassedOnTextFinderAction(item) }
+        return super.validateUserInterfaceItem(item)
+    }
+
     /// Whether the caret sits on the first or last visual line, where Up or Down would leave the text.
     func caretIsOnEdgeLine(top: Bool) -> Bool {
         let selection = selectedRange()

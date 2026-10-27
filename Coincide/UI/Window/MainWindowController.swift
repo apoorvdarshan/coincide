@@ -151,7 +151,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         } else if runner.isStarting(id) {
             runStatus.update(.starting)
         } else if let turn = runner.turn(id) {
-            runStatus.update(.running(since: turn.startedAt))
+            // A turn the agent started itself runs and stops like any other; the tooltip says why it runs.
+            runStatus.update(.running(since: turn.startedAt, note: AgentTurns.shared.runningNote(in: id)))
         } else {
             runStatus.update(.idle)
         }
@@ -233,6 +234,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         showWindow(nil)
         if !splitController.isSidebarOpen { splitController.toggleSidebarPanel() }
         sidebar.focusSearch()
+    }
+
+    /// Find…, Find Next and Find Previous reach the window when focus is outside the chat, in the sidebar or
+    /// the diff; as in T3 Code they search the open thread. The chat handles them itself when it has focus,
+    /// and the terminal keeps them for its own search.
+    override func performTextFinderAction(_ sender: Any?) {
+        splitController.content.chat.performTextFinderAction(sender)
+    }
+
+    /// Opens the find bar over the open thread.
+    func findInThread() {
+        showWindow(nil)
+        splitController.content.chat.showFindBar()
     }
 
     @objc func stopTurn(_ sender: Any?) {
@@ -437,6 +451,8 @@ extension MainWindowController: NSMenuItemValidation {
             return store.settings.fontSize > 10
         case #selector(increaseFontSize(_:)):
             return store.settings.fontSize < 24
+        case #selector(performTextFinderAction(_:)):
+            return window?.isVisible == true && splitController.content.chat.validateUserInterfaceItem(menuItem)
         default:
             break
         }

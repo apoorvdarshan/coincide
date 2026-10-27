@@ -7,7 +7,8 @@ import QuickLookUI
 /// The transcript follows T3 Code's chat view: user bubbles, Markdown replies with the provider and
 /// model that wrote them, tool calls folded into a work log per turn, approvals, plans, errors and
 /// each turn's changed files. It updates incrementally from store changes, follows new output while
-/// the reader is at the bottom, and offers "Jump to Latest" otherwise.
+/// the reader is at the bottom, and offers "Jump to Latest" otherwise. ⌘F opens T3's thread find bar
+/// over it.
 final class ChatViewController: NSViewController {
     var threadID: UUID? {
         didSet {
@@ -52,7 +53,14 @@ final class ChatViewController: NSViewController {
     /// How long the last transcript update took.
     private var updateCost: TimeInterval = 0
     private var liveTimer: Timer?
-    private var wasRunning = false
+    /// The displayed thread's turn as last seen running, to look for its checkpoint once it ends.
+    private var runningTurn: ThreadRunner.TurnState?
+    private let findBar = TranscriptFindBar()
+    private let finder = TranscriptFinder()
+    /// The last query, kept while the find bar is closed, as the find pasteboard would.
+    private var findQuery = ""
+    private var pendingFind: DispatchWorkItem?
+    private var findRefreshScheduled = false
     private var appliedFontSize = 0.0
     private var appliedShowReasoning = true
     private var previewURLs: [URL] = []
@@ -61,6 +69,8 @@ final class ChatViewController: NSViewController {
     /// Streaming deltas arrive faster than anyone reads; apply them at most this often.
     private static let updateInterval: TimeInterval = 1.0 / 30
     private static let slowestUpdateInterval: TimeInterval = 0.25
+    /// The find bar's height and its gap to the toolbar, kept free above the first row while it shows.
+    private static let findBarReserve: CGFloat = 44
 
     // MARK: View
 
@@ -72,15 +82,22 @@ final class ChatViewController: NSViewController {
         let tableView = list.tableView
         tableView.onToggleRow = { [weak self] row, expand in self?.toggleRow(at: row, expand: expand) }
         tableView.onCopyRow = { [weak self] row in self?.copyRow(at: row) }
-        tableView.onEscape = { [weak self] in self?.composer.focus() }
+        tableView.onEscape = { [weak self] in self?.escapeFromTranscript() }
         tableView.onTypeAhead = { [weak self] event in self?.typeIntoComposer(event) }
         tableView.menu = rowMenu()
+        findBar.onQueryChange = { [weak self] query in self?.findQueryChanged(query) }
+        findBar.onNext = { [weak self] in self?.findNext() }
+        findBar.onPrevious = { [weak self] in self?.findPrevious() }
+        findBar.onClose = { [weak self] in self?.closeFindBar() }
+        findBar.isHidden = true
 
         addChild(composer)
-        for subview in [list.scrollView, welcomeView, composerContainer, jumpButton, noThreadView] as [NSView] {
+        for subview in [list.scrollView, welcomeView, composerContainer, jumpButton, findBar, noThreadView] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(subview)
         }
+        let findBarWidth = findBar.widthAnchor.constraint(equalToConstant: TranscriptFindBar.width)
+        findBarWidth.priority = .defaultHigh
         let composerView = composer.view
         composerView.translatesAutoresizingMaskIntoConstraints = false
         composerContainer.addSubview(composerView)
@@ -108,6 +125,11 @@ final class ChatViewController: NSViewController {
 
             jumpButton.centerXAnchor.constraint(equalTo: list.scrollView.centerXAnchor),
             jumpButton.bottomAnchor.constraint(equalTo: composerContainer.topAnchor, constant: -12),
+
+            findBar.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 10),
+            findBar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
+            findBar.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: 14),
+            findBarWidth,
 
             noThreadView.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
             noThreadView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -141,10 +163,36 @@ final class ChatViewController: NSViewController {
         composer.showPicker(picker)
     }
 
+    // MARK: Composer settings
+
+    /// The composer's model choice, from the command palette: switches agent when the model is another's.
+    func chooseModel(_ selection: ModelSelection) {
+        composer.select(selection)
+    }
+
+    /// Continues the thread with another agent, as `/codex` and the like do.
+    func switchAgent(to provider: ProviderKind) {
+        composer.switchAgent(to: provider)
+    }
+
+    func chooseEffort(_ effort: String) {
+        composer.setEffort(effort)
+    }
+
+    func chooseAccessMode(_ mode: AccessMode) {
+        composer.setAccessMode(mode)
+    }
+
+    func chooseInteractionMode(_ mode: InteractionMode) {
+        composer.setInteractionMode(mode)
+    }
+
     // MARK: Thread
 
     private func loadThread() {
         guard isViewLoaded else { return }
+        // Find belongs to the thread it was opened in, as in T3.
+        hideFindBar(relayout: false)
         composer.threadID = threadID
         pendingItemIDs.removeAll()
         needsFullReload = false
@@ -152,6 +200,7 @@ final class ChatViewController: NSViewController {
         changedFileSignatures.removeAll()
         guard let threadID, store.thread(threadID) != nil else {
             displayedThreadID = nil
+            runningTurn = nil
             itemsByID.removeAll()
             textCache.removeAll()
             list.update([], reload: true)
@@ -160,7 +209,7 @@ final class ChatViewController: NSViewController {
             return
         }
         displayedThreadID = threadID
-        wasRunning = runner.isRunning(threadID)
+        runningTurn = runner.turn(threadID)
         refreshChangedFiles()
         rebuild(reload: true)
         textCache.retain(only: Set(itemsByID.keys))
@@ -172,17 +221,24 @@ final class ChatViewController: NSViewController {
     private func rebuild(reload: Bool = false, keeping anchor: TranscriptRowID? = nil) {
         guard let threadID, let thread = store.thread(threadID) else { return }
         itemsByID = Dictionary(thread.items.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-        let turn = runner.turn(threadID)
+        list.update(builder(for: thread).build(), reload: reload, keeping: anchor)
+    }
+
+    /// Lays out the thread's rows: what runs now, which rows are open, and the turns agents started themselves.
+    private func builder(for thread: ChatThread) -> TranscriptBuilder {
+        let turn = runner.turn(thread.id)
         var builder = TranscriptBuilder(items: thread.items)
-        builder.runningTurnID = runner.isRunning(threadID) ? turn?.userItemID : nil
+        builder.runningTurnID = turn?.userItemID
         builder.turnStartedAt = turn?.startedAt
-        builder.isStarting = runner.isStarting(threadID)
+        builder.isStarting = runner.isStarting(thread.id)
         builder.runningProvider = turn?.provider ?? thread.selection.provider
         builder.showReasoning = store.settings.showReasoning
-        builder.expanded = expanded[threadID] ?? []
+        builder.expanded = expanded[thread.id] ?? []
+        builder.agentTurnIDs = AgentTurns.shared.anchors(in: thread.id)
+        builder.topReserve = findBar.isHidden ? 0 : Self.findBarReserve
         builder.revisions = revisions
         builder.changedFiles = changedFileSignatures
-        list.update(builder.build(), reload: reload, keeping: anchor)
+        return builder
     }
 
     private func updateChrome() {
@@ -264,15 +320,17 @@ final class ChatViewController: NSViewController {
         rebuild(reload: reload)
         if reload { list.scrollToBottom() }
         updateChrome()
+        scheduleFindRefresh()
     }
 
     private func runStateChanged() {
         guard let threadID = displayedThreadID else { return }
-        let running = runner.isRunning(threadID)
-        if wasRunning && !running, let last = store.thread(threadID)?.items.last(where: { $0.kind == .user }) {
-            watchCheckpoints(for: last.id)
+        let turn = runner.turn(threadID)
+        // A turn of the user's ended: its after-turn checkpoint is on its way. Agents' own turns have none.
+        if let finished = runningTurn, finished.userItemID != turn?.userItemID, !finished.isAgentInitiated {
+            watchCheckpoints(for: finished.userItemID)
         }
-        wasRunning = running
+        runningTurn = turn
         rebuild()
         list.reconfigureVisibleCells()
         updateChrome()
@@ -287,6 +345,7 @@ final class ChatViewController: NSViewController {
         textCache.removeAll()
         list.invalidateHeights()
         rebuild(reload: true)
+        scheduleFindRefresh()
     }
 
     private func updateLiveTimer() {
@@ -358,6 +417,231 @@ final class ChatViewController: NSViewController {
         list.scrollToBottom(animated: true)
     }
 
+    // MARK: Find
+
+    /// Opens the find bar with the last query selected, or puts the caret back in it when it is open.
+    /// Like T3's thread find, opening it searches from the first row on screen.
+    func showFindBar() {
+        guard displayedThreadID != nil else { return }
+        if findBar.isHidden {
+            findBar.setQuery(findQuery)
+            revealFindBar()
+            runFind(navigating: true)
+        }
+        findBar.focus()
+    }
+
+    /// Opens the find bar searching for `query`, from the first row on screen.
+    func find(_ query: String) {
+        guard displayedThreadID != nil else { return }
+        pendingFind?.cancel()
+        pendingFind = nil
+        findQuery = query
+        findBar.setQuery(query)
+        revealFindBar()
+        runFind(navigating: true)
+    }
+
+    func closeFindBar() {
+        guard !findBar.isHidden else { return }
+        let hadFocus = findBar.hasFocus
+        hideFindBar()
+        if hadFocus { composer.focus() }
+    }
+
+    /// Shows the bar and keeps room for it above the first row.
+    private func revealFindBar() {
+        guard findBar.isHidden else { return }
+        findBar.isHidden = false
+        rebuild()
+    }
+
+    /// Closes the find bar without moving focus. Opening another thread lays out its rows anew, so it
+    /// passes `relayout: false`.
+    private func hideFindBar(relayout: Bool = true) {
+        pendingFind?.cancel()
+        pendingFind = nil
+        guard !findBar.isHidden else { return }
+        findBar.isHidden = true
+        finder.reset()
+        guard relayout else { return }
+        rebuild()
+        list.reconfigurePreparedCells()
+    }
+
+    func findNext() {
+        stepFind(by: 1)
+    }
+
+    func findPrevious() {
+        stepFind(by: -1)
+    }
+
+    private func stepFind(by delta: Int) {
+        guard displayedThreadID != nil else { return }
+        if findBar.isHidden {
+            // Find Next with the bar closed searches again for the last query, as in other apps.
+            guard !findQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return showFindBar() }
+            findBar.setQuery(findQuery)
+            revealFindBar()
+            runFind(navigating: true)
+            return
+        }
+        if let pending = pendingFind {
+            // Return right after typing: search now, which lands on the first match from here.
+            pending.cancel()
+            pendingFind = nil
+            runFind(navigating: true)
+            return
+        }
+        guard !finder.matches.isEmpty else { return NSSound.beep() }
+        finder.step(delta)
+        findResultsChanged()
+        revealCurrentMatch()
+    }
+
+    /// "Use Selection for Find": searches for the text selected in the conversation or the composer.
+    private func useSelectionForFind() {
+        guard let selection = selectedTextForFind else { return }
+        find(selection)
+    }
+
+    private var selectedTextForFind: String? {
+        guard let textView = view.window?.firstResponder as? NSTextView, !textView.isFieldEditor else { return nil }
+        let range = textView.selectedRange()
+        guard range.length > 0, NSMaxRange(range) <= (textView.string as NSString).length else { return nil }
+        let text = (textView.string as NSString).substring(with: range)
+        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : String(trimmed.prefix(TranscriptFinder.maxQueryLength))
+    }
+
+    private func findQueryChanged(_ query: String) {
+        findQuery = query
+        pendingFind?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingFind = nil
+            self.runFind(navigating: true)
+        }
+        pendingFind = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+    }
+
+    /// Searches the thread for the find bar's query. A new search starts from the first row on screen and
+    /// scrolls to its first match; refreshing while output streams in keeps the current match and the view.
+    private func runFind(navigating: Bool) {
+        guard !findBar.isHidden, let threadID = displayedThreadID, let thread = store.thread(threadID) else { return }
+        finder.search(
+            findBar.query, in: thread.items, revisions: revisions, showReasoning: store.settings.showReasoning,
+            textCache: textCache, keepingCurrent: !navigating, from: navigating ? list.firstVisibleItemID() : nil)
+        findResultsChanged(announcing: navigating)
+        if navigating { revealCurrentMatch() }
+    }
+
+    private func findResultsChanged(announcing: Bool = true) {
+        findBar.showCount(current: finder.currentIndex, total: finder.matches.count, isTruncated: finder.isTruncated)
+        list.reconfigurePreparedCells()
+        guard announcing, !finder.query.isEmpty else { return }
+        NSAccessibility.post(
+            element: findBar, notification: .announcementRequested,
+            userInfo: [.announcement: findBar.countDescription, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+    }
+
+    /// Output that streams in while the find bar is open is searched too, at most a few times a second.
+    private func scheduleFindRefresh() {
+        guard !findBar.isHidden, !findRefreshScheduled else { return }
+        findRefreshScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            self.findRefreshScheduled = false
+            guard self.pendingFind == nil else { return }
+            self.runFind(navigating: false)
+        }
+    }
+
+    /// Brings the current match into view: opens the turn, group of tool calls and row folding it away,
+    /// scrolls to it (inside a tool call's output too) and points it out.
+    private func revealCurrentMatch() {
+        guard let threadID = displayedThreadID, let thread = store.thread(threadID), let match = finder.current,
+            let item = itemsByID[match.itemID]
+        else { return }
+        let rowID = TranscriptRowID.item(match.itemID)
+        var open = expanded[threadID] ?? []
+        var layout = builder(for: thread)
+        var rows = layout.build()
+        if !rows.contains(where: { $0.id == rowID }), let opener = layout.turnOpener(of: match.itemID) {
+            open.insert(.turnHeader(opener))
+            layout.expanded = open
+            rows = layout.build()
+        }
+        let group = rows.first { row in
+            if case .group(let ids, _) = row.kind { return ids.contains(match.itemID) }
+            return false
+        }
+        if !rows.contains(where: { $0.id == rowID }), let group { open.insert(group.id) }
+        if !open.contains(rowID), rowHidesMatch(match, of: item) {
+            open.insert(rowID)
+            revisions[match.itemID, default: 0] += 1
+        }
+        if open != (expanded[threadID] ?? []) {
+            expanded[threadID] = open
+            rebuild()
+        }
+
+        guard let index = list.index(of: rowID) else { return }
+        list.reveal(row: index)
+        guard let cell = list.cell(at: index) else { return }
+        cell.layoutSubtreeIfNeeded()
+        guard let target = cell.findTarget(for: match) else { return }
+        list.reveal(row: index, rect: target.rect)
+        if let textView = target.textView {
+            // Once the scroll has drawn, so the indicator lands on the match.
+            DispatchQueue.main.async { textView.showFindIndicator(for: target.range) }
+        }
+    }
+
+    /// Whether the match's own row folds it away: a thought or a tool call's output shows once the row is
+    /// open, and a long message shows its start until "Show full message".
+    private func rowHidesMatch(_ match: TranscriptFindMatch, of item: TranscriptItem) -> Bool {
+        switch item.kind {
+        case .reasoning:
+            return true
+        case .tool:
+            return match.field == .detail
+        case .user:
+            guard TranscriptUserCell.shouldCollapse(item.text), let row = list.rows.first(where: { $0.id == .item(item.id) })
+            else { return false }
+            return TranscriptUserCell.hides(match.range, of: item, row: row, width: list.tableView.bounds.width, host: self)
+        default:
+            return false
+        }
+    }
+
+    /// Escape in the conversation closes the find bar first, then returns to the composer.
+    private func escapeFromTranscript() {
+        if findBar.isHidden {
+            composer.focus()
+        } else {
+            hideFindBar()
+        }
+    }
+
+    /// Find…, Find Next, Find Previous and Use Selection for Find from the Edit menu, while focus is in
+    /// the chat; the main window passes them on from the sidebar and the diff. The terminal keeps its own.
+    override func performTextFinderAction(_ sender: Any?) {
+        guard let tag = (sender as? NSValidatedUserInterfaceItem)?.tag, let action = NSTextFinder.Action(rawValue: tag)
+        else { return }
+        switch action {
+        case .showFindInterface: showFindBar()
+        case .nextMatch: findNext()
+        case .previousMatch: findPrevious()
+        case .setSearchString: useSelectionForFind()
+        case .hideFindInterface: closeFindBar()
+        default: break
+        }
+    }
+
     // MARK: Keyboard
 
     private func toggleRow(at index: Int, expand: Bool?) {
@@ -396,6 +680,8 @@ final class ChatViewController: NSViewController {
     private func rowMenu() -> NSMenu {
         let menu = NSMenu()
         menu.delegate = self
+        // Items are enabled as they are built (editing waits for the turn to end).
+        menu.autoenablesItems = false
         return menu
     }
 
@@ -579,6 +865,25 @@ extension ChatViewController: TranscriptHost {
         guard let modelID = meta.modelID, !modelID.isEmpty, modelID != "default" else { return meta.provider.displayName }
         let model = registry.displayName(for: ModelSelection(provider: meta.provider, modelID: modelID))
         return "\(meta.provider.displayName) · \(model)"
+    }
+
+    func findHighlights(for itemID: UUID) -> TranscriptFindHighlights? {
+        findBar.isHidden ? nil : finder.highlights(for: itemID)
+    }
+}
+
+// MARK: - Find commands
+
+extension ChatViewController: NSUserInterfaceValidations {
+    func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        guard item.action == #selector(performTextFinderAction(_:)) else { return true }
+        guard displayedThreadID != nil, let action = NSTextFinder.Action(rawValue: item.tag) else { return false }
+        switch action {
+        case .showFindInterface, .nextMatch, .previousMatch: return true
+        case .setSearchString: return selectedTextForFind != nil
+        case .hideFindInterface: return !findBar.isHidden
+        default: return false
+        }
     }
 }
 

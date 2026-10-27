@@ -59,6 +59,9 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
             let menuItem = NSMenuToolbarItem(itemIdentifier: itemIdentifier)
             menuItem.menu = NSMenu()
             menuItem.menu.delegate = self
+            // The split button's dropdown half takes its accessibility label from the menu; the button half
+            // reads its own from the image (see `updateOpenInItem`).
+            menuItem.menu.setAccessibilityLabel(String(localized: "Choose App to Open In"))
             menuItem.showsIndicator = true
             menuItem.target = self
             menuItem.action = #selector(openInPreferred(_:))

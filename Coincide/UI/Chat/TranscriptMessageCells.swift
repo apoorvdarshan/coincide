@@ -60,6 +60,8 @@ final class TranscriptUserCell: TranscriptCell {
         self.item = item
         textView.setText(TranscriptText.markdown(item, .user, cache: host.textCache))
         textView.onOpenLink = { [weak host] link in host?.openLink(link) ?? false }
+        let highlights = findHighlights
+        textView.setFindHighlights(highlights.ranges(in: .body), current: highlights.currentRange(in: .body))
         let attachments = item.attachments ?? []
         while thumbnails.count < attachments.count {
             let thumbnail = TranscriptThumbnailView()
@@ -99,6 +101,10 @@ final class TranscriptUserCell: TranscriptCell {
 
     override var copyText: String? { item?.text }
 
+    override func findTarget(for match: TranscriptFindMatch) -> TranscriptFindTarget? {
+        match.field == .body ? findTarget(match.range, in: textView) : nil
+    }
+
     private struct Layout {
         var bubble: NSRect
         var thumbnails: [NSRect]
@@ -111,6 +117,15 @@ final class TranscriptUserCell: TranscriptCell {
 
     static func shouldCollapse(_ text: String) -> Bool {
         text.count > 600 || text.split(separator: "\n", omittingEmptySubsequences: false).count > 8
+    }
+
+    /// Whether the folded message hides `range` of its text, below "Show full message" or in its fade.
+    static func hides(_ range: NSRange, of item: TranscriptItem, row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> Bool {
+        let layout = layout(for: item, row: row, width: width, host: host)
+        guard layout.isCollapsed else { return false }
+        let text = TranscriptText.markdown(item, .user, cache: host.textCache).string
+        guard let rect = ChatTextMeasurer.shared.rect(of: range, in: text, width: layout.text.width) else { return true }
+        return rect.maxY > collapsedTextHeight - 24
     }
 
     private static func layout(for item: TranscriptItem, row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> Layout {
@@ -304,6 +319,8 @@ final class TranscriptAssistantCell: TranscriptCell {
         rendered = TranscriptText.markdown(item, .assistant, cache: host.textCache)
         textView.setText(rendered)
         textView.onOpenLink = { [weak host] link in host?.openLink(link) ?? false }
+        let highlights = findHighlights
+        textView.setFindHighlights(highlights.ranges(in: .body), current: highlights.currentRange(in: .body))
         while codeButtons.count < rendered.codeBlocks.count {
             let button = TranscriptIconButton(symbol: "doc.on.doc", label: String(localized: "Copy code"), action: #selector(copyCode(_:)), target: self)
             addSubview(button)
@@ -354,6 +371,10 @@ final class TranscriptAssistantCell: TranscriptCell {
     }
 
     override var copyText: String? { item?.text }
+
+    override func findTarget(for match: TranscriptFindMatch) -> TranscriptFindTarget? {
+        match.field == .body ? findTarget(match.range, in: textView) : nil
+    }
 
     override func layout() {
         super.layout()

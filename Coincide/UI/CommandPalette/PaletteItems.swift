@@ -118,8 +118,16 @@ struct PaletteCatalog {
                     id: "action:stop", title: String(localized: "Stop Agent"), icon: symbol("stop.circle"), trailing: "⌘.",
                     keywords: ["stop", "interrupt", "cancel", "abort"], behavior: .run { window?.stopTurn(nil) }))
         }
+        if thread != nil {
+            items.append(
+                PaletteItem(
+                    id: "action:find", title: String(localized: "Find in Thread…"), icon: symbol("magnifyingglass"), trailing: "⌘F",
+                    keywords: ["find", "search", "thread", "conversation", "text", "match", "current"],
+                    behavior: .run { window?.findInThread() }))
+        }
         let core = items
         items = []
+        if let thread { items += composerActions(for: thread) }
         if let split = window?.splitController {
             items.append(
                 PaletteItem(
@@ -213,6 +221,110 @@ struct PaletteCatalog {
             PaletteItem(
                 id: "setting:\(section.rawValue)", title: title, subtitle: String(localized: "Settings"), icon: symbol(icon),
                 keywords: keywords, behavior: .run { SettingsWindowController.shared.show(section: section) })
+        }
+    }
+
+    // MARK: Composer
+
+    /// The composer's pickers (agent and model, reasoning effort, access, plan or build) and a switch to each
+    /// other ready agent, as `/codex` and the like do in the composer.
+    private func composerActions(for thread: ChatThread) -> [PaletteItem] {
+        let window = windowController
+        let registry = ProviderRegistry.shared
+        var items: [PaletteItem] = [
+            PaletteItem(
+                id: "action:model", title: String(localized: "Choose Agent and Model…"), icon: symbol("cpu"), trailing: "⇧⌘M",
+                keywords: ["model", "agent", "provider", "switch", "change", "picker"], behavior: .submenu(modelMenu(thread)))
+        ]
+        if let model = registry.model(for: thread.selection), !model.efforts.isEmpty {
+            items.append(
+                PaletteItem(
+                    id: "action:effort", title: String(localized: "Choose Reasoning Effort…"), icon: symbol("brain"),
+                    trailing: "⇧⌘E", keywords: ["reasoning", "effort", "thinking", "think", "level"],
+                    behavior: .submenu(effortMenu(thread, model: model))))
+        }
+        items.append(
+            PaletteItem(
+                id: "action:access", title: String(localized: "Choose Access…"),
+                icon: symbol(ComposerMenus.symbolName(for: thread.accessMode)), trailing: "⇧⌘A",
+                keywords: ["access", "permissions", "approval", "approve", "full access", "ask", "mode"],
+                behavior: .submenu(accessMenu(thread))))
+        let planning = thread.interactionMode == .plan
+        let mode: InteractionMode = planning ? .build : .plan
+        items.append(
+            PaletteItem(
+                id: "action:interaction-mode",
+                title: planning ? String(localized: "Switch to Build Mode") : String(localized: "Switch to Plan Mode"),
+                icon: symbol(planning ? "hammer" : "pencil.and.ruler"), keywords: ["plan", "build", "mode", "toggle"],
+                behavior: .run { window?.splitController.content.chat.chooseInteractionMode(mode) }))
+        for kind in registry.readyKinds where kind != thread.selection.provider {
+            items.append(
+                PaletteItem(
+                    id: "action:agent:\(kind.rawValue)", title: String(localized: "Switch to \(kind.displayName)"),
+                    icon: symbol(kind.symbolName), iconTint: Theme.color(for: kind),
+                    keywords: ["switch", "agent", "provider", "continue", "handoff", kind.rawValue],
+                    behavior: .run { window?.splitController.content.chat.switchAgent(to: kind) }))
+        }
+        return items
+    }
+
+    /// Every model of the ready agents, grouped by agent, as in the composer's picker.
+    private func modelMenu(_ thread: ChatThread) -> PaletteMenu {
+        let window = windowController
+        let threadID = thread.id
+        return PaletteMenu(title: String(localized: "Choose Agent and Model…"), placeholder: String(localized: "Search models…")) {
+            let registry = ProviderRegistry.shared
+            let current = AppStore.shared.thread(threadID)?.selection ?? thread.selection
+            return registry.readyKinds.map { kind in
+                var models = registry.models(for: kind)
+                if kind == current.provider, !models.contains(where: { $0.modelID == current.modelID }) {
+                    models.insert(ModelOption(provider: kind, modelID: current.modelID, displayName: current.modelID), at: 0)
+                }
+                let items = models.map { model in
+                    let selection = ModelSelection(provider: model.provider, modelID: model.modelID, effort: model.defaultEffort)
+                    let isCurrent = model.provider == current.provider && model.modelID == current.modelID
+                    return PaletteItem(
+                        id: "model:\(model.id)", title: model.displayName,
+                        subtitle: model.displayName != model.modelID && model.modelID != "default" ? model.modelID : nil,
+                        icon: Theme.symbol(kind.symbolName, size: 15), iconTint: Theme.color(for: kind),
+                        trailing: isCurrent ? String(localized: "Current") : nil,
+                        keywords: [kind.displayName, kind.rawValue, model.modelID],
+                        behavior: .run { window?.splitController.content.chat.chooseModel(selection) })
+                }
+                return PaletteGroup(id: "models:\(kind.rawValue)", title: kind.displayName, items: items)
+            }
+        }
+    }
+
+    private func effortMenu(_ thread: ChatThread, model: ModelOption) -> PaletteMenu {
+        let window = windowController
+        let selected = thread.selection.effort ?? model.defaultEffort
+        return PaletteMenu(
+            title: String(localized: "Choose Reasoning Effort…"), placeholder: String(localized: "Search reasoning efforts…")
+        ) {
+            let items = model.efforts.map { effort in
+                PaletteItem(
+                    id: "effort:\(effort)", title: ComposerMenus.effortTitle(effort),
+                    subtitle: effort == model.defaultEffort ? String(localized: "Default") : nil,
+                    icon: Theme.symbol("brain", size: 15), trailing: effort == selected ? String(localized: "Current") : nil,
+                    keywords: [effort], behavior: .run { window?.splitController.content.chat.chooseEffort(effort) })
+            }
+            return [PaletteGroup(id: "efforts", title: String(localized: "Reasoning Effort"), items: items)]
+        }
+    }
+
+    private func accessMenu(_ thread: ChatThread) -> PaletteMenu {
+        let window = windowController
+        let selected = thread.accessMode
+        return PaletteMenu(title: String(localized: "Choose Access…"), placeholder: String(localized: "Search access modes…")) {
+            let items = AccessMode.allCases.map { mode in
+                PaletteItem(
+                    id: "access:\(mode.rawValue)", title: mode.displayName, subtitle: ComposerMenus.summary(for: mode),
+                    icon: Theme.symbol(ComposerMenus.symbolName(for: mode), size: 15),
+                    trailing: mode == selected ? String(localized: "Current") : nil,
+                    behavior: .run { window?.splitController.content.chat.chooseAccessMode(mode) })
+            }
+            return [PaletteGroup(id: "access", title: String(localized: "Access"), items: items)]
         }
     }
 

@@ -196,6 +196,11 @@ final class ChatTextView: NSTextView {
 
     /// The blocks the text view shows, when its text came from rendered Markdown.
     private var pieces: [ChatRenderedText.Piece] = []
+    /// Find matches to highlight, and the current one.
+    private var findRanges: [NSRange] = []
+    private var currentFindRange: NSRange?
+    /// Where highlights were last drawn, to clear just those.
+    private var drawnFindRanges: [NSRange] = []
 
     /// Replaces the text, keeping the selection when it still fits (streamed text only grows).
     func setText(_ text: NSAttributedString) {
@@ -206,6 +211,7 @@ final class ChatTextView: NSTextView {
         let length = storage.length
         let kept = selection.map(\.rangeValue).filter { $0.length > 0 && NSMaxRange($0) <= length }
         if !kept.isEmpty { selectedRanges = kept.map { NSValue(range: $0) } }
+        drawFindHighlights()
     }
 
     /// Shows rendered Markdown, replacing only the blocks that changed since the last call: streamed
@@ -220,6 +226,66 @@ final class ChatTextView: NSTextView {
         guard rendered.pieces != pieces else { return }
         ChatIncrementalText.apply(rendered, to: storage, replacing: pieces)
         pieces = rendered.pieces
+        drawFindHighlights()
+    }
+
+    // MARK: Find
+
+    /// Highlights the find bar's matches in this text, the current one more strongly. They are drawn as
+    /// temporary attributes, so neither the text nor its layout changes.
+    func setFindHighlights(_ ranges: [NSRange], current: NSRange?) {
+        guard ranges != findRanges || current != currentFindRange else { return }
+        let hadHighlights = !findRanges.isEmpty || currentFindRange != nil
+        findRanges = ranges
+        currentFindRange = current
+        if hadHighlights || !ranges.isEmpty || current != nil { drawFindHighlights() }
+    }
+
+    private func drawFindHighlights() {
+        guard let layoutManager, let storage = textStorage else { return }
+        let length = storage.length
+        for range in drawnFindRanges {
+            let clipped = NSIntersectionRange(range, NSRange(location: 0, length: length))
+            guard clipped.length > 0 else { continue }
+            layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: clipped)
+            layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: clipped)
+        }
+        drawnFindRanges = []
+        for range in findRanges where NSMaxRange(range) <= length {
+            layoutManager.addTemporaryAttribute(.backgroundColor, value: TranscriptFindStyle.match, forCharacterRange: range)
+            drawnFindRanges.append(range)
+        }
+        if let current = currentFindRange, NSMaxRange(current) <= length {
+            layoutManager.addTemporaryAttributes(
+                [.backgroundColor: TranscriptFindStyle.current, .foregroundColor: TranscriptFindStyle.currentText],
+                forCharacterRange: current)
+            drawnFindRanges.append(current)
+        }
+    }
+
+    /// Where `range` is drawn, in the text view's coordinates.
+    func rect(for range: NSRange) -> NSRect? {
+        guard let layoutManager, let container = textContainer, let storage = textStorage, NSMaxRange(range) <= storage.length
+        else { return nil }
+        layoutManager.ensureLayout(for: container)
+        let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        let rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
+        return rect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+    }
+
+    /// Find commands go to the chat's find bar, which searches the whole conversation rather than this text.
+    override func performTextFinderAction(_ sender: Any?) {
+        passTextFinderActionOn(sender)
+    }
+
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(performTextFinderAction(_:)) { return validatePassedOnTextFinderAction(menuItem) }
+        return super.validateMenuItem(menuItem)
+    }
+
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(performTextFinderAction(_:)) { return validatePassedOnTextFinderAction(item) }
+        return super.validateUserInterfaceItem(item)
     }
 
     override func clicked(onLink link: Any, at charIndex: Int) {
@@ -263,6 +329,16 @@ final class ChatTextMeasurer {
 
     func height(of text: NSAttributedString, width: CGFloat) -> CGFloat {
         size(of: text, width: width).height
+    }
+
+    /// Where `range` of `text` lies when laid out at `width`, as a `ChatTextView` would draw it.
+    func rect(of range: NSRange, in text: NSAttributedString, width: CGFloat) -> NSRect? {
+        guard width > 0, NSMaxRange(range) <= text.length else { return nil }
+        container.size = NSSize(width: width, height: .greatestFiniteMagnitude)
+        storage.setAttributedString(text)
+        layoutManager.ensureLayout(for: container)
+        let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        return layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
     }
 }
 
