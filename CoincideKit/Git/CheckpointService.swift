@@ -82,10 +82,12 @@ public final class CheckpointService {
     /// Uses `AppStore.shared`, connected on first need so merely referencing the service has no side effects.
     public static let shared = CheckpointService(
         directory: AppStore.defaultDirectory.appendingPathComponent("checkpoints", isDirectory: true),
-        storeProvider: { AppStore.shared })
+        storeProvider: { AppStore.shared }, isThreadRunning: { ThreadRunner.shared.isRunning($0) })
 
     private let directory: URL?
     private let storeProvider: (@MainActor () -> AppStore)?
+    /// Whether a thread has a turn running, which can change files without updating the thread.
+    private let isThreadRunning: (@MainActor (UUID) -> Bool)?
     private var connectedStore: AppStore?
     private var threads: [UUID: [TurnCheckpoint]] = [:]
     private var workspaceQueues: [String: Task<Void, Never>] = [:]
@@ -94,18 +96,24 @@ public final class CheckpointService {
 
     /// `store` is consulted for restore safety and notified when a turn's changes are ready.
     /// Checkpoint indexes are saved under `directory` (by default the store's `checkpoints` folder);
-    /// with neither, they are kept in memory only.
-    public convenience init(store: AppStore? = nil, directory: URL? = nil) {
+    /// with neither, they are kept in memory only. `isThreadRunning` tells which threads have a turn
+    /// running, so a restore never rewrites a folder another running thread works in.
+    public convenience init(
+        store: AppStore? = nil, directory: URL? = nil, isThreadRunning: (@MainActor (UUID) -> Bool)? = nil
+    ) {
         var provider: (@MainActor () -> AppStore)?
         if let store { provider = { store } }
         self.init(
             directory: directory ?? store?.directory.appendingPathComponent("checkpoints", isDirectory: true),
-            storeProvider: provider)
+            storeProvider: provider, isThreadRunning: isThreadRunning)
     }
 
-    private init(directory: URL?, storeProvider: (@MainActor () -> AppStore)?) {
+    private init(
+        directory: URL?, storeProvider: (@MainActor () -> AppStore)?, isThreadRunning: (@MainActor (UUID) -> Bool)?
+    ) {
         self.directory = directory
         self.storeProvider = storeProvider
+        self.isThreadRunning = isThreadRunning
     }
 
     /// The store, observed from the first time it is needed.
@@ -125,11 +133,14 @@ public final class CheckpointService {
     /// Records the working tree before a turn starts.
     public func captureBeforeTurn(threadID: UUID, userItemID: UUID, cwd: URL) async {
         let ref = Self.ref(threadID: threadID, userItemID: userItemID, phase: "before")
+        // Taken before waiting for the folder and reading it, so any change the snapshot may have
+        // missed counts as made after it.
+        let startedAt = Date()
         guard let commit = try? await serialized(cwd, { try await CheckpointGit.capture(cwd: cwd, ref: ref) }) else {
             return
         }
         update(threadID) { turns in
-            let checkpoint = TurnCheckpoint(userItemID: userItemID, cwd: cwd.path, before: commit, beforeAt: Date())
+            let checkpoint = TurnCheckpoint(userItemID: userItemID, cwd: cwd.path, before: commit, beforeAt: startedAt)
             if let index = turns.firstIndex(where: { $0.userItemID == userItemID }) {
                 turns[index] = checkpoint
             } else {
@@ -243,11 +254,14 @@ public final class CheckpointService {
     }
 
     /// Restoring rewrites the whole folder, so it is refused when another thread has worked in the
-    /// same folder (or one inside or around it) since the snapshot was taken.
+    /// same folder (or one inside or around it) since the snapshot was taken, or is running there now.
+    /// A running turn's tool output and completions update its items without touching the thread, so
+    /// `updatedAt` alone would miss a long tool; the turn's end does touch it.
     private func isRestoreIsolated(threadID: UUID, cwd: String, since: Date) -> Bool {
         guard let store = store() else { return true }
         let target = URL(fileURLWithPath: cwd).resolvingSymlinksInPath().standardizedFileURL.path
-        for other in store.threads.values where other.id != threadID && other.updatedAt > since {
+        for other in store.threads.values
+        where other.id != threadID && (other.updatedAt > since || isThreadRunning?(other.id) == true) {
             guard let folder = store.workingDirectory(for: other.id)?.resolvingSymlinksInPath().standardizedFileURL.path
             else { continue }
             if Self.contains(target, folder) || Self.contains(folder, target) { return false }
