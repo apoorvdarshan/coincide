@@ -282,7 +282,7 @@ public final class CheckpointService {
     private func isRestoreIsolated(threadID: UUID, cwd: String, since: Date) -> Bool {
         guard let store = store() else { return true }
         let target = URL(fileURLWithPath: cwd).resolvingSymlinksInPath().standardizedFileURL.path
-        for other in store.threads.values
+        for other in store.threadSummaries.values
         where other.id != threadID && (other.updatedAt > since || isThreadRunning?(other.id) == true) {
             guard let folder = store.workingDirectory(for: other.id)?.resolvingSymlinksInPath().standardizedFileURL.path
             else { continue }
@@ -334,7 +334,7 @@ public final class CheckpointService {
                 if let id = UUID(uuidString: String(file.dropLast(5))) { known.insert(id) }
             }
         }
-        for threadID in known where store.thread(threadID) == nil {
+        for threadID in known where !store.hasThread(threadID) {
             await deleteCheckpoints(threadID: threadID)
         }
     }

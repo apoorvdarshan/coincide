@@ -77,7 +77,11 @@ public final class ThreadRunner {
     private var lastActivity: [UUID: [ProviderKind: Date]] = [:]
     /// Provider item id ("kind:id") to transcript item id, per thread.
     private var itemMaps: [UUID: [String: UUID]] = [:]
-    public private(set) var turns: [UUID: TurnState] = [:]
+    public private(set) var turns: [UUID: TurnState] = [:] {
+        didSet { holdTranscriptsOfRunningTurns() }
+    }
+    /// Running turns keep their thread's transcript in memory (`AppStore.holdTranscript(_:)`).
+    private var transcriptHolds: [UUID: TranscriptHold] = [:]
     public private(set) var usage: [UUID: TokenUsage] = [:]
     /// Which provider the stored usage belongs to, so a switch doesn't show the previous agent's context.
     public private(set) var usageProviders: [UUID: ProviderKind] = [:]
@@ -123,6 +127,14 @@ public final class ThreadRunner {
     }
 
     // MARK: State
+
+    private func holdTranscriptsOfRunningTurns() {
+        guard transcriptHolds.count != turns.count || transcriptHolds.keys.contains(where: { turns[$0] == nil }) else { return }
+        transcriptHolds = transcriptHolds.filter { turns[$0.key] != nil }
+        for threadID in turns.keys where transcriptHolds[threadID] == nil {
+            transcriptHolds[threadID] = store.holdTranscript(threadID)
+        }
+    }
 
     public func isRunning(_ threadID: UUID) -> Bool { turns[threadID] != nil }
 
@@ -512,7 +524,7 @@ public final class ThreadRunner {
         // A session launched with full access must not run a turn the user now wants to approve; providers
         // that only read the mode at launch would otherwise keep running unprompted. Restart it instead.
         if sessions[threadID]?[provider] != nil, launchedAccess[threadID]?[provider] == .fullAccess,
-            store.thread(threadID)?.accessMode == .approval
+            store.summary(threadID)?.accessMode == .approval
         {
             shutdown(threadID: threadID, provider: provider)
         }

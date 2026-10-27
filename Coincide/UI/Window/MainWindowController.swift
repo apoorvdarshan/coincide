@@ -64,7 +64,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         ]
         for (name, selector) in events { center.addObserver(self, selector: selector, name: name, object: nil) }
 
-        let saved = UIState.shared.values.selectedThreadID.flatMap { store.thread($0) }
+        let saved = UIState.shared.values.selectedThreadID.flatMap { store.summary($0) }
         let initial = saved.map(\.id) ?? store.recentThreads.first?.id
         open(initial)
         updatePanelItems()
@@ -75,7 +75,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Shows a thread in the chat, terminal and diff panes, and highlights it in the sidebar.
     /// As in T3, the composer takes focus, unless the user is working in the sidebar, terminal or diff.
     func open(_ threadID: UUID?) {
-        let threadID = threadID.flatMap { store.thread($0) != nil ? $0 : nil }
+        let threadID = threadID.flatMap { store.hasThread($0) ? $0 : nil }
         guard threadID != selectedThreadID || !hasOpenedThread else { return }
         hasOpenedThread = true
         selectedThreadID = threadID
@@ -97,7 +97,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    var selectedThread: ChatThread? { selectedThreadID.flatMap { store.thread($0) } }
+    var selectedThread: ThreadSummary? { selectedThreadID.flatMap { store.summary($0) } }
 
     /// The project new threads go to: the open thread's, else the first one.
     var currentProjectID: UUID? { selectedThread?.projectID ?? store.projects.first?.id }

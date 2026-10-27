@@ -71,7 +71,7 @@ final class AgentTurns {
 
     private func pruneDeletedThreads() {
         let stale = UIState.shared.values.agentTurns.keys.filter { key in
-            UUID(uuidString: key).map { store.thread($0) == nil } ?? true
+            UUID(uuidString: key).map { !store.hasThread($0) } ?? true
         }
         guard !stale.isEmpty else { return }
         UIState.shared.update { values in

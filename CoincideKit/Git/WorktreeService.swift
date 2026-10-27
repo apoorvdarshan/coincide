@@ -59,7 +59,7 @@ public final class WorktreeService {
     /// Moves a thread that has no messages into a new worktree started from `baseBranch`
     /// (the default base when nil). A worktree made here for it earlier and never used is replaced.
     public func useNewWorktree(threadID: UUID, baseBranch: String?) async throws {
-        guard let thread = store.thread(threadID), !thread.hasUserMessages, let project = store.project(thread.projectID),
+        guard let thread = store.summary(threadID), !thread.hasUserMessages, let project = store.project(thread.projectID),
             !preparing.contains(threadID)
         else { return }
         setPreparing(threadID, true)
@@ -73,7 +73,7 @@ public final class WorktreeService {
         let worktree = try await git.createThreadWorktree(projectPath: project.url, baseBranch: base, prefix: prefix)
 
         // A message sent meanwhile already runs in the project folder; leave the thread there.
-        guard let current = store.thread(threadID), !current.hasUserMessages else {
+        guard let current = store.summary(threadID), !current.hasUserMessages else {
             await git.discardUnusedWorktree(URL(fileURLWithPath: worktree.path), branch: worktree.branch, prefix: prefix)
             return
         }
@@ -89,7 +89,7 @@ public final class WorktreeService {
     /// Moves a thread that has no messages back to the project folder, removing the worktree
     /// made here for it when it was never used.
     public func useProjectCheckout(threadID: UUID) async {
-        guard let thread = store.thread(threadID), !thread.hasUserMessages, thread.worktreePath != nil,
+        guard let thread = store.summary(threadID), !thread.hasUserMessages, thread.worktreePath != nil,
             !preparing.contains(threadID)
         else { return }
         setPreparing(threadID, true)
@@ -108,7 +108,7 @@ public final class WorktreeService {
 
     /// Moves a thread that has no messages into an existing worktree, such as one another thread used.
     public func useExistingWorktree(threadID: UUID, path: String, branch: String?) async {
-        guard let thread = store.thread(threadID), !thread.hasUserMessages, !preparing.contains(threadID) else { return }
+        guard let thread = store.summary(threadID), !thread.hasUserMessages, !preparing.contains(threadID) else { return }
         if let previous = unused.removeValue(forKey: threadID), previous.path != path,
             !isInUse(previous.path, besides: threadID)
         {
@@ -125,7 +125,7 @@ public final class WorktreeService {
 
     /// The worktree another thread of the same project used most recently, if it still exists.
     public func previousWorktree(for threadID: UUID) -> (path: String, branch: String?)? {
-        guard let thread = store.thread(threadID) else { return nil }
+        guard let thread = store.summary(threadID) else { return nil }
         let candidate = store.threads(in: thread.projectID)
             .filter { $0.id != threadID && $0.worktreePath != nil && $0.worktreePath != thread.worktreePath }
             .max { $0.updatedAt < $1.updatedAt }
@@ -140,7 +140,7 @@ public final class WorktreeService {
     /// Whether a thread other than `threadID` is in the worktree at `path`. Such a worktree is never
     /// discarded, even when the thread it was made for never used it.
     private func isInUse(_ path: String, besides threadID: UUID?) -> Bool {
-        store.threads.values.contains { $0.id != threadID && $0.worktreePath == path }
+        store.threadSummaries.values.contains { $0.id != threadID && $0.worktreePath == path }
     }
 
     private func setPreparing(_ threadID: UUID, _ value: Bool) {
@@ -164,14 +164,14 @@ public final class WorktreeService {
                     branch, in: URL(fileURLWithPath: path), message: message, prefix: prefix)
             else { return }
             // Threads sharing the worktree follow the rename.
-            for other in store.threads.values where other.worktreePath == path && other.branch == branch {
+            for other in store.threadSummaries.values where other.worktreePath == path && other.branch == branch {
                 store.updateThread(other.id) { $0.branch = renamed }
             }
         }
     }
 
     private func discardWorktreesOfDeletedThreads() {
-        let deleted = unused.filter { store.thread($0.key) == nil }
+        let deleted = unused.filter { !store.hasThread($0.key) }
         guard !deleted.isEmpty else { return }
         for threadID in deleted.keys {
             unused[threadID] = nil

@@ -67,7 +67,7 @@ struct PaletteCatalog {
     static let threadLimit = 20
     static let secondaryLimit = 3
 
-    private var thread: ChatThread? { windowController?.selectedThread }
+    private var thread: ThreadSummary? { windowController?.selectedThread }
 
     /// The menu command's current shortcut, nil when it has none.
     private func keys(_ command: KeyCommand) -> String? {
@@ -193,7 +193,7 @@ struct PaletteCatalog {
         return store.recentThreads.map { threadItem($0, isCurrent: $0.id == current) }
     }
 
-    private func threadItem(_ thread: ChatThread, isCurrent: Bool) -> PaletteItem {
+    private func threadItem(_ thread: ThreadSummary, isCurrent: Bool) -> PaletteItem {
         let project = store.project(thread.projectID)?.name
         var parts = [project].compactMap(\.self)
         if let branch = thread.branch, !branch.isEmpty { parts.append("#\(branch)") }
@@ -236,7 +236,7 @@ struct PaletteCatalog {
 
     /// The composer's pickers (agent and model, reasoning effort, access, plan or build) and a switch to each
     /// other ready agent, as `/codex` and the like do in the composer.
-    private func composerActions(for thread: ChatThread) -> [PaletteItem] {
+    private func composerActions(for thread: ThreadSummary) -> [PaletteItem] {
         let window = windowController
         let registry = ProviderRegistry.shared
         var items: [PaletteItem] = [
@@ -279,12 +279,12 @@ struct PaletteCatalog {
     }
 
     /// Every model of the ready agents, grouped by agent, as in the composer's picker.
-    private func modelMenu(_ thread: ChatThread) -> PaletteMenu {
+    private func modelMenu(_ thread: ThreadSummary) -> PaletteMenu {
         let window = windowController
         let threadID = thread.id
         return PaletteMenu(title: String(localized: "Choose Agent and Model…"), placeholder: String(localized: "Search models…")) {
             let registry = ProviderRegistry.shared
-            let current = AppStore.shared.thread(threadID)?.selection ?? thread.selection
+            let current = AppStore.shared.summary(threadID)?.selection ?? thread.selection
             return registry.readyKinds.map { kind in
                 var models = registry.models(for: kind)
                 if kind == current.provider, !models.contains(where: { $0.modelID == current.modelID }) {
@@ -306,7 +306,7 @@ struct PaletteCatalog {
         }
     }
 
-    private func effortMenu(_ thread: ChatThread, model: ModelOption) -> PaletteMenu {
+    private func effortMenu(_ thread: ThreadSummary, model: ModelOption) -> PaletteMenu {
         let window = windowController
         let selected = thread.selection.effort ?? model.defaultEffort
         return PaletteMenu(
@@ -323,7 +323,7 @@ struct PaletteCatalog {
         }
     }
 
-    private func accessMenu(_ thread: ChatThread) -> PaletteMenu {
+    private func accessMenu(_ thread: ThreadSummary) -> PaletteMenu {
         let window = windowController
         let selected = thread.accessMode
         return PaletteMenu(title: String(localized: "Choose Access…"), placeholder: String(localized: "Search access modes…")) {

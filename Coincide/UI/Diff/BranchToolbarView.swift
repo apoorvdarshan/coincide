@@ -299,7 +299,7 @@ final class BranchToolbarView: NSView {
             if let path = branch.worktreePath, !branch.isCurrent {
                 // Git checks a branch out in one folder at a time; before the first message the
                 // thread can move to that folder instead.
-                if store.thread(threadID)?.hasUserMessages == false {
+                if store.summary(threadID)?.hasUserMessages == false {
                     await worktrees.useExistingWorktree(threadID: threadID, path: path, branch: branch.name)
                 } else {
                     present(
