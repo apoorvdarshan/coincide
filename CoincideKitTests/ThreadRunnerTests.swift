@@ -582,6 +582,20 @@ struct ThreadRunnerTests {
         #expect(runner.queuedMessages(threadID).isEmpty)
     }
 
+    @Test func aSteerTakenAsTheTurnEndsCountsAsSeen() async {
+        let session = await startRunningTurn()
+        session.emit(.assistantText(itemID: "a1", text: "done"))
+        // The agent took the message, but its turn ended while the steer was on its way.
+        session.onSteer = { session, _ in session.emit(.turnCompleted(.completed)) }
+        let delivery = await runner.steer(threadID: threadID, text: "two")
+        #expect(delivery == .steered)
+        #expect(!runner.isRunning(threadID))
+        #expect(items.last?.kind == .user && items.last?.text == "two")
+        #expect(session.sent.map(\.message) == ["one"])
+        // The session has seen the message, so the next turn does not recap it.
+        #expect(store.thread(threadID)!.sessions[.claude]!.seenItemCount == items.count)
+    }
+
     @Test func steeringAnIdleThreadSendsAsUsual() async {
         claude.configure = { session in
             session.supportsSteering = true

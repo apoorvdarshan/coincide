@@ -146,6 +146,29 @@ struct OpenCodeLiveTests {
         }
     }
 
+    /// Steers a turn while a command runs: OpenCode takes the message in with `steer` delivery and the turn ends once,
+    /// after the agent answered it.
+    @Test func steeringRedirectsTheRunningTurn() async throws {
+        try await withLiveOpenCode { live in
+            let run = try await live.start()
+            try await run.session.send(
+                live.input("Run this exact command once with your shell tool: sleep 8; echo first. Then reply with exactly: first"))
+            _ = try await run.recorder.wait(timeout: 60) { event in
+                if case .toolStarted = event { return true }
+                if case .turnCompleted = event { return true }
+                return false
+            }
+            try #require(run.recorder.turnEnds.isEmpty, "the turn ended before it could be steered")
+            try await run.session.steer(live.input("Change of plan: after the command, reply with exactly: steered"))
+            let outcome = try await run.recorder.turnOutcome()
+            try await Task.sleep(for: .seconds(2))
+            #expect(outcome == .completed, "Events: \(run.recorder.events)")
+            #expect(run.recorder.turnEnds == [.completed])
+            #expect(run.recorder.assistantText.lowercased().contains("steered"))
+            #expect(!run.recorder.events.contains { if case .agentTurnStarted = $0 { true } else { false } })
+        }
+    }
+
     @Test func commandOutputStreams() async throws {
         try await withLiveOpenCode { live in
             let run = try await live.start()

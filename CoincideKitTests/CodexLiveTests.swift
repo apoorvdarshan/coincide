@@ -290,4 +290,49 @@ struct CodexLiveTests {
         #expect(outcome == .completed)
         #expect(reply.lowercased().contains("ok"))
     }
+
+    @Test func theCheckAndSessionsReadThePlansUsageLimits() async throws {
+        let provider = CodexProvider()
+        let executable = await ShellEnvironment.shared.which("codex")
+        let environment = await ShellEnvironment.shared.environment()
+        let status = await provider.detect(executable: executable, environment: environment)
+        try #require(status.state == .ready)
+        // Only a ChatGPT plan has usage windows; an API key reports none.
+        guard let limits = status.usageLimits else { return }
+        #expect(!limits.windows.isEmpty)
+        #expect(limits.windows.allSatisfy { (0...100).contains($0.usedPercent) })
+        #expect(limits.windows.allSatisfy { ["primary", "secondary", "individual"].contains($0.id) })
+
+        let directory = try workingDirectory()
+        let (session, recorder) = try await makeSession(in: directory)
+        defer { session.shutdown() }
+        try await waitUntil(.seconds(30)) {
+            recorder.events.contains { if case .rateLimits(let windows) = $0 { !windows.isEmpty } else { false } }
+        }
+    }
+
+    /// Steers a running turn with `turn/steer` while a command runs: Codex takes the message in at its next step and
+    /// the turn still ends once.
+    @Test func steeringRedirectsTheRunningTurn() async throws {
+        let directory = try workingDirectory()
+        let (session, recorder) = try await makeSession(in: directory)
+        defer { session.shutdown() }
+        let start = recorder.events.count
+        try await session.send(input("Run the shell command `sleep 6; echo done`, then reply with exactly: first"))
+        try await waitUntil(.seconds(60)) {
+            recorder.events[start...].contains { if case .toolStarted(let info) = $0 { info.category == .command } else { false } }
+                || !recorder.completions(since: start).isEmpty
+        }
+        try #require(recorder.completions(since: start).isEmpty, "the turn ended before it could be steered")
+        try await session.steer(
+            input("New instruction, replacing the one about your reply: once the command is done, reply with exactly: steered"))
+        try await waitUntil { !recorder.completions(since: start).isEmpty }
+        try await Task.sleep(for: .seconds(1))
+        #expect(recorder.completions(since: start) == [.completed])
+        #expect(recorder.assistantText(since: start).lowercased().contains("steered"))
+        // The thread goes on as usual afterwards.
+        let (outcome, reply) = try await run(session, recorder, input("Reply with exactly: ok"))
+        #expect(outcome == .completed)
+        #expect(reply.lowercased().contains("ok"))
+    }
 }
