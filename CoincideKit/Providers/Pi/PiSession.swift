@@ -150,6 +150,34 @@ public final class PiSession: AgentSession {
         }
     }
 
+    public let supportsSteering = true
+
+    /// Sends the message with `streamingBehavior: steer`, as T3 Code does: Pi hands it to the running agent after its
+    /// current tool calls, or runs it right after. The turn ends once Pi is idle again, so it covers the steer too.
+    /// `/compact` is not steered; it waits for the turn.
+    public func steer(_ input: AgentTurnInput) async throws {
+        guard !isClosed, var turn, turn.sent, !turn.interruptRequested, let rpc, rpc.isOpen,
+            !input.imagePaths.isEmpty || PiCompactCommand.parse(input.message) == nil
+        else {
+            throw AgentError.providerError(String(localized: "Pi can't take a message for this turn now."))
+        }
+        let images = try PiImages.payload(input.imagePaths)
+        // An idle check already on its way must not end the turn before Pi has the message.
+        turn.probeGeneration += 1
+        self.turn = turn
+        let number = turn.number
+        var record: [String: JSONValue] = ["type": "prompt", "message": .string(input.message), "streamingBehavior": "steer"]
+        if !images.isEmpty { record["images"] = .array(images) }
+        // Answered once queued or started; waiting could block on an extension's dialog.
+        rpc.request(.object(record), timeout: nil) { [weak self] result in
+            guard let self, self.turn?.number == number else { return }
+            if case .failure(let error) = result, (error as? PiRPCError)?.isClosed != true {
+                self.emit(.notice(String(localized: "Pi could not take your message: \(error.localizedDescription)")))
+            }
+            self.probeIdle(number)
+        }
+    }
+
     public func respond(to approvalID: String, optionID: String) {
         respond(to: approvalID, optionID: optionID, text: nil)
     }

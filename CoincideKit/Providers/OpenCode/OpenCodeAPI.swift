@@ -262,9 +262,14 @@ extension OpenCodeAPI {
     }
 
     /// Admits a user message; the agent loop runs it and reports progress on the event stream.
-    nonisolated func prompt(_ id: String, messageID: String, text: String, files: [JSONValue]) async throws {
+    /// Sends a message. With `delivery` `steer`, a running execution takes it in at its next step (or one starts
+    /// for it); with `queue` it waits for the execution to end. OpenCode decides when none is given.
+    nonisolated func prompt(_ id: String, messageID: String, text: String, files: [JSONValue], delivery: String? = nil)
+        async throws
+    {
         var body: [String: JSONValue] = ["id": .string(messageID), "text": .string(text)]
         if !files.isEmpty { body["files"] = .array(files) }
+        if let delivery { body["delivery"] = .string(delivery) }
         try await send("POST", "/api/session/\(Self.segment(id))/prompt", body: .object(body))
     }
 
