@@ -389,7 +389,10 @@ struct ChatMarkdownRenderer {
                 if output.length > start { output.addAttribute(.toolTip, value: destination, range: NSRange(location: start, length: output.length - start)) }
             case .image(let alt, let source):
                 let label = alt.isEmpty ? (source as NSString).lastPathComponent : alt
+                let start = output.length
                 self.inlines([.text(label)], font: base, color: color, traits: traits, link: Self.linkValue(source))
+                // Like a link, it shows where it leads before it is clicked.
+                if output.length > start { output.addAttribute(.toolTip, value: source, range: NSRange(location: start, length: output.length - start)) }
             case .softBreak:
                 output.append(NSAttributedString(string: style.preservesLineBreaks ? "\u{2028}" : " ", attributes: [.font: base]))
             case .lineBreak:

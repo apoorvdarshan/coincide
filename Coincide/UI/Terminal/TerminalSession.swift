@@ -243,7 +243,7 @@ final class ShellTerminalView: LocalProcessTerminalView {
     }
 
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
-        TerminalLinks.open(link, relativeTo: linkDirectory())
+        TerminalLinks.open(link, relativeTo: linkDirectory(), from: window)
     }
 
     override func bell(source: Terminal) {

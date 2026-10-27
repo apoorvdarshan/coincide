@@ -819,18 +819,25 @@ extension ChatViewController: TranscriptHost {
         AppEvents.showTurnDiff(threadID: threadID, turnID: turnID, path: path)
     }
 
+    /// Opens a link from the transcript. Agents write these links, so nothing they point at is run:
+    /// web and mail links open, other schemes ask first, and files open in an editor (see `SafeLinks`).
     func openLink(_ link: Any) -> Bool {
         if let url = link as? URL {
             if url.isFileURL { return openFile(url.path) }
-            return NSWorkspace.shared.open(url)
+            SafeLinks.openExternal(url, from: view.window)
+            return true
         }
         guard let text = link as? String, !text.isEmpty else { return false }
         if text.hasPrefix("#") { return true }
-        if text.hasPrefix("www."), let url = URL(string: "https://" + text) { return NSWorkspace.shared.open(url) }
+        if text.hasPrefix("www."), let url = URL(string: "https://" + text) {
+            SafeLinks.openExternal(url, from: view.window)
+            return true
+        }
         return openFile(text)
     }
 
     /// Opens a path from a reply, relative to the thread's folder; `file.swift:12` and `#L12` suffixes are ignored.
+    /// Files outside the thread's folder open only once the user agrees.
     private func openFile(_ reference: String) -> Bool {
         var path = reference.removingPercentEncoding ?? reference
         if let hash = path.firstIndex(of: "#") { path = String(path[..<hash]) }
@@ -842,7 +849,7 @@ extension ChatViewController: TranscriptHost {
             NSSound.beep()
             return true
         }
-        NSWorkspace.shared.open(url)
+        SafeLinks.openFile(url, inside: base, from: view.window)
         return true
     }
 

@@ -134,14 +134,20 @@ enum TerminalProcess {
     }
 }
 
-/// Opens what the user Command-clicks in a terminal: URLs in their app, paths in their default app.
+/// Opens what the user Command-clicks in a terminal. Program output can make a link whose target differs
+/// from its text (OSC 8), so links open as transcript links do (see `SafeLinks`): web and mail links
+/// directly, other schemes once the user agrees, and paths in an editor or Finder, never their default app.
 enum TerminalLinks {
-    static func open(_ link: String, relativeTo directory: URL) {
+    static func open(_ link: String, relativeTo directory: URL, from window: NSWindow?) {
         guard let url = url(for: link, relativeTo: directory) else {
             NSSound.beep()
             return
         }
-        NSWorkspace.shared.open(url)
+        if url.isFileURL {
+            SafeLinks.openFile(url, from: window)
+        } else {
+            SafeLinks.openExternal(url, from: window)
+        }
     }
 
     /// Resolves a URL, or a file path that may be relative to the shell's directory and may end in
