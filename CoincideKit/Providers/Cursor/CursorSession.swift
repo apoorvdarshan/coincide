@@ -51,6 +51,8 @@ public final class CursorSession: AgentSession {
     /// Whether Cursor has stored the chat, which it does with the first prompt. Until then there is
     /// nothing to reopen, and a restart simply starts a new chat.
     private var chatIsStored = false
+    /// How many times a reopened chat could not be loaded, so a new one was started in its place.
+    private var replacedChats = 0
     private var turn: Turn?
     private var turnCount = 0
     private var pendingApprovals: [String: PendingApproval] = [:]
@@ -102,7 +104,8 @@ public final class CursorSession: AgentSession {
     public func send(_ input: AgentTurnInput) async throws {
         guard !isShutDown else { throw AgentError.notRunning }
         // Read attachments first, so a missing image fails the turn before any process work.
-        let prompt = try promptBlocks(for: input)
+        _ = try promptBlocks(for: input, text: input.text)
+        let replaced = replacedChats
         if let stale = turn {
             // Coincide already gave up on the previous turn, for example after an unconfirmed interrupt.
             if stale.promptSent, let sessionID { connection?.notify("session/cancel", ["sessionId": .string(sessionID)]) }
@@ -128,6 +131,14 @@ public final class CursorSession: AgentSession {
         guard let connection, !connection.isClosed, let sessionID else {
             turn = nil
             throw AgentError.notRunning
+        }
+        // A restart that could not reopen the chat started a new one, which needs the whole recap.
+        let prompt: JSONValue
+        do {
+            prompt = try promptBlocks(for: input, text: input.prompt(forNewSession: replacedChats != replaced))
+        } catch {
+            turn = nil
+            throw error
         }
         turn?.promptSent = true
         chatIsStored = true
@@ -243,6 +254,7 @@ public final class CursorSession: AgentSession {
                 chatIsStored = true
                 return
             } catch let error as CursorRPCError where !error.isAuthRequired {
+                replacedChats += 1
                 emit(.notice(String(localized: "Cursor couldn't reopen the earlier chat (\(error.detail)), so a new one was started.")))
             }
         }
@@ -359,8 +371,8 @@ public final class CursorSession: AgentSession {
         }
     }
 
-    private func promptBlocks(for input: AgentTurnInput) throws -> JSONValue {
-        var text = input.text
+    private func promptBlocks(for input: AgentTurnInput, text: String) throws -> JSONValue {
+        var text = text
         var images: [JSONValue] = []
         for path in input.imagePaths {
             let url = URL(fileURLWithPath: path)

@@ -157,6 +157,8 @@ public enum ACPExtensionEvent: Sendable, Hashable {
     /// The agent ended a prompt before (or instead of) answering `session/prompt`. A nil prompt id
     /// matches the running prompt; `failure` ends the turn as failed.
     case promptCompleted(promptID: String?, stopReason: String?, failure: String?, usage: TokenUsage?)
+    /// A prompt the agent ran by itself (see `isBackgroundUpdate`) ended.
+    case backgroundPromptCompleted(promptID: String, stopReason: String?, failure: String?)
     case modelState(ACPModelState)
     case modelChanged(id: String, effort: String?)
 }

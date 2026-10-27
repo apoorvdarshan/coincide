@@ -103,6 +103,11 @@ public final class ACPSession: AgentSession {
     private var launching = false
     private var needsRestart = false
     private var isShutDown = false
+    /// How many times a new native session was created instead of an earlier one continued.
+    private var newConversations = 0
+    /// A prompt the agent runs by itself between Coincide's turns (Grok's background wakes), shown as a turn
+    /// the agent started. True once it is being stopped.
+    private var backgroundTurn: Bool?
     /// Each `send` gets a generation. A newer one supersedes an older one that is still
     /// preparing (the runner gave up on that turn), and the older one then stops silently.
     private var sendGeneration = 0
@@ -142,6 +147,8 @@ public final class ACPSession: AgentSession {
         guard !isShutDown else { throw AgentError.notRunning }
         sendGeneration += 1
         let generation = sendGeneration
+        // Work the agent started by itself is no longer reported as a turn of its own.
+        backgroundTurn = nil
         // An earlier send may still be setting up a turn the runner gave up on; it stops at its
         // next step. Never throw for a superseded send: the runner would fail the newer turn.
         while preparingGeneration != nil {
@@ -158,6 +165,7 @@ public final class ACPSession: AgentSession {
             cancelPending()
             needsRestart = true
         }
+        let conversations = newConversations
         if transport == nil || needsRestart || (flavor.accessModeNeedsRestart && input.accessMode != launchedAccessMode) {
             let resumeID = sessionID ?? launch.resumeSessionID
             stopProcess()
@@ -180,9 +188,12 @@ public final class ACPSession: AgentSession {
         }
         guard self.client === client, !isShutDown else { throw AgentError.notRunning }
 
-        let message = ACPPrompt.messageText(input.text, imagePaths: input.imagePaths)
-        let text = ACPPrompt.text(message, mode: input.interactionMode, previousMode: instructedModes[sessionID])
-        if text != message { instructedModes[sessionID] = input.interactionMode }
+        // A restart that could not resume the session created a new one, which needs the whole recap.
+        let recap = input.recap(forNewSession: newConversations != conversations)
+        let texts = ACPPrompt.texts(
+            message: ACPPrompt.messageText(input.message, imagePaths: input.imagePaths), recap: recap,
+            mode: input.interactionMode, previousMode: instructedModes[sessionID])
+        if texts.instructed { instructedModes[sessionID] = input.interactionMode }
         let inline = flavor.supportsImagePrompts || initialized?.promptImage == true
         let images = inline ? input.imagePaths.compactMap { ACPPrompt.imageBlock($0, types: flavor.imageTypes) } : []
 
@@ -191,7 +202,8 @@ public final class ACPSession: AgentSession {
         mapper.beginTurn()
         contextTokens = nil
         turnUsage = TokenUsage()
-        client.prompt(sessionID: sessionID, blocks: [.text(text)] + images, meta: flavor.promptMeta(promptID: promptID)) {
+        let blocks = texts.blocks.map { ACPContentBlock.text($0) } + images
+        client.prompt(sessionID: sessionID, blocks: blocks, meta: flavor.promptMeta(promptID: promptID)) {
             [weak self] result in
             self?.promptFinished(promptID, result)
         }
@@ -227,7 +239,11 @@ public final class ACPSession: AgentSession {
     public func interrupt() {
         guard var current = turn, !current.interrupting else {
             // The runner's turn belongs to the newest send, which may still be setting up.
-            if turn == nil && preparingGeneration != nil { interruptedGeneration = sendGeneration }
+            if turn == nil && preparingGeneration != nil {
+                interruptedGeneration = sendGeneration
+            } else if turn == nil, backgroundTurn == false {
+                stopBackgroundTurn()
+            }
             return
         }
         current.interrupting = true
@@ -261,6 +277,7 @@ public final class ACPSession: AgentSession {
         isShutDown = true
         turn?.cancelTimer?.cancel()
         turn = nil
+        backgroundTurn = nil
         cancelPending()
         guard let transport, let client, let sessionID, initialized?.closeSession == true, !launching,
             !client.connection.isClosed
@@ -322,6 +339,7 @@ public final class ACPSession: AgentSession {
         let created = try await authenticated(client) {
             try await client.newSession(cwd: self.launch.workingDirectory, timeout: Self.sessionTimeout)
         }
+        newConversations += 1
         adopt(created, id: created.sessionID ?? "", continued: false)
     }
 
@@ -529,6 +547,8 @@ public final class ACPSession: AgentSession {
         // Fails the pending prompt (ending the turn) or the handshake that is waiting.
         closing?.connection.close(with: AgentError.providerError(message))
         if turn != nil { finishTurn(.failed(message)) }
+        // A turn the agent started by itself ends with the session (the runner fails it on the exit).
+        backgroundTurn = nil
         if !launching && !isShutDown { emit(.sessionExited(error: message)) }
     }
 
@@ -770,9 +790,47 @@ public final class ACPSession: AgentSession {
         case .userMessageChunk, .availableCommands, .sessionInfo, .other:
             break
         default:
-            guard turn != nil, !flavor.isBackgroundUpdate(meta: notification.meta) else { return }
+            if flavor.isBackgroundUpdate(meta: notification.meta) {
+                // Background work stays out of a turn of ours; between turns it is a turn of the agent's own.
+                guard turn == nil, preparingGeneration == nil else { return }
+                if backgroundTurn == nil {
+                    backgroundTurn = false
+                    mapper.beginTurn()
+                    emit(.agentTurnStarted(note: String(localized: "\(provider.displayName) continued after background work finished.")))
+                }
+            } else if turn == nil {
+                return
+            }
             emit(mapper.map(notification.update, flavor: flavor, terminals: terminals))
         }
+    }
+
+    /// Stops a turn the agent started by itself, the way the flavor stops any turn.
+    private func stopBackgroundTurn() {
+        backgroundTurn = true
+        guard let client, let sessionID, flavor.interruptStyle == .cancel else {
+            finishBackgroundTurn(.interrupted)
+            stopProcess()
+            needsRestart = true
+            return
+        }
+        client.cancel(sessionID: sessionID, meta: flavor.cancelMeta)
+        Task { [weak self, timeout = cancelTimeout] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard let self, self.turn == nil, self.backgroundTurn == true else { return }
+            // The agent did not confirm; end the turn and replace the process.
+            self.finishBackgroundTurn(.interrupted)
+            self.stopProcess()
+            self.needsRestart = true
+        }
+    }
+
+    /// Ends the turn the agent started by itself.
+    private func finishBackgroundTurn(_ outcome: TurnOutcome) {
+        guard backgroundTurn != nil else { return }
+        backgroundTurn = nil
+        emit(mapper.closeSegments())
+        emit(.turnCompleted(outcome))
     }
 
     private func showNotice(_ title: String, _ description: String?) {
@@ -935,6 +993,13 @@ public final class ACPSession: AgentSession {
                     finishTurn(current.interrupting ? .interrupted : .failed(failure))
                 } else {
                     complete(stopReason: stopReason ?? "end_turn", interrupting: current.interrupting)
+                }
+            case .backgroundPromptCompleted(_, let stopReason, let failure):
+                guard turn == nil, let stopping = backgroundTurn else { continue }
+                if stopping || stopReason == "cancelled" {
+                    finishBackgroundTurn(.interrupted)
+                } else {
+                    finishBackgroundTurn(failure.map { .failed($0) } ?? .completed)
                 }
             case .modelState(let state):
                 setup.models = state

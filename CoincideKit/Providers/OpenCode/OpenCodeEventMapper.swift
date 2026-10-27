@@ -49,6 +49,13 @@ struct OpenCodeEventMapper {
     private(set) var pending: [String: PendingRequest] = [:]
     /// Whether an execution of the session is running, from its start and end events.
     private(set) var executionRunning = false
+    /// An execution OpenCode started without a prompt from Coincide (another client, or a wake-up),
+    /// reported as a turn the agent started itself. True once the user asked to stop it.
+    private(set) var agentExecution: Bool?
+    /// A prompt is being prepared: an execution starting now belongs to it, not to the agent.
+    var preparingPrompt = false {
+        didSet { if preparingPrompt { agentExecution = nil } }
+    }
     /// Context window of the session's current model, reported with usage.
     var contextWindow: Int?
 
@@ -70,6 +77,8 @@ struct OpenCodeEventMapper {
 
     mutating func beginTurn(promptID: String) {
         turn = Turn(promptID: promptID)
+        // An execution OpenCode started itself now continues as this turn; its end no longer reports separately.
+        agentExecution = nil
         retryMessages = []
         guard !executionRunning else { return }
         // Nothing from an earlier execution can still arrive; drop what an interrupted one left behind.
@@ -81,6 +90,15 @@ struct OpenCodeEventMapper {
 
     mutating func requestInterrupt() {
         turn?.interruptRequested = true
+        if turn == nil, agentExecution == false { agentExecution = true }
+    }
+
+    /// Ends a turn OpenCode started itself whose end was missed (the event stream dropped meanwhile).
+    mutating func endAgentExecution() -> AgentEvent? {
+        guard let stopping = agentExecution else { return nil }
+        agentExecution = nil
+        executionRunning = false
+        return .turnCompleted(stopping ? .interrupted : .completed)
     }
 
     /// Ends the turn without waiting for OpenCode, e.g. after an interrupt it could not confirm.
@@ -135,7 +153,9 @@ struct OpenCodeEventMapper {
         case "session.execution.started":
             executionRunning = true
             turn?.started = true
-            return []
+            guard turn == nil, agentExecution == nil, !preparingPrompt else { return [] }
+            agentExecution = false
+            return [.event(.agentTurnStarted(note: String(localized: "OpenCode started working on its own.")))]
         case "session.execution.succeeded":
             return executionEnded(turn?.interruptRequested == true ? .interrupted : .completed)
         case "session.execution.interrupted":
@@ -323,7 +343,11 @@ struct OpenCodeEventMapper {
 
     private mutating func executionEnded(_ outcome: TurnOutcome) -> [Effect] {
         executionRunning = false
-        guard let turn else { return [] }
+        guard let turn else {
+            guard let stopping = agentExecution else { return [] }
+            agentExecution = nil
+            return [.event(.turnCompleted(stopping && outcome == .completed ? .interrupted : outcome))]
+        }
         // An end before the prompt reached the agent belongs to an earlier execution, unless the user
         // stopped the turn while its prompt was still queued.
         let stoppedWhileQueued = outcome == .interrupted && turn.interruptRequested

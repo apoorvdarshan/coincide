@@ -96,18 +96,17 @@ struct PiModelTests {
             items: [TranscriptItem(kind: .user, text: "Fix the bug"), TranscriptItem(kind: .assistant, text: "Fixed.", provider: .codex)],
             sessions: [.pi: ProviderSessionRef(sessionID: "/s.jsonl", seenItemCount: 0)])
         let message = "/skill:review check\n\nthe parser"
-        let text = Handoff.prompt(for: message, thread: thread, provider: .pi)
-        let prompt = PiPrompt(text)
-        #expect(prompt.message == message)
-        let recap = try #require(prompt.recap)
+        let recap = try #require(Handoff.recap(thread: thread, provider: .pi))
+        #expect(Handoff.prompt(for: message, thread: thread, provider: .pi) == recap + "\n\n" + message)
+        let prompt = PiPrompt(recap: recap, message: message)
         #expect(recap.hasPrefix("<conversation_handoff>\n"))
         #expect(recap.contains("</conversation_handoff>"))
         #expect(recap.contains("Codex:\nFixed."))
         #expect(!recap.contains("/skill:review"))
         #expect(prompt.needsSeparateRecap)
-        #expect(!PiPrompt(Handoff.prompt(for: "Carry on", thread: thread, provider: .pi)).needsSeparateRecap)
-        #expect(PiPrompt("/compact") == PiPrompt(message: "/compact"))
-        #expect(PiPrompt("<conversation_handoff>\nno end") == PiPrompt(message: "<conversation_handoff>\nno end"))
+        #expect(!PiPrompt(recap: recap, message: "Carry on").needsSeparateRecap)
+        #expect(!PiPrompt(message: "/compact").needsSeparateRecap)
+        #expect(PiPrompt(recap: "", message: "/compact") == PiPrompt(message: "/compact"))
     }
 
     @Test func compactCommandMatchesT3() {

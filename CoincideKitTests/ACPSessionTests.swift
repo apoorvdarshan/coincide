@@ -1031,6 +1031,36 @@ struct ACPSessionTests {
         #expect(!log.events.contains { if case .assistantTextDelta(_, "background") = $0 { true } else { false } })
     }
 
+    @Test func grokBackgroundWakeBetweenTurnsIsATurnOfItsOwn() async throws {
+        let agent = ACPFakeAgent()
+        let (session, log) = makeSession(agent)
+        try await session.start()
+        agent.update(
+            ["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "The build finished."]],
+            meta: ["promptId": "task-completed-3"])
+        await acpWaitUntil { log.events.contains { if case .agentTurnStarted = $0 { true } else { false } } }
+        #expect(log.events.contains(.agentTurnStarted(note: "Grok Build continued after background work finished.")))
+        #expect(log.events.contains { if case .assistantTextDelta(_, "The build finished.") = $0 { true } else { false } })
+        agent.notify(
+            "_x.ai/session_notification",
+            ["sessionId": "sess-1", "update": ["sessionUpdate": "turn_completed", "prompt_id": "task-completed-3", "stop_reason": "end_turn"]])
+        await acpWaitUntil { !log.completions.isEmpty }
+        #expect(log.completions == [.completed])
+
+        // Stopping a wake ends it at once; Grok stops by restarting.
+        agent.update(
+            ["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "again"]],
+            meta: ["promptId": "task-completed-4"])
+        await acpWaitUntil { log.events.filter { if case .agentTurnStarted = $0 { true } else { false } }.count == 2 }
+        session.interrupt()
+        #expect(log.completions == [.completed, .interrupted])
+        // The next turn of ours is unaffected.
+        try await session.send(acpTurn("go"))
+        agent.finishPrompt()
+        await acpWaitUntil { log.completions.count == 3 }
+        #expect(log.completions == [.completed, .interrupted, .completed])
+    }
+
     @Test func grokModelUpdatesRefreshTheModels() async throws {
         let agent = ACPFakeAgent()
         agent.initializeResult = json(ACPMapperTests.grokInitialize)

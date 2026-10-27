@@ -18,6 +18,8 @@ final class CodexSession: AgentSession {
     /// The model the thread reported, sent when the selection names none.
     private var threadModel: String?
     private var threadLoaded = false
+    /// How many times the thread could not be resumed, so a new one was started in its place.
+    private var replacedThreads = 0
     private var isShutDown = false
     private var turn: Turn?
     private var interruptWatchdog: Task<Void, Never>?
@@ -84,8 +86,10 @@ final class CodexSession: AgentSession {
         // Registered before any waiting, so a stop requested meanwhile is not lost.
         let current = Turn()
         turn = current
+        let replaced = replacedThreads
         do {
             let connection = try await connect()
+            // Codex may have unloaded the thread; resuming it can fail and start a new one.
             if !threadLoaded { try await openThread(on: connection) }
             guard turn?.token == current.token else { return }
             if turn?.interruptRequested == true {
@@ -95,6 +99,9 @@ final class CodexSession: AgentSession {
             guard let threadID = mapper.threadID else { throw AgentError.notRunning }
             mapper.beginTurn()
             turn?.sent = true
+            // A new thread has seen nothing of the conversation, so it gets the whole recap.
+            var input = input
+            if replacedThreads != replaced { input.text = input.prompt(forNewSession: true) }
             let params = CodexProtocol.turnStartParams(
                 threadID: threadID, cwd: launch.workingDirectory.path, input: input, fallbackModel: threadModel)
             let result = try await connection.request("turn/start", params, timeout: .seconds(60))
@@ -197,6 +204,7 @@ final class CodexSession: AgentSession {
                 let result = try await connection.request(
                     "thread/start", CodexProtocol.threadStartParams(cwd: cwd, model: model), timeout: .seconds(60))
                 try adoptThread(result, on: connection)
+                replacedThreads += 1
                 let notice = String(
                     localized: "The previous Codex session could not be resumed, so a new one was started. (\(message))")
                 emit(.notice(notice))

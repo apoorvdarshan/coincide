@@ -72,6 +72,12 @@ final class ClaudeSession: AgentSession {
     /// Claude has a saved conversation under `sessionID` that a new process must resume.
     private var conversationExists = false
     private var turn: Turn?
+    /// A turn Claude started by itself between our turns, for example to answer finished background work.
+    /// True once it is being stopped.
+    private var agentTurn: Bool?
+    /// A turn ended before its result arrived (stopped, or its lifecycle completed first); frames until that
+    /// result still belong to it rather than to a turn Claude starts by itself.
+    private var endedTurnResultPending = false
     private var lifecycleSeen = false
     private var handshake: Handshake?
     private var pendingControls: [String: CheckedContinuation<JSONValue, Error>] = [:]
@@ -114,8 +120,11 @@ final class ClaudeSession: AgentSession {
         }
         let turnID = Self.newID()
         turn = Turn(id: turnID)
+        // A turn Claude started itself is no longer reported on its own; its result does not end this one.
+        agentTurn = nil
         access = input.accessMode
         interaction = input.interactionMode
+        let conversationBefore = sessionID
         do {
             let settings = turnSettings(input.selection, access: input.accessMode, interaction: input.interactionMode)
             if transport == nil {
@@ -128,9 +137,11 @@ final class ClaudeSession: AgentSession {
             if let window = ClaudeModelCatalog.contextWindow(modelID: input.selection.modelID, resolvedModel: resolved) {
                 mapper.contextWindow = window
             }
-            let texts =
-                Self.splitTrailingCommand(input.text).map { [$0.leading, $0.command] }
-                ?? [settings.effort.ultrathink ? ClaudeModelCatalog.applyUltrathink(to: input.text) : input.text]
+            // A relaunch that could not resume the conversation started a new one, which needs the whole recap.
+            let isNewConversation = sessionID != conversationBefore
+            let texts = Self.promptTexts(
+                message: input.message, recap: input.recap(forNewSession: isNewConversation),
+                ultrathink: settings.effort.ultrathink)
             let (images, skipped) = ClaudeAttachments.imageBlocks(for: input.imagePaths)
             guard turn?.id == turnID else { return }
             if turn?.interruptRequested == true {
@@ -182,7 +193,14 @@ final class ClaudeSession: AgentSession {
     }
 
     func interrupt() {
-        guard let current = turn, !current.interruptRequested else { return }
+        guard let current = turn, !current.interruptRequested else {
+            // A turn Claude started by itself: stop it; its result then ends it as interrupted.
+            if turn == nil, agentTurn == false {
+                agentTurn = true
+                Task { [weak self] in _ = try? await self?.control(["subtype": "interrupt"], timeout: 10) }
+            }
+            return
+        }
         turn?.interruptRequested = true
         // A turn still being prepared stops in `send` before its message goes out.
         guard current.accepted else { return }
@@ -243,12 +261,12 @@ final class ClaudeSession: AgentSession {
             conversationExists = false
             try await spawn(config(.fresh(Self.newID())))
             if hadConversation {
-                // The thread's earlier messages are not in the new conversation, and this turn's recap was already built.
+                // The new conversation gets the turn's recap of the whole thread (`send` sends it), not the history itself.
                 emit(
                     .notice(
                         String(
                             localized:
-                                "Claude Code could not find this thread's saved conversation, so it started a new one without the earlier messages.")))
+                                "Claude Code could not find this thread's saved conversation, so it started a new one with a recap of the earlier messages.")))
             }
         } catch let failure as StartFailure where failure.sessionInUse {
             guard case .fresh(let id) = identity else { throw failure }
@@ -341,7 +359,7 @@ final class ClaudeSession: AgentSession {
         cancelTails()
         withdrawPrompts()
         failPendingControls(AgentError.notRunning)
-        mapper.processRestarted()
+        processRestarted()
         await withCheckedContinuation { continuation in
             let waiter = ExitWaiter(continuation)
             old.onExit = { _, _ in waiter.finish() }
@@ -445,9 +463,21 @@ final class ClaudeSession: AgentSession {
             } else {
                 let owned = ownsResult(frame)
                 emit(mapper.map(frame))
-                if owned { finishTurn(withResult: frame) }
+                if owned {
+                    finishTurn(withResult: frame)
+                } else if turn == nil {
+                    finishAgentTurn(withResult: frame)
+                }
             }
         default:
+            if turn == nil, agentTurn == nil, !endedTurnResultPending,
+                frame["type"]?.string == "stream_event" || frame["type"]?.string == "assistant"
+            {
+                // Claude answers on its own, for example after background work finished.
+                agentTurn = false
+                mapper.turnStarted()
+                emit(.agentTurnStarted(note: String(localized: "Claude Code continued on its own.")))
+            }
             if frame["type"]?.string == "system", frame["subtype"]?.string == "task_started" { startTail(frame) }
             if frame["type"]?.string == "user" {
                 // The tool's own output replaces anything tailed so far.
@@ -516,11 +546,28 @@ final class ClaudeSession: AgentSession {
             }
         }
         finishTurn(outcome)
+        endedTurnResultPending = false
+    }
+
+    /// A result between our turns: the late one of a turn that already ended, or the end of a turn Claude
+    /// started by itself.
+    private func finishAgentTurn(withResult result: JSONValue) {
+        if endedTurnResultPending {
+            endedTurnResultPending = false
+            return
+        }
+        guard let stopping = agentTurn else { return }
+        agentTurn = nil
+        prompts.removeAll()
+        emit(.turnCompleted(
+            ClaudeEventMapper.outcome(of: result, interruptRequested: stopping, assistantError: mapper.assistantError)))
     }
 
     private func finishTurn(_ outcome: TurnOutcome) {
-        guard turn != nil else { return }
+        guard let current = turn else { return }
         turn = nil
+        // Claude still sends a result for a message it received.
+        endedTurnResultPending = current.accepted
         // Claude withdraws prompts of a finished turn; the runner closes their items.
         prompts.removeAll()
         cancelTails()
@@ -535,7 +582,7 @@ final class ClaudeSession: AgentSession {
         transport = nil
         withdrawPrompts()
         failPendingControls(AgentError.notRunning)
-        mapper.processRestarted()
+        processRestarted()
         stuck.closeInput()
         stuck.terminate()
         emit(.sessionExited(error: nil))
@@ -554,14 +601,22 @@ final class ClaudeSession: AgentSession {
         let message = Self.exitMessage(status: status, stderrTail: stderrTail)
         failPendingControls(AgentError.providerError(message ?? String(localized: "Claude Code exited.")))
         guard !isShutDown else { return }
-        mapper.processRestarted()
         if let current = turn, current.accepted {
             finishTurn(
                 current.interruptRequested
                     ? .interrupted : .failed(message ?? String(localized: "Claude Code exited before finishing the turn.")))
         }
+        // A turn Claude started by itself ends with the session.
+        processRestarted()
         withdrawPrompts()
         emit(.sessionExited(error: message))
+    }
+
+    /// A new process (or none) runs the conversation: stream state and turns of the old one are gone.
+    private func processRestarted() {
+        mapper.processRestarted()
+        agentTurn = nil
+        endedTurnResultPending = false
     }
 
     // MARK: Permission prompts
@@ -737,16 +792,15 @@ final class ClaudeSession: AgentSession {
         ]
     }
 
-    /// Splits a recapped prompt whose new message is a slash command or skill (`/name …`), so the command can start
-    /// its own last text block, the only place Claude runs one. Nil for other prompts.
-    static func splitTrailingCommand(_ text: String) -> (leading: String, command: String)? {
-        // Handoff's recap: `<conversation_handoff>…</conversation_handoff>`, a line ending in a colon, then the message.
-        guard text.hasPrefix("<conversation_handoff>"), let close = text.range(of: "</conversation_handoff>"),
-            let marker = text.range(of: ":\n\n", range: close.upperBound..<text.endIndex)
-        else { return nil }
-        let message = text[marker.upperBound...]
-        guard message.range(of: #"^/[^\s/]+(\s|$)"#, options: .regularExpression) != nil else { return nil }
-        return (String(text[..<marker.upperBound]).trimmingCharacters(in: .whitespacesAndNewlines), String(message))
+    /// The text blocks of a user message. A slash command or skill (`/name …`) only runs when it starts the last
+    /// text block, so after a recap it travels in a block of its own. Ultrathink is a request to the model, so it
+    /// is not added to a command.
+    static func promptTexts(message: String, recap: String?, ultrathink: Bool) -> [String] {
+        if let recap, !recap.isEmpty, message.range(of: #"^/[^\s/]+(\s|$)"#, options: .regularExpression) != nil {
+            return [recap, message]
+        }
+        let prompt = Handoff.compose(message: message, recap: recap)
+        return [ultrathink ? ClaudeModelCatalog.applyUltrathink(to: prompt) : prompt]
     }
 
     static func exitMessage(status: Int32, stderrTail: String) -> String? {
