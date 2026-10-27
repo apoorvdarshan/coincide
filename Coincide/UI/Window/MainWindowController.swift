@@ -1,15 +1,393 @@
 import AppKit
 import CoincideKit
 
-// STUB: replaced by the real main window (sidebar | chat + terminal | diff inspector).
-final class MainWindowController: NSWindowController {
+/// The main window: sidebar | chat + terminal | diff inspector, a unified toolbar, and the
+/// open thread. Cross-controller requests arrive through `AppEvents`.
+final class MainWindowController: NSWindowController, NSWindowDelegate {
+    let splitController = MainSplitViewController()
+    let runStatus = RunStatusView()
+    var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
+
+    private let store = AppStore.shared
+    private var token: ObservationToken?
+    private(set) var selectedThreadID: UUID?
+    private var hasOpenedThread = false
+
+    var sidebar: SidebarViewController { splitController.sidebar }
+
     convenience init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered,
             defer: false)
         window.title = "Coincide"
-        window.contentViewController = ChatViewController()
+        window.isReleasedWhenClosed = false
+        window.isRestorable = false
+        window.tabbingMode = .disallowed
+        window.toolbarStyle = .unified
+        window.minSize = NSSize(width: 820, height: 520)
+        let savedFrame = UIState.shared.values.windowFrame
         self.init(window: window)
+        shouldCascadeWindows = false
+        window.contentViewController = splitController
+        window.toolbar = makeToolbar()
+        if let savedFrame {
+            window.setFrame(from: savedFrame)
+        } else {
+            window.setContentSize(NSSize(width: 1280, height: 820))
+            window.center()
+        }
+        // Only now, so the sizing above is not saved as the user's frame.
+        window.delegate = self
+        configure()
+    }
+
+    private func configure() {
+        sidebar.onSelectThread = { [weak self] id in self?.open(id) }
+        splitController.onPanelsChanged = { [weak self] in self?.updatePanelItems() }
+        runStatus.onStop = { [weak self] in self?.stopTurn(nil) }
+        runStatus.onVisibilityChange = { [weak self] visible in
+            self?.toolbarItems[.runStatus]?.isHidden = !visible
+        }
+        token = store.observe { [weak self] change in self?.handle(change) }
+
+        let center = NotificationCenter.default
+        let events: [(Notification.Name, Selector)] = [
+            (.coincideOpenThread, #selector(openThreadEvent(_:))),
+            (.coincideNewThread, #selector(newThreadEvent(_:))),
+            (.coincideAddProject, #selector(addProject(_:))),
+            (.coincideToggleDiff, #selector(toggleDiffPanel(_:))),
+            (.coincideToggleTerminal, #selector(toggleTerminalPanel(_:))),
+            (.coincideToggleSidebar, #selector(toggleSidebarPanel(_:))),
+            (.coincideShowCommandPalette, #selector(showCommandPalette(_:))),
+            (.coincideThreadActivityChanged, #selector(activityChanged(_:))),
+            (OpenTargets.preferredDidChange, #selector(updateOpenInItem)),
+        ]
+        for (name, selector) in events { center.addObserver(self, selector: selector, name: name, object: nil) }
+
+        let saved = UIState.shared.values.selectedThreadID.flatMap { store.thread($0) }
+        let initial = saved.map(\.id) ?? store.recentThreads.first?.id
+        open(initial)
+        updatePanelItems()
+    }
+
+    // MARK: Selection
+
+    /// Shows a thread in the chat, terminal and diff panes, and highlights it in the sidebar.
+    func open(_ threadID: UUID?) {
+        let threadID = threadID.flatMap { store.thread($0) != nil ? $0 : nil }
+        guard threadID != selectedThreadID || !hasOpenedThread else { return }
+        hasOpenedThread = true
+        selectedThreadID = threadID
+        splitController.setThreadID(threadID)
+        sidebar.select(threadID: threadID)
+        ThreadActivity.shared.visibleThreadID = threadID
+        if let threadID { NotificationController.shared.clearDelivered(for: threadID) }
+        UIState.shared.update { $0.selectedThreadID = threadID }
+        updateTitle()
+        updateRunStatus()
+    }
+
+    var selectedThread: ChatThread? { selectedThreadID.flatMap { store.thread($0) } }
+
+    /// The project new threads go to: the open thread's, else the first one.
+    var currentProjectID: UUID? { selectedThread?.projectID ?? store.projects.first?.id }
+
+    private func handle(_ change: StoreChange) {
+        switch change {
+        case .thread(let id) where id == selectedThreadID:
+            updateTitle()
+        case .runState(let id) where id == selectedThreadID:
+            updateRunStatus()
+        case .projects, .threadList:
+            updateTitle()
+        default:
+            break
+        }
+    }
+
+    @objc private func activityChanged(_ note: Notification) {
+        guard let id = note.userInfo?["threadID"] as? UUID, id == selectedThreadID else { return }
+        updateRunStatus()
+    }
+
+    /// Thread title, with project and branch as the subtitle and the folder as the proxy icon.
+    /// Runs on every metadata change (drafts included), so it only touches what changed.
+    private func updateTitle() {
+        guard let window else { return }
+        var title = "Coincide"
+        var subtitle = ""
+        var folder: URL?
+        if let thread = selectedThread {
+            title = thread.title
+            subtitle = store.project(thread.projectID)?.name ?? ""
+            if let branch = thread.branch, !branch.isEmpty { subtitle += subtitle.isEmpty ? branch : " · \(branch)" }
+            folder = store.workingDirectory(for: thread.id)
+        }
+        if window.title != title { window.title = title }
+        if window.subtitle != subtitle { window.subtitle = subtitle }
+        if window.representedURL != folder { window.representedURL = folder }
+    }
+
+    private func updateRunStatus() {
+        guard let id = selectedThreadID else {
+            runStatus.update(.idle)
+            return
+        }
+        let runner = ThreadRunner.shared
+        let pending = ThreadActivity.shared.pendingApprovalCount(id)
+        if pending > 0 {
+            runStatus.update(.approval(count: pending))
+        } else if runner.isStarting(id) {
+            runStatus.update(.starting)
+        } else if let turn = runner.turn(id) {
+            runStatus.update(.running(since: turn.startedAt))
+        } else {
+            runStatus.update(.idle)
+        }
+    }
+
+    // MARK: AppEvents
+
+    @objc private func openThreadEvent(_ note: Notification) {
+        guard let id = note.userInfo?["threadID"] as? UUID else { return }
+        showWindow(nil)
+        open(id)
+    }
+
+    @objc private func newThreadEvent(_ note: Notification) {
+        newThread(in: note.userInfo?["projectID"] as? UUID)
+    }
+
+    func newThread(in projectID: UUID?) {
+        showWindow(nil)
+        guard let project = projectID ?? currentProjectID else {
+            ThreadActions.addProject(in: window)
+            return
+        }
+        ThreadActions.newThread(in: project)
+    }
+
+    // MARK: Actions
+
+    @objc func newThread(_ sender: Any?) {
+        newThread(in: nil)
+    }
+
+    @objc func newThreadInProject(_ sender: NSMenuItem) {
+        newThread(in: sender.representedObject as? UUID)
+    }
+
+    @objc func addProject(_ sender: Any?) {
+        showWindow(nil)
+        ThreadActions.addProject(in: window)
+    }
+
+    @objc func toggleSidebarPanel(_ sender: Any?) {
+        splitController.toggleSidebarPanel()
+    }
+
+    @objc func toggleTerminalPanel(_ sender: Any?) {
+        showWindow(nil)
+        splitController.content.toggleTerminal()
+    }
+
+    @objc func toggleDiffPanel(_ sender: Any?) {
+        showWindow(nil)
+        splitController.toggleDiffPanel()
+    }
+
+    /// Command-K opens the palette, or closes it when it is showing.
+    @objc func showCommandPalette(_ sender: Any?) {
+        let palette = CommandPaletteController.shared
+        // Check first: showing the window would take focus from the palette and close it.
+        guard !palette.isVisible else {
+            palette.dismiss()
+            return
+        }
+        showWindow(nil)
+        palette.show(in: window)
+    }
+
+    @objc func searchThreads(_ sender: Any?) {
+        showWindow(nil)
+        if !splitController.isSidebarOpen { splitController.toggleSidebarPanel() }
+        sidebar.focusSearch()
+    }
+
+    @objc func stopTurn(_ sender: Any?) {
+        guard let id = selectedThreadID else { return }
+        ThreadRunner.shared.stop(threadID: id)
+    }
+
+    @objc func previousThread(_ sender: Any?) {
+        stepThread(by: -1)
+    }
+
+    @objc func nextThread(_ sender: Any?) {
+        stepThread(by: 1)
+    }
+
+    private func stepThread(by offset: Int) {
+        let ids = sidebar.visibleThreadIDs
+        guard !ids.isEmpty else { return }
+        guard let current = selectedThreadID, let index = ids.firstIndex(of: current) else {
+            open(offset > 0 ? ids.first : ids.last)
+            return
+        }
+        let next = index + offset
+        guard ids.indices.contains(next) else { return }
+        open(ids[next])
+    }
+
+    /// Command-1 … Command-9: the nth thread in the sidebar, as in T3.
+    @objc func jumpToThread(_ sender: NSMenuItem) {
+        let ids = sidebar.visibleThreadIDs
+        let index = sender.tag - 1
+        guard ids.indices.contains(index) else { return }
+        open(ids[index])
+    }
+
+    @objc func renameThread(_ sender: Any?) {
+        guard let id = selectedThreadID else { return }
+        if !splitController.isSidebarOpen { splitController.toggleSidebarPanel() }
+        sidebar.beginRename(threadID: id)
+    }
+
+    @objc func togglePinThread(_ sender: Any?) {
+        guard let id = selectedThreadID else { return }
+        ThreadActions.togglePin(id)
+    }
+
+    @objc func toggleArchiveThread(_ sender: Any?) {
+        guard let id = selectedThreadID else { return }
+        ThreadActions.toggleArchived(id)
+    }
+
+    @objc func deleteThread(_ sender: Any?) {
+        guard let id = selectedThreadID else { return }
+        ThreadActions.delete(id, in: window)
+    }
+
+    @objc func copyThreadPath(_ sender: Any?) {
+        guard let id = selectedThreadID, let folder = ThreadActions.folder(for: id) else { return }
+        ThreadActions.copyToPasteboard(folder.path)
+    }
+
+    @objc func revealInFinder(_ sender: Any?) {
+        guard let folder = openFolder else { return }
+        ThreadActions.reveal(folder)
+    }
+
+    /// The folder "Open in" acts on: the open thread's worktree or project, else the current project.
+    var openFolder: URL? {
+        if let id = selectedThreadID, let folder = ThreadActions.folder(for: id) { return folder }
+        return currentProjectID.flatMap { store.project($0)?.url }
+    }
+
+    @objc func openInPreferred(_ sender: Any?) {
+        guard let folder = openFolder, let target = OpenTargets.preferred else { return }
+        OpenTargets.open(folder, with: target)
+    }
+
+    @objc func openInApp(_ sender: NSMenuItem) {
+        guard let folder = openFolder, let id = sender.representedObject as? String,
+            let target = OpenTargets.target(withBundleID: id)
+        else { return }
+        OpenTargets.open(folder, with: target)
+    }
+
+    @objc func increaseFontSize(_ sender: Any?) {
+        changeFontSize(by: 1)
+    }
+
+    @objc func decreaseFontSize(_ sender: Any?) {
+        changeFontSize(by: -1)
+    }
+
+    @objc func resetFontSize(_ sender: Any?) {
+        store.updateSettings { $0.fontSize = AppSettings().fontSize }
+    }
+
+    private func changeFontSize(by delta: Double) {
+        let size = min(24, max(10, store.settings.fontSize + delta))
+        guard size != store.settings.fontSize else { return }
+        store.updateSettings { $0.fontSize = size }
+    }
+
+    // MARK: NSWindowDelegate
+
+    func windowDidMove(_ notification: Notification) {
+        saveFrame()
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        saveFrame()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        saveLayout()
+        CommandPaletteController.shared.dismiss()
+    }
+
+    /// Remembers the window frame and panel sizes.
+    func saveLayout() {
+        saveFrame()
+        splitController.saveLayout()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        if let id = selectedThreadID { ThreadActivity.shared.markSeen(id) }
+    }
+
+    private func saveFrame() {
+        guard let window, !window.styleMask.contains(.fullScreen) else { return }
+        let frame = window.frameDescriptor
+        UIState.shared.update { $0.windowFrame = frame }
+    }
+}
+
+// MARK: - Menu validation
+
+extension MainWindowController: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let thread = selectedThread
+        switch menuItem.action {
+        case #selector(toggleSidebarPanel(_:)):
+            menuItem.title = splitController.isSidebarOpen ? String(localized: "Hide Sidebar") : String(localized: "Show Sidebar")
+        case #selector(toggleTerminalPanel(_:)):
+            menuItem.title =
+                splitController.content.isTerminalOpen ? String(localized: "Hide Terminal") : String(localized: "Show Terminal")
+        case #selector(toggleDiffPanel(_:)):
+            menuItem.title = splitController.isDiffOpen ? String(localized: "Hide Diff") : String(localized: "Show Diff")
+        case #selector(stopTurn(_:)):
+            return thread.map { ThreadRunner.shared.isRunning($0.id) } ?? false
+        case #selector(previousThread(_:)), #selector(nextThread(_:)):
+            return !sidebar.visibleThreadIDs.isEmpty
+        case #selector(jumpToThread(_:)):
+            return window?.isKeyWindow == true && sidebar.visibleThreadIDs.count >= menuItem.tag
+        case #selector(togglePinThread(_:)):
+            menuItem.title = thread?.isPinned == true ? String(localized: "Unpin Thread") : String(localized: "Pin Thread")
+            return thread != nil
+        case #selector(toggleArchiveThread(_:)):
+            menuItem.title =
+                thread?.isArchived == true ? String(localized: "Unarchive Thread") : String(localized: "Archive Thread")
+            return thread.map { ThreadActions.canArchive($0.id) } ?? false
+        case #selector(renameThread(_:)), #selector(deleteThread(_:)), #selector(copyThreadPath(_:)):
+            return thread != nil
+        case #selector(openInPreferred(_:)):
+            let target = OpenTargets.preferred
+            menuItem.title = target.map { String(localized: "Open in \($0.name)") } ?? String(localized: "Open in Editor")
+            return openFolder != nil && target != nil
+        case #selector(openInApp(_:)), #selector(revealInFinder(_:)):
+            return openFolder != nil
+        case #selector(decreaseFontSize(_:)):
+            return store.settings.fontSize > 10
+        case #selector(increaseFontSize(_:)):
+            return store.settings.fontSize < 24
+        default:
+            break
+        }
+        return true
     }
 }
