@@ -90,6 +90,9 @@
     "%@ failed." : {
 
     },
+    "%@ fork" : {
+
+    },
     "%@ is not installed or could not be found on PATH." : {
 
     },
@@ -142,6 +145,26 @@
     },
     "%@ refused to continue this request." : {
 
+    },
+    "%@ runs %@ instead." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ runs %2$@ instead."
+          }
+        }
+      }
+    },
+    "%@ stays with %@, so this command has no shortcut." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ stays with %2$@, so this command has no shortcut."
+          }
+        }
+      }
     },
     "%@ stopped after reaching its output limit." : {
 
@@ -296,6 +319,26 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$@: “%2$@”"
+          }
+        }
+      }
+    },
+    "%@: “%@” isn’t a shortcut." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: “%2$@” isn’t a shortcut."
+          }
+        }
+      }
+    },
+    "%@: “%@” needs ⌘ or ⌃." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: “%2$@” needs ⌘ or ⌃."
           }
         }
       }
@@ -485,6 +528,9 @@
     "A command is still running in a terminal." : {
 
     },
+    "A downloaded Antigravity file no longer matches its SHA-256. Remove the runtime and install it again." : {
+
+    },
     "A feature branch can only be created when committing." : {
 
     },
@@ -572,6 +618,9 @@
     "Add “%@” as a Project" : {
 
     },
+    "Add ⌘ or ⌃" : {
+
+    },
     "Added" : {
 
     },
@@ -586,6 +635,9 @@
       }
     },
     "Added to %@’s environment on top of your login shell’s, for example API keys or a custom base URL." : {
+
+    },
+    "Address" : {
 
     },
     "After installing or signing in, choose Check Again." : {
@@ -686,6 +738,9 @@
     "Already up to date" : {
 
     },
+    "Also assigned to %@." : {
+
+    },
     "Always allow" : {
 
     },
@@ -701,10 +756,22 @@
     "Always block %@" : {
 
     },
+    "An Antigravity file isn’t signed by Google. Nothing was installed." : {
+
+    },
     "An MCP server" : {
 
     },
     "An agent is still working." : {
+
+    },
+    "An archive member exceeded its pinned size." : {
+
+    },
+    "An archive member was truncated." : {
+
+    },
+    "An extracted Antigravity file failed its SHA-256 check. Nothing was installed." : {
 
     },
     "Another thread has worked in this folder since this turn, so restoring files would undo its changes too. Rewind the conversation without restoring files instead." : {
@@ -716,10 +783,40 @@
     "Answer below" : {
 
     },
-    "Antigravity needs you to sign in with Google. Finish signing in in your browser: %@" : {
+    "Antigravity Runtime" : {
 
     },
-    "Antigravity needs you to sign in with Google. Start the turn again to open the sign-in page." : {
+    "Antigravity couldn’t reach Google. Check this Mac’s network connection, then start sign-in again." : {
+
+    },
+    "Antigravity download" : {
+
+    },
+    "Antigravity exited unexpectedly (status %d)." : {
+
+    },
+    "Antigravity hasn’t reached Google after 30 seconds. Check this Mac’s network connection; broken IPv6 is a common cause." : {
+
+    },
+    "Antigravity needs IPv6 networking. Turn IPv6 on for this Mac’s network, then try again." : {
+
+    },
+    "Antigravity needs at least %lld MB of free space to install." : {
+
+    },
+    "Antigravity runs from the custom path below. Installing here keeps that path; clear it to use the downloaded runtime." : {
+
+    },
+    "Antigravity sign-out failed. Try again." : {
+
+    },
+    "Antigravity signed in, but couldn’t start a session or load models." : {
+
+    },
+    "Antigravity started more than one Google sign-in request. Start sign-in again." : {
+
+    },
+    "Antigravity uses your Google account’s subscription. Coincide keeps this sign-in in its own Antigravity profile, separate from ~/.gemini and any other Antigravity install." : {
 
     },
     "Antigravity's %@ helper is missing next to %@. Install both files from the same release." : {
@@ -732,7 +829,19 @@
         }
       }
     },
+    "Antigravity’s browser helper could not be written." : {
+
+    },
+    "Antigravity’s browser suppression could not be verified." : {
+
+    },
+    "App Shortcuts added for Coincide in System Settings › Keyboard take priority over these." : {
+
+    },
     "Appearance" : {
+
+    },
+    "Application windows" : {
 
     },
     "Approval" : {
@@ -754,6 +863,9 @@
 
     },
     "Archive Thread" : {
+
+    },
+    "Archive or Unarchive Thread" : {
 
     },
     "Ask %@" : {
@@ -865,6 +977,9 @@
     "Cancel" : {
 
     },
+    "Cannot create a merge request from a detached HEAD." : {
+
+    },
     "Cannot create a pull request from a detached HEAD." : {
 
     },
@@ -881,6 +996,9 @@
 
     },
     "Change Appearance…" : {
+
+    },
+    "Change the way Tab moves focus" : {
 
     },
     "Changed %lld files" : {
@@ -919,7 +1037,13 @@
     "Check again" : {
 
     },
+    "Check out a branch before pushing or opening a merge request." : {
+
+    },
     "Check out a branch before pushing or opening a pull request." : {
+
+    },
+    "Check out a branch to push or open a merge request." : {
 
     },
     "Check out a branch to push or open a pull request." : {
@@ -928,10 +1052,22 @@
     "Checked out in %@" : {
 
     },
+    "Checking Antigravity access and models." : {
+
+    },
     "Checking out changes the branch of the project folder." : {
 
     },
     "Checking providers…" : {
+
+    },
+    "Checking the downloaded runtime." : {
+
+    },
+    "Checking the downloaded runtime…" : {
+
+    },
+    "Checking your account…" : {
 
     },
     "Checking…" : {
@@ -1094,6 +1230,12 @@
     "Clear todos" : {
 
     },
+    "Click a shortcut, then press the keys you want. Standard macOS shortcuts such as Copy and Close Window stay as they are." : {
+
+    },
+    "Click to record a new shortcut" : {
+
+    },
     "Close" : {
 
     },
@@ -1179,6 +1321,9 @@
     "Codex to answer %@" : {
 
     },
+    "Coincide can't find this repository’s page on %@." : {
+
+    },
     "Coincide could not prepare its Pi extension: %@" : {
 
     },
@@ -1194,6 +1339,9 @@
     "Coincide could not tell which Pi version is installed. Pi %@ or newer is required." : {
 
     },
+    "Coincide downloads Google’s Antigravity runtime from dl.google.com, checks it against the release Coincide expects (size, SHA-256 and Google’s signature), and keeps it in Coincide’s data folder." : {
+
+    },
     "Coincide is a native macOS port of T3 Code, the open-source agent app by T3 Tools Inc., and is used under the MIT License." : {
 
     },
@@ -1204,6 +1352,9 @@
 
     },
     "Coincide runs your coding agents in a folder on your Mac. Add one, then start a thread." : {
+
+    },
+    "Coincide’s data folder path contains a character that stops Antigravity’s browser launches from being redirected to Coincide. Move the data folder to a path without colons." : {
 
     },
     "Collapse" : {
@@ -1254,7 +1405,13 @@
     "Commit on New Branch" : {
 
     },
+    "Commit, Push & Create MR" : {
+
+    },
     "Commit, Push & Create PR" : {
+
+    },
+    "Commit, push and open a merge request from the default branch?" : {
 
     },
     "Commit, push and open a pull request from the default branch?" : {
@@ -1303,6 +1460,9 @@
     "Composer" : {
 
     },
+    "Composer › %@" : {
+
+    },
     "Confirm before deleting threads" : {
 
     },
@@ -1349,6 +1509,9 @@
     "Conversation" : {
 
     },
+    "Conversation fork" : {
+
+    },
     "Copied" : {
 
     },
@@ -1373,10 +1536,19 @@
     "Copy Path" : {
 
     },
+    "Copy Sign-in Link" : {
+
+    },
     "Copy Thread ID" : {
 
     },
     "Copy Version Info" : {
+
+    },
+    "Copy a screenshot" : {
+
+    },
+    "Copy a screenshot of an area" : {
 
     },
     "Copy code" : {
@@ -1401,6 +1573,9 @@
 
     },
     "Could not commit." : {
+
+    },
+    "Could not create the merge request." : {
 
     },
     "Could not create the pull request." : {
@@ -1512,6 +1687,48 @@
     "Couldn't start Cursor: %@" : {
 
     },
+    "Couldn’t activate Antigravity. The previous runtime is unchanged. Try again." : {
+
+    },
+    "Couldn’t create Antigravity’s folder in Coincide’s data folder." : {
+
+    },
+    "Couldn’t deliver the sign-in response. Start sign-in again." : {
+
+    },
+    "Couldn’t download Antigravity from Google. Check your internet connection and try again." : {
+
+    },
+    "Couldn’t extract the Antigravity runtime." : {
+
+    },
+    "Couldn’t extract the Antigravity runtime. Check free disk space and try again." : {
+
+    },
+    "Couldn’t install Antigravity. Check free disk space and folder access, then try again." : {
+
+    },
+    "Couldn’t open the verified archive." : {
+
+    },
+    "Couldn’t publish the Antigravity runtime. The previous release is unchanged. Try again." : {
+
+    },
+    "Couldn’t record the Antigravity installation." : {
+
+    },
+    "Couldn’t remove the downloaded Antigravity runtime. Check for open processes and try again." : {
+
+    },
+    "Couldn’t save the Antigravity download." : {
+
+    },
+    "Couldn’t save the Antigravity download. Check free disk space." : {
+
+    },
+    "Couldn’t start Antigravity: %@" : {
+
+    },
     "Create %@" : {
 
     },
@@ -1524,6 +1741,12 @@
           }
         }
       }
+    },
+    "Create MR" : {
+
+    },
+    "Create Merge Request" : {
+
     },
     "Create PR" : {
 
@@ -1540,7 +1763,22 @@
     "Create checkpoints" : {
 
     },
+    "Create the merge request on %@" : {
+
+    },
+    "Create the pull request on %@" : {
+
+    },
+    "Create the pull request on %@ instead." : {
+
+    },
+    "Created MR !%lld" : {
+
+    },
     "Created PR #%lld" : {
+
+    },
+    "Creating merge request…" : {
 
     },
     "Creating pull request…" : {
@@ -1646,6 +1884,9 @@
     "Default model" : {
 
     },
+    "Default: %@" : {
+
+    },
     "Delete" : {
 
     },
@@ -1713,6 +1954,22 @@
     "Down Arrow" : {
 
     },
+    "Downloading %@ of %@…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Downloading %1$@ of %2$@…"
+          }
+        }
+      }
+    },
+    "Downloading %@…" : {
+
+    },
+    "Downloading Google’s official Antigravity runtime." : {
+
+    },
     "Each turn's changes appear here once the agent starts working." : {
 
     },
@@ -1738,22 +1995,25 @@
     "Edit %lld files" : {
 
     },
-    "Edit Message" : {
-
-    },
     "Edit a file" : {
-
-    },
-    "Edit and Resend…" : {
-
-    },
-    "Edit and resend" : {
 
     },
     "Edit file" : {
 
     },
     "Edit files" : {
+
+    },
+    "Edit from Here" : {
+
+    },
+    "Edit from Here…" : {
+
+    },
+    "Edit from here" : {
+
+    },
+    "Edit from here?" : {
 
     },
     "Edit notebook" : {
@@ -1768,10 +2028,13 @@
     "Edit the last queued message" : {
 
     },
-    "Edit this message?" : {
+    "Emoji & Symbols" : {
 
     },
     "Enable a provider in Settings to send a message" : {
+
+    },
+    "End" : {
 
     },
     "Enter" : {
@@ -1801,6 +2064,9 @@
     "Escape" : {
 
     },
+    "Every menu command goes back to its default shortcut." : {
+
+    },
     "Executable" : {
 
     },
@@ -1826,6 +2092,12 @@
 
     },
     "Extra High" : {
+
+    },
+    "Extracting Antigravity…" : {
+
+    },
+    "Extracting the verified runtime." : {
 
     },
     "Failed" : {
@@ -1856,9 +2128,6 @@
 
     },
     "Files and folders" : {
-
-    },
-    "Files go back to how they were before this turn, and the conversation from this message on is removed. The message returns to the composer." : {
 
     },
     "Files to commit" : {
@@ -1943,7 +2212,13 @@
         }
       }
     },
+    "Finder search window" : {
+
+    },
     "Find…" : {
+
+    },
+    "Finish signing in in your browser." : {
 
     },
     "Folder" : {
@@ -1965,6 +2240,24 @@
 
     },
     "Font size" : {
+
+    },
+    "Force Quit" : {
+
+    },
+    "Fork Thread" : {
+
+    },
+    "Fork from Here" : {
+
+    },
+    "Fork from this response" : {
+
+    },
+    "Forked from conversation" : {
+
+    },
+    "Forked from “%@”" : {
 
     },
     "Forward Delete" : {
@@ -2009,16 +2302,40 @@
     "Git's index is locked. Wait for other Git operations to finish, then try again." : {
 
     },
+    "Go to Thread" : {
+
+    },
     "Go to Thread %lld" : {
 
     },
-    "Go to Thread 1–9" : {
+    "Google Account" : {
+
+    },
+    "Google doesn’t publish an Antigravity runtime for this Mac (%@). Choose your own executable instead." : {
+
+    },
+    "Google doesn’t publish an Antigravity runtime for this Mac." : {
 
     },
     "Google requires an eligible Antigravity subscription for this account." : {
 
     },
-    "Google sign-in is checked when a session starts." : {
+    "Google sign-in expired. Start sign-in again." : {
+
+    },
+    "Google sign-in failed. Start sign-in again." : {
+
+    },
+    "Google sign-in was cancelled by sign-out." : {
+
+    },
+    "Google sign-in was cancelled." : {
+
+    },
+    "Google sign-in wasn’t approved. Start sign-in again." : {
+
+    },
+    "Google’s download server answered with HTTP %lld. Try again later." : {
 
     },
     "Grant additional permissions" : {
@@ -2087,6 +2404,9 @@
     "Hold" : {
 
     },
+    "Home" : {
+
+    },
     "Hotkeys" : {
 
     },
@@ -2104,6 +2424,16 @@
     },
     "Implement the plan." : {
 
+    },
+    "In a focused terminal, %@ does “%@” instead." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "In a focused terminal, %1$@ does “%2$@” instead."
+          }
+        }
+      }
     },
     "Include %@" : {
 
@@ -2129,19 +2459,31 @@
     "Install" : {
 
     },
+    "Install Antigravity" : {
+
+    },
+    "Install Antigravity below to download Google’s runtime, then sign in with Google. To use your own copy instead, choose agy_acp_server (with its localharness_external helper beside it) as the custom path." : {
+
+    },
+    "Install Antigravity first, then sign in with Google." : {
+
+    },
     "Install Antigravity, open it once and sign in with your Google account." : {
 
     },
     "Install Claude Code and run `claude auth login`." : {
 
     },
-    "Install Google's Antigravity ACP agent (agy_acp_server with its localharness_external helper) from the ACP Registry, then put it on PATH or choose it in Settings." : {
+    "Install Managed Runtime" : {
 
     },
     "Install OpenCode and run `opencode auth login`." : {
 
     },
     "Install Pi with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`, then run `pi` and sign in with /login." : {
+
+    },
+    "Install the Azure CLI (az) with its azure-devops extension and run “az login” to create pull requests." : {
 
     },
     "Install the Codex CLI and run `codex login`." : {
@@ -2153,7 +2495,16 @@
     "Install the GitHub CLI (gh) and run “gh auth login” to create pull requests." : {
 
     },
+    "Install the GitLab CLI (glab) and run “glab auth login” to create merge requests." : {
+
+    },
+    "Install the Gitea CLI (tea) and run “tea login add” for this server to create pull requests." : {
+
+    },
     "Install the Grok Build CLI and run `grok login`." : {
+
+    },
+    "Installation cancelled. The previous runtime is unchanged." : {
 
     },
     "Interrupt a subagent" : {
@@ -2272,6 +2623,12 @@
     "Location" : {
 
     },
+    "Lock Screen" : {
+
+    },
+    "Log Out" : {
+
+    },
     "Look for %@ again and reload its models" : {
 
     },
@@ -2283,6 +2640,9 @@
     },
     "MCP tool" : {
 
+    },
+    "MR" : {
+      "comment" : "Short for merge request"
     },
     "Make Lower Case" : {
 
@@ -2305,6 +2665,19 @@
     "Memory" : {
 
     },
+    "Merge Request" : {
+
+    },
+    "Merge request !%lld: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Merge request !%1$lld: %2$@"
+          }
+        }
+      }
+    },
     "Message" : {
 
     },
@@ -2324,6 +2697,9 @@
 
     },
     "Minimize" : {
+
+    },
+    "Mission Control" : {
 
     },
     "Model" : {
@@ -2380,6 +2756,9 @@
     "More Git actions" : {
 
     },
+    "More options for %@" : {
+
+    },
     "Move %@ to %@" : {
       "localizations" : {
         "en" : {
@@ -2401,6 +2780,36 @@
       }
     },
     "Move by word" : {
+
+    },
+    "Move focus to status menus" : {
+
+    },
+    "Move focus to the Dock" : {
+
+    },
+    "Move focus to the active or next window" : {
+
+    },
+    "Move focus to the floating window" : {
+
+    },
+    "Move focus to the menu bar" : {
+
+    },
+    "Move focus to the next window" : {
+
+    },
+    "Move focus to the previous window" : {
+
+    },
+    "Move focus to the window toolbar" : {
+
+    },
+    "Move left a space" : {
+
+    },
+    "Move right a space" : {
 
     },
     "Move to the composer" : {
@@ -2493,6 +2902,9 @@
     "No Changes on This Branch" : {
 
     },
+    "No Conflicts" : {
+
+    },
     "No Files Changed" : {
 
     },
@@ -2553,6 +2965,12 @@
     "No prefix" : {
 
     },
+    "No shortcut by default" : {
+
+    },
+    "No shortcuts conflict." : {
+
+    },
     "No terminal sessions for this thread yet." : {
 
     },
@@ -2596,6 +3014,9 @@
 
     },
     "Not installed." : {
+
+    },
+    "Not installed. %@ download." : {
 
     },
     "Not signed in" : {
@@ -2661,13 +3082,25 @@
     "Open a web page" : {
 
     },
+    "Open fork" : {
+
+    },
     "Open in %@" : {
+
+    },
+    "Open in Browser" : {
 
     },
     "Open in Editor" : {
 
     },
     "Open or close the selected entry" : {
+
+    },
+    "Open source conversation" : {
+
+    },
+    "Open the Google sign-in page and finish there. If your browser is on another device, paste the address it ends on here." : {
 
     },
     "Open this link and finish there, then continue:\n%@" : {
@@ -2722,6 +3155,9 @@
     "OpenCode started working on its own." : {
 
     },
+    "Opened MR !%lld" : {
+
+    },
     "Opened PR #%lld" : {
 
     },
@@ -2734,10 +3170,22 @@
     "Other" : {
 
     },
+    "Other Menu Commands" : {
+
+    },
     "Output tokens" : {
 
     },
     "Overview" : {
+
+    },
+    "PR" : {
+      "comment" : "Short for pull request"
+    },
+    "Page Down" : {
+
+    },
+    "Page Up" : {
 
     },
     "Parts of a branch name can’t start with “.” or end with “.lock”." : {
@@ -2747,6 +3195,9 @@
 
     },
     "Paste and Match Style" : {
+
+    },
+    "Paste the complete address from the Google sign-in page." : {
 
     },
     "Pasted image" : {
@@ -2859,6 +3310,9 @@
     "Pin Thread" : {
 
     },
+    "Pin or Unpin Thread" : {
+
+    },
     "Pinned" : {
 
     },
@@ -2886,10 +3340,16 @@
     "Preparing feature branch…" : {
 
     },
+    "Preparing merge request…" : {
+
+    },
     "Preparing pull request…" : {
 
     },
     "Preparing worktree…" : {
+
+    },
+    "Press the new shortcut. Delete removes it; Escape cancels." : {
 
     },
     "Preview %@" : {
@@ -2946,6 +3406,9 @@
     "Pull" : {
 
     },
+    "Pull Request" : {
+
+    },
     "Pull request #%lld: %@" : {
       "localizations" : {
         "en" : {
@@ -2965,7 +3428,13 @@
     "Push" : {
 
     },
+    "Push & Create MR" : {
+
+    },
     "Push & Create PR" : {
+
+    },
+    "Push and open a merge request from the default branch?" : {
 
     },
     "Push and open a pull request from the default branch?" : {
@@ -3106,6 +3575,12 @@
     "Recent Threads" : {
 
     },
+    "Recording. Type the new shortcut." : {
+
+    },
+    "Records a new shortcut. Escape cancels; Delete removes the shortcut." : {
+
+    },
     "Redo" : {
 
     },
@@ -3116,6 +3591,9 @@
 
     },
     "Refresh Providers" : {
+
+    },
+    "Reinstall Antigravity" : {
 
     },
     "Reload Models" : {
@@ -3133,6 +3611,15 @@
     "Remove Custom Model" : {
 
     },
+    "Remove Downloaded Runtime" : {
+
+    },
+    "Remove Shortcut" : {
+
+    },
+    "Remove Them" : {
+
+    },
     "Remove custom model" : {
 
     },
@@ -3140,6 +3627,9 @@
 
     },
     "Remove from queue" : {
+
+    },
+    "Remove the downloaded Antigravity runtime?" : {
 
     },
     "Remove the selected custom models" : {
@@ -3182,7 +3672,22 @@
     "Report an Issue" : {
 
     },
+    "Reset All" : {
+
+    },
+    "Reset All…" : {
+
+    },
     "Reset Font Size" : {
+
+    },
+    "Reset all keyboard shortcuts?" : {
+
+    },
+    "Reset or remove the shortcut" : {
+
+    },
+    "Reset to Default" : {
 
     },
     "Resets %@" : {
@@ -3207,6 +3712,12 @@
 
     },
     "Resume a subagent" : {
+
+    },
+    "Retry Installation" : {
+
+    },
+    "Retry Sign-in" : {
 
     },
     "Retrying after a provider error (attempt %lld of %lld)." : {
@@ -3244,13 +3755,10 @@
     "Revert" : {
 
     },
-    "Revert to Before This Message…" : {
+    "Revert Files Too" : {
 
     },
-    "Revert to before this message" : {
-
-    },
-    "Revert to before this message?" : {
+    "Revert and Keep Changes" : {
 
     },
     "Review and confirm your commit. Leave the message empty to have the agent write one." : {
@@ -3301,7 +3809,19 @@
     "Runs commands and edits files without asking." : {
 
     },
+    "Runtime" : {
+
+    },
     "Save" : {
+
+    },
+    "Screenshot" : {
+
+    },
+    "Screenshot and recording options" : {
+
+    },
+    "Screenshot of an area" : {
 
     },
     "Scroll to the newest messages" : {
@@ -3375,6 +3895,9 @@
     "Search reasoning efforts…" : {
 
     },
+    "Search the Help menu" : {
+
+    },
     "Search the web" : {
 
     },
@@ -3434,6 +3957,15 @@
 
     },
     "Select an existing thread or create a new one to get started." : {
+
+    },
+    "Select the next input source" : {
+
+    },
+    "Select the previous input source" : {
+
+    },
+    "Send" : {
 
     },
     "Send (↩)" : {
@@ -3496,7 +4028,7 @@
     "Shift-Return inserts a new line." : {
 
     },
-    "Shortcuts for Coincide’s commands. Standard macOS shortcuts such as Copy and Close Window work as usual." : {
+    "Shortcut for %@" : {
 
     },
     "Show %@ Settings" : {
@@ -3518,6 +4050,9 @@
 
     },
     "Show Diff (⌘D)" : {
+
+    },
+    "Show Settings File in Finder" : {
 
     },
     "Show Sidebar" : {
@@ -3547,6 +4082,21 @@
     "Show less" : {
 
     },
+    "Show only conflicts" : {
+
+    },
+    "Show or Hide Diff" : {
+
+    },
+    "Show or Hide Sidebar" : {
+
+    },
+    "Show or Hide Terminal" : {
+
+    },
+    "Show or hide the Dock" : {
+
+    },
     "Show reasoning" : {
 
     },
@@ -3565,7 +4115,43 @@
     "Sidebar Options" : {
 
     },
+    "Sign In Again" : {
+
+    },
+    "Sign Out" : {
+
+    },
+    "Sign Out…" : {
+
+    },
     "Sign in" : {
+
+    },
+    "Sign in to Antigravity in Settings before you continue." : {
+
+    },
+    "Sign in with Google" : {
+
+    },
+    "Sign in with Google in Settings to use Antigravity." : {
+
+    },
+    "Sign out of Google in Antigravity?" : {
+
+    },
+    "Sign-in" : {
+
+    },
+    "Signed in with Google." : {
+
+    },
+    "Signed out of Google." : {
+
+    },
+    "Signing in from another device? After Google sign-in, paste the address its browser ends on." : {
+
+    },
+    "Signing out…" : {
 
     },
     "Skill" : {
@@ -3587,6 +4173,12 @@
 
     },
     "Snapshot the working tree before each turn so you can review or revert what it changed." : {
+
+    },
+    "Some saved shortcuts can’t be used, so their commands keep their defaults." : {
+
+    },
+    "Some shortcuts conflict." : {
 
     },
     "Source Code" : {
@@ -3619,6 +4211,9 @@
     "Split right" : {
 
     },
+    "Spotlight" : {
+
+    },
     "Start Speaking" : {
 
     },
@@ -3632,6 +4227,12 @@
 
     },
     "Starting %@…" : {
+
+    },
+    "Starting Google sign-in." : {
+
+    },
+    "Starting sign-in…" : {
 
     },
     "Starting…" : {
@@ -3661,6 +4262,9 @@
     "Stop Agent" : {
 
     },
+    "Stop Antigravity sessions and sign-in before removing the downloaded runtime." : {
+
+    },
     "Stop Speaking" : {
 
     },
@@ -3686,6 +4290,9 @@
 
     },
     "Supports reasoning effort" : {
+
+    },
+    "Switch apps" : {
 
     },
     "Switch between Build and Plan" : {
@@ -3730,6 +4337,16 @@
     "Tab" : {
 
     },
+    "Takes %@ from %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Takes %1$@ from %2$@."
+          }
+        }
+      }
+    },
     "Task" : {
 
     },
@@ -3755,6 +4372,24 @@
 
     },
     "That custom model is already added." : {
+
+    },
+    "The Antigravity download exceeded the pinned release size." : {
+
+    },
+    "The Antigravity download failed its size or SHA-256 check. Nothing was installed." : {
+
+    },
+    "The Antigravity download size didn’t match the pinned release." : {
+
+    },
+    "The Antigravity profile folder could not be created." : {
+
+    },
+    "The Antigravity profile settings could not be written." : {
+
+    },
+    "The Azure CLI can't take a branch name containing “@”." : {
 
     },
     "The Claude API is overloaded (529). Try again shortly." : {
@@ -3810,6 +4445,12 @@
     "The OpenCode session no longer exists. Send the message again to continue in a new session." : {
 
     },
+    "The address isn’t a Google sign-in response." : {
+
+    },
+    "The address must contain one Google sign-in response." : {
+
+    },
     "The agent asked a question" : {
 
     },
@@ -3825,6 +4466,18 @@
     "The agent working in it is stopped and the conversation is deleted. Files on disk are not changed." : {
 
     },
+    "The archive contains an unexpected, unsafe, or incorrectly sized member." : {
+
+    },
+    "The archive is damaged. Nothing was installed." : {
+
+    },
+    "The archive is missing the Antigravity executable or its harness." : {
+
+    },
+    "The archive must contain exactly the Antigravity executable and its harness." : {
+
+    },
     "The branch has diverged from its upstream. Rebase or merge first." : {
 
     },
@@ -3834,10 +4487,31 @@
     "The branch the new worktree starts from" : {
 
     },
-    "The conversation from this message on is removed so you can change it and send it again. Files on disk are not changed." : {
+    "The conversation is rewound to before this message, which returns to the composer. Files on disk are not changed." : {
+
+    },
+    "The conversation is rewound to before this message, which returns to the composer. “Revert Files Too” also puts files back the way they were before it, undoing any edits since." : {
 
     },
     "The diff for this file is too large to show." : {
+
+    },
+    "The downloaded Antigravity runtime couldn’t start on this Mac." : {
+
+    },
+    "The downloaded Antigravity runtime didn’t answer in time. Try again." : {
+
+    },
+    "The downloaded Antigravity runtime is incomplete. Install it again in Settings." : {
+
+    },
+    "The downloaded Antigravity runtime is incomplete. Remove it and install it again." : {
+
+    },
+    "The downloaded release has the wrong version. Remove it before installing again." : {
+
+    },
+    "The downloaded runtime didn’t identify as the expected Google Antigravity release." : {
 
     },
     "The folder and its files are not changed." : {
@@ -3880,7 +4554,19 @@
     "The project folder was moved or deleted: %@" : {
 
     },
+    "The server answered with HTTP status %lld." : {
+
+    },
     "The server is not an OpenCode 2 server." : {
+
+    },
+    "The sign-in response address is too long." : {
+
+    },
+    "The sign-in response timed out. Start sign-in again." : {
+
+    },
+    "The sign-in response was already sent. Wait for Google to finish." : {
 
     },
     "The subagent failed." : {
@@ -3919,7 +4605,16 @@
     "Thinking…" : {
 
     },
+    "This Antigravity version can’t sign out. Update Antigravity." : {
+
+    },
+    "This address doesn’t belong to the current sign-in." : {
+
+    },
     "This branch has no upstream yet. Push it first." : {
+
+    },
+    "This branch has not been pushed. Push it before creating a merge request." : {
 
     },
     "This branch has not been pushed. Push it before creating a pull request." : {
@@ -3929,6 +4624,9 @@
 
     },
     "This permanently deletes the conversation. Files on disk are not changed." : {
+
+    },
+    "This thread is no longer available" : {
 
     },
     "This thread started on %@; the folder is now on %@." : {
@@ -3971,7 +4669,13 @@
     "Thread failed" : {
 
     },
+    "Thread history is kept. Antigravity asks you to sign in again before its next turn." : {
+
+    },
     "Threads" : {
+
+    },
+    "Threads are counted from the top of the sidebar. Hold ⌘ to see their numbers." : {
 
     },
     "Threads per Project" : {
@@ -3987,9 +4691,6 @@
 
     },
     "Timeout" : {
-
-    },
-    "To change a menu shortcut, add an App Shortcut for Coincide in System Settings › Keyboard." : {
 
     },
     "To sign in, run `pi` in Terminal and type `/login`." : {
@@ -4057,6 +4758,9 @@
     "Turn on %@ to load its models." : {
 
     },
+    "Turn on Antigravity to sign in." : {
+
+    },
     "Turn on checkpoints in Settings to see each turn's changes." : {
 
     },
@@ -4064,6 +4768,9 @@
 
     },
     "Type @ to mention a file and / for commands." : {
+
+    },
+    "Type Shortcut" : {
 
     },
     "Type your answer" : {
@@ -4106,6 +4813,9 @@
 
     },
     "Up Arrow" : {
+
+    },
+    "Update Antigravity" : {
 
     },
     "Update the Codex CLI to 0.156 or later for full support." : {
@@ -4169,6 +4879,9 @@
         }
       }
     },
+    "Using Antigravity found on your PATH." : {
+
+    },
     "Value" : {
 
     },
@@ -4185,6 +4898,19 @@
         }
       }
     },
+    "Version %@ installed." : {
+
+    },
+    "Version %@ installed. Version %@ is available." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version %1$@ installed. Version %2$@ is available."
+          }
+        }
+      }
+    },
     "View" : {
 
     },
@@ -4192,6 +4918,12 @@
 
     },
     "View Diff" : {
+
+    },
+    "View MR" : {
+
+    },
+    "View Merge Request !%lld" : {
 
     },
     "View PR" : {
@@ -4204,6 +4936,12 @@
 
     },
     "Wait for subagents" : {
+
+    },
+    "Wait for the Google sign-in link before you paste an address." : {
+
+    },
+    "Waiting for Google to finish sign-in." : {
 
     },
     "Waiting for your answer below" : {
@@ -4228,6 +4966,9 @@
 
     },
     "What should we build in " : {
+
+    },
+    "When two commands share a shortcut, a changed one wins over a default one. Fixed menu shortcuts such as Copy keep their keys." : {
 
     },
     "Where is “%@” now?" : {
@@ -4275,6 +5016,9 @@
     "Write file" : {
 
     },
+    "Writing merge request…" : {
+
+    },
     "Writing pull request…" : {
 
     },
@@ -4282,6 +5026,12 @@
 
     },
     "You" : {
+
+    },
+    "Your Google sign-in and thread history are kept. You can install the runtime again at any time." : {
+
+    },
+    "Your custom Antigravity path points into the downloaded runtime. Clear it before removing the runtime." : {
 
     },
     "Zoom" : {
@@ -4340,6 +5090,16 @@
     },
     "in progress" : {
 
+    },
+    "macOS uses %@ for %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "macOS uses %1$@ for %2$@."
+          }
+        }
+      }
     },
     "model-id" : {
 
@@ -4414,6 +5174,9 @@
 
     },
     "“%@” is still running. Closing the terminal stops it." : {
+
+    },
+    "“%@” isn’t a Coincide command." : {
 
     },
     "“%@” isn’t a valid name. Use letters, digits and underscores." : {
