@@ -65,27 +65,37 @@ enum ThreadActions {
         ThreadActivity.shared.markUnread(threadID)
     }
 
-    /// Deletes the thread, asking first unless the user turned that off.
+    /// Deletes the thread, asking first unless the user turned that off. A command still running in one of
+    /// its terminals is stopped too, so that is always asked about.
     static func delete(_ threadID: UUID, in window: NSWindow?) {
         guard let thread = store.thread(threadID) else { return }
         let perform = {
             ThreadRunner.shared.shutdown(threadID: threadID)
             store.deleteThread(threadID)
         }
-        guard store.settings.confirmBeforeDeletingThreads else {
+        let busy = busyTerminals(in: [threadID])
+        guard store.settings.confirmBeforeDeletingThreads || !busy.isEmpty else {
             perform()
             return
         }
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = String(localized: "Delete “\(thread.title)”?")
-        alert.informativeText =
+        var text =
             ThreadRunner.shared.isRunning(threadID)
             ? String(localized: "The agent working in it is stopped and the conversation is deleted. Files on disk are not changed.")
             : String(localized: "This permanently deletes the conversation. Files on disk are not changed.")
+        if busy.count == 1 {
+            text += " " + String(localized: "“\(busy[0].title)” is still running in its terminal. Deleting the thread stops it.")
+        } else if busy.count > 1 {
+            let names = ListFormatter.localizedString(byJoining: busy.map { "“\($0.title)”" })
+            text += " " + String(localized: "\(names) are still running in its terminals. Deleting the thread stops them.")
+        }
+        alert.informativeText = text
         alert.addButton(withTitle: String(localized: "Delete")).hasDestructiveAction = true
         alert.addButton(withTitle: String(localized: "Cancel"))
-        alert.showsSuppressionButton = true
+        // "Don't ask again" never covers stopping a running command.
+        alert.showsSuppressionButton = busy.isEmpty
         alert.suppressionButton?.title = String(localized: "Don’t ask again")
         present(alert, in: window) { confirmed in
             guard confirmed else { return }
@@ -176,10 +186,19 @@ enum ThreadActions {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = String(localized: "Remove “\(project.name)”?")
-        alert.informativeText =
+        var text =
             threads.isEmpty
             ? String(localized: "The folder and its files are not changed.")
             : String(localized: "Its \(threads.count) threads will be deleted. The folder and its files are not changed.")
+        // Deleting its threads stops their terminals' shells.
+        let busy = busyTerminals(in: threads.map(\.id))
+        if busy.count == 1 {
+            text += " " + String(localized: "“\(busy[0].title)” is still running in a terminal. Removing the project stops it.")
+        } else if busy.count > 1 {
+            let names = ListFormatter.localizedString(byJoining: busy.map { "“\($0.title)”" })
+            text += " " + String(localized: "\(names) are still running in terminals. Removing the project stops them.")
+        }
+        alert.informativeText = text
         alert.addButton(withTitle: String(localized: "Remove")).hasDestructiveAction = true
         alert.addButton(withTitle: String(localized: "Cancel"))
         present(alert, in: window) { confirmed in
@@ -199,6 +218,14 @@ enum ThreadActions {
     static func folder(for threadID: UUID) -> URL? { store.workingDirectory(for: threadID) }
 
     // MARK: Helpers
+
+    /// Terminals of the threads running a command that deleting the threads would stop.
+    private static func busyTerminals(in threadIDs: [UUID]) -> [TerminalSession] {
+        // `terminals(for:)` adds an empty entry for a thread without terminals; one for a deleted thread is
+        // dropped with it.
+        let manager = TerminalSessionManager.shared
+        return threadIDs.flatMap { manager.terminals(for: $0).sessions.filter(\.isBusy) }
+    }
 
     private static func present(_ alert: NSAlert, in window: NSWindow?, completion: @escaping (Bool) -> Void) {
         if let window, window.isVisible {
