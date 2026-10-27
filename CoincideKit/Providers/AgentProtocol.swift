@@ -322,9 +322,10 @@ public protocol AgentSession: AnyObject {
     /// Whether the provider takes more messages into a running turn (`steer`), as T3 Code's active steering.
     var supportsSteering: Bool { get }
     /// Adds the user's message to the running turn, so the agent takes it into account without starting over;
-    /// the turn still ends with one `.turnCompleted`. Returns once the provider accepted the message. Throws
-    /// when it cannot take one now (the turn has not started yet, is ending or is being stopped); the runner then
-    /// sends the message after the turn instead. The input carries no recap: the session has seen the whole thread.
+    /// the turn still ends with one `.turnCompleted`. Returns once the provider accepted the message (a session may
+    /// first wait briefly for the provider to start the turn). Throws when it cannot take one now (the turn has not
+    /// started, is ending or is being stopped); the runner then sends the message after the turn instead. The input
+    /// carries no recap: the session has seen the whole thread.
     func steer(_ input: AgentTurnInput) async throws
 }
 

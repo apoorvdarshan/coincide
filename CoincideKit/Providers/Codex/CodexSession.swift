@@ -129,10 +129,21 @@ final class CodexSession: AgentSession {
     }
 
     let supportsSteering = true
+    /// How long a steer waits for Codex to name the turn it goes into.
+    nonisolated static let steerWaitLimit: Duration = .seconds(10)
 
     /// Adds the message to the running turn with `turn/steer`, as T3 Code does. Codex only takes it once the turn
-    /// has its id, and refuses it when that turn is no longer the active one.
+    /// has its id, so a steer sent before `turn/start` answers waits for it a little; Codex refuses the message when
+    /// that turn is no longer the active one.
     func steer(_ input: AgentTurnInput) async throws {
+        if let pending = turn, pending.id == nil, !pending.interruptRequested {
+            let deadline = ContinuousClock.now + Self.steerWaitLimit
+            while let current = turn, current.token == pending.token, current.id == nil, !current.interruptRequested,
+                !isShutDown, ContinuousClock.now < deadline
+            {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+        }
         guard !isShutDown, let connection, let threadID = mapper.threadID, let current = turn, current.sent,
             let turnID = current.id, !current.interruptRequested
         else {

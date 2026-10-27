@@ -1641,6 +1641,14 @@ struct CodexUsageLimitsTests {
         #expect(CodexUsageLimits.windows(from: nil).isEmpty)
         #expect(CodexUsageLimits.windows(from: .null).isEmpty)
     }
+
+    @Test func aReadWithoutACodexBucketUsesItsSingleBucketView() throws {
+        let read = try #require(
+            JSONValue.parse(#"{"rateLimits":{"primary":{"usedPercent":7,"windowDurationMins":300}},"rateLimitsByLimitId":{"codex":null}}"#))
+        #expect(CodexUsageLimits.windows(fromRead: read).map(\.usedPercent) == [7])
+        let older = try #require(JSONValue.parse(#"{"rateLimits":{"primary":{"usedPercent":8}},"rateLimitsByLimitId":null}"#))
+        #expect(CodexUsageLimits.windows(fromRead: older).map(\.usedPercent) == [8])
+    }
 }
 
 extension CodexSessionTests {
@@ -1663,23 +1671,49 @@ extension CodexSessionTests {
         #expect(log.completions == [.completed])
     }
 
-    @Test func steeringNeedsTheTurnsIDAndATurnThatIsNotStopping() async throws {
+    @Test func aSteerWaitsForCodexToNameTheTurn() async throws {
         let transport = FakeCodexTransport()
         transport.handlers["turn/start"] = { _ in .silent }
         transport.handlers["turn/steer"] = { _ in .result(["turnId": "R1"]) }
         let (session, _) = makeSession(transports: [transport])
         try await session.start()
+        // No turn, nothing to steer.
         await #expect(throws: AgentError.self) { try await session.steer(input()) }
         let sending = Task { try await session.send(input()) }
         try await waitUntil { !transport.requests("turn/start").isEmpty }
-        // Codex has not named the turn yet.
-        await #expect(throws: AgentError.self) { try await session.steer(input()) }
+        // Codex has not named the turn yet: the steer waits for `turn/start` to answer.
+        let steering = Task { try await session.steer(input("and the tests")) }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(transport.requests("turn/steer").isEmpty)
         transport.answer("turn/start", with: ["turn": ["id": "R1", "status": "inProgress", "startedAt": 1]])
         try await sending.value
-        try await session.steer(input())
+        try await steering.value
+        let steer = try #require(transport.requests("turn/steer").first)
+        #expect(steer.at("params.expectedTurnId") == "R1")
+        #expect(steer.at("params.input")?[0]?["text"] == "and the tests")
+        // A turn being stopped takes no more messages.
         session.interrupt()
         await #expect(throws: AgentError.self) { try await session.steer(input()) }
         #expect(transport.requests("turn/steer").count == 1)
+    }
+
+    @Test func aSteerWaitingForTheTurnFailsWhenTheTurnIsStopped() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["turn/start"] = { _ in .silent }
+        let (session, _) = makeSession(transports: [transport])
+        try await session.start()
+        let sending = Task { try await session.send(input()) }
+        try await waitUntil { !transport.requests("turn/start").isEmpty }
+        let steering = Task { try await session.steer(input()) }
+        try await Task.sleep(for: .milliseconds(100))
+        session.interrupt()
+        await #expect(throws: AgentError.self) { try await steering.value }
+        #expect(transport.requests("turn/steer").isEmpty)
+        // Codex names the turn after all, and is told to stop it.
+        transport.answer("turn/start", with: ["turn": ["id": "R1", "status": "inProgress", "startedAt": 1]])
+        try await sending.value
+        try await waitUntil { !transport.requests("turn/interrupt").isEmpty }
+        #expect(transport.requests("turn/steer").isEmpty)
     }
 
     @Test func aSteerCodexRefusesFailsTheCall() async throws {

@@ -38,7 +38,8 @@ enum CodexUsageLimits {
     /// The windows of an `account/rateLimits/read` result: the `codex` bucket when Codex lists buckets,
     /// otherwise its single-bucket view.
     nonisolated static func windows(fromRead result: JSONValue) -> [UsageLimitWindow] {
-        windows(from: result.at("rateLimitsByLimitId.codex") ?? result["rateLimits"])
+        let codex = result.at("rateLimitsByLimitId.codex")
+        return windows(from: codex?.object != nil ? codex : result["rateLimits"])
     }
 
     nonisolated static func kind(forMinutes minutes: Int) -> UsageLimitWindow.Kind {
