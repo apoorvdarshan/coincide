@@ -169,6 +169,13 @@ public final class ThreadRunner {
     public func stop(threadID: UUID) {
         guard let turn = turns[threadID] else { return }
         turns[threadID]?.interruptRequested = true
+        // The session cancels open prompts when interrupted, so they must not stay clickable.
+        for item in pendingApprovals(threadID) + pendingQuestions(threadID) {
+            store.updateItem(item.id, in: threadID) { item in
+                item.status = .declined
+                item.completedAt = Date()
+            }
+        }
         if let session = sessions[threadID]?[turn.provider], !starting.contains(threadID) {
             session.interrupt()
         }
@@ -375,7 +382,7 @@ public final class ThreadRunner {
             else { return }
             store.updateItem(item.id, in: threadID) { item in
                 item.status = .completed
-                item.approval?.resolution = String(localized: "Resolved by the agent")
+                item.approval?.resolution = String(localized: "Closed by the agent")
                 item.completedAt = Date()
             }
 

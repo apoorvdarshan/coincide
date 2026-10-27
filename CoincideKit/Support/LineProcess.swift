@@ -19,6 +19,8 @@ public final class LineProcess: @unchecked Sendable {
     private let stderrPipe = Pipe()
     private let lock = NSLock()
     private var stdoutBuffer = Data()
+    /// How far `stdoutBuffer` has been searched for a newline, so long lines aren't rescanned per chunk.
+    private var scannedCount = 0
     private var stderrTail = Data()
     private var finished = false
 
@@ -100,13 +102,16 @@ public final class LineProcess: @unchecked Sendable {
         var lines: [String] = []
         lock.lock()
         stdoutBuffer.append(data)
-        while let newline = stdoutBuffer.firstIndex(of: 0x0A) {
+        var searchFrom = stdoutBuffer.startIndex + scannedCount
+        while let newline = stdoutBuffer[searchFrom...].firstIndex(of: 0x0A) {
             let lineData = stdoutBuffer[stdoutBuffer.startIndex..<newline]
             var line = String(decoding: lineData, as: UTF8.self)
             stdoutBuffer.removeSubrange(stdoutBuffer.startIndex...newline)
             if line.hasSuffix("\r") { line.removeLast() }
             if !line.isEmpty { lines.append(line) }
+            searchFrom = stdoutBuffer.startIndex
         }
+        scannedCount = stdoutBuffer.count
         lock.unlock()
         guard !lines.isEmpty else { return }
         DispatchQueue.main.async { [weak self] in
