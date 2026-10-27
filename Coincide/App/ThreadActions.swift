@@ -160,12 +160,8 @@ enum ThreadActions {
                 NSSound.beep()
                 return
             }
-            // Agents started in the old folder cannot continue there; their next turn starts fresh.
-            for thread in store.threads(in: projectID, includeArchived: true)
-            where thread.worktreePath == nil && !ThreadRunner.shared.isRunning(thread.id) {
-                ThreadRunner.shared.shutdown(threadID: thread.id)
-            }
-            store.updateProject(projectID) { $0.path = url.path }
+            store.relocateProject(projectID, to: url)
+            RelocatedSessions.end(in: projectID)
         }
         if let window {
             panel.beginSheetModal(for: window, completionHandler: finish)
@@ -209,6 +205,46 @@ enum ThreadActions {
             alert.beginSheetModal(for: window) { completion($0 == .alertFirstButtonReturn) }
         } else {
             completion(alert.runModal() == .alertFirstButtonReturn)
+        }
+    }
+}
+
+/// Ends the agent sessions still running in a project's old folder after it was located somewhere else
+/// (`AppStore.relocateProject`), so each thread's next turn resumes its native sessions in the new folder.
+/// A turn that is running is left to finish; its sessions end when it does, before a queued message goes out.
+/// Threads in their own worktree do not run in the project folder and keep their sessions.
+enum RelocatedSessions {
+    /// Threads whose sessions end when their running turn does.
+    private static var waiting: Set<UUID> = []
+    private static var observer: NSObjectProtocol?
+
+    static func end(in projectID: UUID) {
+        let runner = ThreadRunner.shared
+        for thread in AppStore.shared.threads(in: projectID, includeArchived: true) where thread.worktreePath == nil {
+            if runner.isRunning(thread.id) {
+                waiting.insert(thread.id)
+            } else {
+                runner.shutdown(threadID: thread.id)
+            }
+        }
+        guard !waiting.isEmpty, observer == nil else { return }
+        // Posted on the main thread as the turn ends, before the runner sends the next queued message.
+        observer = NotificationCenter.default.addObserver(
+            forName: ThreadRunner.turnFinishedNotification, object: nil, queue: nil
+        ) { note in
+            guard let threadID = note.userInfo?["threadID"] as? UUID else { return }
+            MainActor.assumeIsolated { turnFinished(threadID) }
+        }
+    }
+
+    private static func turnFinished(_ threadID: UUID) {
+        guard waiting.remove(threadID) != nil else { return }
+        // Only the sessions: the runner is still finishing the turn and keeps the thread's queued messages.
+        let runner = ThreadRunner.shared
+        for provider in runner.liveProviders(threadID) { runner.shutdown(threadID: threadID, provider: provider) }
+        if waiting.isEmpty, let observer {
+            NotificationCenter.default.removeObserver(observer)
+            self.observer = nil
         }
     }
 }
