@@ -72,7 +72,8 @@ public enum Handoff {
 
     /// A compact, plain-text transcript. Keeps the most recent entries when over budget.
     public nonisolated static func transcript(_ items: [TranscriptItem], budget: Int) -> String {
-        let blocks = items.compactMap(render)
+        // One long entry must not crowd out the rest: each is capped so the newest exchange always fits.
+        let blocks = items.compactMap(render).map { truncateMiddle($0, limit: max(budget / 3, 1)) }
         var total = 0
         var kept: [String] = []
         for block in blocks.reversed() {

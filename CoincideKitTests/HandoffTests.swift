@@ -77,6 +77,24 @@ struct HandoffTests {
         #expect(text.contains("x49"))
         #expect(!text.contains("x0\n"))
     }
+
+    @Test func aLongReplyIsShortenedInsteadOfDroppingTheLastExchange() throws {
+        let reply = "REPORT-START " + String(repeating: "line of the report\n", count: 1_600) + " REPORT-END"
+        #expect(reply.count > Handoff.defaultBudget)
+        let items = [
+            TranscriptItem(kind: .user, text: "write the report", provider: .codex),
+            TranscriptItem(kind: .assistant, text: reply, provider: .codex),
+        ]
+        let text = Handoff.transcript(items, budget: Handoff.defaultBudget)
+        #expect(text.count <= Handoff.defaultBudget)
+        #expect(text.contains("User:\nwrite the report"))
+        #expect(text.contains("REPORT-START"))
+        #expect(text.contains("REPORT-END"))
+        #expect(!text.contains("earlier entries omitted"))
+
+        let recap = try #require(Handoff.recap(thread: thread(items), provider: .claude))
+        #expect(recap.contains("write the report") && recap.contains("REPORT-END"))
+    }
 }
 
 @MainActor
