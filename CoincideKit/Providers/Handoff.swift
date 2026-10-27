@@ -18,7 +18,9 @@ public enum Handoff {
             }
         }
         let hasUserTurns = missed.contains { $0.kind == .user }
-        return fromOthers || (thread.sessions[provider] == nil && hasUserTurns) ? missed : []
+        // A session that has seen nothing (new, or a fresh one after a failed resume) needs everything.
+        let seenNothing = (thread.sessions[provider]?.seenItemCount ?? 0) == 0
+        return fromOthers || (seenNothing && hasUserTurns) ? missed : []
     }
 
     /// Wraps the user's message with a recap of what happened while this provider was away.
@@ -30,7 +32,7 @@ public enum Handoff {
         guard !missed.isEmpty else { return message }
         let recap = transcript(Array(missed), budget: budget)
         guard !recap.isEmpty else { return message }
-        let firstTime = thread.sessions[provider] == nil
+        let firstTime = (thread.sessions[provider]?.seenItemCount ?? 0) == 0
         let intro =
             firstTime
             ? "You are joining an existing conversation in Coincide, a desktop app that lets the user switch coding agents mid-thread. Earlier turns were handled by other agents in this same working directory. Here is the conversation so far:"
@@ -93,6 +95,13 @@ public enum Handoff {
             return "\(agentLabel(item)) plan:\n\(item.text)"
         case .error:
             return "Error: \(item.text)"
+        case .question:
+            guard let request = item.questions else { return nil }
+            let lines = request.questions.map { question -> String in
+                let answer = item.answers?[question.id]?.joined(separator: ", ") ?? "(no answer)"
+                return "Q: \(question.prompt)\nA: \(answer)"
+            }
+            return "\(agentLabel(item)) asked the user:\n" + lines.joined(separator: "\n")
         case .reasoning, .approval, .notice:
             return nil
         }

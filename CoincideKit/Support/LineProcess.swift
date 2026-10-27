@@ -52,6 +52,8 @@ public final class LineProcess: @unchecked Sendable {
         process.terminationHandler = { [weak self] process in
             self?.handleTermination(status: process.terminationStatus)
         }
+        // A write racing the child's exit should fail with EPIPE (handled in write) instead of killing Coincide.
+        _ = fcntl(stdinPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         try process.run()
     }
 
@@ -172,42 +174,24 @@ public enum ProcessRunner {
         timeout: TimeInterval = 20, input: String? = nil
     ) async -> Result {
         await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                let process = Process()
-                process.executableURL = executable
-                process.arguments = arguments
-                if let cwd { process.currentDirectoryURL = cwd }
-                if let environment { process.environment = environment }
-                let out = Pipe()
-                let err = Pipe()
-                let inPipe = Pipe()
-                process.standardOutput = out
-                process.standardError = err
-                process.standardInput = inPipe
-                let outBox = DataBox()
-                let errBox = DataBox()
-                out.fileHandleForReading.readabilityHandler = { outBox.append($0.availableData) }
-                err.fileHandleForReading.readabilityHandler = { errBox.append($0.availableData) }
-                do {
-                    try process.run()
-                } catch {
-                    continuation.resume(returning: Result(status: -1, stdout: "", stderr: error.localizedDescription))
-                    return
-                }
-                if let input, let data = input.data(using: .utf8) {
-                    try? inPipe.fileHandleForWriting.write(contentsOf: data)
-                }
-                try? inPipe.fileHandleForWriting.close()
-                let group = DispatchGroup()
-                group.enter()
-                DispatchQueue.global().async {
-                    process.waitUntilExit()
-                    group.leave()
-                }
-                if group.wait(timeout: .now() + timeout) == .timedOut {
-                    process.terminate()
-                    process.waitUntilExit()
-                }
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = arguments
+            if let cwd { process.currentDirectoryURL = cwd }
+            if let environment { process.environment = environment }
+            let out = Pipe()
+            let err = Pipe()
+            let inPipe = Pipe()
+            process.standardOutput = out
+            process.standardError = err
+            process.standardInput = inPipe
+            let outBox = DataBox()
+            let errBox = DataBox()
+            let once = OnceFlag()
+            out.fileHandleForReading.readabilityHandler = { outBox.append($0.availableData) }
+            err.fileHandleForReading.readabilityHandler = { errBox.append($0.availableData) }
+            process.terminationHandler = { process in
+                guard once.claim() else { return }
                 out.fileHandleForReading.readabilityHandler = nil
                 err.fileHandleForReading.readabilityHandler = nil
                 outBox.append((try? out.fileHandleForReading.readToEnd()) ?? Data())
@@ -218,7 +202,38 @@ public enum ProcessRunner {
                         stdout: String(decoding: outBox.data, as: UTF8.self),
                         stderr: String(decoding: errBox.data, as: UTF8.self)))
             }
+            _ = fcntl(inPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+            do {
+                try process.run()
+            } catch {
+                guard once.claim() else { return }
+                continuation.resume(returning: Result(status: -1, stdout: "", stderr: error.localizedDescription))
+                return
+            }
+            if let input, let data = input.data(using: .utf8) {
+                try? inPipe.fileHandleForWriting.write(contentsOf: data)
+            }
+            try? inPipe.fileHandleForWriting.close()
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                if process.isRunning { process.terminate() }
+            }
         }
+    }
+}
+
+/// Lets exactly one of several racing callbacks proceed.
+final class OnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    nonisolated init() {}
+
+    nonisolated func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true
+        return true
     }
 }
 

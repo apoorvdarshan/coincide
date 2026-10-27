@@ -75,10 +75,13 @@ public struct ApprovalRequest: Sendable, Hashable {
     public var detail: String?
     public var options: [ApprovalOption]
     public var toolCallID: String?
+    /// Set when the agent wants text along with the choice (for example an extension's input dialog).
+    /// The answer arrives through `respond(to:optionID:text:)`.
+    public var textInput: TextInputSpec?
 
     public nonisolated init(
         id: String, category: ToolCategory, title: String, detail: String? = nil, options: [ApprovalOption],
-        toolCallID: String? = nil
+        toolCallID: String? = nil, textInput: TextInputSpec? = nil
     ) {
         self.id = id
         self.category = category
@@ -86,6 +89,7 @@ public struct ApprovalRequest: Sendable, Hashable {
         self.detail = detail
         self.options = options
         self.toolCallID = toolCallID
+        self.textInput = textInput
     }
 
     /// Allow once / allow for the session / deny, for providers that do not supply their own choices.
@@ -136,6 +140,9 @@ public enum AgentEvent: Sendable, Hashable {
     /// The provider's session id, persisted so the thread can resume it later.
     /// Emit it again if a resume failed and a fresh session was created instead.
     case sessionStarted(id: String)
+    /// The session moved to a new native id that still holds the whole conversation (for example a fork),
+    /// so the thread needs no recap for it.
+    case sessionContinued(id: String)
     case assistantTextDelta(itemID: String, delta: String)
     /// Authoritative full text for an assistant item; replaces anything streamed so far.
     case assistantText(itemID: String, text: String)
@@ -149,6 +156,11 @@ public enum AgentEvent: Sendable, Hashable {
     case approvalRequested(ApprovalRequest)
     /// The provider resolved or withdrew a pending approval itself.
     case approvalResolved(id: String)
+    /// The agent asks the user one or more questions (Claude's AskUserQuestion, Codex's request_user_input, …).
+    /// Answers go back through `answer(userInput:answers:)`.
+    case userInputRequested(UserInputRequest)
+    /// The provider withdrew or resolved a pending question itself.
+    case userInputResolved(id: String)
     /// The agent's current plan or todo list, as markdown. Replaces the previous plan of the turn.
     case plan(text: String)
     case usage(TokenUsage)
@@ -178,10 +190,23 @@ public protocol AgentSession: AnyObject {
     /// ending with exactly one `.turnCompleted`.
     func send(_ input: AgentTurnInput) async throws
     func respond(to approvalID: String, optionID: String)
+    /// Answers an approval that asked for text (`ApprovalRequest.textInput`).
+    func respond(to approvalID: String, optionID: String, text: String?)
+    /// Answers a `.userInputRequested` event. `answers` maps each question id to the chosen option labels
+    /// or free text. An empty dictionary means the user dismissed the questions.
+    func answer(userInput requestID: String, answers: [String: [String]])
     /// Asks the provider to stop the running turn. It should still end with `.turnCompleted(.interrupted)`.
     func interrupt()
     /// Ends the process. No events are expected afterwards.
     func shutdown()
+}
+
+extension AgentSession {
+    public func respond(to approvalID: String, optionID: String, text: String?) {
+        respond(to: approvalID, optionID: optionID)
+    }
+
+    public func answer(userInput requestID: String, answers: [String: [String]]) {}
 }
 
 public struct ProviderStatus: Sendable, Hashable {
