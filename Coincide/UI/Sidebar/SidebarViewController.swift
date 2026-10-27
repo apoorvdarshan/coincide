@@ -171,6 +171,9 @@ final class SidebarViewController: NSViewController {
             self, selector: #selector(activityChanged(_:)), name: .coincideThreadActivityChanged, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(hideJumpHints), name: NSApplication.didResignActiveNotification, object: nil)
+        // Project folders are moved and deleted in other apps.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(applicationDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
         hasLoaded = true
         rebuild()
         if let selectedThreadID { select(threadID: selectedThreadID) }
@@ -198,6 +201,10 @@ final class SidebarViewController: NSViewController {
         case .items, .settings, .providers:
             break
         }
+    }
+
+    @objc private func applicationDidBecomeActive() {
+        refreshProjectRows()
     }
 
     @objc private func activityChanged(_ note: Notification) {
@@ -910,6 +917,9 @@ extension SidebarViewController: NSMenuDelegate {
         menu.addItem(.separator())
         addOpenItems(to: menu)
         menu.addItem(.separator())
+        if !FileManager.default.fileExists(atPath: project.path) {
+            menu.addItem(item(String(localized: "Locate Folder…"), #selector(locateProjectFromMenu(_:)), id))
+        }
         menu.addItem(item(String(localized: "Rename…"), #selector(renameProjectFromMenu(_:)), id))
         menu.addItem(item(String(localized: "Remove from Coincide…"), #selector(removeProjectFromMenu(_:)), id))
     }
@@ -985,6 +995,11 @@ extension SidebarViewController: NSMenuDelegate {
     @objc private func renameProjectFromMenu(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID, let node = nodes.existing(.project(id)) else { return }
         beginRename(node)
+    }
+
+    @objc private func locateProjectFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        ThreadActions.locateProject(id, in: view.window)
     }
 
     @objc private func removeProjectFromMenu(_ sender: NSMenuItem) {

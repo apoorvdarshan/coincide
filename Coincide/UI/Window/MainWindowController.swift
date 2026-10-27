@@ -317,9 +317,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// The folder "Open in" acts on: the open thread's worktree or project, else the current project.
+    /// Nil when that folder was moved or deleted.
     var openFolder: URL? {
-        if let id = selectedThreadID, let folder = ThreadActions.folder(for: id) { return folder }
-        return currentProjectID.flatMap { store.project($0)?.url }
+        let folder: URL?
+        if let id = selectedThreadID, let threadFolder = ThreadActions.folder(for: id) {
+            folder = threadFolder
+        } else {
+            folder = currentProjectID.flatMap { store.project($0)?.url }
+        }
+        return folder.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
     @objc func openInPreferred(_ sender: Any?) {

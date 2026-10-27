@@ -62,6 +62,8 @@ final class BranchToolbarView: NSView {
                 self.scheduleRefresh()
             case .items(threadID, _, true):
                 self.render()
+            case .projects:
+                if self.cwd != self.statusFolder { self.scheduleRefresh() }
             default:
                 break
             }

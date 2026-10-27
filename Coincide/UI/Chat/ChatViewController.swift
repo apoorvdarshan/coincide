@@ -226,7 +226,7 @@ final class ChatViewController: NSViewController {
                 scrollStates[threadID] = nil
                 expanded[threadID] = nil
                 self.threadID = nil
-            } else if displayedThreadID == nil {
+            } else if displayedThreadID == nil || !welcomeView.isHidden {
                 updateChrome()
             }
         case .settings:

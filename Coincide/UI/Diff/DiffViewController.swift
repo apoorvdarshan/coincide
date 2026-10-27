@@ -188,6 +188,9 @@ final class DiffViewController: NSViewController {
             case .thread(let id) where id == self.threadID:
                 // The thread may have moved into (or out of) a worktree.
                 if self.cwd != self.loadedFolder { self.reload() }
+            case .projects where self.cwd != self.loadedFolder:
+                // The project's folder was located somewhere else.
+                self.reload()
             case .settings where self.fontSize != Theme.fontSize:
                 self.fontSize = Theme.fontSize
                 if let diff = self.diff { self.show(diff, keepPosition: true) }

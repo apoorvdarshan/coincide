@@ -90,6 +90,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             self, selector: #selector(focusRequested), name: .coincideFocusComposer, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationWillTerminate), name: NSApplication.willTerminateNotification, object: nil)
+        // Folders are moved and deleted in other apps.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(applicationDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
         applySettings()
         bindThread()
     }
@@ -300,6 +303,10 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         suggestions.hide()
     }
 
+    @objc private func applicationDidBecomeActive() {
+        refreshThread()
+    }
+
     @objc private func applicationWillTerminate() {
         guard let threadID else { return }
         saveDraft(to: threadID)
@@ -345,6 +352,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             refreshRunState()
         case .threadList:
             if threadID != nil, thread == nil { refreshThread() }
+        case .projects:
+            if threadID != nil { refreshThread() }
         case .settings:
             applySettings()
             refreshThread()
@@ -576,6 +585,11 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         if noProviderReady {
             return String(localized: "Enable a provider in Settings to send a message")
         }
+        if let missing = missingFolder {
+            return missing.isWorktree
+                ? String(localized: "This thread’s worktree no longer exists.")
+                : String(localized: "The project folder was moved or deleted. Locate it from the sidebar.")
+        }
         let provider = thread.selection.provider
         if !isUsable(provider) {
             return String(localized: "\(provider.displayName) isn't available. Choose another agent below.")
@@ -609,6 +623,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         }
     }
 
+    /// The folder the thread works in, when it was moved or deleted.
+    private var missingFolder: (url: URL, isWorktree: Bool)? {
+        guard let thread, let folder = store.workingDirectory(for: thread.id),
+            !FileManager.default.fileExists(atPath: folder.path)
+        else { return nil }
+        return (folder, thread.worktreePath != nil)
+    }
+
     private var hasContent: Bool {
         !attachments.isEmpty || textView.string.contains { !$0.isWhitespace }
     }
@@ -627,7 +649,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         let running = runner.isRunning(threadID)
         let canSend =
             hasContent && importingImages == 0 && isUsable(thread.selection.provider)
-            && !WorktreeService.shared.isPreparing(threadID)
+            && !WorktreeService.shared.isPreparing(threadID) && missingFolder == nil
         footer.stopButton.isHidden = !running
         footer.implementButton.isHidden = !(proposedPlan != nil && !hasContent && !running)
         send.isHidden = !footer.implementButton.isHidden
@@ -1038,7 +1060,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         }
         // A message sent while the thread's worktree is still being created would run in the project folder.
         guard importingImages == 0, let thread, isUsable(thread.selection.provider),
-            !WorktreeService.shared.isPreparing(thread.id)
+            !WorktreeService.shared.isPreparing(thread.id), missingFolder == nil
         else {
             NSSound.beep()
             return
