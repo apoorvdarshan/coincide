@@ -3,6 +3,7 @@ import CoincideKit
 
 /// Builds the menu bar in code and fills its project and "Open In" submenus when they open.
 /// Coincide commands target the main window controller; standard ones travel the responder chain.
+/// Commands the user can rebind (`KeyCommand`) get their shortcuts from `KeyBindingsController`.
 final class MainMenu: NSObject, NSMenuDelegate {
     private weak var windowController: MainWindowController?
     private let newThreadInMenu = NSMenu(title: String(localized: "New Thread in Project"))
@@ -28,6 +29,7 @@ final class MainMenu: NSObject, NSMenuDelegate {
         let help = NSMenu(title: String(localized: "Help"))
         main.addItem(submenu(help))
         NSApp.helpMenu = help
+        KeyBindingsController.shared.attach(to: main)
         return main
     }
 
@@ -58,17 +60,17 @@ final class MainMenu: NSObject, NSMenuDelegate {
 
     private func fileMenu() -> NSMenu {
         let menu = NSMenu(title: String(localized: "File"))
-        menu.addItem(item(String(localized: "New Thread"), #selector(MainWindowController.newThread(_:)), "n"))
+        menu.addItem(item(String(localized: "New Thread"), #selector(MainWindowController.newThread(_:)), .newThread))
         let newIn = NSMenuItem(title: newThreadInMenu.title, action: nil, keyEquivalent: "")
         newIn.submenu = newThreadInMenu
         menu.addItem(newIn)
-        menu.addItem(item(String(localized: "Add Project…"), #selector(MainWindowController.addProject(_:)), "o", [.command, .shift]))
+        menu.addItem(item(String(localized: "Add Project…"), #selector(MainWindowController.addProject(_:)), .addProject))
         menu.addItem(.separator())
-        menu.addItem(item(String(localized: "Open in Editor"), #selector(MainWindowController.openInPreferred(_:)), "o"))
+        menu.addItem(item(String(localized: "Open in Editor"), #selector(MainWindowController.openInPreferred(_:)), .openInEditor))
         let openIn = NSMenuItem(title: openInMenu.title, action: nil, keyEquivalent: "")
         openIn.submenu = openInMenu
         menu.addItem(openIn)
-        menu.addItem(item(String(localized: "Reveal in Finder"), #selector(MainWindowController.revealInFinder(_:))))
+        menu.addItem(item(String(localized: "Reveal in Finder"), #selector(MainWindowController.revealInFinder(_:)), .revealInFinder))
         menu.addItem(.separator())
         menu.addItem(standard(String(localized: "Close Window"), #selector(NSWindow.performClose(_:)), "w"))
         return menu
@@ -101,8 +103,7 @@ final class MainMenu: NSObject, NSMenuDelegate {
             standard(
                 String(localized: "Use Selection for Find"), finder, "e", tag: NSTextFinder.Action.setSearchString.rawValue))
         find.addItem(.separator())
-        find.addItem(
-            item(String(localized: "Search Threads"), #selector(MainWindowController.searchThreads(_:)), "f", [.command, .option]))
+        find.addItem(item(String(localized: "Search Threads"), #selector(MainWindowController.searchThreads(_:)), .searchThreads))
         menu.addItem(submenu(find))
 
         let spelling = NSMenu(title: String(localized: "Spelling and Grammar"))
@@ -150,20 +151,24 @@ final class MainMenu: NSObject, NSMenuDelegate {
 
     private func viewMenu() -> NSMenu {
         let menu = NSMenu(title: String(localized: "View"))
-        menu.addItem(item(String(localized: "Hide Sidebar"), #selector(MainWindowController.toggleSidebarPanel(_:)), "b"))
-        menu.addItem(item(String(localized: "Show Terminal"), #selector(MainWindowController.toggleTerminalPanel(_:)), "j"))
-        menu.addItem(item(String(localized: "Show Diff"), #selector(MainWindowController.toggleDiffPanel(_:)), "d"))
+        menu.addItem(item(String(localized: "Hide Sidebar"), #selector(MainWindowController.toggleSidebarPanel(_:)), .toggleSidebar))
+        menu.addItem(item(String(localized: "Show Terminal"), #selector(MainWindowController.toggleTerminalPanel(_:)), .toggleTerminal))
+        menu.addItem(item(String(localized: "Show Diff"), #selector(MainWindowController.toggleDiffPanel(_:)), .toggleDiff))
         menu.addItem(.separator())
-        menu.addItem(item(String(localized: "Command Palette…"), #selector(MainWindowController.showCommandPalette(_:)), "k"))
+        menu.addItem(
+            item(String(localized: "Command Palette…"), #selector(MainWindowController.showCommandPalette(_:)), .commandPalette))
         menu.addItem(.separator())
-        menu.addItem(item(String(localized: "Increase Font Size"), #selector(MainWindowController.increaseFontSize(_:)), "+"))
-        // Command-= reaches the same command without Shift.
+        menu.addItem(
+            item(String(localized: "Increase Font Size"), #selector(MainWindowController.increaseFontSize(_:)), .increaseFontSize))
+        // Command-= reaches the same command without Shift while it keeps its default Command-+.
         let equals = item(String(localized: "Increase Font Size"), #selector(MainWindowController.increaseFontSize(_:)), "=")
+        equals.identifier = .increaseFontSizeWithoutShift
         equals.isHidden = true
         equals.allowsKeyEquivalentWhenHidden = true
         menu.addItem(equals)
-        menu.addItem(item(String(localized: "Decrease Font Size"), #selector(MainWindowController.decreaseFontSize(_:)), "-"))
-        menu.addItem(item(String(localized: "Reset Font Size"), #selector(MainWindowController.resetFontSize(_:)), "0"))
+        menu.addItem(
+            item(String(localized: "Decrease Font Size"), #selector(MainWindowController.decreaseFontSize(_:)), .decreaseFontSize))
+        menu.addItem(item(String(localized: "Reset Font Size"), #selector(MainWindowController.resetFontSize(_:)), .resetFontSize))
         menu.addItem(.separator())
         menu.addItem(
             standard(String(localized: "Show Toolbar"), #selector(NSWindow.toggleToolbarShown(_:)), "t", [.command, .option]))
@@ -177,14 +182,13 @@ final class MainMenu: NSObject, NSMenuDelegate {
 
     private func threadMenu() -> NSMenu {
         let menu = NSMenu(title: String(localized: "Thread"))
-        menu.addItem(item(String(localized: "Stop"), #selector(MainWindowController.stopTurn(_:)), "."))
+        menu.addItem(item(String(localized: "Stop"), #selector(MainWindowController.stopTurn(_:)), .stopTurn))
         menu.addItem(.separator())
-        menu.addItem(
-            item(String(localized: "Previous Thread"), #selector(MainWindowController.previousThread(_:)), "[", [.command, .shift]))
-        menu.addItem(
-            item(String(localized: "Next Thread"), #selector(MainWindowController.nextThread(_:)), "]", [.command, .shift]))
+        menu.addItem(item(String(localized: "Previous Thread"), #selector(MainWindowController.previousThread(_:)), .previousThread))
+        menu.addItem(item(String(localized: "Next Thread"), #selector(MainWindowController.nextThread(_:)), .nextThread))
         for index in 1...9 {
-            let jump = item(String(localized: "Go to Thread \(index)"), #selector(MainWindowController.jumpToThread(_:)), "\(index)")
+            guard let command = KeyCommand.jumpToThread(index) else { continue }
+            let jump = item(String(localized: "Go to Thread \(index)"), #selector(MainWindowController.jumpToThread(_:)), command)
             jump.tag = index
             jump.isHidden = true
             jump.allowsKeyEquivalentWhenHidden = true
@@ -193,25 +197,20 @@ final class MainMenu: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         // The composer's pickers (T3's modelPicker.toggle, composer.effort and composer.mode).
         menu.addItem(
-            item(
-                String(localized: "Choose Agent and Model…"), #selector(MainWindowController.showModelPicker(_:)), "m",
-                [.command, .shift]))
+            item(String(localized: "Choose Agent and Model…"), #selector(MainWindowController.showModelPicker(_:)), .chooseModel))
         menu.addItem(
-            item(
-                String(localized: "Reasoning Effort…"), #selector(MainWindowController.showEffortPicker(_:)), "e",
-                [.command, .shift]))
-        menu.addItem(
-            item(String(localized: "Access…"), #selector(MainWindowController.showAccessPicker(_:)), "a", [.command, .shift]))
-        // Shift-Tab toggles it in the composer; as a menu shortcut it would take Shift-Tab from every field.
-        menu.addItem(item(String(localized: "Plan Mode"), #selector(MainWindowController.togglePlanMode(_:))))
+            item(String(localized: "Reasoning Effort…"), #selector(MainWindowController.showEffortPicker(_:)), .reasoningEffort))
+        menu.addItem(item(String(localized: "Access…"), #selector(MainWindowController.showAccessPicker(_:)), .accessMode))
+        // No default: Shift-Tab toggles it in the composer, and as a menu shortcut it would take Shift-Tab from every field.
+        menu.addItem(item(String(localized: "Plan Mode"), #selector(MainWindowController.togglePlanMode(_:)), .planMode))
         menu.addItem(.separator())
-        menu.addItem(item(String(localized: "Rename…"), #selector(MainWindowController.renameThread(_:))))
+        menu.addItem(item(String(localized: "Rename…"), #selector(MainWindowController.renameThread(_:)), .renameThread))
+        menu.addItem(item(String(localized: "Pin Thread"), #selector(MainWindowController.togglePinThread(_:)), .pinThread))
         menu.addItem(
-            item(String(localized: "Pin Thread"), #selector(MainWindowController.togglePinThread(_:)), "p", [.command, .shift]))
-        menu.addItem(item(String(localized: "Archive Thread"), #selector(MainWindowController.toggleArchiveThread(_:))))
-        menu.addItem(item(String(localized: "Copy Path"), #selector(MainWindowController.copyThreadPath(_:))))
+            item(String(localized: "Archive Thread"), #selector(MainWindowController.toggleArchiveThread(_:)), .archiveThread))
+        menu.addItem(item(String(localized: "Copy Path"), #selector(MainWindowController.copyThreadPath(_:)), .copyThreadPath))
         menu.addItem(.separator())
-        menu.addItem(item(String(localized: "Delete Thread…"), #selector(MainWindowController.deleteThread(_:))))
+        menu.addItem(item(String(localized: "Delete Thread…"), #selector(MainWindowController.deleteThread(_:)), .deleteThread))
         return menu
     }
 
@@ -250,7 +249,15 @@ final class MainMenu: NSObject, NSMenuDelegate {
 
     // MARK: Helpers
 
-    /// A Coincide command, sent to the main window controller.
+    /// A Coincide command whose shortcut the user sets, sent to the main window controller. `KeyBindingsController`
+    /// gives it its shortcut once the menu bar is built.
+    private func item(_ title: String, _ action: Selector, _ command: KeyCommand) -> NSMenuItem {
+        let item = item(title, action)
+        item.identifier = .keyCommand(command)
+        return item
+    }
+
+    /// A Coincide command with a fixed shortcut, sent to the main window controller.
     private func item(
         _ title: String, _ action: Selector, _ key: String = "", _ modifiers: NSEvent.ModifierFlags = .command
     ) -> NSMenuItem {
