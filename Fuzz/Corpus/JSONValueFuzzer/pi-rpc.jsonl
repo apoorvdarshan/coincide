@@ -1,0 +1,2 @@
+{"type":"response","command":"prompt","success":true}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"x"}}

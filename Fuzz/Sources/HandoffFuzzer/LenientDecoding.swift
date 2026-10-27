@@ -1,0 +1,1 @@
+../../../CoincideKit/Models/LenientDecoding.swift

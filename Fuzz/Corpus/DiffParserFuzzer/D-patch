@@ -1,0 +1,36 @@
+Ddiff --git a/Sources/App.swift b/Sources/App.swift
+index 1111111..2222222 100644
+--- a/Sources/App.swift
++++ b/Sources/App.swift
+@@ -1,4 +1,5 @@ struct App {
+ import Foundation
+-let a = 1
++let a = 2
++let b = 3
+
+ func run() {}
+diff --git a/new file.txt b/new file.txt
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/new file.txt	
+@@ -0,0 +1 @@
++hello
+\ No newline at end of file
+diff --git a/gone.txt b/gone.txt
+deleted file mode 100644
+index 4444444..0000000
+--- a/gone.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-bye
+diff --git a/old.swift b/new.swift
+similarity index 90%
+rename from old.swift
+rename to new.swift
+diff --git a/logo.png b/logo.png
+index 5555555..6666666 100644
+Binary files a/logo.png and b/logo.png differ
+diff --git a/run.sh b/run.sh
+old mode 100644
+new mode 100755

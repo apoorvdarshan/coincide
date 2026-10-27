@@ -1,0 +1,1 @@
+{"type":"message.part.updated","properties":{"part":{"id":"p1","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"ls"},"output":"a\nb\n","time":{"start":1730000000000,"end":1730000000500}}}}}

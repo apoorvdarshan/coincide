@@ -1,0 +1,1 @@
+../../../CoincideKit/Support/TerminalText.swift

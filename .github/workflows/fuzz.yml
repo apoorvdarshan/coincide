@@ -1,0 +1,103 @@
+# Fuzzes Coincide's parsers with libFuzzer and AddressSanitizer. The fuzzers live in Fuzz/ and
+# compile the real CoincideKit files through symlinks; each checks invariants (round trips,
+# consistent counts) as well as memory safety. See "Fuzzing" in CONTRIBUTING.md.
+#
+# Runs on pull requests that change a fuzzed file, weekly and on demand. A crash or a broken
+# invariant fails the job and uploads the input that caused it; replay it on any Mac with
+# `Fuzz/fuzz.sh replay <fuzzer> <file>`.
+
+name: Fuzz
+
+on:
+  pull_request:
+    branches: [main]
+    # `Fuzz/fuzz.sh check` fails when a fuzzed CoincideKit file is missing here.
+    paths:
+      - ".github/workflows/fuzz.yml"
+      - "Fuzz/**"
+      # Source of the ChangedFile shim in Fuzz/Shims.
+      - "CoincideKit/Git/CheckpointService.swift"
+      - "CoincideKit/Git/GitModels.swift"
+      - "CoincideKit/Git/GitParsing.swift"
+      - "CoincideKit/Models/LenientDecoding.swift"
+      - "CoincideKit/Models/Models.swift"
+      - "CoincideKit/Providers/ACP/UnifiedDiff.swift"
+      - "CoincideKit/Providers/Cursor/CursorDiff.swift"
+      - "CoincideKit/Providers/Handoff.swift"
+      - "CoincideKit/Support/JSONValue.swift"
+      - "CoincideKit/Support/TerminalText.swift"
+      - "CoincideKit/Support/TextClip.swift"
+  schedule:
+    # Weekly on Sundays.
+    - cron: "23 5 * * 0"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds to fuzz each target (at most 3600)
+        type: number
+        default: 120
+
+permissions:
+  contents: read
+
+# A newer push to a pull request replaces its older run; scheduled and manual runs are never cancelled.
+concurrency:
+  group: fuzz-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  prepare:
+    name: Check fuzz sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      fuzzers: ${{ steps.list.outputs.fuzzers }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the shim, symlinks, seeds and paths are in sync
+        run: Fuzz/fuzz.sh check
+
+      - name: List fuzzers
+        id: list
+        run: echo "fuzzers=$(Fuzz/fuzz.sh list --json)" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    name: Fuzz (${{ matrix.fuzzer }})
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    # libFuzzer ships with the swift.org toolchain, not with Xcode. Swift 6.4.1 on Ubuntu 24.04.
+    container:
+      image: swift:6.4.1-noble@sha256:6304481cf2717966b7ba175162e397ea2f2cc3161909f2b2a5cf40036079a0f7
+    strategy:
+      fail-fast: false
+      matrix:
+        fuzzer: ${{ fromJSON(needs.prepare.outputs.fuzzers) }}
+    env:
+      FUZZER: ${{ matrix.fuzzer }}
+      # A quick pass for pull requests; the weekly run fuzzes longer.
+      FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && '60' || inputs.seconds || '120' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build with libFuzzer and AddressSanitizer
+        run: Fuzz/fuzz.sh build "$FUZZER"
+
+      - name: Fuzz
+        run: Fuzz/fuzz.sh run "$FUZZER" "$FUZZ_SECONDS"
+
+      - name: Upload the failing input
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-failure-${{ matrix.fuzzer }}
+          path: Fuzz/.build/fuzz-artifacts/
+          if-no-files-found: ignore
+          retention-days: 30

@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"0b1f","model":"claude-opus","tools":["Bash","Read"]}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Hello"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls -la","timeout":120000}}],"usage":{"input_tokens":12,"output_tokens":3}},"session_id":"0b1f"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":1234,"total_cost_usd":0.0123,"result":"Done"}

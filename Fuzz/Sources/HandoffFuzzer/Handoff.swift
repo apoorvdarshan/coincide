@@ -1,0 +1,1 @@
+../../../CoincideKit/Providers/Handoff.swift
