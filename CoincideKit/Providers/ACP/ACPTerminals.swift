@@ -77,6 +77,7 @@ public final class ACPTerminals {
         nextNumber += 1
         let terminal = Terminal(sessionID: sessionID, process: process, output: output)
         process.terminationHandler = { [weak self] process in
+            ChildProcesses.shared.forget(process.processIdentifier)
             let status: JSONValue =
                 process.terminationReason == .uncaughtSignal
                 ? ["exitCode": .null, "signal": .string(Self.signalName(process.terminationStatus))]
@@ -92,6 +93,8 @@ public final class ACPTerminals {
             pipe.fileHandleForReading.readabilityHandler = nil
             throw ACPError.internalError("Could not start terminal command '\(command)'.")
         }
+        // Stopped when Coincide quits, and after a crash on the next launch.
+        ChildProcesses.shared.track(process.processIdentifier)
         terminals[id] = terminal
         order.append(id)
         return ["terminalId": .string(id)]
@@ -150,12 +153,7 @@ public final class ACPTerminals {
     private func stop(_ terminal: Terminal) {
         let process = terminal.process
         guard process.isRunning else { return }
-        ACPProcessTree.terminate(ACPProcessTree.descendants(of: process.processIdentifier))
-        process.terminate()
-        let pid = process.processIdentifier
-        DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
-            if process.isRunning { Darwin.kill(pid, SIGKILL) }
-        }
+        ProcessTree.terminateTree(process.processIdentifier, grace: 3)
     }
 
     private func finish(_ id: String, status: JSONValue) {

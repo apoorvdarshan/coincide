@@ -19,9 +19,8 @@ final class PiProcessTransport: PiTransport {
     var onLine: ((String) -> Void)?
     var onExit: ((Int32, String) -> Void)?
 
+    /// Prompts can carry megabytes of image data; `LineProcess` writes off the main thread, in order.
     private let process: LineProcess
-    /// Prompts can carry megabytes of image data, so writes leave the main thread; one serial queue keeps them in order.
-    private let writer = DispatchQueue(label: "com.apoorvdarshan.coincide.pi.stdin")
 
     init(executable: URL, arguments: [String], workingDirectory: URL, environment: [String: String]) {
         process = LineProcess(
@@ -37,13 +36,11 @@ final class PiProcessTransport: PiTransport {
     }
 
     func write(_ line: String) {
-        let process = process
-        writer.async { process.write(line) }
+        process.write(line)
     }
 
     func closeInput() {
-        let process = process
-        writer.async { process.closeInput() }
+        process.closeInput()
     }
 
     func terminate() {

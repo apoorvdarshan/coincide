@@ -74,9 +74,8 @@ final class OpenCodeServer {
             executable: executable, arguments: ["serve", "--hostname=127.0.0.1", "--port=0"],
             workingDirectory: FileManager.default.homeDirectoryForCurrentUser, environment: environment)
         let url = try await waitUntilListening(process)
+        // `LineProcess` registers the server with `ChildProcesses`, so it never outlives Coincide.
         let pid = process.processIdentifier
-        OpenCodeServerProcesses.shared.track(pid)
-        OpenCodeServerLedger.record(pid: pid)
         let api = OpenCodeAPI(baseURL: url, password: password, urlSession: OpenCodeAPI.makeURLSession())
         do {
             let version = try await api.serverVersion()
@@ -85,11 +84,7 @@ final class OpenCodeServer {
             return server
         } catch {
             // The handler holds the process until it has exited, then lets go.
-            process.onExit = { _, _ in
-                process.onExit = nil
-                OpenCodeServerProcesses.shared.forget(pid)
-                OpenCodeServerLedger.forget(pid: pid)
-            }
+            process.onExit = { _, _ in process.onExit = nil }
             OpenCodeServerProcesses.stop(pid)
             api.urlSession.invalidateAndCancel()
             throw error
@@ -249,7 +244,7 @@ final class OpenCodeServer {
     }
 
     /// Stops the process, keeping this server (and so the process handle) alive until it has exited, so
-    /// the exit is reaped and its ledger entry removed.
+    /// the exit is reaped.
     private func stopProcess() {
         guard process.isRunning else { return }
         process.onExit = { [self] status, stderrTail in
@@ -260,8 +255,6 @@ final class OpenCodeServer {
     }
 
     private func processExited(status: Int32, stderrTail: String) {
-        OpenCodeServerProcesses.shared.forget(pid)
-        OpenCodeServerLedger.forget(pid: pid)
         guard !isStopping else { return }
         var message = String(localized: "OpenCode exited unexpectedly (code \(status)).")
         let tail = stderrTail.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -432,90 +425,33 @@ final class OpenCodeServerLease {
 
 // MARK: - Process tracking
 
-/// Server processes still running. Coincide terminates them when it exits so none outlive it.
-final class OpenCodeServerProcesses: @unchecked Sendable {
-    static let shared = OpenCodeServerProcesses()
-
-    private let lock = NSLock()
-    private var pids: Set<Int32> = []
-    private var installedExitHandler = false
-
-    nonisolated func track(_ pid: Int32) {
-        lock.withLock {
-            pids.insert(pid)
-            guard !installedExitHandler else { return }
-            installedExitHandler = true
-            atexit { OpenCodeServerProcesses.shared.terminateAll() }
-        }
-    }
-
-    nonisolated func forget(_ pid: Int32) {
-        lock.withLock { _ = pids.remove(pid) }
-    }
-
-    nonisolated func terminateAll() {
-        for pid in lock.withLock({ pids }) { kill(pid, SIGTERM) }
-    }
-
+/// Stopping a server. Servers are `LineProcess`es, so `ChildProcesses` stops them when Coincide quits
+/// and sweeps up ones a crashed Coincide left behind.
+enum OpenCodeServerProcesses {
     /// Sends SIGTERM, which lets OpenCode stop the MCP servers it started (they run in their own
-    /// process groups). If it is still running after `grace`, kills it and terminates its children.
+    /// process groups). If it is still running after `grace`, kills it and stops its children.
     nonisolated static func stop(_ pid: Int32, grace: TimeInterval = 10) {
-        guard pid > 0, let start = startTime(of: pid) else { return }
+        guard let server = ProcessTree.identity(of: pid) else { return }
         kill(pid, SIGTERM)
         DispatchQueue.global().asyncAfter(deadline: .now() + grace) {
-            guard startTime(of: pid) == start else { return }
-            let children = childProcesses(of: pid)
+            guard ProcessTree.isAlive(server) else { return }
+            let children = ProcessTree.descendants(of: pid)
             kill(pid, SIGKILL)
-            for child in children { kill(child, SIGTERM) }
+            ProcessTree.terminate(children)
         }
-    }
-
-    /// When the process started, in seconds since 1970, or nil if it is not running.
-    nonisolated static func startTime(of pid: Int32) -> Double? {
-        var info = kinfo_proc()
-        var size = MemoryLayout<kinfo_proc>.stride
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
-        guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size > 0, info.kp_proc.p_pid == pid else {
-            return nil
-        }
-        let start = info.kp_proc.p_un.__p_starttime
-        return Double(start.tv_sec) + Double(start.tv_usec) / 1_000_000
-    }
-
-    private nonisolated static func childProcesses(of pid: Int32) -> [Int32] {
-        var buffer = [Int32](repeating: 0, count: 256)
-        let count = buffer.withUnsafeMutableBytes { proc_listchildpids(pid, $0.baseAddress, Int32($0.count)) }
-        return Array(buffer.prefix(Int(max(0, count))))
     }
 }
 
-/// Records running servers on disk so that a launch after a crash can stop servers the crashed
-/// Coincide left behind. Each entry pairs the server with its owner; process start times guard
-/// against reused process ids.
+/// Servers an earlier Coincide recorded before `ChildProcesses` kept the ledger for every child.
 enum OpenCodeServerLedger {
     private nonisolated static var directory: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("coincide-opencode-servers", isDirectory: true)
     }
 
-    nonisolated static func record(pid: Int32) {
-        guard let start = OpenCodeServerProcesses.startTime(of: pid),
-            let ownerStart = OpenCodeServerProcesses.startTime(of: getpid())
-        else { return }
-        let entry: JSONValue = [
-            "pid": .number(Double(pid)), "start": .number(start), "owner": .number(Double(getpid())),
-            "ownerStart": .number(ownerStart),
-        ]
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? Data(entry.compactJSON.utf8).write(to: directory.appendingPathComponent("\(pid).json"), options: .atomic)
-    }
-
-    nonisolated static func forget(pid: Int32) {
-        try? FileManager.default.removeItem(at: directory.appendingPathComponent("\(pid).json"))
-    }
-
-    /// Stops servers whose owner is no longer running.
+    /// Stops servers whose owner is no longer running, and removes the old ledger.
     nonisolated static func sweep() {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        guard !files.isEmpty else { return }
         for file in files where file.pathExtension == "json" {
             guard let data = try? Data(contentsOf: file), let entry = JSONValue.parse(data),
                 let pid = entry["pid"]?.int, let start = entry["start"]?.number, let owner = entry["owner"]?.int,
@@ -531,7 +467,8 @@ enum OpenCodeServerLedger {
     }
 
     private nonisolated static func isRunning(_ pid: Int32, startedAt start: Double) -> Bool {
-        guard let actual = OpenCodeServerProcesses.startTime(of: pid) else { return false }
-        return abs(actual - start) < 0.001
+        guard let actual = ProcessTree.identity(of: pid) else { return false }
+        return abs(Double(actual.startTime) / 1_000_000 - start) < 0.001
     }
 }
+

@@ -317,10 +317,13 @@ public final class ThreadRunner {
         declineOpenPrompts(threadID, provider: provider, since: nil)
     }
 
-    /// Ends every session and stops every agent process. Call when quitting.
+    /// Ends every session and stops every agent process and what it started, waiting briefly for them
+    /// to exit. Call when quitting.
     public func shutdownAll() {
         let threadIDs = Set(sessions.keys).union(launches.keys).union(turns.keys)
         for threadID in threadIDs { shutdown(threadID: threadID) }
+        // Sessions stop their processes asynchronously, which a quitting app does not wait for.
+        ChildProcesses.terminateAllAndWait()
     }
 
     // MARK: Sessions
