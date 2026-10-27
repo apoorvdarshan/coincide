@@ -91,6 +91,10 @@ public final class CheckpointService {
     private var connectedStore: AppStore?
     private var threads: [UUID: [TurnCheckpoint]] = [:]
     private var workspaceQueues: [String: Task<Void, Never>] = [:]
+    /// Live-diff captures queued but not started yet, by folder (see `liveTree`).
+    private var waitingLiveCaptures: [String: Task<String, Error>] = [:]
+    /// How many live-diff captures have started, so tests can check that requests share them.
+    private(set) var liveCapturesStarted = 0
     private var storeObservation: ObservationToken?
     private var pruneScheduled = false
 
@@ -213,12 +217,30 @@ public final class CheckpointService {
         if let after = checkpoint.after {
             target = after
         } else {
-            guard let tree = try? await serialized(cwd, { try await CheckpointGit.capture(cwd: cwd, ref: nil) })
-            else { return nil }
+            // A caller that gave up (a reload replaced it) would only queue work nobody reads.
+            guard !Task.isCancelled, let tree = try? await liveTree(cwd) else { return nil }
             target = tree
         }
         return try? await CheckpointGit.diff(
             cwd: cwd, from: before, to: target, numstat: false, ignoreWhitespace: ignoreWhitespace, paths: paths)
+    }
+
+    /// The folder's current tree, for the diff of a turn that is still running. At most one such
+    /// capture waits in the folder's queue, and requests made meanwhile share it, so frequent diff
+    /// reloads cannot pile up captures ahead of the next turn's snapshots.
+    private func liveTree(_ cwd: URL) async throws -> String {
+        let key = cwd.standardizedFileURL.path
+        if let waiting = waitingLiveCaptures[key] { return try await waiting.value }
+        let task = Task { @MainActor () async throws -> String in
+            try await self.serialized(cwd) {
+                // Once it starts, a later request queues a fresh capture, so the diff stays current.
+                self.waitingLiveCaptures[key] = nil
+                self.liveCapturesStarted += 1
+                return try await CheckpointGit.capture(cwd: cwd, ref: nil)
+            }
+        }
+        waitingLiveCaptures[key] = task
+        return try await task.value
     }
 
     /// Whether the working tree can be restored to how it was before the turn.

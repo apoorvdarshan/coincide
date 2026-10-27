@@ -232,6 +232,33 @@ struct CheckpointServiceTests {
         #expect(!checkpoints.canRestore(threadID: mine.id, userItemID: turnID))
     }
 
+    @Test func runningTurnDiffsShareAWaitingCapture() async throws {
+        let repository = try await makeRepository()
+        let (checkpoints, _) = try makeService()
+        await checkpoints.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: repository.url)
+        try repository.write("edit.txt", "one\nTWO\n")
+
+        let requests = (0..<8).map { _ in Task { await checkpoints.turnDiff(threadID: threadID, userItemID: turnID) } }
+        for request in requests {
+            #expect(await request.value?.contains("+TWO") == true)
+        }
+        #expect(checkpoints.liveCapturesStarted <= 2)
+
+        // A later request still sees later changes.
+        try repository.write("edit.txt", "one\nTHREE\n")
+        #expect(await checkpoints.turnDiff(threadID: threadID, userItemID: turnID)?.contains("+THREE") == true)
+    }
+
+    @Test func aCancelledTurnDiffQueuesNoCapture() async throws {
+        let repository = try await makeRepository()
+        let (checkpoints, _) = try makeService()
+        await checkpoints.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: repository.url)
+        let request = Task { await checkpoints.turnDiff(threadID: threadID, userItemID: turnID) }
+        request.cancel()
+        #expect(await request.value == nil)
+        #expect(checkpoints.liveCapturesStarted == 0)
+    }
+
     @Test func turnDiffsReadAtMostTheCappedPatch() async throws {
         let repository = try await makeRepository()
         let (checkpoints, _) = try makeService()
