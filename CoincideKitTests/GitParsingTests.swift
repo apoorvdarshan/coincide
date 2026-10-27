@@ -119,6 +119,19 @@ struct GitParsingTests {
         #expect(files[5].modeChange == "100644 → 100755")
     }
 
+    @Test func absurdHunkNumbersAreNotHunkHeaders() {
+        // Counting lines from these used to overflow Int and trap.
+        #expect(DiffParser.hunkHeader("@@ -9223372036854775807,2 +1,2 @@") == nil)
+        #expect(DiffParser.hunkHeader("@@ -1,2 +1,-9223372036854775808 @@") == nil)
+        #expect(DiffParser.hunkHeader("@@ -1,-1 +1 @@") == nil)
+        #expect(DiffParser.hunkHeader("@@ -2147483647,2147483647 +0,0 @@")?.oldCount == 2_147_483_647)
+        for header in ["@@ -9223372036854775807,2 +1,2 @@", "@@ -1,2 +1,-9223372036854775808 @@"] {
+            let files = DiffParser.parse("diff --git a/x b/x\n\(header)\n a\n b\n")
+            #expect(files.map(\.path) == ["x"])
+            #expect(files.first?.hunks.isEmpty == true)
+        }
+    }
+
     @Test func assemblesCountsFromNumstat() {
         let patch = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n"
         let diff = GitOps.assemble(

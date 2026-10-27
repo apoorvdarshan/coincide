@@ -351,14 +351,21 @@ enum DiffParser {
         value.hasPrefix(prefix) ? String(value.dropFirst(prefix.count)) : value
     }
 
-    /// Parses `@@ -a,b +c,d @@ section`; a missing count means 1.
+    /// No file in a diff has this many lines. Capping hunk numbers here keeps the line numbers and counts
+    /// `parse` steps from them, once per line of the patch, from overflowing.
+    private static let maxLineNumber = Int(Int32.max)
+
+    /// Parses `@@ -a,b +c,d @@ section`; a missing count means 1. A negative or absurdly large number,
+    /// which git never writes, makes the line not a hunk header.
     static func hunkHeader(_ line: Substring) -> DiffHunk? {
         let parts = line.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true)
         guard parts.count >= 4, parts[0] == "@@", parts[3] == "@@" || parts[3].hasPrefix("@@") else { return nil }
         func range(_ value: Substring) -> (Int, Int)? {
             let pieces = value.dropFirst().split(separator: ",", omittingEmptySubsequences: false)
             guard let start = Int(pieces[0]) else { return nil }
-            return (start, pieces.count > 1 ? Int(pieces[1]) ?? 1 : 1)
+            let count = pieces.count > 1 ? Int(pieces[1]) ?? 1 : 1
+            guard (0...maxLineNumber).contains(start), (0...maxLineNumber).contains(count) else { return nil }
+            return (start, count)
         }
         guard let old = range(parts[1]), let new = range(parts[2]) else { return nil }
         let section = parts.count > 4 ? String(parts[4]) : ""
