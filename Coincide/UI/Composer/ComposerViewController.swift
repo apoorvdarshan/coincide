@@ -110,6 +110,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             self, selector: #selector(applicationDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(usageLimitsChanged), name: ThreadRunner.usageLimitsChangedNotification, object: runner)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyBindingsChanged), name: KeyBindingsController.didChangeNotification, object: nil)
         applySettings()
         bindThread()
     }
@@ -218,7 +220,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         footer.sendButton.action = #selector(sendClicked)
         footer.stopButton.target = self
         footer.stopButton.action = #selector(stop)
-        footer.stopButton.toolTip = String(localized: "Stop (⌘.)")
         footer.stopButton.setAccessibilityLabel(String(localized: "Stop"))
         footer.implementButton.target = self
         footer.implementButton.action = #selector(implementPlan)
@@ -446,7 +447,18 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         textView.font = Theme.bodyFont
         footer.sendButton.toolTip =
             store.settings.sendOnReturn ? String(localized: "Send (↩)") : String(localized: "Send (⌘↩)")
+        refreshStopToolTip()
         updateTextHeight()
+    }
+
+    /// The footer's tooltips name the menu commands' shortcuts, which the user can change.
+    @objc private func keyBindingsChanged() {
+        refreshStopToolTip()
+        refreshControls(thread)
+    }
+
+    private func refreshStopToolTip() {
+        footer.stopButton.toolTip = KeyBindingsController.shared.toolTip(String(localized: "Stop"), for: .stopTurn)
     }
 
     // MARK: Refresh
@@ -485,7 +497,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             footer.modelButton.configure(
                 title: title, symbolName: provider.symbolName, symbolTint: Theme.color(for: provider), chevron: true)
         }
-        footer.modelButton.toolTip = String(localized: "\(provider.displayName) · \(modelName). Choose the agent and model (⇧⌘M)")
+        let keyBindings = KeyBindingsController.shared
+        footer.modelButton.toolTip = keyBindings.toolTip(
+            String(localized: "\(provider.displayName) · \(modelName). Choose the agent and model"), for: .chooseModel)
         footer.modelButton.setAccessibilityLabel(String(localized: "Agent and model: \(provider.displayName), \(modelName)"))
 
         if let model, !model.efforts.isEmpty {
@@ -494,7 +508,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             footer.effortButton.configure(
                 title: effort.map(ComposerMenus.effortTitle) ?? String(localized: "Default"), symbolName: "brain",
                 chevron: true)
-            footer.effortButton.toolTip = String(localized: "Reasoning effort (⇧⌘E)")
+            footer.effortButton.toolTip = keyBindings.toolTip(String(localized: "Reasoning effort"), for: .reasoningEffort)
             footer.effortButton.setAccessibilityLabel(
                 String(localized: "Reasoning effort: \(effort.map(ComposerMenus.effortTitle) ?? String(localized: "Default"))"))
         } else {
@@ -504,7 +518,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         footer.accessButton.configure(
             title: thread.accessMode.displayName, symbolName: ComposerMenus.symbolName(for: thread.accessMode),
             chevron: true)
-        footer.accessButton.toolTip = ComposerMenus.summary(for: thread.accessMode) + " (⇧⌘A)"
+        footer.accessButton.toolTip = keyBindings.toolTip(ComposerMenus.summary(for: thread.accessMode), for: .accessMode)
         footer.accessButton.setAccessibilityLabel(String(localized: "Access: \(thread.accessMode.displayName)"))
 
         let planning = thread.interactionMode == .plan

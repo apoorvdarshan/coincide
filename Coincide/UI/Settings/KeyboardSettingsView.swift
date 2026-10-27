@@ -154,10 +154,19 @@ struct KeyboardSettingsView: View {
             CommandGroup(
                 title: menu.title, commands: KeyCommand.allCases.filter { $0.menu == menu && $0.threadJumpIndex == nil })
         }
+        let held = threadJumpModifiers.map { $0.glyphs.joined() }
         let jumps = CommandGroup(
             title: String(localized: "Go to Thread"), commands: KeyCommand.allCases.filter { $0.threadJumpIndex != nil },
-            note: String(localized: "Threads are counted from the top of the sidebar. Hold ⌘ to see their numbers."))
+            note: held.isEmpty
+                ? String(localized: "Threads are counted from the top of the sidebar.")
+                : String(
+                    localized: "Threads are counted from the top of the sidebar. Hold \(held.formatted(.list(type: .or))) to see their numbers."))
         return (groups + [jumps]).filter { !$0.commands.isEmpty }
+    }
+
+    /// The modifier keys that show the sidebar's thread numbers: those of the Go to Thread shortcuts.
+    private var threadJumpModifiers: [KeyModifiers] {
+        model.settings.keyBindings.threadJumpModifiers(keeping: Set(fixedMenuShortcuts.map(\.shortcut)))
     }
 
     private func filteredCommandGroups(bindings: KeyBindings, conflicted: Set<KeyCommand>) -> [CommandGroup] {
@@ -244,8 +253,14 @@ struct KeyboardSettingsView: View {
                 shortcuts: [
                     Shortcut(String(localized: "Move to the composer"), ["↩"]),
                     Shortcut(String(localized: "Delete thread"), ["⌫"]),
-                    Shortcut(String(localized: "Show thread numbers for ⌘1…⌘9"), [String(localized: "Hold"), "⌘"]),
-                ]),
+                ]
+                    + (threadJumpModifiers.isEmpty
+                        ? []
+                        : [
+                            Shortcut(
+                                String(localized: "Show thread numbers for Go to Thread"),
+                                threadJumpModifiers.map { [String(localized: "Hold")] + $0.glyphs })
+                        ])),
             ShortcutGroup(
                 title: String(localized: "Conversation"),
                 shortcuts: [

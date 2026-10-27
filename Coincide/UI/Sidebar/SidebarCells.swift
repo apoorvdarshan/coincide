@@ -64,7 +64,8 @@ struct ThreadRowModel: Equatable {
     var canFork = false
     var toolTip: String
     var accessibilityLabel: String
-    /// "⌘1"… while the user holds Command, as in T3.
+    /// The thread's Go to Thread shortcut ("⌘1"…) while the user holds its modifier keys, as in T3. Nil when the
+    /// thread's command has no shortcut.
     var jumpHint: String?
 }
 

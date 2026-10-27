@@ -60,6 +60,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             (.coincideToggleTerminal, #selector(toggleTerminalPanel(_:))),
             (.coincideThreadActivityChanged, #selector(activityChanged(_:))),
             (OpenTargets.preferredDidChange, #selector(updateOpenInItem)),
+            (KeyBindingsController.didChangeNotification, #selector(updateToolbarShortcuts)),
         ]
         for (name, selector) in events { center.addObserver(self, selector: selector, name: name, object: nil) }
 

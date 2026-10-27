@@ -48,6 +48,25 @@ final class KeyBindingsController {
         menuShortcut(for: command)?.displayString
     }
 
+    /// A tooltip naming the command's shortcut after `text`, such as "Stop (⌘.)"; just `text` when the command has
+    /// none. Views that show one update it on `didChangeNotification`.
+    func toolTip(_ text: String, for command: KeyCommand) -> String {
+        guard let keys = displayString(for: command) else { return text }
+        return String(localized: "\(text) (\(keys))")
+    }
+
+    /// The modifiers of the Go to Thread shortcuts, each once (`KeyBindings.threadJumpModifiers(keeping:)`).
+    var threadJumpModifiers: [KeyModifiers] {
+        bindings.threadJumpModifiers(keeping: fixed)
+    }
+
+    /// Whether holding `flags` (and nothing else) shows the sidebar's thread numbers: they are the modifiers of a Go
+    /// to Thread shortcut, as T3 shows its jump hints.
+    func showsThreadJumpHints(for flags: NSEvent.ModifierFlags) -> Bool {
+        let held = KeyModifiers(flags)
+        return !held.isEmpty && threadJumpModifiers.contains(held)
+    }
+
     private func settingsChanged() {
         let latest = store.settings.keyBindings
         guard latest != bindings else { return }

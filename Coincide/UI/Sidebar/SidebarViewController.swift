@@ -171,6 +171,8 @@ final class SidebarViewController: NSViewController {
             self, selector: #selector(activityChanged(_:)), name: .coincideThreadActivityChanged, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(hideJumpHints), name: NSApplication.didResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyBindingsChanged), name: KeyBindingsController.didChangeNotification, object: nil)
         // Project folders are moved and deleted in other apps.
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
@@ -181,7 +183,7 @@ final class SidebarViewController: NSViewController {
             MainActor.assumeIsolated { self?.refreshVisibleTimes(runningOnly: false) }
         }
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            self?.commandKeyChanged(event)
+            self?.modifiersChanged(event)
             return event
         }
         updateRunningTimer()
@@ -422,8 +424,8 @@ final class SidebarViewController: NSViewController {
         // A turn the agent started itself shows as working like any other; the tooltip says why.
         if let note = AgentTurns.shared.runningNote(in: thread.id) { lines.append(note) }
         var jumpHint: String?
-        if showsJumpHints, let index = jumpOrder.firstIndex(of: thread.id) {
-            jumpHint = "⌘\(index + 1)"
+        if showsJumpHints, let index = jumpOrder.firstIndex(of: thread.id), let command = KeyCommand.jumpToThread(index + 1) {
+            jumpHint = KeyBindingsController.shared.displayString(for: command)
         }
         return ThreadRowModel(
             title: thread.title, provider: thread.selection.provider, isPinned: thread.isPinned,
@@ -515,29 +517,39 @@ final class SidebarViewController: NSViewController {
         }
     }
 
-    // MARK: Command-key jump hints
+    // MARK: Go to Thread hints
 
-    private func commandKeyChanged(_ event: NSEvent) {
+    /// Holding the modifier keys of a Go to Thread shortcut (Command, unless the user changed them) shows each of
+    /// the first nine threads' shortcut, as T3 does.
+    private func modifiersChanged(_ event: NSEvent) {
         hideJumpHints()
-        guard Self.isOnlyCommandHeld(event.modifierFlags), view.window?.isKeyWindow == true else { return }
+        guard KeyBindingsController.shared.showsThreadJumpHints(for: event.modifierFlags), view.window?.isKeyWindow == true
+        else { return }
         // Wait a moment, so ordinary shortcuts do not flash the hints.
         jumpHintTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, NSApp.isActive, Self.isOnlyCommandHeld(NSEvent.modifierFlags) else { return }
+                guard let self, NSApp.isActive, KeyBindingsController.shared.showsThreadJumpHints(for: NSEvent.modifierFlags)
+                else { return }
                 self.showsJumpHints = true
             }
         }
     }
 
-    /// Also runs when Coincide goes to the background, which hides the Command key's release from it.
+    /// Also runs when Coincide goes to the background, which hides the keys' release from it.
     @objc private func hideJumpHints() {
         jumpHintTimer?.invalidate()
         jumpHintTimer = nil
         showsJumpHints = false
     }
 
-    private static func isOnlyCommandHeld(_ flags: NSEvent.ModifierFlags) -> Bool {
-        flags.intersection([.command, .shift, .option, .control]) == .command
+    /// New shortcuts change the hints shown, or whether the keys held still show them.
+    @objc private func keyBindingsChanged() {
+        guard showsJumpHints else { return }
+        if KeyBindingsController.shared.showsThreadJumpHints(for: NSEvent.modifierFlags) {
+            refreshVisibleThreadRows()
+        } else {
+            hideJumpHints()
+        }
     }
 
     // MARK: Actions
