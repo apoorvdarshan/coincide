@@ -182,8 +182,7 @@ public final class LineProcess: @unchecked Sendable {
             lock.unlock()
             return
         }
-        stderrTail.append(data)
-        if stderrTail.count > 16_384 { stderrTail = stderrTail.suffix(16_384) }
+        Self.appendToTail(&stderrTail, data)
         let (text, carry) = Self.decodeUTF8(stderrCarry + data)
         stderrCarry = carry
         lock.unlock()
@@ -230,6 +229,17 @@ public final class LineProcess: @unchecked Sendable {
                 self.onExit?(status, tail)
             }
         }
+    }
+
+    /// How much of the end of stderr is kept for `onExit`.
+    nonisolated static let stderrTailLimit = 16_384
+
+    /// Appends to the stderr tail and keeps its last `stderrTailLimit` bytes in storage of their own. A slice
+    /// would keep the old buffer, which then grows in place, so everything the process ever wrote to stderr
+    /// would stay in memory.
+    nonisolated static func appendToTail(_ tail: inout Data, _ data: Data) {
+        tail.append(data)
+        if tail.count > stderrTailLimit { tail = Data(tail.suffix(stderrTailLimit)) }
     }
 
     /// Decodes the complete UTF-8 characters of `data` and returns the bytes of a character cut off at the end.
