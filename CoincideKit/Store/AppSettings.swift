@@ -89,7 +89,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         }
         defaultSelection = value(.defaultSelection, defaults.defaultSelection)
         defaultAccessMode = value(.defaultAccessMode, defaults.defaultAccessMode)
-        providers = value(.providers, defaults.providers)
+        // Settings of providers this version does not know are skipped, not the whole list.
+        providers = container.lenientProviderMap(ProviderSettings.self, forKey: .providers)
         appearance = value(.appearance, defaults.appearance)
         sendOnReturn = value(.sendOnReturn, defaults.sendOnReturn)
         showReasoning = value(.showReasoning, defaults.showReasoning)

@@ -136,6 +136,15 @@ struct ThreadRunnerTests {
 
     // MARK: Starting and stopping
 
+    @Test func aFolderThatIsGoneFailsTheTurn() async {
+        let project = store.addProject(at: URL(fileURLWithPath: "/tmp/coincide-missing-\(UUID().uuidString)"))
+        let thread = store.createThread(in: project.id, selection: ModelSelection(provider: .claude, modelID: "m"))
+        await runner.send(threadID: thread.id, text: "hello")
+        #expect(store.thread(thread.id)?.items.last?.text == "The project folder is missing.")
+        #expect(claude.sessions.isEmpty)
+        #expect(!runner.isRunning(thread.id))
+    }
+
     @Test func stopWhileStartingEndsTheTurnAndANewSendSharesTheLaunch() async throws {
         let gate = Gate()
         claude.configure = { $0.onStart = { _ in await gate.wait() } }

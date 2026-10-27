@@ -122,6 +122,15 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
     }
 
     public nonisolated var url: URL { URL(fileURLWithPath: path) }
+
+    public nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        path = try container.decode(String.self, forKey: .path)
+        name = container.lenient(String.self, forKey: .name) ?? (path as NSString).lastPathComponent
+        createdAt = container.lenient(Date.self, forKey: .createdAt) ?? .distantPast
+        isExpanded = container.lenient(Bool.self, forKey: .isExpanded) ?? true
+    }
 }
 
 public enum ToolCategory: String, Codable, Sendable {
@@ -326,6 +335,28 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.completedAt = completedAt
     }
+
+    /// Only the id and kind are required; a field this version cannot read (a status or category added
+    /// later, say) is left empty rather than failing the item.
+    public nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        text = container.lenient(String.self, forKey: .text) ?? ""
+        title = container.lenient(String.self, forKey: .title)
+        detail = container.lenient(String.self, forKey: .detail)
+        category = container.lenient(ToolCategory.self, forKey: .category)
+        status = container.lenient(ItemStatus.self, forKey: .status)
+        provider = container.lenient(ProviderKind.self, forKey: .provider)
+        modelID = container.lenient(String.self, forKey: .modelID)
+        externalID = container.lenient(String.self, forKey: .externalID)
+        approval = container.lenient(ApprovalInfo.self, forKey: .approval)
+        questions = container.lenient(UserInputRequest.self, forKey: .questions)
+        answers = container.lenient([String: [String]].self, forKey: .answers)
+        attachments = container.lenient([String].self, forKey: .attachments)
+        createdAt = container.lenient(Date.self, forKey: .createdAt) ?? .distantPast
+        completedAt = container.lenient(Date.self, forKey: .completedAt)
+    }
 }
 
 /// A provider's native session for a thread, and how much of the transcript it has seen.
@@ -385,22 +416,25 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
 
     public nonisolated var hasUserMessages: Bool { items.contains { $0.kind == .user } }
 
+    /// Only the id and project are required; anything else this version cannot read falls back to a
+    /// default (items it cannot read are left out), so a thread is never lost to one bad field.
     public nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         projectID = try container.decode(UUID.self, forKey: .projectID)
-        title = try container.decode(String.self, forKey: .title)
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
-        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
-        selection = try container.decode(ModelSelection.self, forKey: .selection)
-        accessMode = try container.decodeIfPresent(AccessMode.self, forKey: .accessMode) ?? .fullAccess
-        interactionMode = try container.decodeIfPresent(InteractionMode.self, forKey: .interactionMode) ?? .build
-        items = try container.decodeIfPresent([TranscriptItem].self, forKey: .items) ?? []
-        sessions = try container.decodeIfPresent([ProviderKind: ProviderSessionRef].self, forKey: .sessions) ?? [:]
-        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
-        isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
-        worktreePath = try container.decodeIfPresent(String.self, forKey: .worktreePath)
-        branch = try container.decodeIfPresent(String.self, forKey: .branch)
-        draft = try container.decodeIfPresent(String.self, forKey: .draft)
+        title = container.lenient(String.self, forKey: .title) ?? String(localized: "New thread")
+        createdAt = container.lenient(Date.self, forKey: .createdAt) ?? .distantPast
+        updatedAt = container.lenient(Date.self, forKey: .updatedAt) ?? createdAt
+        selection =
+            container.lenient(ModelSelection.self, forKey: .selection) ?? ModelSelection(provider: .claude, modelID: "default")
+        accessMode = container.lenient(AccessMode.self, forKey: .accessMode) ?? .fullAccess
+        interactionMode = container.lenient(InteractionMode.self, forKey: .interactionMode) ?? .build
+        items = container.lenientArray(TranscriptItem.self, forKey: .items)
+        sessions = container.lenientProviderMap(ProviderSessionRef.self, forKey: .sessions)
+        isPinned = container.lenient(Bool.self, forKey: .isPinned) ?? false
+        isArchived = container.lenient(Bool.self, forKey: .isArchived) ?? false
+        worktreePath = container.lenient(String.self, forKey: .worktreePath)
+        branch = container.lenient(String.self, forKey: .branch)
+        draft = container.lenient(String.self, forKey: .draft)
     }
 }

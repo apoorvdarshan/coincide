@@ -151,7 +151,10 @@ public final class ThreadRunner {
         turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: turnID)
         store.notify(.runState(threadID))
 
-        guard let cwd = store.workingDirectory(for: threadID) else {
+        var isDirectory: ObjCBool = false
+        guard let cwd = store.workingDirectory(for: threadID),
+            FileManager.default.fileExists(atPath: cwd.path, isDirectory: &isDirectory), isDirectory.boolValue
+        else {
             finishTurn(threadID, turnID, outcome: .failed(String(localized: "The project folder is missing.")))
             return
         }
