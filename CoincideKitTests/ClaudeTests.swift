@@ -1801,6 +1801,17 @@ struct ClaudeSessionTests {
         #expect(events.value.count == count)
     }
 
+    @Test func aTurnClaudeStartsByItselfShowsWhatOnlyItsResultCarries() async throws {
+        let session = makeSession()
+        try await session.start()
+        transport.emit([ClaudeFixture.initFrame])
+        transport.emit([
+            #"{"type":"stream_event","event":{"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_wake","usage":{"input_tokens":3,"output_tokens":1}}},"parent_tool_use_id":null}"#,
+            #"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","result":"The build passed.","origin":{"kind":"task-notification"},"uuid":"r-wake","total_cost_usd":0.01}"#,
+        ])
+        #expect(events.value.suffix(2) == [.assistantText(itemID: "r-wake:result", text: "The build passed."), .turnCompleted(.completed)])
+    }
+
     @Test func exitMessagesEndWithWhatClaudePrinted() {
         // A clean exit is no error.
         #expect(ClaudeSession.exitMessage(status: 0, stderrTail: "") == nil)

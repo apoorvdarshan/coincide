@@ -537,14 +537,7 @@ final class ClaudeSession: AgentSession {
         guard let current = turn else { return }
         let outcome = ClaudeEventMapper.outcome(
             of: result, interruptRequested: current.interruptRequested, assistantError: mapper.assistantError)
-        if outcome == .completed {
-            if let error = mapper.assistantError, !error.text.isEmpty {
-                emit(.notice(error.text))
-            } else if !mapper.emittedReply, let reply = ClaudeEventMapper.replyText(of: result) {
-                // Only the result carries this turn's output, for example a slash command's.
-                emit(.assistantText(itemID: (result["uuid"]?.string ?? current.id) + ":result", text: reply))
-            }
-        }
+        if outcome == .completed { showUnreportedOutput(of: result, fallbackID: current.id) }
         finishTurn(outcome)
         endedTurnResultPending = false
     }
@@ -559,8 +552,20 @@ final class ClaudeSession: AgentSession {
         guard let stopping = agentTurn else { return }
         agentTurn = nil
         prompts.removeAll()
-        emit(.turnCompleted(
-            ClaudeEventMapper.outcome(of: result, interruptRequested: stopping, assistantError: mapper.assistantError)))
+        cancelTails()
+        let outcome = ClaudeEventMapper.outcome(of: result, interruptRequested: stopping, assistantError: mapper.assistantError)
+        if outcome == .completed { showUnreportedOutput(of: result, fallbackID: Self.newID()) }
+        emit(.turnCompleted(outcome))
+    }
+
+    /// What a completed turn showed nowhere else: an API error Claude reported as its reply, or output only the
+    /// result carries (a slash command's, for example).
+    private func showUnreportedOutput(of result: JSONValue, fallbackID: String) {
+        if let error = mapper.assistantError, !error.text.isEmpty {
+            emit(.notice(error.text))
+        } else if !mapper.emittedReply, let reply = ClaudeEventMapper.replyText(of: result) {
+            emit(.assistantText(itemID: (result["uuid"]?.string ?? fallbackID) + ":result", text: reply))
+        }
     }
 
     private func finishTurn(_ outcome: TurnOutcome) {
