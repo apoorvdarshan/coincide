@@ -478,7 +478,9 @@ final class ClaudeSession: AgentSession {
                 }
             }
         default:
-            if turn == nil, agentTurn == nil, !endedTurnResultPending,
+            // A background subagent keeps writing frames (tagged with its Agent call) after the turn that launched it
+            // ended; only the main conversation starts a turn of Claude's own.
+            if turn == nil, agentTurn == nil, !endedTurnResultPending, frame["parent_tool_use_id"]?.string == nil,
                 frame["type"]?.string == "stream_event" || frame["type"]?.string == "assistant"
             {
                 // Claude answers on its own, for example after background work finished.

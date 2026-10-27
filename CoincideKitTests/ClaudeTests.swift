@@ -1402,6 +1402,33 @@ struct ClaudeSessionTests {
         #expect(events.value.filter { if case .agentTurnStarted = $0 { true } else { false } }.count == 2)
     }
 
+    @Test func aBackgroundSubagentWorkingAfterTheTurnDoesNotStartOne() async throws {
+        let session = makeSession()
+        try await session.start()
+        _ = try await startTurn(session)
+        // The turn launches a background agent, whose call returns at once, and ends.
+        transport.emit([
+            #"{"type":"assistant","message":{"model":"claude-haiku-5-5","id":"msg_01Bg","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_01Bg","name":"Agent","input":{"description":"Run the tests","prompt":"Run the tests.","subagent_type":"general-purpose","run_in_background":true}}]},"parent_tool_use_id":null}"#,
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01Bg","content":"Async agent launched successfully."}]},"parent_tool_use_id":null}"#,
+        ])
+        transport.emit(ClaudeFixture.pongTurn + [ClaudeFixture.pongResult])
+        #expect(completions == [.completed])
+
+        // The subagent keeps working while the main conversation is idle.
+        transport.emit([
+            #"{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_01BgSub","usage":{"input_tokens":5,"output_tokens":1}}},"parent_tool_use_id":"toolu_01Bg"}"#,
+            #"{"type":"assistant","message":{"model":"claude-haiku-5-5","id":"msg_01BgSub","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_01BgBash","name":"Bash","input":{"command":"swift test"}}]},"parent_tool_use_id":"toolu_01Bg"}"#,
+            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01BgBash","content":"ok"}]},"parent_tool_use_id":"toolu_01Bg"}"#,
+        ])
+        #expect(!events.value.contains { if case .agentTurnStarted = $0 { true } else { false } })
+        #expect(completions == [.completed])
+
+        // Claude then wakes up on the main conversation to report it: that is a turn of its own.
+        transport.emit(ClaudeFixture.pongTurn + [ClaudeFixture.pongResult])
+        #expect(events.value.filter { if case .agentTurnStarted = $0 { true } else { false } }.count == 1)
+        #expect(completions == [.completed, .completed])
+    }
+
     @Test func aMessageClaudeNeverStartsFailsTheTurn() async throws {
         let session = makeSession()
         try await session.start()
