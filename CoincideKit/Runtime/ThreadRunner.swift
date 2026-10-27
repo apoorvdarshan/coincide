@@ -65,6 +65,8 @@ public final class ThreadRunner {
     public private(set) var usage: [UUID: TokenUsage] = [:]
     /// Which provider the stored usage belongs to, so a switch doesn't show the previous agent's context.
     public private(set) var usageProviders: [UUID: ProviderKind] = [:]
+    /// The model of the latest turn, so another model's context window is not kept.
+    private var usageModels: [UUID: String] = [:]
     public private(set) var queues: [UUID: [QueuedMessage]] = [:]
     private var idleTimer: Timer?
     /// Seconds a stopped turn waits for the provider's confirmation. Tests shorten it.
@@ -149,6 +151,7 @@ public final class ThreadRunner {
         store.updateThread(threadID, touch: true) { $0.draft = nil }
         itemMaps[threadID] = [:]
         turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: turnID)
+        resetTurnUsage(threadID, provider: provider, modelID: selection.modelID)
         store.notify(.runState(threadID))
 
         var isDirectory: ObjCBool = false
@@ -198,6 +201,18 @@ public final class ThreadRunner {
             guard isActive(threadID, turnID) else { return }
             finishTurn(threadID, turnID, outcome: .failed(error.localizedDescription))
         }
+    }
+
+    /// Usage reports fill in each other's missing fields, so a turn starts without the previous turn's
+    /// per-turn counts, and a different model without the previous model's context window.
+    private func resetTurnUsage(_ threadID: UUID, provider: ProviderKind, modelID: String) {
+        if usageProviders[threadID] == provider, var current = usage[threadID] {
+            current.outputTokens = nil
+            current.cachedInputTokens = nil
+            if usageModels[threadID] != modelID { current.contextWindow = nil }
+            usage[threadID] = current
+        }
+        usageModels[threadID] = modelID
     }
 
     /// Queues a message to send after the running turn.

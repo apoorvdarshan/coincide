@@ -257,7 +257,7 @@ final class OpenCodeServer {
     private func processExited(status: Int32, stderrTail: String) {
         guard !isStopping else { return }
         var message = String(localized: "OpenCode exited unexpectedly (code \(status)).")
-        let tail = stderrTail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tail = TerminalText.stripANSI(stderrTail).trimmingCharacters(in: .whitespacesAndNewlines)
         if !tail.isEmpty { message += "\n" + String(tail.suffix(1_500)) }
         terminate(message)
     }

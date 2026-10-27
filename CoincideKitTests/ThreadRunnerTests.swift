@@ -113,8 +113,9 @@ struct ThreadRunnerTests {
         store.updateThread(threadID) { $0.selection = ModelSelection(provider: provider, modelID: "m") }
     }
 
+    /// Polls for up to ten seconds; the first send resolves the login shell's environment, which can be slow.
     private func eventually(_ condition: () -> Bool) async -> Bool {
-        for _ in 0..<200 {
+        for _ in 0..<1_000 {
             if condition() { return true }
             try? await Task.sleep(for: .milliseconds(10))
         }
@@ -297,6 +298,25 @@ struct ThreadRunnerTests {
         #expect(text.utf8.count <= ThreadRunner.toolOutputLimit)
         #expect(text.hasSuffix("2"))
         #expect(text.unicodeScalars.allSatisfy { $0 == "é" || $0.properties.numericType != nil })
+    }
+
+    @Test func usageStartsEachTurnWithoutThePreviousTurnsCounts() async {
+        claude.configure = { session in
+            session.onSend = { session, _ in
+                session.emit(.usage(TokenUsage(inputTokens: 100, outputTokens: 5, cachedInputTokens: 40, contextWindow: 1_000)))
+                session.emit(.turnCompleted(.completed))
+            }
+        }
+        await runner.send(threadID: threadID, text: "one")
+        #expect(runner.usage[threadID] == TokenUsage(inputTokens: 100, outputTokens: 5, cachedInputTokens: 40, contextWindow: 1_000))
+        claude.last?.onSend = { session, _ in
+            session.emit(.usage(TokenUsage(inputTokens: 150)))
+            session.emit(.turnCompleted(.completed))
+        }
+        // Another model: the old context window no longer applies either.
+        store.updateThread(threadID) { $0.selection = ModelSelection(provider: .claude, modelID: "other") }
+        await runner.send(threadID: threadID, text: "two")
+        #expect(runner.usage[threadID] == TokenUsage(inputTokens: 150))
     }
 
     // MARK: Turns the agent starts

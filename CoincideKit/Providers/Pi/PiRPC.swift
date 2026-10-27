@@ -201,8 +201,7 @@ final class PiRPCClient {
 
     nonisolated static func exitDescription(status: Int32, stderr: String) -> String {
         let summary = status == 0 ? String(localized: "Pi exited.") : String(localized: "Pi exited with code \(status).")
-        let detail = stderr.replacingOccurrences(of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = TerminalText.stripANSI(stderr).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !detail.isEmpty else { return summary }
         return summary + "\n" + (detail.count > 800 ? "…" + String(detail.suffix(800)) : detail)
     }

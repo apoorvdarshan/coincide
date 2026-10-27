@@ -213,7 +213,7 @@ final class CursorConnection {
         guard !isClosed, let message = CursorRPCMessage.parse(line) else { return }
         switch message {
         case .response(let id, let result):
-            guard let key = id.int else { return }
+            guard let key = id.exactInt else { return }
             complete(key, with: result.mapError { $0 })
         case .request(let id, let method, let params):
             onRequest?(id, method, params)
@@ -241,6 +241,6 @@ final class CursorConnection {
     }
 
     nonisolated static func stripANSI(_ text: String) -> String {
-        text.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+        TerminalText.stripANSI(text)
     }
 }

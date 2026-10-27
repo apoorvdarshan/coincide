@@ -88,6 +88,7 @@ final class OpenCodeSession: AgentSession {
         sessionID = id
         var mapper = OpenCodeEventMapper(sessionID: id)
         mapper.contextWindow = model.flatMap { contextWindows[$0.slug] }
+        mapper.paths = PathDisplay(workingDirectory: directory)
         self.mapper = mapper
         emit(.sessionStarted(id: id))
         if let resumeID = launch.resumeSessionID, resumeID != id {

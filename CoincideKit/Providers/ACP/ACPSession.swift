@@ -568,9 +568,7 @@ public final class ACPSession: AgentSession {
 
     private func exitMessage(status: Int32, stderr: String) -> String {
         var message = String(localized: "\(provider.displayName) exited unexpectedly (status \(status)).")
-        let lines = stderr.replacingOccurrences(of: #"\u001B\[[0-9;]*[A-Za-z]"#, with: "", options: .regularExpression)
-            .split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        if !lines.isEmpty { message += "\n" + String(lines.suffix(6).joined(separator: "\n").suffix(800)) }
+        if let tail = TerminalText.tail(stderr, lines: 6, maxLength: 800) { message += "\n" + tail }
         return message
     }
 

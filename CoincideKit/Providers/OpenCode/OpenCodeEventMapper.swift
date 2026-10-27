@@ -58,6 +58,8 @@ struct OpenCodeEventMapper {
     }
     /// Context window of the session's current model, reported with usage.
     var contextWindow: Int?
+    /// Shows paths in tool titles relative to the session's folder.
+    var paths: PathDisplay?
 
     private var tools: [String: Tool] = [:]
     /// Tool calls shown another way: todo lists as the plan, questions as user input requests.
@@ -191,7 +193,7 @@ struct OpenCodeEventMapper {
                 hiddenTools[id] = name
                 return []
             }
-            let info = OpenCodeTools.info(id: id, name: name, input: [:])
+            let info = OpenCodeTools.info(id: id, name: name, input: [:], paths: paths)
             tools[id] = Tool(name: name, info: info)
             return [.event(.toolStarted(info))]
         case "session.tool.called":
@@ -202,7 +204,7 @@ struct OpenCodeEventMapper {
                 return [.event(.plan(text: plan))]
             }
             let name = tools[id]?.name ?? data["name"]?.string ?? "tool"
-            let info = OpenCodeTools.info(id: id, name: name, input: input)
+            let info = OpenCodeTools.info(id: id, name: name, input: input, paths: paths)
             tools[id] = Tool(name: name, info: info)
             return [.event(.toolUpdated(info))]
         case "session.tool.progress":
@@ -319,7 +321,7 @@ struct OpenCodeEventMapper {
                     if let plan = OpenCodeTools.todoMarkdown(input) { effects.append(.event(.plan(text: plan))) }
                     continue
                 }
-                effects.append(.event(.toolStarted(OpenCodeTools.info(id: id, name: name, input: input))))
+                effects.append(.event(.toolStarted(OpenCodeTools.info(id: id, name: name, input: input, paths: paths))))
                 switch state?["status"]?.string {
                 case "completed":
                     let result = OpenCodeTools.completion(name: name, content: state?["content"], metadata: state?["metadata"])
