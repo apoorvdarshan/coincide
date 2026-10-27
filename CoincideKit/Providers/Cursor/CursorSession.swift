@@ -331,6 +331,8 @@ public final class CursorSession: AgentSession {
             throw AgentError.providerError(
                 String(localized: "Cursor can't run the model \(target): \(error.detail). Choose one of the models from your Cursor account."))
         }
+        // The process no longer runs its `--model`; choosing that model again needs a restart.
+        launchModel = nil
         if let currentModel { emit(.modelResolved(currentModel)) }
     }
 

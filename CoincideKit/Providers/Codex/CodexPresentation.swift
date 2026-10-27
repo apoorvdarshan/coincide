@@ -18,9 +18,14 @@ struct CodexPresentation: Sendable {
 
     /// Classifies a command by Codex's parsed actions: pure reads and searches get their own category.
     func commandInfo(id: String, command: String, actions: [JSONValue]) -> ToolCallInfo {
-        let display = Self.head(Self.displayCommand(command, actions: actions))
+        let full = Self.displayCommand(command, actions: actions)
+        let display = Self.head(full)
         let types = actions.compactMap { $0["type"]?.string }
-        guard !types.isEmpty, types.count == actions.count, !types.contains("unknown") else {
+        // Codex leaves out of its actions the commands it takes for formatting (`| tee …`, `| xargs …`, `cd … &&`),
+        // so a command that chains more than its actions describe is shown as the command it is.
+        guard !types.isEmpty, types.count == actions.count, !types.contains("unknown"),
+            Self.chainedCommandCount(full) == actions.count
+        else {
             return ToolCallInfo(id: id, category: .command, title: Self.runTitle(display), detail: display)
         }
         if types.allSatisfy({ $0 == "read" }) {
@@ -40,10 +45,46 @@ struct CodexPresentation: Sendable {
         return ToolCallInfo(id: id, category: .read, title: Self.runTitle(display), detail: display)
     }
 
-    /// The command without the shell wrapper Codex adds, e.g. `npm test` for `/bin/zsh -lc 'npm test'`.
+    /// The command as it will run, without the shell wrapper Codex adds, e.g. `npm test` for `/bin/zsh -lc 'npm test'`.
+    /// Codex's parsed actions are a summary that drops pipeline stages (`cat notes | tee -a ~/.zshrc` reads as
+    /// `cat notes`), so they stand in only when Codex sent no command.
     static func displayCommand(_ command: String, actions: [JSONValue]) -> String {
-        if actions.count == 1, let inner = actions[0]["command"]?.string, !inner.isEmpty { return inner }
-        return unwrapShell(command)
+        let unwrapped = unwrapShell(command)
+        guard unwrapped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, actions.count == 1,
+            let inner = actions[0]["command"]?.string, !inner.isEmpty
+        else { return unwrapped }
+        return inner
+    }
+
+    /// How many commands a shell script runs, counting the ones `|`, `&&`, `||`, `;`, `&` and new lines chain
+    /// outside quotes (`cat a | tee b && ls` runs three); nil when a quote is left open. Errs toward more.
+    static func chainedCommandCount(_ script: String) -> Int? {
+        var count = 1
+        var quote: Character?
+        var escaped = false
+        var lastOperator: Character?
+        for character in script.trimmingCharacters(in: .whitespacesAndNewlines) {
+            var chain: Character?
+            if escaped {
+                escaped = false
+            } else if let open = quote {
+                if character == open {
+                    quote = nil
+                } else if open == "\"", character == "\\" {
+                    escaped = true
+                }
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "'" || character == "\"" {
+                quote = character
+            } else if "|&;".contains(character) || character.isNewline {
+                chain = character
+            }
+            // `&&` and `||` chain once.
+            if let chain, !(chain == lastOperator && (chain == "|" || chain == "&")) { count += 1 }
+            lastOperator = chain
+        }
+        return quote == nil && !escaped ? count : nil
     }
 
     /// An argv as one command line, without a `sh -c` wrapper: `["/bin/zsh", "-lc", "make"]` → `make`.

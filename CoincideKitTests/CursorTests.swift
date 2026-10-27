@@ -1078,6 +1078,14 @@ struct CursorSessionTests {
         try await harness.session.send(harness.input(modelID: "composer-2.5"))
         #expect(harness.transports.count == 2)
         #expect(harness.transport.messages("session/set_config_option").first?["params"]?["value"] == "composer-2.5")
+
+        // Going back to the unlisted model needs `--model` again: the process now runs composer-2.5.
+        harness.transport.answer("session/prompt", with: ["stopReason": "end_turn"])
+        try await harness.session.send(harness.input(modelID: "grok-4.7-high"))
+        #expect(harness.transports.count == 3)
+        #expect(harness.transports[1].isTerminated)
+        #expect(harness.transport.arguments == ["--force", "--model", "grok-4.7-high", "acp"])
+        #expect(harness.transport.methods().contains("session/prompt"))
     }
 
     @Test func approvalsRoundTrip() async throws {
