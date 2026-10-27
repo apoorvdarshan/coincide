@@ -329,6 +329,27 @@ struct ThreadRunnerTests {
         #expect(items.first { $0.externalID == "bg" }?.status == .completed)
     }
 
+    @Test func aToolFromAnEarlierTurnStillGetsLateOutput() async {
+        claude.configure = { session in
+            session.onSend = { session, _ in
+                session.emit(.toolStarted(ToolCallInfo(id: "bg", category: .command, title: "Run `swift test` in the background")))
+                session.emit(.toolCompleted(id: "bg", status: .completed, output: "Started in the background."))
+                session.emit(.turnCompleted(.completed))
+            }
+        }
+        await runner.send(threadID: threadID, text: "run the tests in the background")
+        await completeTurn("meanwhile", reply: "ok")
+        // The background command finishes after the next turn started.
+        claude.last!.emit(.toolOutput(id: "bg", delta: "\nTests passed."))
+        #expect(items.first { $0.externalID == "bg" }?.text == "Started in the background.\nTests passed.")
+
+        // Another provider's tool with the same id is a different tool.
+        select(.codex)
+        await completeTurn("codex, go", reply: "ok")
+        codex.last!.emit(.toolOutput(id: "bg", delta: "\nnot Claude's"))
+        #expect(items.first { $0.externalID == "bg" }?.text == "Started in the background.\nTests passed.")
+    }
+
     @Test func promptsOfAnEndedSessionAreClosed() async {
         await completeTurn("one", reply: "done")
         let session = claude.last!

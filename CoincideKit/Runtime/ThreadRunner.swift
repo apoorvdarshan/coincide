@@ -488,13 +488,13 @@ public final class ThreadRunner {
                 item.category = info.category
             }
         case .toolOutput(let id, let delta):
-            guard !delta.isEmpty, let existing = mappedItem(.tool, id, threadID) else { return }
+            guard !delta.isEmpty, let existing = toolItem(id, provider: provider, threadID) else { return }
             store.updateItem(existing, in: threadID) { item in
                 item.text += delta
                 item.text = TextClip.keepingTail(item.text, limit: Self.toolOutputLimit, clipTo: Self.toolOutputKept)
             }
         case .toolCompleted(let id, let status, let output):
-            guard let existing = mappedItem(.tool, id, threadID) else { return }
+            guard let existing = toolItem(id, provider: provider, threadID) else { return }
             store.updateItem(existing, in: threadID) { item in
                 item.status = status
                 item.completedAt = Date()
@@ -730,6 +730,16 @@ public final class ThreadRunner {
     private func mappedItem(_ kind: TranscriptItem.Kind, _ externalID: String, _ threadID: UUID) -> UUID? {
         guard let id = itemMaps[threadID]?[key(kind, externalID)], store.item(id, in: threadID) != nil else { return nil }
         return id
+    }
+
+    /// The tool item a provider's tool id refers to: one from this turn, or from an earlier turn that the
+    /// provider updates late (a background command or subagent finishing after its call returned). The map
+    /// only covers the current turn, since text ids can repeat across turns and sessions.
+    private func toolItem(_ externalID: String, provider: ProviderKind, _ threadID: UUID) -> UUID? {
+        mappedItem(.tool, externalID, threadID)
+            ?? store.thread(threadID)?.items.last { item in
+                item.kind == .tool && item.provider == provider && item.externalID == externalID
+            }?.id
     }
 
     private func map(_ kind: TranscriptItem.Kind, _ externalID: String, to itemID: UUID, _ threadID: UUID) {
