@@ -803,12 +803,13 @@ final class ClaudeSession: AgentSession {
         return [ultrathink ? ClaudeModelCatalog.applyUltrathink(to: prompt) : prompt]
     }
 
-    static func exitMessage(status: Int32, stderrTail: String) -> String? {
-        let lines = stderrTail.split(whereSeparator: \.isNewline).suffix(6).joined(separator: "\n")
-        let detail = ClaudeEventMapper.cleaned(lines)
-        guard status != 0 || detail != nil else { return nil }
-        let summary = String(localized: "Claude Code exited with status \(Int(status)).")
-        return detail.map { summary + "\n" + String($0.suffix(800)) } ?? summary
+    /// Why Claude Code ended on its own, with the last lines it printed to stderr. Nil for a clean exit: status 0
+    /// with nothing on stderr.
+    nonisolated static func exitMessage(status: Int32, stderrTail: String) -> String? {
+        let tail = TerminalText.tail(stderrTail, lines: 6, maxLength: 800)
+        guard status != 0 || tail != nil else { return nil }
+        let summary = String(localized: "\(ProviderKind.claude.displayName) exited unexpectedly (status \(status)).")
+        return tail.map { summary + "\n" + $0 } ?? summary
     }
 
     private static func newID() -> String { UUID().uuidString.lowercased() }
@@ -822,12 +823,15 @@ final class ClaudeSession: AgentSession {
         var sessionInUse: Bool
 
         init(error: Error, handshake: Handshake) {
-            let stderr = handshake.exit.map { ClaudeEventMapper.cleaned($0.stderr) ?? "" } ?? ""
-            let details = (handshake.resultErrors + [stderr]).filter { !$0.isEmpty && !$0.hasPrefix("[ede_diagnostic]") }
-            missingConversation = details.contains { $0.contains("No conversation found") }
-            sessionInUse = details.contains { $0.contains("is already in use") }
+            // Claude's own errors for the failed start; its diagnostics explain nothing to the user.
+            let errors = handshake.resultErrors.compactMap { TerminalText.nonEmpty($0) }.filter { !$0.hasPrefix("[ede_diagnostic]") }
+            let stderr = handshake.exit.map { TerminalText.stripANSI($0.stderr) } ?? ""
+            missingConversation = (errors + [stderr]).contains { $0.contains("No conversation found") }
+            sessionInUse = (errors + [stderr]).contains { $0.contains("is already in use") }
             if let exit = handshake.exit {
-                let reason = details.first.map { String($0.suffix(800)) } ?? String(localized: "status \(Int(exit.status))")
+                let reason =
+                    errors.first.map { String($0.suffix(800)) } ?? TerminalText.tail(exit.stderr, lines: 6, maxLength: 800)
+                    ?? String(localized: "status \(Int(exit.status))")
                 message = String(localized: "Claude Code exited while starting: \(reason)")
             } else {
                 message = error.localizedDescription

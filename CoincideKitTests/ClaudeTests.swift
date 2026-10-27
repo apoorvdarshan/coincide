@@ -386,7 +386,7 @@ struct ClaudeMapperTests {
             #"{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":180000}}"#,
             #"{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":1000,"error_status":529,"error":"overloaded"}"#,
             #"{"type":"system","subtype":"api_retry","attempt":2,"max_retries":10,"retry_delay_ms":2000,"error_status":529,"error":"overloaded"}"#,
-            #"{"type":"system","subtype":"informational","content":"\u001b[33mUserPromptSubmit hook blocked the prompt\u001b[0m","level":"warning"}"#,
+            #"{"type":"system","subtype":"informational","content":"\u001b[33mUserPromptSubmit hook blocked the prompt\u001b[0m \u001b]8;;https://code.claude.com/docs/hooks\u0007(hooks)\u001b]8;;\u0007","level":"warning"}"#,
             #"{"type":"system","subtype":"informational","content":"debug only","level":"info"}"#,
             #"{"type":"system","subtype":"local_command_output","content":"Total cost: $0.01","uuid":"cmd-1"}"#,
             #"{"type":"system","subtype":"status","status":null,"permissionMode":"acceptEdits"}"#,
@@ -395,7 +395,7 @@ struct ClaudeMapperTests {
         #expect(
             events == [
                 .notice("Context compacted"), .notice("Claude API overloaded; retrying…"),
-                .notice("UserPromptSubmit hook blocked the prompt"), .assistantText(itemID: "cmd-1", text: "Total cost: $0.01"),
+                .notice("UserPromptSubmit hook blocked the prompt (hooks)"), .assistantText(itemID: "cmd-1", text: "Total cost: $0.01"),
             ])
     }
 
@@ -1631,8 +1631,8 @@ struct ClaudeSessionTests {
         try await session.start()
         _ = try await startTurn(session)
         transport.exit(status: 1, stderr: "panic: something broke\n")
-        #expect(completions == [.failed("Claude Code exited with status 1.\npanic: something broke")])
-        #expect(events.value.last == .sessionExited(error: "Claude Code exited with status 1.\npanic: something broke"))
+        #expect(completions == [.failed("Claude Code exited unexpectedly (status 1).\npanic: something broke")])
+        #expect(events.value.last == .sessionExited(error: "Claude Code exited unexpectedly (status 1).\npanic: something broke"))
         // Should the runner still send on it, the session restarts on its conversation.
         try await session.send(input())
         #expect(transports.value.count == 2)
@@ -1799,5 +1799,56 @@ struct ClaudeSessionTests {
         transport.emit(ClaudeFixture.pongTurn)
         try await Task.sleep(for: .milliseconds(20))
         #expect(events.value.count == count)
+    }
+
+    @Test func exitMessagesEndWithWhatClaudePrinted() {
+        // A clean exit is no error.
+        #expect(ClaudeSession.exitMessage(status: 0, stderrTail: "") == nil)
+        #expect(ClaudeSession.exitMessage(status: 0, stderrTail: " \n\u{1B}[0m\u{1B}]0;claude\u{07}\n") == nil)
+        #expect(ClaudeSession.exitMessage(status: 143, stderrTail: "") == "Claude Code exited unexpectedly (status 143).")
+        #expect(
+            ClaudeSession.exitMessage(status: 0, stderrTail: "Error: lost the connection\n")
+                == "Claude Code exited unexpectedly (status 0).\nError: lost the connection")
+        // The last six lines with something on them, without escape sequences.
+        let stderr =
+            (1...8).map { "line \($0)" }.joined(separator: "\n")
+            + "\n\u{1B}[31mError:\u{1B}[0m read \u{1B}]8;;https://code.claude.com/docs\u{07}the docs\u{1B}]8;;\u{07}\n\n   \n"
+        #expect(
+            ClaudeSession.exitMessage(status: 1, stderrTail: stderr)
+                == "Claude Code exited unexpectedly (status 1).\nline 4\nline 5\nline 6\nline 7\nline 8\nError: read the docs")
+        let long = String(repeating: "x", count: 2_000)
+        #expect(ClaudeSession.exitMessage(status: 2, stderrTail: long) == "Claude Code exited unexpectedly (status 2).\n" + long.suffix(800))
+    }
+}
+
+// MARK: - Detection
+
+@MainActor
+struct ClaudeDetectionTests {
+    @Test func failuresEndWithWhatTheCommandPrinted() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-claude-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let script = directory.appendingPathComponent("claude")
+        try #"""
+            #!/bin/sh
+            printf 'Starting up\n\033[31mError:\033[0m the settings file is not valid JSON\n\n   \n' >&2
+            printf 'See \033]8;;https://code.claude.com/docs/settings\033\\the settings docs\033]8;;\033\\\nExiting\n' >&2
+            exit 3
+            """#.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let failed = await ClaudeProvider().detect(executable: script, environment: [:])
+        #expect(failed.state == .error)
+        #expect(
+            failed.message
+                == "Claude Code is installed but failed to run.\nError: the settings file is not valid JSON\nSee the settings docs\nExiting")
+
+        let missing = await ClaudeProvider().detect(executable: directory.appendingPathComponent("missing"), environment: [:])
+        #expect(missing.state == .error)
+        let message = try #require(missing.message)
+        let prefix = "Claude Code could not be started: "
+        #expect(message.hasPrefix(prefix) && message.count > prefix.count)
+        #expect(message == message.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }

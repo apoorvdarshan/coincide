@@ -582,10 +582,7 @@ struct ClaudeEventMapper {
 
     /// Strips terminal escape sequences and surrounding whitespace; nil when nothing is left.
     static func cleaned(_ text: String?) -> String? {
-        guard let text else { return nil }
-        let stripped = text.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return stripped.isEmpty ? nil : stripped
+        TerminalText.nonEmpty(text.map(TerminalText.stripANSI))
     }
 
     /// Claude 5.1 and newer models write their pre-tool updates as thinking.
