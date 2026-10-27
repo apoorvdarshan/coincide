@@ -27,14 +27,17 @@ public final class ThreadRunner {
         /// `send` was called (or the agent started the turn), so the provider may be running it.
         var promptSent = false
         /// Once the turn ends, the provider's session has seen the whole thread: it got the prompt (`send`
-        /// returned while the turn ran, or the turn produced output), or for a turn it started itself,
-        /// it had already seen everything before. Only then are the turn's items counted as seen.
+        /// returned while the turn ran, or the turn produced output after the prompt was sent), or for a turn
+        /// it started itself, it had already seen everything before. Only then are the turn's items counted as seen.
         var delivered = false
+        /// The model the turn runs with, recorded on its items even if the thread's selection changes meanwhile.
+        var modelID: String?
 
-        init(provider: ProviderKind, startedAt: Date, userItemID: UUID) {
+        init(provider: ProviderKind, startedAt: Date, userItemID: UUID, modelID: String? = nil) {
             self.provider = provider
             self.startedAt = startedAt
             self.userItemID = userItemID
+            self.modelID = modelID
         }
     }
 
@@ -71,6 +74,12 @@ public final class ThreadRunner {
     private var idleTimer: Timer?
     /// Seconds a stopped turn waits for the provider's confirmation. Tests shorten it.
     var stopTimeout: TimeInterval = ThreadRunner.defaultStopTimeout
+    /// Where turns' snapshots are kept. Tests use their own.
+    var checkpoints = CheckpointService.shared
+    /// Turns whose before snapshot is still being taken; their after snapshot waits for it.
+    private var capturingBefore: Set<UUID> = []
+    /// After snapshots being taken, so quitting can let them finish.
+    private var pendingCaptures: [UUID: Task<Void, Never>] = [:]
 
     /// Posted when a turn ends. userInfo: "threadID" (UUID), "outcome" (TurnOutcome).
     public static let turnFinishedNotification = Notification.Name("coincide.turnFinished")
@@ -150,7 +159,7 @@ public final class ThreadRunner {
         store.append(userItem, to: threadID)
         store.updateThread(threadID, touch: true) { $0.draft = nil }
         itemMaps[threadID] = [:]
-        turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: turnID)
+        turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: turnID, modelID: selection.modelID)
         resetTurnUsage(threadID, provider: provider, modelID: selection.modelID)
         store.notify(.runState(threadID))
 
@@ -170,8 +179,15 @@ public final class ThreadRunner {
                 return
             }
             if store.settings.checkpointsEnabled {
-                await CheckpointService.shared.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: cwd)
-                guard isActive(threadID, turnID) else { return }
+                capturingBefore.insert(turnID)
+                await checkpoints.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: cwd)
+                capturingBefore.remove(turnID)
+                guard isActive(threadID, turnID) else {
+                    // The turn ended meanwhile (a Stop timed out, or quitting), and `finishTurn` left its after
+                    // snapshot to this, as there was nothing to complete yet.
+                    captureAfterTurn(threadID, turnID, cwd: cwd)
+                    return
+                }
                 guard turns[threadID]?.interruptRequested == false else {
                     finishTurn(threadID, turnID, outcome: .interrupted)
                     return
@@ -342,6 +358,21 @@ public final class ThreadRunner {
         for threadID in threadIDs { shutdown(threadID: threadID) }
         // Sessions stop their processes asynchronously, which a quitting app does not wait for.
         ChildProcesses.terminateAllAndWait()
+        // The turns just ended still need their after snapshots, or their changes could never be shown.
+        waitForCheckpoints(timeout: 3)
+    }
+
+    /// True while snapshots of ended turns are still being taken.
+    var isCapturingCheckpoints: Bool { !capturingBefore.isEmpty || !pendingCaptures.isEmpty }
+
+    /// Lets the snapshots of ended turns finish, for at most `timeout` seconds. They run on the main actor,
+    /// so the main run loop keeps turning meanwhile. That serves the main queue when quitting from a menu,
+    /// key command or Apple event; called from a main-queue block, this just waits out the timeout.
+    private func waitForCheckpoints(timeout: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while isCapturingCheckpoints, Date() < deadline {
+            RunLoop.main.run(mode: .default, before: min(deadline, Date().addingTimeInterval(0.05)))
+        }
     }
 
     // MARK: Sessions
@@ -409,12 +440,17 @@ public final class ThreadRunner {
         return launch.session
     }
 
-    private func shutDownIdleSessions() {
+    func shutDownIdleSessions(now: Date = Date()) {
         let limit = TimeInterval(max(1, store.settings.idleSessionTimeoutMinutes) * 60)
-        let now = Date()
         for (threadID, providers) in sessions {
-            for provider in providers.keys {
+            for (provider, session) in providers {
                 if turns[threadID]?.provider == provider { continue }
+                // Ending the session would kill the agent's background work (a dev server, a long test run).
+                // Its idle time counts from when that work ends, which emits no event.
+                if (session as? BackgroundWorkReporting)?.hasBackgroundWork == true {
+                    lastActivity[threadID, default: [:]][provider] = now
+                    continue
+                }
                 let last = lastActivity[threadID]?[provider] ?? .distantPast
                 if now.timeIntervalSince(last) > limit { shutdown(threadID: threadID, provider: provider) }
             }
@@ -425,10 +461,11 @@ public final class ThreadRunner {
 
     private func handle(_ event: AgentEvent, threadID: UUID, provider: ProviderKind, session: AgentSession) {
         lastActivity[threadID, default: [:]][provider] = Date()
-        let modelID = store.thread(threadID)?.selection.modelID
-        // Output from the provider of the running turn shows it has the prompt.
+        let modelID = self.modelID(for: provider, in: threadID)
+        // Output from the provider of the running turn shows it has the prompt, once the prompt was sent.
+        // Before that it comes from something else, such as a turn the agent started on its own meanwhile.
         let turnOfProvider = turns[threadID]?.provider == provider
-        if turnOfProvider, turns[threadID]?.isAgentInitiated == false, Self.showsDelivery(event) {
+        if turnOfProvider, let turn = turns[threadID], !turn.isAgentInitiated, turn.promptSent, Self.showsDelivery(event) {
             turns[threadID]?.delivered = true
         }
         switch event {
@@ -482,13 +519,13 @@ public final class ThreadRunner {
                 item.category = info.category
             }
         case .toolOutput(let id, let delta):
-            guard !delta.isEmpty, let existing = mappedItem(.tool, id, threadID) else { return }
+            guard !delta.isEmpty, let existing = toolItem(id, provider: provider, threadID) else { return }
             store.updateItem(existing, in: threadID) { item in
                 item.text += delta
                 item.text = TextClip.keepingTail(item.text, limit: Self.toolOutputLimit, clipTo: Self.toolOutputKept)
             }
         case .toolCompleted(let id, let status, let output):
-            guard let existing = mappedItem(.tool, id, threadID) else { return }
+            guard let existing = toolItem(id, provider: provider, threadID) else { return }
             store.updateItem(existing, in: threadID) { item in
                 item.status = status
                 item.completedAt = Date()
@@ -586,6 +623,13 @@ public final class ThreadRunner {
         }
     }
 
+    /// The model `provider` works with on the thread: its running turn's, or the one it was last sent a message
+    /// with. The thread's selection may have moved on to another model or provider meanwhile.
+    private func modelID(for provider: ProviderKind, in threadID: UUID) -> String? {
+        if let turn = turns[threadID], turn.provider == provider, let modelID = turn.modelID { return modelID }
+        return store.thread(threadID)?.items.last { $0.provider == provider && $0.modelID != nil }?.modelID
+    }
+
     /// Events that only arrive once the provider is working on the prompt.
     private static func showsDelivery(_ event: AgentEvent) -> Bool {
         switch event {
@@ -607,7 +651,8 @@ public final class ThreadRunner {
         let text = note ?? String(localized: "\(provider.displayName) continued on its own.")
         let notice = TranscriptItem(kind: .notice, text: text, provider: provider)
         store.append(notice, to: threadID)
-        var state = TurnState(provider: provider, startedAt: Date(), userItemID: notice.id)
+        var state = TurnState(
+            provider: provider, startedAt: Date(), userItemID: notice.id, modelID: modelID(for: provider, in: threadID))
         state.isAgentInitiated = true
         state.isStarting = false
         state.promptSent = true
@@ -664,8 +709,11 @@ public final class ThreadRunner {
             store.updateThread(threadID, touch: true) { _ in }
         }
         store.notify(.runState(threadID))
-        if store.settings.checkpointsEnabled, let cwd = store.workingDirectory(for: threadID) {
-            Task { await CheckpointService.shared.captureAfterTurn(threadID: threadID, userItemID: turnID, cwd: cwd) }
+        // A before snapshot still being taken has nothing to complete yet; `send` takes the after one once it is done.
+        if store.settings.checkpointsEnabled, !capturingBefore.contains(turnID),
+            let cwd = store.workingDirectory(for: threadID)
+        {
+            captureAfterTurn(threadID, turnID, cwd: cwd)
         }
         onTurnFinished?(threadID, outcome)
         NotificationCenter.default.post(
@@ -676,6 +724,15 @@ public final class ThreadRunner {
         if proceed, let next = queues[threadID]?.first {
             removeQueued(threadID: threadID, id: next.id)
             Task { await send(threadID: threadID, text: next.text, imagePaths: next.imagePaths) }
+        }
+    }
+
+    /// Snapshots the folder after a turn ended, recording what the turn changed. Quitting waits for it.
+    private func captureAfterTurn(_ threadID: UUID, _ turnID: UUID, cwd: URL) {
+        let id = UUID()
+        pendingCaptures[id] = Task {
+            await checkpoints.captureAfterTurn(threadID: threadID, userItemID: turnID, cwd: cwd)
+            pendingCaptures[id] = nil
         }
     }
 
@@ -724,6 +781,16 @@ public final class ThreadRunner {
     private func mappedItem(_ kind: TranscriptItem.Kind, _ externalID: String, _ threadID: UUID) -> UUID? {
         guard let id = itemMaps[threadID]?[key(kind, externalID)], store.item(id, in: threadID) != nil else { return nil }
         return id
+    }
+
+    /// The tool item a provider's tool id refers to: one from this turn, or from an earlier turn that the
+    /// provider updates late (a background command or subagent finishing after its call returned). The map
+    /// only covers the current turn, since text ids can repeat across turns and sessions.
+    private func toolItem(_ externalID: String, provider: ProviderKind, _ threadID: UUID) -> UUID? {
+        mappedItem(.tool, externalID, threadID)
+            ?? store.thread(threadID)?.items.last { item in
+                item.kind == .tool && item.provider == provider && item.externalID == externalID
+            }?.id
     }
 
     private func map(_ kind: TranscriptItem.Kind, _ externalID: String, to itemID: UUID, _ threadID: UUID) {

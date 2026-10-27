@@ -5,7 +5,7 @@ import Testing
 
 /// A session whose start and send the test controls.
 @MainActor
-final class ScriptedSession: AgentSession {
+final class ScriptedSession: AgentSession, BackgroundWorkReporting {
     let provider: ProviderKind
     var sessionID: String?
     var onEvent: ((AgentEvent) -> Void)?
@@ -13,6 +13,7 @@ final class ScriptedSession: AgentSession {
     var responses: [(id: String, option: String)] = []
     var interrupts = 0
     var isShutDown = false
+    var hasBackgroundWork = false
     /// Runs inside `start`; it can wait on the test.
     var onStart: (ScriptedSession) async throws -> Void = { _ in }
     /// Runs inside `send` after the input is recorded.
@@ -194,6 +195,49 @@ struct ThreadRunnerTests {
         #expect(claude.last?.sent.map(\.message) == ["one"])
     }
 
+    @Test func aTurnStoppedWhileItsBeforeSnapshotIsTakenStillGetsAnAfterSnapshot() async throws {
+        let repository = try await TestRepository.make()
+        // Enough files that taking the snapshot outlasts the stop timeout.
+        for index in 0..<500 { try repository.write("files/\(index).txt", "\(index)\n") }
+        let checkpoints = CheckpointService(store: store, directory: try TestRepository.makeDirectory("checkpoints"))
+        runner.checkpoints = checkpoints
+        runner.stopTimeout = 0.001
+        store.updateSettings { $0.checkpointsEnabled = true }
+        let project = store.addProject(at: repository.url)
+        let thread = store.createThread(in: project.id, selection: ModelSelection(provider: .claude, modelID: "m"))
+
+        let sending = Task { await runner.send(threadID: thread.id, text: "one") }
+        #expect(await eventually { runner.isCapturingCheckpoints })
+        runner.stop(threadID: thread.id)
+        #expect(await eventually { !runner.isRunning(thread.id) })
+        await sending.value
+        #expect(await eventually { !runner.isCapturingCheckpoints })
+        // The turn ended before its prompt was sent, while its before snapshot was still being taken.
+        #expect(claude.last?.sent.isEmpty == true)
+        let turnID = try #require(store.thread(thread.id)?.items.first { $0.kind == .user }?.id)
+        #expect(checkpoints.checkpoint(threadID: thread.id, userItemID: turnID)?.isComplete == true)
+    }
+
+    // MARK: Idle sessions
+
+    @Test func anIdleSessionIsKeptWhileItsAgentRunsBackgroundWork() async {
+        await completeTurn("one", reply: "The dev server runs in the background.")
+        let session = claude.last!
+        session.hasBackgroundWork = true
+        let later = Date().addingTimeInterval(3_600)
+        runner.shutDownIdleSessions(now: later)
+        #expect(!session.isShutDown)
+        #expect(runner.liveProviders(threadID) == [.claude])
+
+        // Once the work ends, the session counts as idle from then on.
+        session.hasBackgroundWork = false
+        runner.shutDownIdleSessions(now: later.addingTimeInterval(60))
+        #expect(!session.isShutDown)
+        runner.shutDownIdleSessions(now: later.addingTimeInterval(3_600))
+        #expect(session.isShutDown)
+        #expect(runner.liveProviders(threadID).isEmpty)
+    }
+
     // MARK: What each provider has seen
 
     @Test func aTurnThatNeverReachedTheProviderDoesNotCountAsSeen() async {
@@ -215,6 +259,65 @@ struct ThreadRunnerTests {
         #expect(input?.handoffRecap?.contains("Codex did it") == true)
         #expect(input?.text.hasSuffix("\n\nfour") == true)
         #expect(store.thread(threadID)!.sessions[.claude]!.seenItemCount == items.count)
+    }
+
+    @Test func outputBeforeThePromptIsSentDoesNotCountAsDelivery() async {
+        await completeTurn("one", reply: "Claude did it")
+        select(.codex)
+        await completeTurn("two", reply: "Codex did it")
+        select(.claude)
+        let seen = store.thread(threadID)!.sessions[.claude]!.seenItemCount
+        runner.shutdown(threadID: threadID, provider: .claude)
+
+        // While Claude's next process starts, it answers a finished background task on its own.
+        let ownOutput: (ScriptedSession) -> Void = { session in
+            session.emit(.agentTurnStarted(note: nil))
+            session.emit(.assistantTextDelta(itemID: UUID().uuidString, delta: "The background tests passed."))
+        }
+        // The prompt then never reaches it: sending fails…
+        claude.configure = { session in
+            session.onStart = { ownOutput($0) }
+            session.onSend = { _, _ in throw AgentError.providerError("could not relaunch") }
+        }
+        await runner.send(threadID: threadID, text: "three")
+        #expect(items.last?.kind == .error)
+        #expect(store.thread(threadID)!.sessions[.claude]!.seenItemCount == seen)
+
+        // …or the process exits before the prompt is handed over.
+        runner.shutdown(threadID: threadID, provider: .claude)
+        claude.configure = { session in
+            session.onStart = { session in
+                ownOutput(session)
+                throw AgentError.providerError("exited")
+            }
+        }
+        await runner.send(threadID: threadID, text: "four")
+        #expect(items.last?.kind == .error)
+        #expect(store.thread(threadID)!.sessions[.claude]!.seenItemCount == seen)
+
+        // The next prompt that gets through still recaps Codex's turn.
+        claude.configure = { session in session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) } }
+        await runner.send(threadID: threadID, text: "five")
+        #expect(claude.last?.sent.last?.handoffRecap?.contains("Codex did it") == true)
+    }
+
+    @Test func itemsCarryTheModelOfTheProviderThatMadeThem() async {
+        await completeTurn("one", reply: "done")
+        let session = claude.last!
+        // The thread moved on to Codex; Claude then answers a finished background task on its own.
+        store.updateThread(threadID) { $0.selection = ModelSelection(provider: .codex, modelID: "gpt") }
+        session.emit(.agentTurnStarted(note: nil))
+        session.emit(.assistantText(itemID: "bg", text: "The background tests passed."))
+        session.emit(.turnCompleted(.completed))
+        #expect(items.last { $0.kind == .assistant }?.modelID == "m")
+
+        // Picking another model during a turn does not relabel the running turn's output.
+        store.updateThread(threadID) { $0.selection = ModelSelection(provider: .claude, modelID: "m") }
+        session.onSend = { _, _ in }
+        await runner.send(threadID: threadID, text: "two")
+        store.updateThread(threadID) { $0.selection = ModelSelection(provider: .claude, modelID: "other") }
+        session.emit(.assistantText(itemID: "r2", text: "Working on it."))
+        #expect(items.last?.modelID == "m")
     }
 
     @Test func theInputCarriesTheRecapForANewNativeSession() async {
@@ -266,6 +369,27 @@ struct ThreadRunnerTests {
         #expect(items.last?.status == .running)
         await completeTurn("two", reply: "done")
         #expect(items.first { $0.externalID == "bg" }?.status == .completed)
+    }
+
+    @Test func aToolFromAnEarlierTurnStillGetsLateOutput() async {
+        claude.configure = { session in
+            session.onSend = { session, _ in
+                session.emit(.toolStarted(ToolCallInfo(id: "bg", category: .command, title: "Run `swift test` in the background")))
+                session.emit(.toolCompleted(id: "bg", status: .completed, output: "Started in the background."))
+                session.emit(.turnCompleted(.completed))
+            }
+        }
+        await runner.send(threadID: threadID, text: "run the tests in the background")
+        await completeTurn("meanwhile", reply: "ok")
+        // The background command finishes after the next turn started.
+        claude.last!.emit(.toolOutput(id: "bg", delta: "\nTests passed."))
+        #expect(items.first { $0.externalID == "bg" }?.text == "Started in the background.\nTests passed.")
+
+        // Another provider's tool with the same id is a different tool.
+        select(.codex)
+        await completeTurn("codex, go", reply: "ok")
+        codex.last!.emit(.toolOutput(id: "bg", delta: "\nnot Claude's"))
+        #expect(items.first { $0.externalID == "bg" }?.text == "Started in the background.\nTests passed.")
     }
 
     @Test func promptsOfAnEndedSessionAreClosed() async {
