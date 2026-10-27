@@ -443,9 +443,15 @@ enum TranscriptLabels {
         return String(format: "%dh %02dm", hours, minutes % 60)
     }
 
+    /// How much of a thought its preview reads: the row shows one line, and a thought that streams for a
+    /// while would otherwise be parsed whole on every update.
+    private static let previewSourceLength = 4096
+
     /// The first sentence of a thought, flattened to one line, for a collapsed reasoning row.
     static func thoughtPreview(_ markdown: String) -> String {
-        let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        var head = markdown.drop(while: \.isWhitespace).prefix(previewSourceLength)
+        if head.endIndex < markdown.endIndex, let lineEnd = head.lastIndex(where: \.isNewline) { head = head[..<lineEnd] }
+        let trimmed = head.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("**"), let end = trimmed.dropFirst(2).range(of: "**") {
             return String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<end.lowerBound])
         }

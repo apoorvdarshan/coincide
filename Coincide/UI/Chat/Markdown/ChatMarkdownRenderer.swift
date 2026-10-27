@@ -33,7 +33,7 @@ struct ChatRenderedText {
 }
 
 /// Top-level blocks rendered for one text, kept between renders while the text streams in, so
-/// each update renders only the blocks that changed.
+/// each update parses and renders only the blocks that changed.
 @MainActor
 final class ChatRenderCache {
     fileprivate struct Entry {
@@ -43,7 +43,16 @@ final class ChatRenderCache {
         var codeBlocks: [ChatCodeBlock]
     }
 
+    /// The last rendering: its parsed text and each top-level block's entry, in order.
+    fileprivate struct Last {
+        var style: ChatMarkdownStyle
+        var document: ChatMarkdown.Document
+        var entries: [Entry]
+        var rendered: ChatRenderedText
+    }
+
     fileprivate var entries: [Int: Entry] = [:]
+    fileprivate var last: Last?
 }
 
 /// Turns Markdown into one attributed string for a `ChatTextView`: paragraphs and lists use
@@ -64,19 +73,49 @@ struct ChatMarkdownRenderer {
         var color: NSColor
     }
 
+    /// Renders Markdown. With a cache, a text that grew since its last rendering (a streaming reply) is
+    /// parsed again only from its last blocks, keeps the rendering of the blocks before them as one
+    /// copy, and renders only the blocks that changed; otherwise each update would cost as much as the
+    /// whole text.
     static func render(_ markdown: String, style: ChatMarkdownStyle, cache: ChatRenderCache? = nil) -> ChatRenderedText {
-        render(ChatMarkdown.parse(markdown), style: style, cache: cache)
+        let bytes = Array(markdown.utf8)
+        guard let cache, let last = cache.last, last.style == style else {
+            return render(ChatMarkdown.Document(parsing: bytes), keeping: 0, of: nil, style: style, cache: cache)
+        }
+        let (document, kept) = last.document.reparsed(bytes)
+        return render(document, keeping: kept, of: last, style: style, cache: cache)
     }
 
-    /// Renders each top-level block on its own, reusing the cache's rendering of blocks that did not change.
-    static func render(_ blocks: [ChatMarkdown.Block], style: ChatMarkdownStyle, cache: ChatRenderCache? = nil) -> ChatRenderedText {
-        let output = NSMutableAttributedString()
+    /// Renders each top-level block on its own after the first `kept` blocks of `last`, whose rendering
+    /// is reused as it is, and reuses the cache's rendering of other blocks that did not change.
+    private static func render(
+        _ document: ChatMarkdown.Document, keeping kept: Int, of last: ChatRenderCache.Last?, style: ChatMarkdownStyle,
+        cache: ChatRenderCache?
+    ) -> ChatRenderedText {
+        let blocks = document.blocks
+        var output = NSMutableAttributedString()
         var codeBlocks: [ChatCodeBlock] = []
         var pieces: [ChatRenderedText.Piece] = []
+        var entries: [ChatRenderCache.Entry] = []
+        var first = 0
+        if kept > 0, let last {
+            let keptPieces = last.rendered.pieces[..<kept]
+            let length = keptPieces.reduce(0) { $0 + $1.length }
+            // The previous text lost its final newline, which must lie past the blocks kept.
+            if length <= last.rendered.string.length, let copy = last.rendered.string.mutableCopy() as? NSMutableAttributedString {
+                copy.deleteCharacters(in: NSRange(location: length, length: copy.length - length))
+                output = copy
+                codeBlocks = Array(last.rendered.codeBlocks.prefix { $0.range.location < length })
+                pieces = Array(keptPieces)
+                entries = Array(last.entries[..<kept])
+                first = kept
+            }
+        }
         var used: [Int: ChatRenderCache.Entry] = [:]
-        var previous: ChatMarkdown.Block?
-        for block in blocks {
-            let spacing = previous.map { Self.spacing(after: $0, isTight: false, style: style) } ?? 0
+        for (piece, entry) in zip(pieces, entries) { used[piece.key] = entry }
+        for index in first..<blocks.count {
+            let block = blocks[index]
+            let spacing = index > 0 ? Self.spacing(after: blocks[index - 1], isTight: false, style: style) : 0
             var hasher = Hasher()
             hasher.combine(block)
             hasher.combine(spacing)
@@ -85,11 +124,12 @@ struct ChatMarkdownRenderer {
             if let cached = cache?.entries[key], cached.spacing == spacing, cached.block == block {
                 entry = cached
             } else {
-                var renderer = ChatMarkdownRenderer(style: style, followsContent: previous != nil)
+                var renderer = ChatMarkdownRenderer(style: style, followsContent: index > 0)
                 renderer.block(block, Context(spacingBefore: spacing, color: style.textColor))
                 entry = ChatRenderCache.Entry(block: block, spacing: spacing, string: renderer.output, codeBlocks: renderer.codeBlocks)
             }
             used[key] = entry
+            entries.append(entry)
             let offset = output.length
             codeBlocks += entry.codeBlocks.map { code in
                 var code = code
@@ -98,11 +138,12 @@ struct ChatMarkdownRenderer {
             }
             output.append(entry.string)
             pieces.append(ChatRenderedText.Piece(key: key, length: entry.string.length))
-            previous = block
         }
-        cache?.entries = used
         if output.length > 0 { output.deleteCharacters(in: NSRange(location: output.length - 1, length: 1)) }
-        return ChatRenderedText(string: output, codeBlocks: codeBlocks, pieces: pieces)
+        let rendered = ChatRenderedText(string: output, codeBlocks: codeBlocks, pieces: pieces)
+        cache?.entries = used
+        cache?.last = ChatRenderCache.Last(style: style, document: document, entries: entries, rendered: rendered)
+        return rendered
     }
 
     private init(style: ChatMarkdownStyle, followsContent: Bool) {

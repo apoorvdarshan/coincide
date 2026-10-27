@@ -51,8 +51,74 @@ nonisolated enum ChatMarkdown {
     }
 
     static func parse(_ text: String) -> [Block] {
-        var parser = BlockParser(lines: splitLines(Array(text.utf8)))
+        var parser = BlockParser(lines: splitLines(Array(text.utf8)[...]).lines)
         return parser.parse()
+    }
+
+    /// A text's top-level blocks with the line each starts on, so that once the text has grown it can be
+    /// parsed again from its last blocks only (see `reparsed(_:)`), as T3 Code's incremental Markdown does.
+    struct Document: Sendable {
+        /// The text, as UTF-8.
+        let bytes: [UInt8]
+        let blocks: [Block]
+        /// The line each top-level block starts on, and that line's UTF-8 offset.
+        let startLines: [Int]
+        let startOffsets: [Int]
+        /// The index of the text's last line, the only one that may be incomplete, and its UTF-8 offset.
+        let lastLine: Int
+        let lastLineOffset: Int
+
+        init(parsing bytes: [UInt8]) {
+            let (blocks, startLines, lineStarts) = Self.parse(bytes[...])
+            self.init(
+                bytes: bytes, blocks: blocks, startLines: startLines, startOffsets: startLines.map { lineStarts[$0] },
+                lastLine: lineStarts.count - 1, lastLineOffset: lineStarts[lineStarts.count - 1])
+        }
+
+        private init(bytes: [UInt8], blocks: [Block], startLines: [Int], startOffsets: [Int], lastLine: Int, lastLineOffset: Int) {
+            self.bytes = bytes
+            self.blocks = blocks
+            self.startLines = startLines
+            self.startOffsets = startOffsets
+            self.lastLine = lastLine
+            self.lastLineOffset = lastLineOffset
+        }
+
+        /// The document of `bytes`, and how many of its leading blocks are this document's own.
+        ///
+        /// When every complete line of this text starts `bytes` unchanged, as while a reply streams in, the
+        /// blocks that start at least two lines before this text's last line are kept, and only the text
+        /// from the last of the others on is parsed. A top-level block reads at most one line past the
+        /// start of the next (a paragraph checks whether its next line starts a table), so the kept blocks
+        /// never read the last line, the only one that can have changed; the text from where the next
+        /// block starts parses the same on its own as within the whole text. Restarting at the last block
+        /// alone would not do: a growing last line can join the block before it (`Intro` then `#`, which
+        /// is an empty heading, becomes one paragraph once the line reads `#123 fixed`).
+        func reparsed(_ bytes: [UInt8]) -> (document: Document, kept: Int) {
+            guard lastLine >= 2, bytes.count >= lastLineOffset,
+                let reparse = startLines.lastIndex(where: { $0 <= lastLine - 2 }), reparse > 0,
+                bytes.withUnsafeBufferPointer({ new in
+                    self.bytes.withUnsafeBufferPointer { old in memcmp(new.baseAddress!, old.baseAddress!, lastLineOffset) == 0 }
+                })
+            else { return (Document(parsing: bytes), 0) }
+            let firstLine = startLines[reparse]
+            let offset = startOffsets[reparse]
+            let (blocks, startLines, lineStarts) = Self.parse(bytes[offset...])
+            let document = Document(
+                bytes: bytes, blocks: Array(self.blocks[..<reparse]) + blocks,
+                startLines: Array(self.startLines[..<reparse]) + startLines.map { firstLine + $0 },
+                startOffsets: Array(startOffsets[..<reparse]) + startLines.map { offset + lineStarts[$0] },
+                lastLine: firstLine + lineStarts.count - 1, lastLineOffset: offset + lineStarts[lineStarts.count - 1])
+            return (document, reparse)
+        }
+
+        /// Top-level blocks with their start lines, and where each line of `bytes` starts.
+        private static func parse(_ bytes: ArraySlice<UInt8>) -> (blocks: [Block], startLines: [Int], lineStarts: [Int]) {
+            let (lines, lineStarts) = splitLines(bytes)
+            var parser = BlockParser(lines: lines)
+            let blocks = parser.parse()
+            return (blocks, parser.starts, lineStarts)
+        }
     }
 
     /// Inline content as plain text, for labels, accessibility and copying.
@@ -71,16 +137,19 @@ nonisolated enum ChatMarkdown {
         return result
     }
 
-    /// Splits into lines and expands leading tabs, so indentation is counted in spaces.
-    private static func splitLines(_ bytes: [UInt8]) -> [[UInt8]] {
+    /// Splits into lines and expands leading tabs, so indentation is counted in spaces. Also returns where
+    /// each line starts, as an offset from the start of `bytes`.
+    private static func splitLines(_ bytes: ArraySlice<UInt8>) -> (lines: [[UInt8]], starts: [Int]) {
         var lines: [[UInt8]] = []
+        var starts = [0]
         var current: [UInt8] = []
         var inIndent = true
-        for byte in bytes {
+        for (offset, byte) in bytes.enumerated() {
             switch byte {
             case .newline:
                 if current.last == .carriageReturn { current.removeLast() }
                 lines.append(current)
+                starts.append(offset + 1)
                 current.removeAll(keepingCapacity: true)
                 inIndent = true
             case .tab where inIndent:
@@ -92,7 +161,7 @@ nonisolated enum ChatMarkdown {
         }
         if current.last == .carriageReturn { current.removeLast() }
         lines.append(current)
-        return lines
+        return (lines, starts)
     }
 }
 
@@ -101,6 +170,8 @@ nonisolated enum ChatMarkdown {
 nonisolated private struct BlockParser {
     let lines: [[UInt8]]
     var index = 0
+    /// The line each block `parse()` returned starts on.
+    private(set) var starts: [Int] = []
 
     init(lines: [[UInt8]]) {
         self.lines = lines
@@ -115,6 +186,7 @@ nonisolated private struct BlockParser {
                 continue
             }
             let indent = line.leadingSpaces
+            starts.append(index)
             if indent >= 4 {
                 blocks.append(indentedCode())
             } else if let fence = Self.fence(line, indent: indent) {
