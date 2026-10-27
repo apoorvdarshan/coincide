@@ -1548,6 +1548,25 @@ struct ClaudeSessionTests {
         #expect(completions == [.interrupted])
     }
 
+    @Test(arguments: ["set_model", "set_permission_mode"])
+    func anExitWhileApplyingSettingsEndsTheSessionWithoutRelaunching(subtype: String) async throws {
+        let session = makeSession { _, _, request in request["subtype"]?.string == subtype ? .ignore : nil }
+        try await session.start()
+        let turn = subtype == "set_model" ? input(model: "opus") : input(interaction: .plan)
+        let sending = Task { try await session.send(turn) }
+        try await waitUntil { transport.controlRequests.contains { $0["subtype"]?.string == subtype } }
+        transport.exit(status: 137, stderr: "")
+        // The runner drops the session on `sessionExited`; it must not start Claude again and run the message unseen.
+        await #expect(throws: (any Error).self) { try await sending.value }
+        #expect(events.value.contains { if case .sessionExited = $0 { true } else { false } })
+        #expect(transports.value.count == 1)
+        #expect(transport.userMessages.isEmpty)
+        // Sending again later still restarts on the conversation.
+        try await session.send(input())
+        #expect(transports.value.count == 2)
+        #expect(transport.userMessages.count == 1)
+    }
+
     @Test func perTurnChangesUseControlRequests() async throws {
         let session = makeSession(access: .fullAccess, interaction: .plan)
         try await session.start()

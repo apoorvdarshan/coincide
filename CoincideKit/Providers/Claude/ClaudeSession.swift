@@ -416,6 +416,9 @@ final class ClaudeSession: AgentSession {
         }
         self.live = live
         if needsRelaunch {
+            // The process exited while a setting was being applied: the session has ended (the runner dropped it on
+            // `sessionExited`), so it must not start another process and send the message there.
+            guard transport != nil else { throw AgentError.notRunning }
             try await relaunch(settings)
             return
         }
@@ -429,6 +432,8 @@ final class ClaudeSession: AgentSession {
         do {
             response = try await control(["subtype": "set_permission_mode", "mode": .string(mode)])
         } catch {
+            // The process exited meanwhile and the session ended with it; don't start another one.
+            guard transport != nil else { throw error }
             // Claude refused the switch; start in the mode instead.
             try await relaunch(settings)
             return
