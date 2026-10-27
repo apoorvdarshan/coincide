@@ -30,6 +30,9 @@ struct ClaudeEventMapper {
     private(set) var backgroundTasks: [String: String] = [:]
     /// The current turn showed reply text; otherwise its result text is the reply.
     private(set) var emittedReply = false
+    /// The current turn compacted the conversation, or tried to. The compaction item shows the outcome, so
+    /// `/compact`'s echoed output and result text are not replies.
+    private(set) var compactedThisTurn = false
 
     private struct ToolCall {
         var name: String
@@ -69,7 +72,16 @@ struct ClaudeEventMapper {
         var followsThinking: Bool
     }
 
+    /// A compaction Claude is running, shown as a tool item.
+    private struct Compaction {
+        var id: String
+        /// Claude reported success; the boundary that follows carries the token counts.
+        var succeeded = false
+    }
+
     private var tools: [String: ToolCall] = [:]
+    private var compaction: Compaction?
+    private var compactionCount = 0
     private var streamTextCounts: [String: Int] = [:]
     private var streamThinkingCounts: [String: Int] = [:]
     private var snapshotTextCounts: [String: Int] = [:]
@@ -99,15 +111,18 @@ struct ClaudeEventMapper {
         assistantError = nil
         retryNoticed = false
         emittedReply = false
+        compactedThisTurn = false
     }
 
     /// A new process started for the same session: stream state resets and cost keeps counting up.
+    /// A compaction the old process left open is settled with its turn.
     mutating func processRestarted() {
         keepCost()
         openBlocks = [:]
         messageUsage = nil
         permissionMode = nil
         backgroundTasks = [:]
+        compaction = nil
     }
 
     /// Claude's running cost total starts over (a new process, or /clear); the thread's total keeps counting.
@@ -162,7 +177,7 @@ struct ClaudeEventMapper {
     }
 
     /// The reply text of a successful result, for turns whose output only the result carries
-    /// (for example a slash command such as `/compact` that had nothing to do).
+    /// (for example a slash command's).
     static func replyText(of result: JSONValue) -> String? {
         guard result["subtype"]?.string == "success", result["is_error"]?.bool != true,
             result["terminal_reason"].map({ $0.string == "completed" || $0.isNull }) ?? true
@@ -256,6 +271,9 @@ struct ClaudeEventMapper {
     private mutating func assistant(_ frame: JSONValue) -> [AgentEvent] {
         guard let message = frame["message"], let content = message["content"]?.array else { return [] }
         if let parent = frame["parent_tool_use_id"]?.string { return subagentActivity(parent: parent, content: content) }
+        // Claude echoes `/compact`'s output ("Not enough messages to compact.") as a message; the compaction item
+        // already shows it.
+        if frame["local_command_source"] != nil, compactedThisTurn { return [] }
         let messageID = message["id"]?.string ?? frame["uuid"]?.string ?? UUID().uuidString
         let model = message["model"]?.string
         var events: [AgentEvent] = []
@@ -434,7 +452,9 @@ struct ClaudeEventMapper {
             return resolveModel(model)
         case "status"?:
             permissionMode = frame["permissionMode"]?.string ?? permissionMode
-            return []
+            return compactionStatus(frame)
+        case "compact_boundary"?:
+            return compactionBoundary(frame)
         case "background_tasks_changed"?:
             // Replaces the whole set; ambient tasks (watchers) are not work anyone waits for.
             var tasks: [String: String] = [:]
@@ -444,8 +464,6 @@ struct ClaudeEventMapper {
             }
             backgroundTasks = tasks
             return []
-        case "compact_boundary"?:
-            return [.notice(String(localized: "Context compacted"))]
         case "api_retry"?:
             guard !retryNoticed else { return [] }
             retryNoticed = true
@@ -471,6 +489,7 @@ struct ClaudeEventMapper {
     }
 
     private mutating func result(_ frame: JSONValue) -> [AgentEvent] {
+        var events = finishCompaction(result: frame)
         var usage = TokenUsage()
         let models = frame["modelUsage"]?.object ?? [:]
         if let window = (model.flatMap { models[$0] } ?? models.values.first)?["contextWindow"]?.int, window > 0 {
@@ -486,7 +505,91 @@ struct ClaudeEventMapper {
             processCost = cost
             usage.costUSD = costOffset + cost
         }
-        return usage == TokenUsage() ? [] : [.usage(usage)]
+        if usage != TokenUsage() { events.append(.usage(usage)) }
+        return events
+    }
+
+    // MARK: Compaction
+
+    /// Claude summarizing the conversation to free context, shown as a tool item the way Codex shows its own.
+    static func compactionInfo(_ id: String) -> ToolCallInfo {
+        ToolCallInfo(id: id, category: .other, title: String(localized: "Compact the conversation"))
+    }
+
+    private mutating func startCompaction(id: String?) -> ToolCallInfo {
+        compactionCount += 1
+        let open = Compaction(id: id ?? "compaction:\(compactionCount)")
+        compaction = open
+        compactedThisTurn = true
+        return Self.compactionInfo(open.id)
+    }
+
+    /// `status` frames: `compacting` while Claude compacts (repeated as a heartbeat), then the outcome.
+    private mutating func compactionStatus(_ frame: JSONValue) -> [AgentEvent] {
+        if frame["status"]?.string == "compacting" {
+            var events: [AgentEvent] = []
+            if let open = compaction {
+                guard open.succeeded else { return [] }
+                // Another compaction, after one whose boundary never came.
+                events.append(.toolCompleted(id: open.id, status: .completed, output: nil))
+            }
+            events.append(.toolStarted(startCompaction(id: frame["uuid"]?.string)))
+            return events
+        }
+        guard let open = compaction, !open.succeeded else { return [] }
+        switch frame["compact_result"]?.string {
+        case "success"?:
+            compaction?.succeeded = true
+            return []
+        case "failed"?:
+            compaction = nil
+            return [.toolCompleted(id: open.id, status: .failed, output: Self.cleaned(frame["compact_error"]?.string))]
+        default:
+            // A bare status ends a compaction that did not happen, for example one a PreCompact hook blocked.
+            guard frame["status"]?.isNull == true, frame["compact_result"] == nil, frame["permissionMode"] == nil else {
+                return []
+            }
+            compaction = nil
+            return [.toolCompleted(id: open.id, status: .failed, output: String(localized: "Compaction was stopped."))]
+        }
+    }
+
+    /// The boundary Claude writes into the conversation once it is compacted, with its size before and after.
+    private mutating func compactionBoundary(_ frame: JSONValue) -> [AgentEvent] {
+        var events: [AgentEvent] = []
+        let id: String
+        if let open = compaction {
+            id = open.id
+        } else {
+            // Claude Code versions without compaction statuses report only the boundary.
+            let info = startCompaction(id: frame["uuid"]?.string)
+            id = info.id
+            events.append(.toolStarted(info))
+        }
+        compaction = nil
+        let before = frame.at("compact_metadata.pre_tokens")?.int
+        let after = frame.at("compact_metadata.post_tokens")?.int.flatMap { $0 > 0 ? $0 : nil }
+        var summary: String?
+        if let before, let after {
+            summary = String(localized: "Compacted context from \(before.formatted()) to about \(after.formatted()) tokens")
+        }
+        events.append(.toolCompleted(id: id, status: .completed, output: summary))
+        if let after {
+            // Until the next response reports exact usage, the context holds about this much.
+            messageUsage = nil
+            events.append(.usage(TokenUsage(inputTokens: after, contextWindow: contextWindow)))
+        }
+        return events
+    }
+
+    /// A result ends any compaction still open. Claude explains a `/compact` it refused without reporting a
+    /// compaction result only in the result text.
+    private mutating func finishCompaction(result: JSONValue) -> [AgentEvent] {
+        guard let open = compaction else { return [] }
+        compaction = nil
+        if open.succeeded { return [.toolCompleted(id: open.id, status: .completed, output: nil)] }
+        let reason = result["subtype"]?.string == "success" ? Self.cleaned(result["result"]?.string) : nil
+        return [.toolCompleted(id: open.id, status: .failed, output: reason)]
     }
 
     private mutating func resolveModel(_ model: String) -> [AgentEvent] {
@@ -582,10 +685,7 @@ struct ClaudeEventMapper {
 
     /// Strips terminal escape sequences and surrounding whitespace; nil when nothing is left.
     static func cleaned(_ text: String?) -> String? {
-        guard let text else { return nil }
-        let stripped = text.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return stripped.isEmpty ? nil : stripped
+        TerminalText.nonEmpty(text.map(TerminalText.stripANSI))
     }
 
     /// Claude 5.1 and newer models write their pre-tool updates as thinking.

@@ -70,6 +70,33 @@ enum ClaudeFixture {
         {"type":"result","subtype":"error_during_execution","duration_ms":0,"is_error":true,"num_turns":0,"stop_reason":null,"session_id":"23ace05f-68cb-41ed-96e9-fc4b637bc343","total_cost_usd":0,"modelUsage":{},"permission_denials":[],"errors":["No conversation found with session ID: 23ace05f-68cb-41ed-96e9-fc4b637bc343"]}
         """#
 
+    /// `/compact` as a conversation's first message, which Claude Code refuses. `uuid` is the message's.
+    static func compactRefused(_ uuid: String) -> [String] {
+        [
+            #"{"type":"system","subtype":"status","status":"compacting","session_id":"0d790d70-4678-41f0-8463-8fc18ec2a6af","uuid":"89071be4-2986-4d22-bbba-1e949644ee19"}"#,
+            #"{"type":"system","subtype":"status","status":null,"compact_result":"failed","compact_error":"Not enough messages to compact.","session_id":"0d790d70-4678-41f0-8463-8fc18ec2a6af","uuid":"fd445962-3ec1-4d3a-924b-85a2fc837021"}"#,
+            #"{"type":"assistant","message":{"id":"9613ba7a-11e3-4808-a692-da8e188880d5","model":"<synthetic>","role":"assistant","type":"message","content":[{"type":"text","text":"Not enough messages to compact."}],"stop_reason":"end_turn"},"parent_tool_use_id":null,"local_command_source":"<local-command-stdout>Not enough messages to compact.</local-command-stdout>","session_id":"0d790d70-4678-41f0-8463-8fc18ec2a6af","uuid":"5586edb3-c913-45a7-a2ca-99a1d5c74547","local_command_run":{"command":"compact","args":""}}"#,
+            #"{"type":"result","subtype":"success","is_error":false,"num_turns":0,"stop_reason":null,"session_id":"0d790d70-4678-41f0-8463-8fc18ec2a6af","total_cost_usd":0,"origin":{"kind":"human"},"result":"Not enough messages to compact.","user_message_uuid":"UUID","user_message_uuids":["UUID"],"local_command":"compact","uuid":"f6cfb566-2b77-4f04-a580-2e6952a68e2a"}"#
+                .replacingOccurrences(of: "UUID", with: uuid),
+        ]
+    }
+
+    /// `/compact` after a turn: Claude Code compacts, then reports the context's size before and after.
+    static func compactSucceeded(_ uuid: String) -> [String] {
+        [
+            #"{"type":"system","subtype":"status","status":"compacting","session_id":"0d790d70-4678-41f0-8463-8fc18ec2a6af","uuid":"cf026f3f-2051-42d4-97c6-555b173956c1"}"#,
+            #"{"type":"system","subtype":"hook_started","hook_id":"0f2fa370-d8ee-4147-a721-c2cac17c4fad","hook_name":"SessionStart:compact","hook_event":"SessionStart","uuid":"fab3ceff-e6cf-41a1-a3b9-6a628a6d0853","session_id":"0d790d70-4678-41f0-8463-8fc18ec2a6af"}"#,
+            #"{"type":"system","subtype":"status","status":null,"compact_result":"success","session_id":"0d790d70-4678-41f0-8463-8fc18ec2a6af","uuid":"e3d74651-65fb-4777-8712-52f5d7fa2504"}"#,
+            #"{"type":"system","subtype":"compact_boundary","session_id":"0d790d70-4678-41f0-8463-8fc18ec2a6af","uuid":"ca2c930e-f1be-483b-89a2-27b362ed160b","compact_metadata":{"trigger":"manual","pre_tokens":68664,"post_tokens":20362,"cumulative_dropped_tokens":48302,"duration_ms":3969},"logical_parent_uuid":"ff29ebfb-d571-49ef-bd5e-ee69c887c9d6"}"#,
+            #"{"type":"user","message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary:\n1. Primary Request and Intent: a probe reply of exactly \"pong\"."},"session_id":"0d790d70-4678-41f0-8463-8fc18ec2a6af","parent_tool_use_id":null,"uuid":"a6809e28-ff3d-415d-b14e-fca0b7d758a8","isReplay":false,"isSynthetic":true}"#,
+            #"{"type":"user","message":{"role":"user","content":"<local-command-stdout>Compacted </local-command-stdout>"},"session_id":"0d790d70-4678-41f0-8463-8fc18ec2a6af","parent_tool_use_id":null,"uuid":"6885fa7b-8a4a-48a9-8323-c0bdd0152a07","isReplay":true}"#,
+            #"{"type":"result","subtype":"success","is_error":false,"num_turns":0,"stop_reason":null,"session_id":"0d790d70-4678-41f0-8463-8fc18ec2a6af","total_cost_usd":0.01625187,"origin":{"kind":"human"},"result":"","user_message_uuid":"UUID","user_message_uuids":["UUID"],"local_command":"compact","uuid":"09367534-88c0-4b4e-a299-2ba65a637ef4"}"#
+                .replacingOccurrences(of: "UUID", with: uuid),
+        ]
+    }
+
+    static let compactedSummary = "Compacted context from \(68_664.formatted()) to about \(20_362.formatted()) tokens"
+
     /// Summarized thinking followed by the answer.
     static let thinkingTurn = [
         #"{"type":"stream_event","event":{"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CgSGYiXPHBrzhV5n1JyzY","type":"message","role":"assistant","content":[],"usage":{"input_tokens":2,"cache_creation_input_tokens":37846,"cache_read_input_tokens":15329,"output_tokens":3}}},"parent_tool_use_id":null,"thinking_display":"summarized"}"#,
@@ -383,20 +410,125 @@ struct ClaudeMapperTests {
     @Test func systemFramesBecomeNotices() {
         var mapper = testMapper()
         let frames = [
-            #"{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":180000}}"#,
             #"{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":1000,"error_status":529,"error":"overloaded"}"#,
             #"{"type":"system","subtype":"api_retry","attempt":2,"max_retries":10,"retry_delay_ms":2000,"error_status":529,"error":"overloaded"}"#,
-            #"{"type":"system","subtype":"informational","content":"\u001b[33mUserPromptSubmit hook blocked the prompt\u001b[0m","level":"warning"}"#,
+            #"{"type":"system","subtype":"informational","content":"\u001b[33mUserPromptSubmit hook blocked the prompt\u001b[0m \u001b]8;;https://code.claude.com/docs/hooks\u0007(hooks)\u001b]8;;\u0007","level":"warning"}"#,
             #"{"type":"system","subtype":"informational","content":"debug only","level":"info"}"#,
             #"{"type":"system","subtype":"local_command_output","content":"Total cost: $0.01","uuid":"cmd-1"}"#,
             #"{"type":"system","subtype":"status","status":null,"permissionMode":"acceptEdits"}"#,
+            #"{"type":"system","subtype":"session_title_changed","title":"Fix the build","uuid":"t1"}"#,
         ]
         let events = mapLines(frames, into: &mapper)
         #expect(
             events == [
-                .notice("Context compacted"), .notice("Claude API overloaded; retrying…"),
-                .notice("UserPromptSubmit hook blocked the prompt"), .assistantText(itemID: "cmd-1", text: "Total cost: $0.01"),
+                .notice("Claude API overloaded; retrying…"), .notice("UserPromptSubmit hook blocked the prompt (hooks)"),
+                .assistantText(itemID: "cmd-1", text: "Total cost: $0.01"),
             ])
+    }
+
+    @Test func compactionIsAToolItemThatCompletes() {
+        var mapper = testMapper()
+        let frames = ClaudeFixture.compactSucceeded("c4f5d3a1-50b0-4f79-910d-525abb26c975")
+        let id = "cf026f3f-2051-42d4-97c6-555b173956c1"
+        // Long compactions repeat the status; the item starts once, like Codex's.
+        #expect(mapLines([frames[0], frames[0]], into: &mapper) == [.toolStarted(ClaudeEventMapper.compactionInfo(id))])
+        #expect(ClaudeEventMapper.compactionInfo(id) == ToolCallInfo(id: id, category: .other, title: "Compact the conversation"))
+        // Success waits for the boundary's token counts, which also update the context in use.
+        #expect(
+            mapLines(Array(frames[1...]), into: &mapper) == [
+                .toolCompleted(id: id, status: .completed, output: ClaudeFixture.compactedSummary),
+                .usage(TokenUsage(inputTokens: 20_362, contextWindow: 1_000_000)), .usage(TokenUsage(costUSD: 0.01625187)),
+            ])
+        #expect(mapper.compactedThisTurn)
+        mapper.turnStarted()
+        #expect(!mapper.compactedThisTurn)
+    }
+
+    @Test func refusedCompactionFailsWithClaudesReason() {
+        var mapper = testMapper()
+        mapper.beginTurn()
+        let id = "89071be4-2986-4d22-bbba-1e949644ee19"
+        // The echoed "Not enough messages to compact." is not a reply: the item shows it.
+        #expect(
+            mapLines(ClaudeFixture.compactRefused("51aa728f-5e34-4c67-b5e8-e3a1d99663ad"), into: &mapper) == [
+                .toolStarted(ClaudeEventMapper.compactionInfo(id)),
+                .toolCompleted(id: id, status: .failed, output: "Not enough messages to compact."), .usage(TokenUsage(costUSD: 0)),
+            ])
+        #expect(!mapper.emittedReply)
+
+        // Claude can also refuse without a compaction result; then only the turn's result says why.
+        mapper.turnStarted()
+        let unreported = mapLines(
+            [
+                #"{"type":"system","subtype":"status","status":"compacting","uuid":"c2"}"#,
+                ClaudeFixture.compactRefused("u")[2],
+                #"{"type":"result","subtype":"success","is_error":false,"num_turns":0,"result":"Not enough messages to compact.","local_command":"compact"}"#,
+            ], into: &mapper)
+        #expect(
+            unreported == [
+                .toolStarted(ClaudeEventMapper.compactionInfo("c2")),
+                .toolCompleted(id: "c2", status: .failed, output: "Not enough messages to compact."),
+            ])
+
+        // Other commands' echoed output is their reply.
+        mapper.turnStarted()
+        let cost = #"{"type":"assistant","message":{"id":"m2","model":"<synthetic>","content":[{"type":"text","text":"Total cost: $0.01"}]},"parent_tool_use_id":null,"local_command_source":"<local-command-stdout>Total cost: $0.01</local-command-stdout>"}"#
+        #expect(mapLines([cost], into: &mapper) == [.assistantText(itemID: "m2:text:0", text: "Total cost: $0.01")])
+    }
+
+    @Test func compactionsThatStopOrOnlyReportTheirBoundary() {
+        var mapper = testMapper()
+        // A compaction that did not happen (a PreCompact hook blocked it) ends with a bare status; a permission
+        // mode change during it does not end it.
+        let stopped = mapLines(
+            [
+                #"{"type":"system","subtype":"status","status":"compacting","uuid":"c1"}"#,
+                #"{"type":"system","subtype":"status","status":null,"permissionMode":"default"}"#,
+                #"{"type":"system","subtype":"status","status":null,"uuid":"c1-end"}"#,
+            ], into: &mapper)
+        #expect(
+            stopped == [
+                .toolStarted(ClaudeEventMapper.compactionInfo("c1")),
+                .toolCompleted(id: "c1", status: .failed, output: "Compaction was stopped."),
+            ])
+
+        // A success whose boundary never came ends with the turn's result.
+        let unbounded = mapLines(
+            [
+                #"{"type":"system","subtype":"status","status":"compacting","uuid":"c2"}"#,
+                #"{"type":"system","subtype":"status","status":null,"compact_result":"success"}"#,
+                #"{"type":"system","subtype":"status","status":null}"#,
+                #"{"type":"result","subtype":"success","is_error":false,"result":""}"#,
+            ], into: &mapper)
+        #expect(
+            unbounded == [
+                .toolStarted(ClaudeEventMapper.compactionInfo("c2")), .toolCompleted(id: "c2", status: .completed, output: nil),
+            ])
+
+        // Versions without compaction statuses report only the boundary.
+        let boundary = #"{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":180000}}"#
+        #expect(
+            mapLines([boundary], into: &mapper) == [
+                .toolStarted(ClaudeEventMapper.compactionInfo("compaction:3")),
+                .toolCompleted(id: "compaction:3", status: .completed, output: nil),
+            ])
+
+        // Compacting again before the last success's boundary came starts another item.
+        let again = mapLines(
+            [
+                #"{"type":"system","subtype":"status","status":"compacting","uuid":"c4"}"#,
+                #"{"type":"system","subtype":"status","status":null,"compact_result":"success"}"#,
+                #"{"type":"system","subtype":"status","status":"compacting","uuid":"c5"}"#,
+            ], into: &mapper)
+        #expect(
+            again == [
+                .toolStarted(ClaudeEventMapper.compactionInfo("c4")), .toolCompleted(id: "c4", status: .completed, output: nil),
+                .toolStarted(ClaudeEventMapper.compactionInfo("c5")),
+            ])
+
+        // A new process leaves nothing open.
+        mapper.processRestarted()
+        #expect(mapLines([#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#], into: &mapper).isEmpty)
     }
 
     @Test func ignoresSubagentStreamsAndPlumbingTools() {
@@ -1076,13 +1208,24 @@ struct ClaudeSessionTests {
 
     private func input(
         _ text: String = "Reply with exactly: pong", model: String = "haiku", effort: String? = "low", access: AccessMode = .approval,
-        interaction: InteractionMode = .build, images: [String] = [], recap: String? = nil, newSessionRecap: String? = nil
+        interaction: InteractionMode = .build, images: [String] = [], recap: String? = nil, newSessionRecap: String? = nil,
+        title: String? = nil
     ) -> AgentTurnInput {
         AgentTurnInput(
-            message: text, handoffRecap: recap, newSessionRecap: newSessionRecap ?? recap, imagePaths: images,
+            message: text, handoffRecap: recap, newSessionRecap: newSessionRecap ?? recap, threadTitle: title, imagePaths: images,
             selection: ModelSelection(provider: .claude, modelID: model, effort: effort), accessMode: access,
             interactionMode: interaction)
     }
+
+    private var notices: [String] {
+        events.value.compactMap { event in
+            if case .notice(let text) = event { return text }
+            return nil
+        }
+    }
+
+    private static let lostConversationNotice =
+        "Claude Code could not find this thread's saved conversation, so it started a new one with a recap of the earlier messages."
 
     private var completions: [TurnOutcome] {
         events.value.compactMap { event in
@@ -1138,9 +1281,10 @@ struct ClaudeSessionTests {
         #expect(transport.config.identity == .resume("29718ecd-ee07-4e0c-9590-9666442ec28f"))
         #expect(transport.config.arguments.contains("--resume=29718ecd-ee07-4e0c-9590-9666442ec28f"))
         #expect(events.value.contains(.sessionStarted(id: "29718ecd-ee07-4e0c-9590-9666442ec28f")))
+        #expect(notices.isEmpty)
     }
 
-    @Test func missingConversationStartsFresh() async throws {
+    @Test func missingConversationStartsFreshAndSaysSo() async throws {
         let session = makeSession(resume: "23ace05f-68cb-41ed-96e9-fc4b637bc343") { index, transport, request in
             guard index == 0, request["subtype"] == "initialize" else { return nil }
             transport.later { transport in
@@ -1157,7 +1301,10 @@ struct ClaudeSessionTests {
         }
         #expect(id != "23ace05f-68cb-41ed-96e9-fc4b637bc343")
         #expect(session.sessionID == id)
-        #expect(events.value.contains(.sessionStarted(id: id)))
+        // The runner sends the next turn's recap of the whole thread to the new id, as for the other providers.
+        let started = try #require(events.value.firstIndex(of: .sessionStarted(id: id)))
+        #expect(events.value[started...].contains(.notice(Self.lostConversationNotice)))
+        #expect(notices == [Self.lostConversationNotice])
     }
 
     @Test func startFailureExplainsWhy() async throws {
@@ -1267,11 +1414,11 @@ struct ClaudeSessionTests {
     @Test func aResultCarryingTheOnlyOutputBecomesTheReply() async throws {
         let session = makeSession()
         try await session.start()
-        _ = try await startTurn(session, input("/compact"))
+        _ = try await startTurn(session, input("/cost"))
         transport.emit([
-            #"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","result":"Not enough messages to compact.","uuid":"r1","total_cost_usd":0}"#
+            #"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","result":"Total cost: $0.01","uuid":"r1","total_cost_usd":0}"#
         ])
-        #expect(events.value.suffix(2) == [.assistantText(itemID: "r1:result", text: "Not enough messages to compact."), .turnCompleted(.completed)])
+        #expect(events.value.suffix(2) == [.assistantText(itemID: "r1:result", text: "Total cost: $0.01"), .turnCompleted(.completed)])
         // A turn that showed its reply does not repeat the result's copy of it.
         _ = try await startTurn(session)
         let start = events.value.count
@@ -1517,9 +1664,7 @@ struct ClaudeSessionTests {
         #expect(events.value.contains(.sessionStarted(id: fresh)))
         // The new conversation has seen nothing, so it gets the recap of the whole thread.
         #expect(transport.userMessages.last?.at("message.content")?.string == recap + "\n\nReply with exactly: pong")
-        #expect(
-            events.value.contains(
-                .notice("Claude Code could not find this thread's saved conversation, so it started a new one with a recap of the earlier messages.")))
+        #expect(notices == [Self.lostConversationNotice])
         #expect(!events.value.contains { if case .usage(let usage) = $0 { return usage.costUSD == 0 } else { return false } })
 
         // Frames sent before the new process reports its id must not switch back to the lost one.
@@ -1631,8 +1776,8 @@ struct ClaudeSessionTests {
         try await session.start()
         _ = try await startTurn(session)
         transport.exit(status: 1, stderr: "panic: something broke\n")
-        #expect(completions == [.failed("Claude Code exited with status 1.\npanic: something broke")])
-        #expect(events.value.last == .sessionExited(error: "Claude Code exited with status 1.\npanic: something broke"))
+        #expect(completions == [.failed("Claude Code exited unexpectedly (status 1).\npanic: something broke")])
+        #expect(events.value.last == .sessionExited(error: "Claude Code exited unexpectedly (status 1).\npanic: something broke"))
         // Should the runner still send on it, the session restarts on its conversation.
         try await session.send(input())
         #expect(transports.value.count == 2)
@@ -1799,5 +1944,115 @@ struct ClaudeSessionTests {
         transport.emit(ClaudeFixture.pongTurn)
         try await Task.sleep(for: .milliseconds(20))
         #expect(events.value.count == count)
+    }
+
+    @Test func compactingIsAToolItemNotAReply() async throws {
+        let session = makeSession()
+        try await session.start()
+        func replies(since start: Int) -> [AgentEvent] {
+            events.value[start...].filter { if case .assistantText = $0 { true } else { false } }
+        }
+
+        // Too little to compact: the item fails with Claude's reason, which is not repeated as a reply.
+        let refused = try await startTurn(session, input("/compact"))
+        transport.emit(ClaudeFixture.compactRefused(refused) + [ClaudeFixture.lifecycle(refused, "completed")])
+        let refusedItem = "89071be4-2986-4d22-bbba-1e949644ee19"
+        #expect(events.value.contains(.toolStarted(ClaudeEventMapper.compactionInfo(refusedItem))))
+        #expect(events.value.contains(.toolCompleted(id: refusedItem, status: .failed, output: "Not enough messages to compact.")))
+        #expect(replies(since: 0).isEmpty)
+        #expect(completions == [.completed])
+
+        let turn = try await startTurn(session)
+        transport.emit(ClaudeFixture.pongTurn + [ClaudeFixture.pongResult, ClaudeFixture.lifecycle(turn, "completed")])
+        let start = events.value.count
+        let compacted = try await startTurn(session, input("/compact"))
+        transport.emit(ClaudeFixture.compactSucceeded(compacted) + [ClaudeFixture.lifecycle(compacted, "completed")])
+        let item = "cf026f3f-2051-42d4-97c6-555b173956c1"
+        #expect(events.value[start...].contains(.toolStarted(ClaudeEventMapper.compactionInfo(item))))
+        #expect(events.value[start...].contains(.toolCompleted(id: item, status: .completed, output: ClaudeFixture.compactedSummary)))
+        #expect(replies(since: start).isEmpty)
+        #expect(!events.value.contains { if case .notice = $0 { true } else { false } })
+        #expect(completions == [.completed, .completed, .completed])
+    }
+
+    @Test func newConversationsAreNamedAfterTheThread() async throws {
+        let session = makeSession()
+        try await session.start()
+        let uuid = try await startTurn(session, input(title: "Fix the flaky build"))
+        try await waitUntil { transport.controlRequests.contains { $0["subtype"] == "rename_session" } }
+        // After the message, so the conversation it names is saved.
+        #expect(transport.written.last { $0["type"] == "user" || $0.at("request.subtype") == "rename_session" }?["type"] == "control_request")
+        #expect(transport.controlRequests.last == ["subtype": "rename_session", "title": "Fix the flaky build", "source": "host"])
+        transport.emit([ClaudeFixture.pongResult, ClaudeFixture.lifecycle(uuid, "completed")])
+
+        // Later turns, and conversations that were saved before, keep their name.
+        try await session.send(input(title: "Renamed thread"))
+        let resumed = makeSession(resume: "29718ecd-ee07-4e0c-9590-9666442ec28f")
+        try await resumed.start()
+        try await resumed.send(input(title: "Fix the flaky build"))
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(transports.value.flatMap { $0.controlRequests }.filter { $0["subtype"] == "rename_session" }.count == 1)
+    }
+
+    @Test func aTurnClaudeStartsByItselfShowsWhatOnlyItsResultCarries() async throws {
+        let session = makeSession()
+        try await session.start()
+        transport.emit([ClaudeFixture.initFrame])
+        transport.emit([
+            #"{"type":"stream_event","event":{"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_wake","usage":{"input_tokens":3,"output_tokens":1}}},"parent_tool_use_id":null}"#,
+            #"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","result":"The build passed.","origin":{"kind":"task-notification"},"uuid":"r-wake","total_cost_usd":0.01}"#,
+        ])
+        #expect(events.value.suffix(2) == [.assistantText(itemID: "r-wake:result", text: "The build passed."), .turnCompleted(.completed)])
+    }
+
+    @Test func exitMessagesEndWithWhatClaudePrinted() {
+        // A clean exit is no error.
+        #expect(ClaudeSession.exitMessage(status: 0, stderrTail: "") == nil)
+        #expect(ClaudeSession.exitMessage(status: 0, stderrTail: " \n\u{1B}[0m\u{1B}]0;claude\u{07}\n") == nil)
+        #expect(ClaudeSession.exitMessage(status: 143, stderrTail: "") == "Claude Code exited unexpectedly (status 143).")
+        #expect(
+            ClaudeSession.exitMessage(status: 0, stderrTail: "Error: lost the connection\n")
+                == "Claude Code exited unexpectedly (status 0).\nError: lost the connection")
+        // The last six lines with something on them, without escape sequences.
+        let stderr =
+            (1...8).map { "line \($0)" }.joined(separator: "\n")
+            + "\n\u{1B}[31mError:\u{1B}[0m read \u{1B}]8;;https://code.claude.com/docs\u{07}the docs\u{1B}]8;;\u{07}\n\n   \n"
+        #expect(
+            ClaudeSession.exitMessage(status: 1, stderrTail: stderr)
+                == "Claude Code exited unexpectedly (status 1).\nline 4\nline 5\nline 6\nline 7\nline 8\nError: read the docs")
+        let long = String(repeating: "x", count: 2_000)
+        #expect(ClaudeSession.exitMessage(status: 2, stderrTail: long) == "Claude Code exited unexpectedly (status 2).\n" + long.suffix(800))
+    }
+}
+
+// MARK: - Detection
+
+@MainActor
+struct ClaudeDetectionTests {
+    @Test func failuresEndWithWhatTheCommandPrinted() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-claude-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let script = directory.appendingPathComponent("claude")
+        try #"""
+            #!/bin/sh
+            printf 'Starting up\n\033[31mError:\033[0m the settings file is not valid JSON\n\n   \n' >&2
+            printf 'See \033]8;;https://code.claude.com/docs/settings\033\\the settings docs\033]8;;\033\\\nExiting\n' >&2
+            exit 3
+            """#.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let failed = await ClaudeProvider().detect(executable: script, environment: [:])
+        #expect(failed.state == .error)
+        #expect(
+            failed.message
+                == "Claude Code is installed but failed to run.\nError: the settings file is not valid JSON\nSee the settings docs\nExiting")
+
+        let missing = await ClaudeProvider().detect(executable: directory.appendingPathComponent("missing"), environment: [:])
+        #expect(missing.state == .error)
+        let message = try #require(missing.message)
+        let prefix = "Claude Code could not be started: "
+        #expect(message.hasPrefix(prefix) && message.count > prefix.count)
+        #expect(message == message.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }

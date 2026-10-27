@@ -155,6 +155,7 @@ final class ClaudeSession: AgentSession {
             mapper.beginTurn()
             transport.write(Self.userMessage(texts: texts, images: images, uuid: turnID).compactJSON)
             turn?.accepted = true
+            if !conversationExists, let title = TerminalText.nonEmpty(input.threadTitle) { name(title) }
             conversationExists = true
         } catch {
             if turn?.id == turnID { turn = nil }
@@ -253,21 +254,19 @@ final class ClaudeSession: AgentSession {
                 identity: identity, model: settings.model, effort: settings.effort, permissionMode: settings.permissionMode,
                 allowsBypass: settings.allowsBypass)
         }
-        let hadConversation = sessionID != nil
         do {
             try await spawn(config(identity))
         } catch let failure as StartFailure where failure.missingConversation {
             guard case .resume = identity else { throw failure }
             conversationExists = false
             try await spawn(config(.fresh(Self.newID())))
-            if hadConversation {
-                // The new conversation gets the turn's recap of the whole thread (`send` sends it), not the history itself.
-                emit(
-                    .notice(
-                        String(
-                            localized:
-                                "Claude Code could not find this thread's saved conversation, so it started a new one with a recap of the earlier messages.")))
-            }
+            // The new conversation gets the next turn's recap of the whole thread (the runner builds it once `start`
+            // reported the new id, `send` once a relaunch did), not the history itself.
+            emit(
+                .notice(
+                    String(
+                        localized:
+                            "Claude Code could not find this thread's saved conversation, so it started a new one with a recap of the earlier messages.")))
         } catch let failure as StartFailure where failure.sessionInUse {
             guard case .fresh(let id) = identity else { throw failure }
             try await spawn(config(.resume(id)))
@@ -441,6 +440,15 @@ final class ClaudeSession: AgentSession {
         }
     }
 
+    /// Names a new conversation after the thread, as OpenCode's sessions are, so Claude Code's own session list
+    /// (`claude --resume`) shows the thread's title. Claude Code takes it as a name the user chose; should it refuse,
+    /// the conversation keeps the title Claude Code gives it.
+    private func name(_ title: String) {
+        Task { [weak self] in
+            _ = try? await self?.control(["subtype": "rename_session", "title": .string(title), "source": "host"], timeout: 10)
+        }
+    }
+
     // MARK: Frames
 
     private func receive(_ line: String) {
@@ -537,14 +545,7 @@ final class ClaudeSession: AgentSession {
         guard let current = turn else { return }
         let outcome = ClaudeEventMapper.outcome(
             of: result, interruptRequested: current.interruptRequested, assistantError: mapper.assistantError)
-        if outcome == .completed {
-            if let error = mapper.assistantError, !error.text.isEmpty {
-                emit(.notice(error.text))
-            } else if !mapper.emittedReply, let reply = ClaudeEventMapper.replyText(of: result) {
-                // Only the result carries this turn's output, for example a slash command's.
-                emit(.assistantText(itemID: (result["uuid"]?.string ?? current.id) + ":result", text: reply))
-            }
-        }
+        if outcome == .completed { showUnreportedOutput(of: result, fallbackID: current.id) }
         finishTurn(outcome)
         endedTurnResultPending = false
     }
@@ -559,8 +560,20 @@ final class ClaudeSession: AgentSession {
         guard let stopping = agentTurn else { return }
         agentTurn = nil
         prompts.removeAll()
-        emit(.turnCompleted(
-            ClaudeEventMapper.outcome(of: result, interruptRequested: stopping, assistantError: mapper.assistantError)))
+        cancelTails()
+        let outcome = ClaudeEventMapper.outcome(of: result, interruptRequested: stopping, assistantError: mapper.assistantError)
+        if outcome == .completed { showUnreportedOutput(of: result, fallbackID: Self.newID()) }
+        emit(.turnCompleted(outcome))
+    }
+
+    /// What a completed turn showed nowhere else: an API error Claude reported as its reply, or output only the
+    /// result carries (a slash command's, for example). A compaction item already shows `/compact`'s outcome.
+    private func showUnreportedOutput(of result: JSONValue, fallbackID: String) {
+        if let error = mapper.assistantError, !error.text.isEmpty {
+            emit(.notice(error.text))
+        } else if !mapper.emittedReply, !mapper.compactedThisTurn, let reply = ClaudeEventMapper.replyText(of: result) {
+            emit(.assistantText(itemID: (result["uuid"]?.string ?? fallbackID) + ":result", text: reply))
+        }
     }
 
     private func finishTurn(_ outcome: TurnOutcome) {
@@ -803,12 +816,13 @@ final class ClaudeSession: AgentSession {
         return [ultrathink ? ClaudeModelCatalog.applyUltrathink(to: prompt) : prompt]
     }
 
-    static func exitMessage(status: Int32, stderrTail: String) -> String? {
-        let lines = stderrTail.split(whereSeparator: \.isNewline).suffix(6).joined(separator: "\n")
-        let detail = ClaudeEventMapper.cleaned(lines)
-        guard status != 0 || detail != nil else { return nil }
-        let summary = String(localized: "Claude Code exited with status \(Int(status)).")
-        return detail.map { summary + "\n" + String($0.suffix(800)) } ?? summary
+    /// Why Claude Code ended on its own, with the last lines it printed to stderr. Nil for a clean exit: status 0
+    /// with nothing on stderr.
+    nonisolated static func exitMessage(status: Int32, stderrTail: String) -> String? {
+        let tail = TerminalText.tail(stderrTail, lines: 6, maxLength: 800)
+        guard status != 0 || tail != nil else { return nil }
+        let summary = String(localized: "\(ProviderKind.claude.displayName) exited unexpectedly (status \(status)).")
+        return tail.map { summary + "\n" + $0 } ?? summary
     }
 
     private static func newID() -> String { UUID().uuidString.lowercased() }
@@ -822,12 +836,15 @@ final class ClaudeSession: AgentSession {
         var sessionInUse: Bool
 
         init(error: Error, handshake: Handshake) {
-            let stderr = handshake.exit.map { ClaudeEventMapper.cleaned($0.stderr) ?? "" } ?? ""
-            let details = (handshake.resultErrors + [stderr]).filter { !$0.isEmpty && !$0.hasPrefix("[ede_diagnostic]") }
-            missingConversation = details.contains { $0.contains("No conversation found") }
-            sessionInUse = details.contains { $0.contains("is already in use") }
+            // Claude's own errors for the failed start; its diagnostics explain nothing to the user.
+            let errors = handshake.resultErrors.compactMap { TerminalText.nonEmpty($0) }.filter { !$0.hasPrefix("[ede_diagnostic]") }
+            let stderr = handshake.exit.map { TerminalText.stripANSI($0.stderr) } ?? ""
+            missingConversation = (errors + [stderr]).contains { $0.contains("No conversation found") }
+            sessionInUse = (errors + [stderr]).contains { $0.contains("is already in use") }
             if let exit = handshake.exit {
-                let reason = details.first.map { String($0.suffix(800)) } ?? String(localized: "status \(Int(exit.status))")
+                let reason =
+                    errors.first.map { String($0.suffix(800)) } ?? TerminalText.tail(exit.stderr, lines: 6, maxLength: 800)
+                    ?? String(localized: "status \(Int(exit.status))")
                 message = String(localized: "Claude Code exited while starting: \(reason)")
             } else {
                 message = error.localizedDescription

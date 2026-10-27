@@ -44,19 +44,41 @@ struct ClaudeLiveTests {
         return session
     }
 
-    private func input(_ text: String, access: AccessMode = .approval, interaction: InteractionMode = .build) -> AgentTurnInput {
-        AgentTurnInput(text: text, selection: Self.selection, accessMode: access, interactionMode: interaction)
+    private func input(
+        _ text: String, access: AccessMode = .approval, interaction: InteractionMode = .build, title: String? = nil
+    ) -> AgentTurnInput {
+        AgentTurnInput(
+            message: text, handoffRecap: nil, newSessionRecap: nil, threadTitle: title, selection: Self.selection,
+            accessMode: access, interactionMode: interaction)
     }
 
     /// Sends a message and waits for its turn to end.
     private func run(
         _ session: ClaudeSession, _ text: String, access: AccessMode = .approval, interaction: InteractionMode = .build,
-        recorder: LiveRecorder
+        title: String? = nil, recorder: LiveRecorder
     ) async throws -> (outcome: TurnOutcome, reply: String) {
         let start = recorder.events.count
-        try await session.send(input(text, access: access, interaction: interaction))
+        try await session.send(input(text, access: access, interaction: interaction, title: title))
         let outcome = try await recorder.completion(after: start)
         return (outcome, recorder.reply(after: start))
+    }
+
+    /// Whether Claude Code saved `title` as the conversation's name, in whichever project folder holds its transcript.
+    private static func isNamed(_ sessionID: String, _ title: String) async throws -> Bool {
+        let root =
+            environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
+        let projects = root.appendingPathComponent("projects", isDirectory: true)
+        let entry = #""customTitle":"\#(title)""#
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
+            for folder in (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? [] {
+                let transcript = try? String(contentsOf: folder.appendingPathComponent("\(sessionID).jsonl"), encoding: .utf8)
+                if transcript?.contains(entry) == true { return true }
+            }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        return false
     }
 
     @Test func detectsTheInstalledCLIAndItsModels() async throws {
@@ -77,10 +99,12 @@ struct ClaudeLiveTests {
         let id = try #require(session.sessionID)
         #expect(recorder.events.contains(.sessionStarted(id: id)))
 
-        let first = try await run(session, "Reply with exactly: pong", recorder: recorder)
+        let first = try await run(session, "Reply with exactly: pong", title: "Coincide live test", recorder: recorder)
         #expect(first.outcome == .completed)
         #expect(first.reply.lowercased().contains("pong"))
         #expect(recorder.events.contains { if case .usage(let usage) = $0 { (usage.inputTokens ?? 0) > 0 } else { false } })
+        // The new conversation carries the thread's name in Claude Code's own session list.
+        #expect(try await Self.isNamed(id, "Coincide live test"))
 
         let second = try await run(
             session, "What single word did you just reply with? Reply with only that word.", recorder: recorder)
@@ -198,6 +222,53 @@ struct ClaudeLiveTests {
 
         let next = try await run(session, "Reply with exactly: pong", recorder: recorder)
         #expect(next.outcome == .completed)
+    }
+
+    @Test func compactingShowsAToolItem() async throws {
+        let recorder = LiveRecorder()
+        let session = try makeSession(recorder: recorder)
+        defer { session.shutdown() }
+        try await session.start()
+        /// How the compaction items since `start` ended.
+        func compactions(after start: Int) -> [ItemStatus] {
+            let started = Set(
+                recorder.events[start...].compactMap { event -> String? in
+                    guard case .toolStarted(let info) = event, info.title == "Compact the conversation" else { return nil }
+                    return info.id
+                })
+            return recorder.events[start...].compactMap { event in
+                guard case .toolCompleted(let id, let status, _) = event, started.contains(id) else { return nil }
+                return status
+            }
+        }
+
+        // A conversation with nothing in it has nothing to compact; the item says so, and no reply repeats it.
+        var start = recorder.events.count
+        let refused = try await run(session, "/compact", recorder: recorder)
+        #expect(refused.outcome == .completed)
+        #expect(compactions(after: start) == [.failed])
+        #expect(refused.reply.isEmpty)
+
+        _ = try await run(session, "Reply with exactly: pong", recorder: recorder)
+        start = recorder.events.count
+        let compacted = try await run(session, "/compact", recorder: recorder)
+        #expect(compacted.outcome == .completed)
+        #expect(compactions(after: start) == [.completed])
+        #expect(compacted.reply.isEmpty)
+        // The context meter drops to what the summary takes.
+        #expect(recorder.events[start...].contains { if case .usage(let usage) = $0 { (usage.inputTokens ?? 0) > 0 } else { false } })
+    }
+
+    @Test func aLostConversationStartsFreshAndSaysSo() async throws {
+        let recorder = LiveRecorder()
+        let lost = UUID().uuidString.lowercased()
+        let session = try makeSession(resume: lost, recorder: recorder)
+        defer { session.shutdown() }
+        try await session.start()
+        let id = try #require(session.sessionID)
+        #expect(id != lost)
+        #expect(recorder.events.contains(.sessionStarted(id: id)))
+        #expect(recorder.events.contains { if case .notice = $0 { true } else { false } })
     }
 }
 

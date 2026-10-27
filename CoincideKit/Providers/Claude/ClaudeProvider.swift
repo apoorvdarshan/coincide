@@ -19,15 +19,16 @@ public final class ClaudeProvider: AgentProvider {
         let environment = ClaudeLaunchConfig.environment(environment)
         let versionResult = await ProcessRunner.run(executable, ["--version"], environment: environment, timeout: 20)
         guard versionResult.status != -1 else {
+            // It could not be launched at all; the runner reports why on stderr.
+            let reason = Self.outputTail(versionResult) ?? String(localized: "status \(Int(versionResult.status))")
             return ProviderStatus(
-                state: .error, executable: executable,
-                message: String(localized: "Claude Code could not be started: \(versionResult.stderr)"))
+                state: .error, executable: executable, message: String(localized: "Claude Code could not be started: \(reason)"))
         }
         let version = ClaudeModelCatalog.parseVersion(versionResult.stdout + "\n" + versionResult.stderr)
         guard versionResult.succeeded else {
-            return ProviderStatus(
-                state: .error, version: version, executable: executable,
-                message: String(localized: "Claude Code is installed but failed to run."))
+            var message = String(localized: "Claude Code is installed but failed to run.")
+            if let tail = Self.outputTail(versionResult) { message += "\n" + tail }
+            return ProviderStatus(state: .error, version: version, executable: executable, message: message)
         }
 
         let authResult = await ProcessRunner.run(
@@ -70,6 +71,11 @@ public final class ClaudeProvider: AgentProvider {
 
     public func makeSession(_ launch: AgentLaunch) -> AgentSession {
         ClaudeSession(launch: launch, knownModels: knownModels)
+    }
+
+    /// The last lines a failed command printed (stderr, else stdout), without escape sequences, for a status message.
+    nonisolated static func outputTail(_ result: ProcessRunner.Result) -> String? {
+        TerminalText.tail(result.stderr, lines: 3, maxLength: 400) ?? TerminalText.tail(result.stdout, lines: 3, maxLength: 400)
     }
 
     private func initializeInfo(executable: URL, environment: [String: String]) async -> ClaudeInitializeInfo? {

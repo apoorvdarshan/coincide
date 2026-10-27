@@ -81,7 +81,7 @@ final class ClaudeTaskOutputTail {
         }
         // Skipped output must not splice two unrelated lines together.
         let text = (skipped ? "\n" : "") + decoder.decode(data)
-        let visible = text.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+        let visible = TerminalText.stripANSI(text)
         if !visible.isEmpty { onChunk(visible) }
         return start + UInt64(data.count)
     }
