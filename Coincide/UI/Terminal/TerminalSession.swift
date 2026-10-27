@@ -201,6 +201,12 @@ final class ShellTerminalView: LocalProcessTerminalView {
 
     init(font: NSFont) {
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 320), font: font, options: TerminalOptions(scrollback: 10_000))
+        // SwiftTerm's local-process view answers OSC 52 clipboard queries with the system clipboard and
+        // lets output replace it, so any program shown here (a remote host over ssh included) could read
+        // or overwrite the clipboard unasked. Ignore OSC 52 entirely, as T3 Code's terminal does. A handler
+        // registered here runs instead of the built-in one for the view's whole life: the parser is never
+        // recreated, not even by a reset.
+        getTerminal().registerOscHandler(code: 52) { _ in }
         // Option composes characters as everywhere else on the Mac; the keys that need Meta are mapped below.
         optionAsMetaKey = false
         TerminalTheme.apply(to: self)
