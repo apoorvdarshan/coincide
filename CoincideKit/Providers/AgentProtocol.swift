@@ -27,10 +27,25 @@ public struct AgentLaunch: Sendable {
     }
 }
 
-/// One user turn. `text` already includes any handoff recap from other providers.
+/// One user turn: the user's message plus, when other providers worked on the thread meanwhile, a recap
+/// of what this provider missed (see `Handoff`). `text` is the two combined, ready to send.
 /// The model, effort, access and interaction mode may differ from the previous turn;
 /// sessions apply such changes before running the turn.
+///
+/// A session that had to replace its native session while sending (resuming failed, so it reports
+/// `.sessionStarted` with a new id) must use `prompt(forNewSession: true)` / `recap(forNewSession: true)`:
+/// the new native session has seen nothing of the thread.
 public struct AgentTurnInput: Sendable {
+    /// The user's message as typed, for example a slash command.
+    public var message: String
+    /// What the provider's current native session missed: a `<conversation_handoff>` block and a line
+    /// introducing the message. Nil when the session is current.
+    public var handoffRecap: String?
+    /// The recap for a native session that has seen nothing of the thread. Nil when there is nothing to recap.
+    public var newSessionRecap: String?
+    /// The thread's title, for providers that name their native sessions.
+    public var threadTitle: String?
+    /// The recap followed by the message: the prompt to send.
     public var text: String
     /// Absolute paths of attached images.
     public var imagePaths: [String]
@@ -38,15 +53,39 @@ public struct AgentTurnInput: Sendable {
     public var accessMode: AccessMode
     public var interactionMode: InteractionMode
 
+    /// A turn whose message needs no recap.
     public nonisolated init(
         text: String, imagePaths: [String] = [], selection: ModelSelection, accessMode: AccessMode,
         interactionMode: InteractionMode
     ) {
-        self.text = text
+        self.init(
+            message: text, handoffRecap: nil, newSessionRecap: nil, threadTitle: nil, imagePaths: imagePaths,
+            selection: selection, accessMode: accessMode, interactionMode: interactionMode)
+    }
+
+    public nonisolated init(
+        message: String, handoffRecap: String?, newSessionRecap: String?, threadTitle: String? = nil,
+        imagePaths: [String] = [], selection: ModelSelection, accessMode: AccessMode, interactionMode: InteractionMode
+    ) {
+        self.message = message
+        self.handoffRecap = handoffRecap
+        self.newSessionRecap = newSessionRecap
+        self.threadTitle = threadTitle
+        self.text = Handoff.compose(message: message, recap: handoffRecap)
         self.imagePaths = imagePaths
         self.selection = selection
         self.accessMode = accessMode
         self.interactionMode = interactionMode
+    }
+
+    /// The recap to send: the full one when the native session is new, otherwise `handoffRecap`.
+    public nonisolated func recap(forNewSession isNew: Bool) -> String? {
+        isNew ? newSessionRecap : handoffRecap
+    }
+
+    /// The recap and the message combined, for the current native session or a new one.
+    public nonisolated func prompt(forNewSession isNew: Bool) -> String {
+        isNew ? Handoff.compose(message: message, recap: newSessionRecap) : text
     }
 }
 
@@ -169,6 +208,11 @@ public enum AgentEvent: Sendable, Hashable {
     /// The provider discovered (or refreshed) its model list while running.
     case modelsDiscovered([ModelOption])
     case notice(String)
+    /// The provider started a turn on its own, without a prompt from Coincide: for example Claude Code
+    /// answering a finished background task, or an extension waking the agent. The thread shows as
+    /// running until the provider ends the turn with `.turnCompleted`, and Stop calls `interrupt()`.
+    /// `note` says why, when known. Never emit it for a turn `send` started.
+    case agentTurnStarted(note: String?)
     case turnCompleted(TurnOutcome)
     /// The underlying process ended. `error` is set when it ended unexpectedly.
     case sessionExited(error: String?)
@@ -187,7 +231,8 @@ public protocol AgentSession: AnyObject {
     /// If resuming fails, start a fresh session and report its id with `.sessionStarted`.
     func start() async throws
     /// Starts a turn. Returns once the provider accepted it; progress arrives as events,
-    /// ending with exactly one `.turnCompleted`.
+    /// ending with exactly one `.turnCompleted`. A session that had to replace its native session
+    /// while sending (it reported `.sessionStarted` with a new id) sends `input.prompt(forNewSession: true)`.
     func send(_ input: AgentTurnInput) async throws
     func respond(to approvalID: String, optionID: String)
     /// Answers an approval that asked for text (`ApprovalRequest.textInput`).

@@ -9,12 +9,33 @@ import Foundation
 public final class ThreadRunner {
     public static let shared = ThreadRunner(store: .shared, registry: .shared)
 
+    /// How long a stopped turn waits for its provider to confirm before the runner ends it.
+    nonisolated static let defaultStopTimeout: TimeInterval = 6
+
     public struct TurnState: Sendable {
         public var provider: ProviderKind
         public var startedAt: Date
+        /// The item the turn started with, which identifies it: the user's message, or for a turn the
+        /// agent started itself, the notice saying so.
         public var userItemID: UUID
+        /// The agent started this turn on its own (`.agentTurnStarted`), not in answer to a message.
+        public var isAgentInitiated = false
         var planItemID: UUID?
         var interruptRequested = false
+        /// The session is being started or the turn prepared; the provider has no prompt yet.
+        var isStarting = true
+        /// `send` was called (or the agent started the turn), so the provider may be running it.
+        var promptSent = false
+        /// Once the turn ends, the provider's session has seen the whole thread: it got the prompt (`send`
+        /// returned while the turn ran, or the turn produced output), or for a turn it started itself,
+        /// it had already seen everything before. Only then are the turn's items counted as seen.
+        var delivered = false
+
+        init(provider: ProviderKind, startedAt: Date, userItemID: UUID) {
+            self.provider = provider
+            self.startedAt = startedAt
+            self.userItemID = userItemID
+        }
     }
 
     /// A message sent while a turn was running; it is sent when the turn completes.
@@ -25,9 +46,18 @@ public final class ThreadRunner {
         public var createdAt: Date
     }
 
+    /// A session whose `start()` is still running. Concurrent sends wait for it instead of spawning another.
+    private struct Launch {
+        let session: AgentSession
+        let task: Task<Void, Error>
+    }
+
     private let store: AppStore
     private let registry: ProviderRegistry
     private var sessions: [UUID: [ProviderKind: AgentSession]] = [:]
+    private var launches: [UUID: [ProviderKind: Launch]] = [:]
+    /// The native id each live session last reported, to notice when the thread forgot it (rewind).
+    private var liveSessionIDs: [UUID: [ProviderKind: String]] = [:]
     private var lastActivity: [UUID: [ProviderKind: Date]] = [:]
     /// Provider item id ("kind:id") to transcript item id, per thread.
     private var itemMaps: [UUID: [String: UUID]] = [:]
@@ -36,8 +66,9 @@ public final class ThreadRunner {
     /// Which provider the stored usage belongs to, so a switch doesn't show the previous agent's context.
     public private(set) var usageProviders: [UUID: ProviderKind] = [:]
     public private(set) var queues: [UUID: [QueuedMessage]] = [:]
-    private var starting: Set<UUID> = []
     private var idleTimer: Timer?
+    /// Seconds a stopped turn waits for the provider's confirmation. Tests shorten it.
+    var stopTimeout: TimeInterval = ThreadRunner.defaultStopTimeout
 
     /// Posted when a turn ends. userInfo: "threadID" (UUID), "outcome" (TurnOutcome).
     public static let turnFinishedNotification = Notification.Name("coincide.turnFinished")
@@ -59,16 +90,20 @@ public final class ThreadRunner {
         }
     }
 
+    isolated deinit {
+        idleTimer?.invalidate()
+    }
+
     // MARK: State
 
-    public func isRunning(_ threadID: UUID) -> Bool { turns[threadID] != nil || starting.contains(threadID) }
+    public func isRunning(_ threadID: UUID) -> Bool { turns[threadID] != nil }
 
-    /// True while the session is being spawned, before the turn is accepted.
-    public func isStarting(_ threadID: UUID) -> Bool { starting.contains(threadID) }
+    /// True while the session is being spawned or the turn prepared, before the provider has the prompt.
+    public func isStarting(_ threadID: UUID) -> Bool { turns[threadID]?.isStarting == true }
 
     public func turn(_ threadID: UUID) -> TurnState? { turns[threadID] }
 
-    public var runningThreadIDs: [UUID] { Array(Set(turns.keys).union(starting)) }
+    public var runningThreadIDs: [UUID] { Array(turns.keys) }
 
     /// Providers with a live process for the thread.
     public func liveProviders(_ threadID: UUID) -> [ProviderKind] {
@@ -109,44 +144,56 @@ public final class ThreadRunner {
         let userItem = TranscriptItem(
             kind: .user, text: trimmed, provider: provider, modelID: selection.modelID,
             attachments: imagePaths.isEmpty ? nil : imagePaths)
-        let userIndex = store.thread(threadID)?.items.count ?? 0
+        let turnID = userItem.id
         store.append(userItem, to: threadID)
         store.updateThread(threadID, touch: true) { $0.draft = nil }
         itemMaps[threadID] = [:]
-        starting.insert(threadID)
-        turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: userItem.id)
+        turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: turnID)
         store.notify(.runState(threadID))
 
         guard let cwd = store.workingDirectory(for: threadID) else {
-            starting.remove(threadID)
-            finishTurn(threadID, provider: provider, outcome: .failed(String(localized: "The project folder is missing.")))
+            finishTurn(threadID, turnID, outcome: .failed(String(localized: "The project folder is missing.")))
             return
         }
 
         do {
             let session = try await session(for: threadID, provider: provider, cwd: cwd)
-            if store.settings.checkpointsEnabled {
-                await CheckpointService.shared.captureBeforeTurn(threadID: threadID, userItemID: userItem.id, cwd: cwd)
-            }
-            // The recap covers what this provider missed before the new message.
-            guard var snapshot = store.thread(threadID) else { return }
-            snapshot.items = Array(snapshot.items.prefix(userIndex))
-            let prompt = Handoff.prompt(for: trimmed, thread: snapshot, provider: provider)
-            let input = AgentTurnInput(
-                text: prompt, imagePaths: imagePaths, selection: selection, accessMode: snapshot.accessMode,
-                interactionMode: snapshot.interactionMode)
-            starting.remove(threadID)
-            store.notify(.runState(threadID))
-            guard turns[threadID]?.userItemID == userItem.id, turns[threadID]?.interruptRequested == false else {
-                finishTurn(threadID, provider: provider, outcome: .interrupted)
+            guard isActive(threadID, turnID) else { return }
+            guard turns[threadID]?.interruptRequested == false else {
+                finishTurn(threadID, turnID, outcome: .interrupted)
                 return
             }
+            if store.settings.checkpointsEnabled {
+                await CheckpointService.shared.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: cwd)
+                guard isActive(threadID, turnID) else { return }
+                guard turns[threadID]?.interruptRequested == false else {
+                    finishTurn(threadID, turnID, outcome: .interrupted)
+                    return
+                }
+            }
+            // The recap covers what this provider missed before the new message. It is built once the
+            // session is up, because starting it may have replaced the native session.
+            guard let current = store.thread(threadID), let userIndex = current.items.firstIndex(where: { $0.id == turnID })
+            else {
+                finishTurn(threadID, turnID, outcome: .interrupted)
+                return
+            }
+            var snapshot = current
+            snapshot.items = Array(current.items.prefix(userIndex))
+            let input = AgentTurnInput(
+                message: trimmed, handoffRecap: Handoff.recap(thread: snapshot, provider: provider),
+                newSessionRecap: Handoff.newSessionRecap(thread: snapshot, provider: provider), threadTitle: snapshot.title,
+                imagePaths: imagePaths, selection: selection, accessMode: snapshot.accessMode,
+                interactionMode: snapshot.interactionMode)
+            turns[threadID]?.isStarting = false
+            turns[threadID]?.promptSent = true
+            store.notify(.runState(threadID))
             try await session.send(input)
+            if isActive(threadID, turnID) { turns[threadID]?.delivered = true }
         } catch {
-            starting.remove(threadID)
-            // The session may already have ended this turn (for example on Stop) before the error surfaced.
-            guard turns[threadID]?.userItemID == userItem.id else { return }
-            finishTurn(threadID, provider: provider, outcome: .failed(error.localizedDescription))
+            // The turn may already have ended (for example on Stop) before the error surfaced.
+            guard isActive(threadID, turnID) else { return }
+            finishTurn(threadID, turnID, outcome: .failed(error.localizedDescription))
         }
     }
 
@@ -169,23 +216,23 @@ public final class ThreadRunner {
 
     /// Stops the running turn on the thread.
     public func stop(threadID: UUID) {
-        guard let turn = turns[threadID] else { return }
+        guard let turn = turns[threadID], !turn.interruptRequested else { return }
         turns[threadID]?.interruptRequested = true
-        // The session cancels open prompts when interrupted, so they must not stay clickable.
-        for item in pendingApprovals(threadID) + pendingQuestions(threadID) {
-            store.updateItem(item.id, in: threadID) { item in
-                item.status = .declined
-                item.completedAt = Date()
-            }
-        }
-        if let session = sessions[threadID]?[turn.provider], !starting.contains(threadID) {
+        // The session cancels the turn's open prompts when interrupted, so they must not stay clickable.
+        declineOpenPrompts(threadID, provider: turn.provider, since: turn.userItemID)
+        if turn.promptSent, let session = sessions[threadID]?[turn.provider] {
             session.interrupt()
         }
-        // Providers should confirm with `.turnCompleted(.interrupted)`; don't wait forever.
-        let startedAt = turn.startedAt
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
-            guard let self, let current = self.turns[threadID], current.startedAt == startedAt else { return }
-            self.finishTurn(threadID, provider: current.provider, outcome: .interrupted)
+        // Providers confirm with `.turnCompleted(.interrupted)`; don't wait forever.
+        let turnID = turn.userItemID
+        DispatchQueue.main.asyncAfter(deadline: .now() + stopTimeout) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let current = self.turns[threadID], current.userItemID == turnID else { return }
+                self.finishTurn(threadID, turnID, outcome: .interrupted)
+                // The provider never confirmed, so it may still be running the turn and report it later,
+                // into the next one. Its process is ended; the next turn resumes the native session.
+                if current.promptSent { self.shutdown(threadID: threadID, provider: current.provider) }
+            }
         }
     }
 
@@ -194,11 +241,15 @@ public final class ThreadRunner {
         guard let item = store.item(itemID, in: threadID), let approval = item.approval, item.status == .waiting,
             let provider = item.provider
         else { return }
+        guard let session = currentSession(threadID, provider) else {
+            closeOrphanedPrompt(itemID, in: threadID)
+            return
+        }
         let option = approval.options.first { $0.id == optionID }
         if approval.textInput != nil {
-            sessions[threadID]?[provider]?.respond(to: approval.requestID, optionID: optionID, text: text)
+            session.respond(to: approval.requestID, optionID: optionID, text: text)
         } else {
-            sessions[threadID]?[provider]?.respond(to: approval.requestID, optionID: optionID)
+            session.respond(to: approval.requestID, optionID: optionID)
         }
         store.updateItem(itemID, in: threadID) { item in
             item.approval?.resolution = option?.label ?? optionID
@@ -213,11 +264,15 @@ public final class ThreadRunner {
         guard let item = store.item(itemID, in: threadID), let request = item.questions, item.status == .waiting,
             let provider = item.provider
         else { return }
-        sessions[threadID]?[provider]?.answer(userInput: request.id, answers: answers)
+        guard let session = currentSession(threadID, provider) else {
+            closeOrphanedPrompt(itemID, in: threadID)
+            return
+        }
+        session.answer(userInput: request.id, answers: answers)
         let secretIDs = Set(request.questions.filter(\.isSecret).map(\.id))
         store.updateItem(itemID, in: threadID) { item in
             // Secret answers are sent to the agent but never stored.
-            item.answers = answers.mapValues { $0 }.reduce(into: [:]) { result, entry in
+            item.answers = answers.reduce(into: [:]) { result, entry in
                 result[entry.key] = secretIDs.contains(entry.key) ? ["••••"] : entry.value
             }
             item.status = .completed
@@ -230,7 +285,7 @@ public final class ThreadRunner {
         guard let item = store.item(itemID, in: threadID), let request = item.questions, item.status == .waiting,
             let provider = item.provider
         else { return }
-        sessions[threadID]?[provider]?.answer(userInput: request.id, answers: [:])
+        currentSession(threadID, provider)?.answer(userInput: request.id, answers: [:])
         store.updateItem(itemID, in: threadID) { item in
             item.status = .declined
             item.completedAt = Date()
@@ -240,30 +295,63 @@ public final class ThreadRunner {
     /// Ends every session of a thread (for example when it is deleted or its folder changes).
     public func shutdown(threadID: UUID) {
         queues[threadID] = nil
-        if let turn = turns[threadID] { finishTurn(threadID, provider: turn.provider, outcome: .interrupted) }
-        for session in (sessions[threadID] ?? [:]).values { session.shutdown() }
+        if let turn = turns[threadID] { finishTurn(threadID, turn.userItemID, outcome: .interrupted) }
+        let providers = Set((sessions[threadID] ?? [:]).keys).union((launches[threadID] ?? [:]).keys)
+        for provider in providers { shutdown(threadID: threadID, provider: provider) }
         sessions[threadID] = nil
+        launches[threadID] = nil
+        liveSessionIDs[threadID] = nil
         lastActivity[threadID] = nil
         itemMaps[threadID] = nil
     }
 
     /// Ends one provider's session for a thread; its id is kept so the next turn resumes it.
+    /// Prompts it left open can no longer be answered and are closed.
     public func shutdown(threadID: UUID, provider: ProviderKind) {
-        sessions[threadID]?[provider]?.shutdown()
-        sessions[threadID]?[provider] = nil
+        let live = sessions[threadID]?.removeValue(forKey: provider)
+        let launching = launches[threadID]?.removeValue(forKey: provider)
+        liveSessionIDs[threadID]?[provider] = nil
+        guard live != nil || launching != nil else { return }
+        live?.shutdown()
+        launching?.session.shutdown()
+        declineOpenPrompts(threadID, provider: provider, since: nil)
     }
 
+    /// Ends every session and stops every agent process. Call when quitting.
     public func shutdownAll() {
-        for threadID in Array(sessions.keys) { shutdown(threadID: threadID) }
+        let threadIDs = Set(sessions.keys).union(launches.keys).union(turns.keys)
+        for threadID in threadIDs { shutdown(threadID: threadID) }
     }
 
     // MARK: Sessions
 
+    /// The live session, or the one still starting.
+    private func currentSession(_ threadID: UUID, _ provider: ProviderKind) -> AgentSession? {
+        sessions[threadID]?[provider] ?? launches[threadID]?[provider]?.session
+    }
+
+    private func isCurrent(_ session: AgentSession, _ threadID: UUID, _ provider: ProviderKind) -> Bool {
+        currentSession(threadID, provider) === session
+    }
+
+    private func isActive(_ threadID: UUID, _ turnID: UUID) -> Bool { turns[threadID]?.userItemID == turnID }
+
     private func session(for threadID: UUID, provider: ProviderKind, cwd: URL) async throws -> AgentSession {
-        if let existing = sessions[threadID]?[provider] { return existing }
+        if let existing = sessions[threadID]?[provider] {
+            // The thread no longer knows this native session (it was rewound), so it must not continue it.
+            if let live = liveSessionIDs[threadID]?[provider], store.thread(threadID)?.sessions[provider]?.sessionID != live {
+                shutdown(threadID: threadID, provider: provider)
+            } else {
+                return existing
+            }
+        }
+        if let launch = launches[threadID]?[provider] { return try await join(launch, threadID, provider) }
         guard let factory = registry.provider(provider) else { throw AgentError.notInstalled(provider) }
         guard let executable = await registry.executable(for: provider) else { throw AgentError.notInstalled(provider) }
         let environment = await registry.environment(for: provider)
+        // Another send may have started (or finished starting) the session while this one waited.
+        if let existing = sessions[threadID]?[provider] { return existing }
+        if let launch = launches[threadID]?[provider] { return try await join(launch, threadID, provider) }
         guard let thread = store.thread(threadID) else { throw AgentError.notRunning }
         let launch = AgentLaunch(
             provider: provider, executable: executable, environment: environment, workingDirectory: cwd,
@@ -271,32 +359,43 @@ public final class ThreadRunner {
             accessMode: thread.accessMode, interactionMode: thread.interactionMode)
         let session = factory.makeSession(launch)
         session.onEvent = { [weak self, weak session] event in
-            guard let self, let session else { return }
+            guard let self, let session, self.isCurrent(session, threadID, provider) else { return }
             self.handle(event, threadID: threadID, provider: provider, session: session)
         }
-        sessions[threadID, default: [:]][provider] = session
+        let task = Task { try await session.start() }
+        launches[threadID, default: [:]][provider] = Launch(session: session, task: task)
         lastActivity[threadID, default: [:]][provider] = Date()
+        return try await join(Launch(session: session, task: task), threadID, provider)
+    }
+
+    /// Waits for a session to start and makes it the thread's live session for its provider.
+    private func join(_ launch: Launch, _ threadID: UUID, _ provider: ProviderKind) async throws -> AgentSession {
         do {
-            try await session.start()
+            try await launch.task.value
         } catch {
-            if sessions[threadID]?[provider] === session { sessions[threadID]?[provider] = nil }
-            session.shutdown()
+            if launches[threadID]?[provider]?.session === launch.session {
+                launches[threadID]?[provider] = nil
+                launch.session.shutdown()
+            }
             throw error
         }
-        return session
+        if launches[threadID]?[provider]?.session === launch.session {
+            launches[threadID]?[provider] = nil
+            sessions[threadID, default: [:]][provider] = launch.session
+        }
+        // Shut down while starting, or it exited right away.
+        guard sessions[threadID]?[provider] === launch.session else { throw AgentError.notRunning }
+        return launch.session
     }
 
     private func shutDownIdleSessions() {
         let limit = TimeInterval(max(1, store.settings.idleSessionTimeoutMinutes) * 60)
         let now = Date()
         for (threadID, providers) in sessions {
-            for (provider, session) in providers {
+            for provider in providers.keys {
                 if turns[threadID]?.provider == provider { continue }
                 let last = lastActivity[threadID]?[provider] ?? .distantPast
-                if now.timeIntervalSince(last) > limit {
-                    session.shutdown()
-                    sessions[threadID]?[provider] = nil
-                }
+                if now.timeIntervalSince(last) > limit { shutdown(threadID: threadID, provider: provider) }
             }
         }
     }
@@ -306,8 +405,14 @@ public final class ThreadRunner {
     private func handle(_ event: AgentEvent, threadID: UUID, provider: ProviderKind, session: AgentSession) {
         lastActivity[threadID, default: [:]][provider] = Date()
         let modelID = store.thread(threadID)?.selection.modelID
+        // Output from the provider of the running turn shows it has the prompt.
+        let turnOfProvider = turns[threadID]?.provider == provider
+        if turnOfProvider, turns[threadID]?.isAgentInitiated == false, Self.showsDelivery(event) {
+            turns[threadID]?.delivered = true
+        }
         switch event {
         case .sessionStarted(let id):
+            liveSessionIDs[threadID, default: [:]][provider] = id
             store.updateThread(threadID) { thread in
                 let previous = thread.sessions[provider]
                 // A different id means a fresh native session that has seen nothing yet.
@@ -316,6 +421,7 @@ public final class ThreadRunner {
             }
 
         case .sessionContinued(let id):
+            liveSessionIDs[threadID, default: [:]][provider] = id
             store.updateThread(threadID) { thread in
                 let seen = thread.sessions[provider]?.seenItemCount ?? 0
                 thread.sessions[provider] = ProviderSessionRef(sessionID: id, seenItemCount: seen)
@@ -355,40 +461,55 @@ public final class ThreadRunner {
                 item.category = info.category
             }
         case .toolOutput(let id, let delta):
-            guard let existing = mappedItem(.tool, id, threadID) else { return }
+            guard !delta.isEmpty, let existing = mappedItem(.tool, id, threadID) else { return }
             store.updateItem(existing, in: threadID) { item in
                 item.text += delta
-                if item.text.count > 200_000 { item.text = String(item.text.suffix(150_000)) }
+                item.text = TextClip.keepingTail(item.text, limit: Self.toolOutputLimit, clipTo: Self.toolOutputKept)
             }
         case .toolCompleted(let id, let status, let output):
             guard let existing = mappedItem(.tool, id, threadID) else { return }
             store.updateItem(existing, in: threadID) { item in
                 item.status = status
                 item.completedAt = Date()
-                if let output, !output.isEmpty { item.text = output.count > 200_000 ? String(output.suffix(150_000)) : output }
+                if let output, !output.isEmpty {
+                    item.text = TextClip.keepingTail(output, limit: Self.toolOutputLimit, clipTo: Self.toolOutputKept)
+                }
             }
 
         case .approvalRequested(let request):
+            let info = ApprovalInfo(requestID: request.id, options: request.options, textInput: request.textInput)
+            if let existing = waitingPrompt(.approval, requestID: request.id, provider: provider, threadID: threadID) {
+                // A provider repeating a request (for example after reconnecting) updates the open one.
+                store.updateItem(existing, in: threadID) { item in
+                    item.title = request.title
+                    item.detail = request.detail
+                    item.category = request.category
+                    item.approval = info
+                }
+                return
+            }
             let item = TranscriptItem(
                 kind: .approval, title: request.title, detail: request.detail, category: request.category,
-                status: .waiting, provider: provider, modelID: modelID, externalID: request.id,
-                approval: ApprovalInfo(requestID: request.id, options: request.options, textInput: request.textInput))
+                status: .waiting, provider: provider, modelID: modelID, externalID: request.id, approval: info)
             store.append(item, to: threadID)
             onApprovalRequested?(threadID, request)
             NotificationCenter.default.post(name: Self.attentionNeededNotification, object: self, userInfo: ["threadID": threadID])
         case .approvalResolved(let id):
-            guard
-                let item = store.thread(threadID)?.items.last(where: {
-                    $0.kind == .approval && $0.approval?.requestID == id && $0.status == .waiting
-                })
-            else { return }
-            store.updateItem(item.id, in: threadID) { item in
+            guard let itemID = waitingPrompt(.approval, requestID: id, provider: provider, threadID: threadID) else { return }
+            store.updateItem(itemID, in: threadID) { item in
                 item.status = .completed
                 item.approval?.resolution = String(localized: "Closed by the agent")
                 item.completedAt = Date()
             }
 
         case .userInputRequested(let request):
+            if let existing = waitingPrompt(.question, requestID: request.id, provider: provider, threadID: threadID) {
+                store.updateItem(existing, in: threadID) { item in
+                    item.title = request.title
+                    item.questions = request
+                }
+                return
+            }
             let item = TranscriptItem(
                 kind: .question, title: request.title, status: .waiting, provider: provider, modelID: modelID,
                 externalID: request.id, questions: request)
@@ -396,22 +517,18 @@ public final class ThreadRunner {
             onUserInputRequested?(threadID, request)
             NotificationCenter.default.post(name: Self.attentionNeededNotification, object: self, userInfo: ["threadID": threadID])
         case .userInputResolved(let id):
-            guard
-                let item = store.thread(threadID)?.items.last(where: {
-                    $0.kind == .question && $0.questions?.id == id && $0.status == .waiting
-                })
-            else { return }
-            store.updateItem(item.id, in: threadID) { item in
+            guard let itemID = waitingPrompt(.question, requestID: id, provider: provider, threadID: threadID) else { return }
+            store.updateItem(itemID, in: threadID) { item in
                 item.status = .completed
                 item.completedAt = Date()
             }
 
         case .plan(let text):
-            if let planID = turns[threadID]?.planItemID, store.item(planID, in: threadID) != nil {
+            if turnOfProvider, let planID = turns[threadID]?.planItemID, store.item(planID, in: threadID) != nil {
                 store.updateItem(planID, in: threadID) { $0.text = text }
             } else {
                 let item = TranscriptItem(kind: .plan, text: text, provider: provider, modelID: modelID)
-                turns[threadID]?.planItemID = item.id
+                if turnOfProvider { turns[threadID]?.planItemID = item.id }
                 store.append(item, to: threadID)
             }
 
@@ -427,30 +544,79 @@ public final class ThreadRunner {
         case .notice(let text):
             store.append(TranscriptItem(kind: .notice, text: text, provider: provider), to: threadID)
 
+        case .agentTurnStarted(let note):
+            startAgentTurn(threadID, provider: provider, note: note)
         case .turnCompleted(let outcome):
-            // While the next turn is still starting, a completion can only be a late one from an abandoned turn.
-            guard turns[threadID]?.provider == provider, !starting.contains(threadID) else { return }
-            finishTurn(threadID, provider: provider, outcome: outcome)
+            // A completion before the prompt was handed over can only be a late one from an abandoned turn.
+            guard let turn = turns[threadID], turn.provider == provider, turn.promptSent else { return }
+            finishTurn(threadID, turn.userItemID, outcome: outcome)
         case .sessionExited(let error):
-            if sessions[threadID]?[provider] === session { sessions[threadID]?[provider] = nil }
-            if turns[threadID]?.provider == provider, !starting.contains(threadID) {
+            let wasLive = sessions[threadID]?[provider] === session
+            if wasLive {
+                sessions[threadID]?[provider] = nil
+                liveSessionIDs[threadID]?[provider] = nil
+                declineOpenPrompts(threadID, provider: provider, since: nil)
+            }
+            // A session that exits while starting fails its `start()` instead.
+            if let turn = turns[threadID], turn.provider == provider, wasLive || turn.promptSent {
                 let message = error ?? String(localized: "\(provider.displayName) exited unexpectedly.")
-                finishTurn(threadID, provider: provider, outcome: .failed(message))
+                finishTurn(threadID, turn.userItemID, outcome: .failed(message))
             }
         }
     }
 
-    private func finishTurn(_ threadID: UUID, provider: ProviderKind, outcome: TurnOutcome) {
-        guard let turn = turns[threadID] else { return }
+    /// Events that only arrive once the provider is working on the prompt.
+    private static func showsDelivery(_ event: AgentEvent) -> Bool {
+        switch event {
+        case .assistantTextDelta, .assistantText, .reasoningDelta, .reasoningText, .toolStarted, .toolUpdated,
+            .toolOutput, .toolCompleted, .approvalRequested, .userInputRequested, .plan, .turnCompleted(.completed):
+            true
+        default:
+            false
+        }
+    }
+
+    /// Shows a turn the agent started by itself as running, so it can be stopped and is settled when it ends.
+    private func startAgentTurn(_ threadID: UUID, provider: ProviderKind, note: String?) {
+        // One turn at a time: a running turn already covers whatever the agent does.
+        guard turns[threadID] == nil, let thread = store.thread(threadID) else { return }
+        // The turn continues the native session as it stands, so the session has seen the whole thread
+        // afterwards only if it had seen everything before.
+        let upToDate = thread.sessions[provider] != nil && Handoff.missedItems(in: thread, for: provider).isEmpty
+        let text = note ?? String(localized: "\(provider.displayName) continued on its own.")
+        let notice = TranscriptItem(kind: .notice, text: text, provider: provider)
+        store.append(notice, to: threadID)
+        var state = TurnState(provider: provider, startedAt: Date(), userItemID: notice.id)
+        state.isAgentInitiated = true
+        state.isStarting = false
+        state.promptSent = true
+        state.delivered = upToDate
+        turns[threadID] = state
+        store.notify(.runState(threadID))
+    }
+
+    private func finishTurn(_ threadID: UUID, _ turnID: UUID, outcome: TurnOutcome) {
+        guard let turn = turns[threadID], turn.userItemID == turnID else { return }
+        let provider = turn.provider
         turns[threadID] = nil
-        starting.remove(threadID)
-        if let thread = store.thread(threadID), let start = thread.items.firstIndex(where: { $0.id == turn.userItemID }) {
-            for item in thread.items[start...] {
-                guard item.status == .running || item.status == .waiting else { continue }
+        lastActivity[threadID, default: [:]][provider] = Date()
+        if let thread = store.thread(threadID) {
+            let start = thread.items.firstIndex { $0.id == turnID } ?? thread.items.endIndex
+            for (index, item) in thread.items.enumerated() {
+                switch item.status {
+                case .running:
+                    // Also settles items that streamed in after an earlier turn had ended.
+                    break
+                case .waiting where index >= start && item.provider == provider:
+                    // Prompts of other providers, or from between turns, stay open until answered.
+                    break
+                default:
+                    continue
+                }
                 store.updateItem(item.id, in: threadID) { item in
                     switch item.kind {
                     case .approval, .question: item.status = .declined
-                    case .tool: item.status = outcome == .completed ? .completed : .failed
+                    case .tool: item.status = outcome == .completed || index < start ? .completed : .failed
                     default: item.status = .completed
                     }
                     item.completedAt = item.completedAt ?? Date()
@@ -465,28 +631,72 @@ public final class ThreadRunner {
         case .failed(let message):
             store.append(TranscriptItem(kind: .error, text: message, provider: provider), to: threadID)
         }
-        store.updateThread(threadID, touch: true) { thread in
-            if var ref = thread.sessions[provider] {
-                ref.seenItemCount = thread.items.count
-                thread.sessions[provider] = ref
+        // A provider that never got the prompt has not seen the turn, nor what other agents did before it.
+        if turn.delivered {
+            store.updateThread(threadID, touch: true) { thread in
+                if var ref = thread.sessions[provider] {
+                    ref.seenItemCount = thread.items.count
+                    thread.sessions[provider] = ref
+                }
             }
+        } else {
+            store.updateThread(threadID, touch: true) { _ in }
         }
         store.notify(.runState(threadID))
         if store.settings.checkpointsEnabled, let cwd = store.workingDirectory(for: threadID) {
-            let userItemID = turn.userItemID
-            Task { await CheckpointService.shared.captureAfterTurn(threadID: threadID, userItemID: userItemID, cwd: cwd) }
+            Task { await CheckpointService.shared.captureAfterTurn(threadID: threadID, userItemID: turnID, cwd: cwd) }
         }
         onTurnFinished?(threadID, outcome)
         NotificationCenter.default.post(
             name: Self.turnFinishedNotification, object: self, userInfo: ["threadID": threadID, "outcome": outcome])
         // Queued follow-ups only continue a turn that finished normally; after a stop or error the user decides.
-        if outcome == .completed, let next = queues[threadID]?.first {
+        // Messages typed while the agent worked on its own are sent unless the user stopped it.
+        let proceed = outcome == .completed || (turn.isAgentInitiated && !turn.interruptRequested)
+        if proceed, let next = queues[threadID]?.first {
             removeQueued(threadID: threadID, id: next.id)
             Task { await send(threadID: threadID, text: next.text, imagePaths: next.imagePaths) }
         }
     }
 
+    // MARK: Prompts
+
+    /// The open approval or question with this request id from the provider, newest first.
+    private func waitingPrompt(_ kind: TranscriptItem.Kind, requestID: String, provider: ProviderKind, threadID: UUID)
+        -> UUID?
+    {
+        store.thread(threadID)?.items.last { item in
+            guard item.kind == kind, item.status == .waiting, item.provider == provider else { return false }
+            return kind == .approval ? item.approval?.requestID == requestID : item.questions?.id == requestID
+        }?.id
+    }
+
+    /// Closes the provider's open approvals and questions, all of them or those since a turn's user message.
+    private func declineOpenPrompts(_ threadID: UUID, provider: ProviderKind, since turnID: UUID?) {
+        guard let items = store.thread(threadID)?.items else { return }
+        let start = turnID.flatMap { id in items.firstIndex { $0.id == id } } ?? 0
+        for item in items[start...]
+        where (item.kind == .approval || item.kind == .question) && item.status == .waiting && item.provider == provider {
+            store.updateItem(item.id, in: threadID) { item in
+                item.status = .declined
+                item.completedAt = Date()
+            }
+        }
+    }
+
+    /// An approval or question whose session is gone cannot be answered any more.
+    private func closeOrphanedPrompt(_ itemID: UUID, in threadID: UUID) {
+        store.updateItem(itemID, in: threadID) { item in
+            item.status = .declined
+            item.approval?.resolution = String(localized: "The agent session ended")
+            item.completedAt = Date()
+        }
+    }
+
     // MARK: Item mapping
+
+    /// Tool output kept per item: once it grows past the limit, only the newest part is kept.
+    nonisolated static let toolOutputLimit = 200_000
+    nonisolated static let toolOutputKept = 150_000
 
     private func key(_ kind: TranscriptItem.Kind, _ externalID: String) -> String { "\(kind.rawValue):\(externalID)" }
 
@@ -507,8 +717,11 @@ public final class ThreadRunner {
         if let existing = mappedItem(kind, externalID, threadID) {
             store.updateItem(existing, in: threadID) { $0.text += delta }
         } else {
+            // Text streaming in while no turn of this provider runs has no turn end to settle it.
+            let idle = turns[threadID]?.provider != provider
             let item = TranscriptItem(
-                kind: kind, text: delta, status: .running, provider: provider, modelID: modelID, externalID: externalID)
+                kind: kind, text: delta, status: idle ? .completed : .running, provider: provider, modelID: modelID,
+                externalID: externalID, completedAt: idle ? Date() : nil)
             map(kind, externalID, to: item.id, threadID)
             store.append(item, to: threadID)
         }
