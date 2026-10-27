@@ -42,9 +42,7 @@ class ComposerBanner: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     static func icon(_ symbolName: String, color: NSColor) -> NSImageView {
-        let view = NSImageView(
-            image: NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)) ?? NSImage())
+        let view = NSImageView(image: Theme.symbol(symbolName, size: 13, weight: .semibold) ?? NSImage())
         view.contentTintColor = color
         view.setContentHuggingPriority(.required, for: .horizontal)
         view.setContentCompressionResistancePriority(.required, for: .horizontal)
