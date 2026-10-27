@@ -33,14 +33,23 @@ public final class ThreadRunner {
     private var itemMaps: [UUID: [String: UUID]] = [:]
     public private(set) var turns: [UUID: TurnState] = [:]
     public private(set) var usage: [UUID: TokenUsage] = [:]
+    /// Which provider the stored usage belongs to, so a switch doesn't show the previous agent's context.
+    public private(set) var usageProviders: [UUID: ProviderKind] = [:]
     public private(set) var queues: [UUID: [QueuedMessage]] = [:]
     private var starting: Set<UUID> = []
     private var idleTimer: Timer?
 
-    /// Called when a turn ends. The app uses it for notifications.
+    /// Posted when a turn ends. userInfo: "threadID" (UUID), "outcome" (TurnOutcome).
+    public static let turnFinishedNotification = Notification.Name("coincide.turnFinished")
+    /// Posted when an agent asks for approval or asks a question. userInfo: "threadID" (UUID).
+    public static let attentionNeededNotification = Notification.Name("coincide.attentionNeeded")
+
+    /// Called when a turn ends. The app shell owns this; other modules observe `turnFinishedNotification`.
     public var onTurnFinished: ((UUID, TurnOutcome) -> Void)?
     /// Called when an agent asks for approval.
     public var onApprovalRequested: ((UUID, ApprovalRequest) -> Void)?
+    /// Called when an agent asks the user questions.
+    public var onUserInputRequested: ((UUID, UserInputRequest) -> Void)?
 
     public init(store: AppStore, registry: ProviderRegistry) {
         self.store = store
@@ -72,6 +81,11 @@ public final class ThreadRunner {
     /// Approval items still waiting for an answer.
     public func pendingApprovals(_ threadID: UUID) -> [TranscriptItem] {
         store.thread(threadID)?.items.filter { $0.kind == .approval && $0.status == .waiting } ?? []
+    }
+
+    /// Question items still waiting for an answer.
+    public func pendingQuestions(_ threadID: UUID) -> [TranscriptItem] {
+        store.thread(threadID)?.items.filter { $0.kind == .question && $0.status == .waiting } ?? []
     }
 
     // MARK: Turns
@@ -166,16 +180,50 @@ public final class ThreadRunner {
         }
     }
 
-    /// Answers an approval item.
-    public func respond(threadID: UUID, itemID: UUID, optionID: String) {
+    /// Answers an approval item. `text` is sent along when the approval asked for text input.
+    public func respond(threadID: UUID, itemID: UUID, optionID: String, text: String? = nil) {
         guard let item = store.item(itemID, in: threadID), let approval = item.approval, item.status == .waiting,
             let provider = item.provider
         else { return }
         let option = approval.options.first { $0.id == optionID }
-        sessions[threadID]?[provider]?.respond(to: approval.requestID, optionID: optionID)
+        if approval.textInput != nil {
+            sessions[threadID]?[provider]?.respond(to: approval.requestID, optionID: optionID, text: text)
+        } else {
+            sessions[threadID]?[provider]?.respond(to: approval.requestID, optionID: optionID)
+        }
         store.updateItem(itemID, in: threadID) { item in
             item.approval?.resolution = option?.label ?? optionID
+            if approval.textInput != nil { item.approval?.responseText = text }
             item.status = (option?.kind == .deny || option?.kind == .cancel) ? .declined : .completed
+            item.completedAt = Date()
+        }
+    }
+
+    /// Answers a question item. `answers` maps question ids to the chosen labels or typed text.
+    public func answer(threadID: UUID, itemID: UUID, answers: [String: [String]]) {
+        guard let item = store.item(itemID, in: threadID), let request = item.questions, item.status == .waiting,
+            let provider = item.provider
+        else { return }
+        sessions[threadID]?[provider]?.answer(userInput: request.id, answers: answers)
+        let secretIDs = Set(request.questions.filter(\.isSecret).map(\.id))
+        store.updateItem(itemID, in: threadID) { item in
+            // Secret answers are sent to the agent but never stored.
+            item.answers = answers.mapValues { $0 }.reduce(into: [:]) { result, entry in
+                result[entry.key] = secretIDs.contains(entry.key) ? ["••••"] : entry.value
+            }
+            item.status = .completed
+            item.completedAt = Date()
+        }
+    }
+
+    /// Dismisses a question item without answering.
+    public func dismissQuestion(threadID: UUID, itemID: UUID) {
+        guard let item = store.item(itemID, in: threadID), let request = item.questions, item.status == .waiting,
+            let provider = item.provider
+        else { return }
+        sessions[threadID]?[provider]?.answer(userInput: request.id, answers: [:])
+        store.updateItem(itemID, in: threadID) { item in
+            item.status = .declined
             item.completedAt = Date()
         }
     }
@@ -258,6 +306,12 @@ public final class ThreadRunner {
                 thread.sessions[provider] = ProviderSessionRef(sessionID: id, seenItemCount: seen)
             }
 
+        case .sessionContinued(let id):
+            store.updateThread(threadID) { thread in
+                let seen = thread.sessions[provider]?.seenItemCount ?? 0
+                thread.sessions[provider] = ProviderSessionRef(sessionID: id, seenItemCount: seen)
+            }
+
         case .assistantTextDelta(let itemID, let delta):
             appendText(delta, kind: .assistant, externalID: itemID, threadID: threadID, provider: provider, modelID: modelID)
         case .assistantText(let itemID, let text):
@@ -312,6 +366,7 @@ public final class ThreadRunner {
                 approval: ApprovalInfo(requestID: request.id, options: request.options))
             store.append(item, to: threadID)
             onApprovalRequested?(threadID, request)
+            NotificationCenter.default.post(name: Self.attentionNeededNotification, object: self, userInfo: ["threadID": threadID])
         case .approvalResolved(let id):
             guard
                 let item = store.thread(threadID)?.items.last(where: {
@@ -321,6 +376,24 @@ public final class ThreadRunner {
             store.updateItem(item.id, in: threadID) { item in
                 item.status = .completed
                 item.approval?.resolution = String(localized: "Resolved by the agent")
+                item.completedAt = Date()
+            }
+
+        case .userInputRequested(let request):
+            let item = TranscriptItem(
+                kind: .question, title: request.title, status: .waiting, provider: provider, modelID: modelID,
+                externalID: request.id, questions: request)
+            store.append(item, to: threadID)
+            onUserInputRequested?(threadID, request)
+            NotificationCenter.default.post(name: Self.attentionNeededNotification, object: self, userInfo: ["threadID": threadID])
+        case .userInputResolved(let id):
+            guard
+                let item = store.thread(threadID)?.items.last(where: {
+                    $0.kind == .question && $0.questions?.id == id && $0.status == .waiting
+                })
+            else { return }
+            store.updateItem(item.id, in: threadID) { item in
+                item.status = .completed
                 item.completedAt = Date()
             }
 
@@ -334,6 +407,8 @@ public final class ThreadRunner {
             }
 
         case .usage(let value):
+            if usageProviders[threadID] != provider { usage[threadID] = nil }
+            usageProviders[threadID] = provider
             usage[threadID] = value.merged(with: usage[threadID] ?? TokenUsage())
             store.notify(.runState(threadID))
         case .modelResolved:
@@ -364,7 +439,7 @@ public final class ThreadRunner {
                 guard item.status == .running || item.status == .waiting else { continue }
                 store.updateItem(item.id, in: threadID) { item in
                     switch item.kind {
-                    case .approval: item.status = .declined
+                    case .approval, .question: item.status = .declined
                     case .tool: item.status = outcome == .completed ? .completed : .failed
                     default: item.status = .completed
                     }
@@ -392,6 +467,8 @@ public final class ThreadRunner {
             Task { await CheckpointService.shared.captureAfterTurn(threadID: threadID, userItemID: userItemID, cwd: cwd) }
         }
         onTurnFinished?(threadID, outcome)
+        NotificationCenter.default.post(
+            name: Self.turnFinishedNotification, object: self, userInfo: ["threadID": threadID, "outcome": outcome])
         // Queued follow-ups only continue a turn that finished normally; after a stop or error the user decides.
         if outcome == .completed, let next = queues[threadID]?.first {
             removeQueued(threadID: threadID, id: next.id)

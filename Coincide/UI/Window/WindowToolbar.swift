@@ -1,0 +1,130 @@
+import AppKit
+import CoincideKit
+
+extension NSToolbarItem.Identifier {
+    static let newThread = NSToolbarItem.Identifier("coincide.newThread")
+    static let runStatus = NSToolbarItem.Identifier("coincide.runStatus")
+    static let openIn = NSToolbarItem.Identifier("coincide.openIn")
+    static let toggleTerminal = NSToolbarItem.Identifier("coincide.toggleTerminal")
+    static let toggleDiff = NSToolbarItem.Identifier("coincide.toggleDiff")
+}
+
+/// The unified toolbar: sidebar toggle and new thread over the sidebar; the thread title, run status,
+/// "Open in" picker and terminal toggle over the chat; and the diff toggle over the inspector.
+extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMenuDelegate {
+    func makeToolbar() -> NSToolbar {
+        let toolbar = NSToolbar(identifier: "MainToolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = true
+        toolbar.autosavesConfiguration = true
+        return toolbar
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [
+            .toggleSidebar, .flexibleSpace, .newThread, .sidebarTrackingSeparator, .flexibleSpace, .runStatus, .openIn,
+            .toggleTerminal, .inspectorTrackingSeparator, .flexibleSpace, .toggleDiff,
+        ]
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        toolbarDefaultItemIdentifiers(toolbar) + [.space]
+    }
+
+    func toolbar(
+        _ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        let item: NSToolbarItem
+        switch itemIdentifier {
+        case .newThread:
+            item = button(
+                itemIdentifier, label: String(localized: "New Thread"), symbol: "square.and.pencil",
+                toolTip: String(localized: "New Thread (⌘N)"), action: #selector(newThread(_:)))
+        case .toggleTerminal:
+            item = button(
+                itemIdentifier, label: String(localized: "Terminal"), symbol: "terminal", toolTip: "",
+                action: #selector(toggleTerminalPanel(_:)))
+        case .toggleDiff:
+            item = button(
+                itemIdentifier, label: String(localized: "Diff"), symbol: "plus.forwardslash.minus", toolTip: "",
+                action: #selector(toggleDiffPanel(_:)))
+        case .runStatus:
+            item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.view = runStatus
+            item.label = String(localized: "Status")
+            item.visibilityPriority = .high
+            item.isHidden = runStatus.state == .idle
+        case .openIn:
+            let menuItem = NSMenuToolbarItem(itemIdentifier: itemIdentifier)
+            menuItem.menu = NSMenu()
+            menuItem.menu.delegate = self
+            menuItem.showsIndicator = true
+            menuItem.target = self
+            menuItem.action = #selector(openInPreferred(_:))
+            menuItem.isBordered = true
+            item = menuItem
+        default:
+            return nil
+        }
+        toolbarItems[itemIdentifier] = item
+        updatePanelItems()
+        updateOpenInItem()
+        return item
+    }
+
+    private func button(
+        _ identifier: NSToolbarItem.Identifier, label: String, symbol: String, toolTip: String, action: Selector
+    ) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = label
+        item.paletteLabel = label
+        item.toolTip = toolTip
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        item.target = self
+        item.action = action
+        item.isBordered = true
+        return item
+    }
+
+    /// Keeps toggle labels, tooltips and symbols in step with the panels.
+    func updatePanelItems() {
+        if let item = toolbarItems[.toggleTerminal] {
+            let open = splitController.content.isTerminalOpen
+            item.toolTip = open ? String(localized: "Hide Terminal (⌘J)") : String(localized: "Show Terminal (⌘J)")
+            item.image = NSImage(systemSymbolName: open ? "terminal.fill" : "terminal", accessibilityDescription: item.label)
+        }
+        if let item = toolbarItems[.toggleDiff] {
+            let open = splitController.isDiffOpen
+            item.toolTip = open ? String(localized: "Hide Diff (⌘D)") : String(localized: "Show Diff (⌘D)")
+        }
+    }
+
+    /// Shows the preferred app's icon and name on the "Open in" button.
+    @objc func updateOpenInItem() {
+        guard let item = toolbarItems[.openIn] else { return }
+        let target = OpenTargets.preferred
+        let title = target.map { String(localized: "Open in \($0.name)") } ?? String(localized: "Open in Editor")
+        // A copy, because the split button reads its accessibility label from the image and icons are shared.
+        let image =
+            target?.icon.copy() as? NSImage ?? NSImage(systemSymbolName: "arrow.up.forward.app", accessibilityDescription: nil)
+        image?.accessibilityDescription = title
+        item.image = image
+        item.label = String(localized: "Open In")
+        item.paletteLabel = String(localized: "Open In")
+        item.toolTip = title + " (⌘O)"
+    }
+
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        item.itemIdentifier == .openIn ? openFolder != nil : true
+    }
+
+    // MARK: "Open in" menu
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        OpenTargets.reload()
+        menu.removeAllItems()
+        for item in OpenTargets.menuItems(target: self, action: #selector(openInApp(_:))) { menu.addItem(item) }
+        updateOpenInItem()
+    }
+}

@@ -19,14 +19,24 @@ enum Theme {
     static var secondaryText: NSColor { .secondaryLabelColor }
     static var tertiaryText: NSColor { .tertiaryLabelColor }
     static var separator: NSColor { .separatorColor }
-    static var userBubble: NSColor { NSColor.controlAccentColor.withAlphaComponent(0.12) }
-    static var codeBackground: NSColor { NSColor.labelColor.withAlphaComponent(0.06) }
-    static var cardBackground: NSColor { NSColor.labelColor.withAlphaComponent(0.04) }
+    static let userBubble = dynamic(.controlAccentColor, alpha: 0.12)
+    static let codeBackground = dynamic(.labelColor, alpha: 0.06)
+    static let cardBackground = dynamic(.labelColor, alpha: 0.04)
     static var success: NSColor { .systemGreen }
     static var failure: NSColor { .systemRed }
     static var warning: NSColor { .systemOrange }
-    static var addition: NSColor { NSColor.systemGreen.withAlphaComponent(0.16) }
-    static var deletion: NSColor { NSColor.systemRed.withAlphaComponent(0.16) }
+    static let addition = dynamic(.systemGreen, alpha: 0.16)
+    static let deletion = dynamic(.systemRed, alpha: 0.16)
+
+    /// `withAlphaComponent` resolves a dynamic color once, for whatever appearance is current, so colors
+    /// kept on views or layers would go stale after a light/dark switch. This one re-resolves per appearance.
+    static func dynamic(_ base: NSColor, alpha: CGFloat) -> NSColor {
+        NSColor(name: nil) { appearance in
+            var color = base
+            appearance.performAsCurrentDrawingAppearance { color = base.withAlphaComponent(alpha) }
+            return color
+        }
+    }
 
     static func color(for provider: ProviderKind) -> NSColor {
         switch provider {
