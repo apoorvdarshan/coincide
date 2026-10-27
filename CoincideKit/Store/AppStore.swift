@@ -17,10 +17,12 @@ public enum StoreChange: Sendable, Equatable {
 /// Owns projects, threads and settings, persists them as JSON, and tells observers what changed.
 ///
 /// Files are encoded and written on a background queue, each thread at most once at a time, so a
-/// long transcript that streams updates never stalls the main thread. Every write is atomic. A file
-/// that cannot be read is set aside (`*.unreadable-…`) before anything replaces it, and fields or items
-/// this version cannot read are skipped rather than losing the thread. A thread file with such content
-/// (written by a newer version, say) is copied aside before its first save, which would drop it.
+/// long transcript that streams updates never stalls the main thread. After each save a thread waits in
+/// proportion to its size, so a long transcript is not rewritten several times a second. Every write is
+/// atomic. A file that cannot be read is set aside (`*.unreadable-…`) before anything replaces it, and
+/// fields or items this version cannot read are skipped rather than losing the thread. A thread file
+/// with such content (written by a newer version, say) is copied aside before its first save, which
+/// would drop it.
 @MainActor
 public final class AppStore {
     public static let shared = AppStore(directory: AppStore.defaultDirectory)
@@ -33,14 +35,22 @@ public final class AppStore {
     /// Handlers in registration order, so every change reaches observers in a fixed order.
     private var observers: [(id: UUID, handler: (StoreChange) -> Void)] = []
     private var pendingThreadSaves: Set<UUID> = []
-    /// Threads whose write is on the save queue; a newer change waits for it.
-    private var threadsBeingSaved: Set<UUID> = []
+    /// Threads whose write is on the save queue or cooling down after it, with the number of that write;
+    /// newer changes wait for it.
+    private var threadsBeingSaved: [UUID: Int] = [:]
+    private var writeCount = 0
     private var saveScheduled = false
     /// Threads loaded from disk and not saved since. Before the first save replaces such a file, the file
     /// is checked for content this version could not read and, if it has some, copied aside.
     private var threadsToCheckBeforeSave: Set<UUID> = []
+    private var turnObserver: NSObjectProtocol?
     /// How long changes collect before they are written.
     var saveDelay: TimeInterval = 0.6
+    /// How many bytes a thread's saves may write per second while it changes. A save rewrites the whole
+    /// transcript, so after each one the thread waits in proportion to its size: a long transcript that
+    /// streams updates is saved every few seconds instead of several times a second. The end of a turn and
+    /// quitting save at once.
+    var saveBytesPerSecond: Double = 2_000_000
     private let writer = StoreWriter()
 
     /// `~/Library/Application Support/Coincide`, or `COINCIDE_DATA_DIR` when set (used for testing).
@@ -55,6 +65,17 @@ public final class AppStore {
     public init(directory: URL) {
         self.directory = directory
         load()
+        // A finished turn is worth keeping at once, whatever the thread's cool-down after its last save.
+        turnObserver = NotificationCenter.default.addObserver(
+            forName: ThreadRunner.turnFinishedNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let threadID = note.userInfo?["threadID"] as? UUID else { return }
+            MainActor.assumeIsolated { self?.saveNow(threadID) }
+        }
+    }
+
+    isolated deinit {
+        if let turnObserver { NotificationCenter.default.removeObserver(turnObserver) }
     }
 
     // MARK: Observation
@@ -231,6 +252,13 @@ public final class AppStore {
         writer.waitUntilIdle()
     }
 
+    /// Starts writing a thread's pending changes now, even while it cools down after its last save.
+    /// Runs at the end of every turn (`ThreadRunner.turnFinishedNotification`).
+    public func saveNow(_ id: UUID) {
+        guard pendingThreadSaves.remove(id) != nil else { return }
+        startSave(id)
+    }
+
     private func scheduleSave(_ id: UUID) {
         pendingThreadSaves.insert(id)
         scheduleFlush(after: saveDelay)
@@ -248,22 +276,32 @@ public final class AppStore {
         }
     }
 
-    /// Hands pending threads to the writer. A thread whose previous write is still running waits for
-    /// it (unless `waitingForBusyThreads`, when quitting), so slow writes never pile up copies.
+    /// Hands pending threads to the writer. A thread whose previous write is still running or cooling
+    /// down waits for it (unless `waitingForBusyThreads`, when quitting), so slow writes never pile up
+    /// copies and a long transcript is not rewritten several times a second.
     private func startPendingSaves(waitingForBusyThreads: Bool) {
         for id in pendingThreadSaves {
-            if threadsBeingSaved.contains(id) && !waitingForBusyThreads { continue }
+            if threadsBeingSaved[id] != nil && !waitingForBusyThreads { continue }
             pendingThreadSaves.remove(id)
-            guard let thread = threads[id] else { continue }
-            threadsBeingSaved.insert(id)
-            if threadsToCheckBeforeSave.remove(id) != nil { writer.preserveIfPartlyUnreadable(threadURL(id)) }
-            writer.write(thread, to: threadURL(id)) { [weak self] in
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        guard let self else { return }
-                        self.threadsBeingSaved.remove(id)
-                        if self.pendingThreadSaves.contains(id) { self.scheduleFlush(after: self.saveDelay) }
-                    }
+            startSave(id)
+        }
+    }
+
+    /// Writes one thread. It counts as busy until the write is done and a cool-down in proportion to the
+    /// bytes written has passed (`saveBytesPerSecond`); a newer write of the same thread takes over.
+    private func startSave(_ id: UUID) {
+        guard let thread = threads[id] else { return }
+        writeCount += 1
+        let write = writeCount
+        threadsBeingSaved[id] = write
+        if threadsToCheckBeforeSave.remove(id) != nil { writer.preserveIfPartlyUnreadable(threadURL(id)) }
+        let bytesPerSecond = max(saveBytesPerSecond, 1)
+        writer.write(thread, to: threadURL(id)) { [weak self] bytes in
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(bytes) / bytesPerSecond) {
+                MainActor.assumeIsolated {
+                    guard let self, self.threadsBeingSaved[id] == write else { return }
+                    self.threadsBeingSaved[id] = nil
+                    if self.pendingThreadSaves.contains(id) { self.scheduleFlush(after: self.saveDelay) }
                 }
             }
         }
@@ -354,16 +392,21 @@ private final class StoreWriter: @unchecked Sendable {
         return decoder
     }
 
-    nonisolated func write<T: Encodable & Sendable>(_ value: T, to url: URL, completion: (@Sendable () -> Void)? = nil) {
+    /// `completion` gets the number of bytes encoded (0 when encoding failed).
+    nonisolated func write<T: Encodable & Sendable>(
+        _ value: T, to url: URL, completion: (@Sendable (_ bytes: Int) -> Void)? = nil
+    ) {
         queue.async { [encoder] in
+            var bytes = 0
             do {
                 try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 let data = try encoder.encode(value)
+                bytes = data.count
                 try data.write(to: url, options: .atomic)
             } catch {
                 NSLog("Coincide: failed to save \(url.lastPathComponent): \(error)")
             }
-            completion?()
+            completion?(bytes)
         }
     }
 
