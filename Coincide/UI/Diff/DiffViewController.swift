@@ -18,6 +18,7 @@ final class DiffViewController: NSViewController {
             diff = nil
             status = nil
             pullRequest = nil
+            sourceControl = nil
             banner.dismiss()
             lastRunKey = threadID.map(runKey)
             reload()
@@ -49,6 +50,8 @@ final class DiffViewController: NSViewController {
     private var diff: GitDiff?
     private var status: GitStatus?
     private var pullRequest: GitPullRequest?
+    /// The host of the branch's remote, which names its pull requests (merge requests on GitLab).
+    private var sourceControl: SourceControlHost?
     private var loadTask: Task<Void, Never>?
     private var statusTask: Task<Void, Never>?
     private var generation = 0
@@ -548,6 +551,13 @@ final class DiffViewController: NSViewController {
             guard !Task.isCancelled, cwd == self.cwd else { return }
             self.status = status
             self.updateActionsBar()
+            if status?.hasRemote == true {
+                let host = await self.git.sourceControlHost(cwd, branch: status?.branch)
+                guard !Task.isCancelled, cwd == self.cwd else { return }
+                self.sourceControl = host
+            } else {
+                self.sourceControl = nil
+            }
             if let branch = status?.branch, status?.hasUpstream == true {
                 let pullRequest = await self.git.openPullRequest(for: branch, in: cwd)
                 guard !Task.isCancelled, cwd == self.cwd else { return }
@@ -559,8 +569,12 @@ final class DiffViewController: NSViewController {
         }
     }
 
+    /// What the repository's host calls pull requests.
+    private var changeRequestTerm: ChangeRequestTerm { sourceControl?.kind.changeRequest ?? .pullRequest }
+
     private var quickAction: GitQuickAction {
-        GitQuickAction.resolve(status: status, isBusy: actionProgress != nil, hasOpenPullRequest: pullRequest != nil)
+        GitQuickAction.resolve(
+            status: status, isBusy: actionProgress != nil, hasOpenPullRequest: pullRequest != nil, term: changeRequestTerm)
     }
 
     private func updateActionsBar() {
@@ -570,8 +584,9 @@ final class DiffViewController: NSViewController {
         actionsBar.update(
             GitActionsBar.State(
                 branch: status.branch, ahead: status.ahead, behind: status.behind, upstream: status.upstream,
+                pullRequest: pullRequest, changeRequestTerm: changeRequestTerm, quickAction: quickAction,
                 // Another thread's action shows here as busy buttons, not as this thread's progress.
-                pullRequest: pullRequest, quickAction: quickAction, progress: actionThreadID == threadID ? actionProgress : nil))
+                progress: actionThreadID == threadID ? actionProgress : nil))
     }
 
     private func runQuickAction() {
@@ -600,12 +615,13 @@ final class DiffViewController: NSViewController {
             add(String(localized: "Push"), symbol: "arrow.up.circle", enabled: availability.canPush) { [weak self] in
                 self?.perform(.push)
             }
+            let term = changeRequestTerm
             if let pullRequest, let url = URL(string: pullRequest.url) {
-                add(String(localized: "View Pull Request #\(pullRequest.number)"), symbol: "arrow.triangle.pull", enabled: true) {
-                    NSWorkspace.shared.open(url)
+                add(term.viewTitle(pullRequest.number), symbol: "arrow.triangle.pull", enabled: true) { [weak self] in
+                    ChangeRequestLinks.openChangeRequest(url, from: self?.view.window)
                 }
             } else {
-                add(String(localized: "Create Pull Request"), symbol: "arrow.triangle.pull", enabled: availability.canCreatePR) {
+                add(term.createMenuTitle, symbol: "arrow.triangle.pull", enabled: availability.canCreatePR) {
                     [weak self] in self?.perform(.createPR)
                 }
             }
@@ -617,9 +633,7 @@ final class DiffViewController: NSViewController {
         }
         if status?.branch == nil {
             menu.addItem(.separator())
-            let note = menu.addItem(
-                withTitle: String(localized: "Check out a branch to push or open a pull request."), action: nil,
-                keyEquivalent: "")
+            let note = menu.addItem(withTitle: changeRequestTerm.detachedHeadNote, action: nil, keyEquivalent: "")
             note.isEnabled = false
         }
         return menu
@@ -672,6 +686,11 @@ final class DiffViewController: NSViewController {
                 if let branch = result.createdBranch {
                     self.store.updateThread(threadID) { $0.branch = branch }
                 }
+                // Without a signed-in CLI the pull request is finished on the host's page, opened at once
+                // while its thread is shown; the result's button opens it again, or later.
+                if case .openChangeRequestPage(let page) = result.followUp, self.threadID == threadID {
+                    ChangeRequestLinks.openPage(page, from: self.view.window)
+                }
                 report = { [weak self] in self?.showResult(result, threadID: threadID) }
             } catch {
                 report = { [weak self] in self?.showFailure(error) }
@@ -694,17 +713,24 @@ final class DiffViewController: NSViewController {
     }
 
     private func showResult(_ result: GitActionResult, threadID: UUID) {
+        let term = result.changeRequestTerm
         switch result.followUp {
         case .run(let next):
-            let title = next == .push ? String(localized: "Push") : String(localized: "Create PR")
+            let title = next == .push ? String(localized: "Push") : GitStackedAction.createPR.title(for: term)
             banner.show(title: result.title, detail: result.detail, isError: false, actionTitle: title) { [weak self] in
                 guard let self, self.threadID == threadID else { return }
                 self.perform(next)
             }
         case .openPullRequest(let url):
-            banner.show(title: result.title, detail: result.detail, isError: false, actionTitle: String(localized: "View PR")) {
-                NSWorkspace.shared.open(url)
+            banner.show(title: result.title, detail: result.detail, isError: false, actionTitle: term.viewButtonTitle) {
+                [weak self] in ChangeRequestLinks.openChangeRequest(url, from: self?.view.window)
             }
+        case .openChangeRequestPage(let url):
+            let name = result.host?.displayName ?? ""
+            banner.show(
+                title: result.title, detail: result.detail, isError: false,
+                actionTitle: String(localized: "Open \(name)")
+            ) { [weak self] in ChangeRequestLinks.openPage(url, from: self?.view.window) }
         case nil:
             banner.show(title: result.title, detail: result.detail, isError: false)
         }
@@ -726,10 +752,7 @@ final class DiffViewController: NSViewController {
             alert.messageText =
                 commits ? String(localized: "Commit and push to the default branch?") : String(localized: "Push to the default branch?")
         default:
-            alert.messageText =
-                commits
-                ? String(localized: "Commit, push and open a pull request from the default branch?")
-                : String(localized: "Push and open a pull request from the default branch?")
+            alert.messageText = changeRequestTerm.defaultBranchQuestion(commits: commits)
         }
         alert.informativeText = String(
             localized:
