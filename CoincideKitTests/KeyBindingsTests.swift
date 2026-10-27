@@ -72,6 +72,12 @@ struct KeyShortcutFormattingTests {
         #expect(KeyShortcut("mod+delete")?.displayString == "⌘⌦")
     }
 
+    @Test func modifiersAloneShowTheirGlyphsInAppleOrder() {
+        #expect(KeyModifiers([.command, .shift, .control, .option]).glyphs == ["⌃", "⌥", "⇧", "⌘"])
+        #expect(KeyModifiers.command.glyphs == ["⌘"])
+        #expect(KeyModifiers().glyphs.isEmpty)
+    }
+
     @Test func readsOutKeysByName() {
         #expect(KeyShortcut("mod+shift+k")?.spokenDescription == "Shift Command K")
         #expect(KeyShortcut("ctrl+alt+arrowup")?.spokenDescription == "Control Option Up Arrow")
@@ -264,6 +270,22 @@ struct KeyBindingsTests {
         #expect(bindings.menuShortcut(for: .renameThread, keeping: fixed) == nil)
         #expect(bindings.menuShortcut(for: .addProject) == KeyShortcut("mod+c"))
         #expect(bindings.menuShortcut(for: .newThread, keeping: fixed) == KeyShortcut("mod+n"))
+    }
+
+    @Test func threadNumbersShowForTheModifiersOfTheJumpShortcuts() {
+        #expect(KeyBindings().threadJumpModifiers() == [.command])
+        // Each set of modifiers once, in the commands' order.
+        let mixed = KeyBindings(overrides: ["thread.jump.2": "ctrl+2", "thread.jump.3": "ctrl+3", "thread.jump.5": "mod+shift+5"])
+        #expect(mixed.threadJumpModifiers() == [.command, .control, [.command, .shift]])
+        // A jump without a menu shortcut, removed or given to another command, or held by a fixed menu item, counts not.
+        var overrides = Dictionary(uniqueKeysWithValues: (1...9).map { ("thread.jump.\($0)", "") })
+        #expect(KeyBindings(overrides: overrides).threadJumpModifiers().isEmpty)
+        overrides["thread.jump.1"] = "ctrl+1"
+        overrides["thread.stop"] = "ctrl+1"
+        overrides["thread.jump.2"] = "alt+mod+2"
+        let taken = KeyBindings(overrides: overrides)
+        #expect(taken.threadJumpModifiers() == [[.command, .option]])
+        #expect(taken.threadJumpModifiers(keeping: [KeyShortcut("alt+mod+2")!]).isEmpty)
     }
 
     @Test func reservedShortcutsConflict() throws {

@@ -152,6 +152,16 @@ public struct KeyModifiers: OptionSet, Hashable, Sendable {
     public nonisolated static let option = KeyModifiers(rawValue: 1 << 1)
     public nonisolated static let shift = KeyModifiers(rawValue: 1 << 2)
     public nonisolated static let command = KeyModifiers(rawValue: 1 << 3)
+
+    /// The modifiers' glyphs in Apple's order: ⌃ ⌥ ⇧ ⌘.
+    public nonisolated var glyphs: [String] {
+        var glyphs: [String] = []
+        if contains(.control) { glyphs.append("⌃") }
+        if contains(.option) { glyphs.append("⌥") }
+        if contains(.shift) { glyphs.append("⇧") }
+        if contains(.command) { glyphs.append("⌘") }
+        return glyphs
+    }
 }
 
 /// A key and the modifiers held with it, written the way T3 Code writes keybindings: `mod+shift+k`.
@@ -243,15 +253,7 @@ public struct KeyShortcut: Hashable, Sendable, CustomStringConvertible {
     public nonisolated var description: String { stringValue }
 
     /// Modifier glyphs in Apple's order (⌃ ⌥ ⇧ ⌘) followed by the key, one key cap each.
-    public nonisolated var glyphs: [String] {
-        var glyphs: [String] = []
-        if modifiers.contains(.control) { glyphs.append("⌃") }
-        if modifiers.contains(.option) { glyphs.append("⌥") }
-        if modifiers.contains(.shift) { glyphs.append("⇧") }
-        if modifiers.contains(.command) { glyphs.append("⌘") }
-        glyphs.append(keyGlyph)
-        return glyphs
-    }
+    public nonisolated var glyphs: [String] { modifiers.glyphs + [keyGlyph] }
 
     /// The shortcut as menus show it, such as ⇧⌘K.
     public nonisolated var displayString: String { glyphs.joined() }
@@ -593,6 +595,20 @@ public struct KeyBindings: Equatable, Sendable {
             return nil
         }
         return shortcut
+    }
+
+    /// The modifiers of the Go to Thread commands' menu shortcuts (`menuShortcut(for:keeping:)`), each once, in the
+    /// commands' order. Holding one of them shows the sidebar's thread numbers, as T3 shows its jump hints while the
+    /// modifiers of a jump shortcut are held.
+    public nonisolated func threadJumpModifiers(keeping fixed: Set<KeyShortcut> = []) -> [KeyModifiers] {
+        var result: [KeyModifiers] = []
+        for index in 1...9 {
+            guard let command = KeyCommand.jumpToThread(index), let modifiers = menuShortcut(for: command, keeping: fixed)?.modifiers,
+                !result.contains(modifiers)
+            else { continue }
+            result.append(modifiers)
+        }
+        return result
     }
 
     /// What else uses the command's shortcut: other commands in menu-bar order, then the reserved shortcuts it
