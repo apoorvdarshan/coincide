@@ -43,6 +43,11 @@ final class ChatViewController: NSViewController {
     private var displayedThreadID: UUID?
     private var itemsByID: [UUID: TranscriptItem] = [:]
     private var revisions: [UUID: Int] = [:]
+    /// Items whose content or revision changed since the last rebuild: their `itemsByID` entries, and the
+    /// rows of finished turns kept in `settledRows`, may be out of date.
+    private var changedSinceRebuild = Set<UUID>()
+    /// The rows of the thread's finished turns, reused while a turn streams.
+    private var settledRows: TranscriptSettledRows?
     private var expanded: [UUID: Set<TranscriptRowID>] = [:]
     private var scrollStates: [UUID: TranscriptScrollState] = [:]
     private var changedFileSignatures: [UUID: Int] = [:]
@@ -200,6 +205,8 @@ final class ChatViewController: NSViewController {
         // thread was hidden.
         revisions.removeAll()
         list.forgetHeights()
+        changedSinceRebuild.removeAll()
+        settledRows = nil
         changedFileSignatures.removeAll()
         guard let threadID, store.thread(threadID) != nil else {
             displayedThreadID = nil
@@ -221,10 +228,27 @@ final class ChatViewController: NSViewController {
         updateLiveTimer()
     }
 
+    /// Lays out the rows again. Streaming updates touch a few items of the last turn, so only those items
+    /// are looked up again and only the last turn's rows are rebuilt, however long the thread is.
     private func rebuild(reload: Bool = false, keeping anchor: TranscriptRowID? = nil) {
         guard let threadID, let thread = store.thread(threadID) else { return }
-        itemsByID = Dictionary(thread.items.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-        list.update(builder(for: thread).build(), reload: reload, keeping: anchor)
+        if reload || needsFullReload {
+            itemsByID = Dictionary(thread.items.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+            settledRows = nil
+        } else {
+            // Items change in place or are appended (anything else reloads), and the changing ones are the
+            // newest, so look for them from the end.
+            for id in changedSinceRebuild { itemsByID[id] = thread.items.last { $0.id == id } }
+        }
+        let rows = builder(for: thread).build(reusing: &settledRows, changed: changedSinceRebuild)
+        changedSinceRebuild.removeAll()
+        list.update(rows, reload: reload, keeping: anchor)
+    }
+
+    /// Marks an item's rows as changed, for cached heights and the rows kept for finished turns.
+    private func bumpRevision(_ id: UUID) {
+        revisions[id, default: 0] += 1
+        changedSinceRebuild.insert(id)
     }
 
     /// Lays out the thread's rows: what runs now, which rows are open, and the turns agents started themselves.
@@ -272,6 +296,7 @@ final class ChatViewController: NSViewController {
                 needsFullReload = true
             } else {
                 pendingItemIDs.formUnion(changed)
+                changedSinceRebuild.formUnion(changed)
             }
             scheduleUpdate()
         case .runState(let id):
@@ -317,7 +342,7 @@ final class ChatViewController: NSViewController {
             for item in thread.items { revisions[item.id, default: 0] += 1 }
             changedFileSignatures = changedFileSignatures.filter { id, _ in thread.items.contains { $0.id == id } }
         }
-        for id in pendingItemIDs { revisions[id, default: 0] += 1 }
+        for id in pendingItemIDs { bumpRevision(id) }
         pendingItemIDs.removeAll()
         needsFullReload = false
         rebuild(reload: reload)
@@ -585,7 +610,7 @@ final class ChatViewController: NSViewController {
         if !rows.contains(where: { $0.id == rowID }), let group { open.insert(group.id) }
         if !open.contains(rowID), rowHidesMatch(match, of: item) {
             open.insert(rowID)
-            revisions[match.itemID, default: 0] += 1
+            bumpRevision(match.itemID)
         }
         if open != (expanded[threadID] ?? []) {
             expanded[threadID] = open
@@ -760,7 +785,7 @@ extension ChatViewController: TranscriptHost {
         var set = expanded[threadID] ?? []
         if set.contains(id) { set.remove(id) } else { set.insert(id) }
         expanded[threadID] = set
-        if case .item(let itemID) = id { revisions[itemID, default: 0] += 1 }
+        if case .item(let itemID) = id { bumpRevision(itemID) }
         rebuild(keeping: id)
     }
 
