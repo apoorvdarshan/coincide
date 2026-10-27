@@ -481,6 +481,15 @@ struct ACPMapperTests {
         #expect(UnifiedDiff.make(path: "a.txt", old: old, new: old).isEmpty)
     }
 
+    @Test func diffsSplitCRLFFilesIntoLines() throws {
+        // "\r\n" is one Character, so a CRLF file used to diff as a single line.
+        let diff = UnifiedDiff.make(path: "w.txt", old: "a\r\nb\r\nc\r\n", new: "a\r\nB\r\nc\r\n", context: 1)
+        #expect(diff == "--- a/w.txt\n+++ b/w.txt\n@@ -1,3 +1,3 @@\n a\r\n-b\r\n+B\r\n c\r")
+        let hunk = try #require(DiffParser.parse("diff --git a/w.txt b/w.txt\n" + diff).first?.hunks.first)
+        #expect(hunk.lines.map(\.kind) == [.context, .deletion, .addition, .context])
+        #expect(hunk.lines.map(\.text) == ["a", "b", "B", "c"])
+    }
+
     @Test func diffsHandleInsertionsAndDeletions() {
         let diff = UnifiedDiff.make(path: "b.txt", old: "a\nb\nc\n", new: "a\nc\nd\n")
         #expect(diff == "--- a/b.txt\n+++ b/b.txt\n@@ -1,3 +1,3 @@\n a\n-b\n c\n+d")

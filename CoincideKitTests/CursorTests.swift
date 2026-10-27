@@ -595,6 +595,12 @@ struct CursorDiffTests {
         #expect(diff.contains("-line 18\n+LINE 18"))
     }
 
+    @Test func crlfLinesAreDiffedOneByOne() {
+        #expect(
+            CursorDiff.unified(old: "a\r\nb\r\n", new: "a\r\nc\r\n", path: "w.txt")
+                == "--- a/w.txt\n+++ b/w.txt\n@@ -1,2 +1,2 @@\n a\r\n-b\r\n+c\r")
+    }
+
     @Test func interleavedChangesStayCorrect() {
         let diff = CursorDiff.unified(old: "a\nb\nc\nd\n", new: "a\nB\nc\nD\ne\n", path: "f")
         #expect(diff == "--- a/f\n+++ b/f\n@@ -1,4 +1,5 @@\n a\n-b\n+B\n c\n-d\n+D\n+e")

@@ -178,6 +178,9 @@ struct PiToolTests {
         #expect(edit.detail == "--- a.ts\n+++ a.ts\n@@\n-old\n+new\n+line")
         let legacy = PiTools.info(id: "e", name: "edit", args: ["path": "a.ts", "oldText": "x", "newText": "y"])
         #expect(legacy.detail == "--- a.ts\n+++ a.ts\n@@\n-x\n+y")
+        // "\r\n" is one Character; a CRLF edit is still one diff line per line.
+        let crlf = PiTools.info(id: "e", name: "edit", args: ["path": "w.ts", "oldText": "a\r\nb\r\n", "newText": "a\r\nc\r\n"])
+        #expect(crlf.detail == "--- w.ts\n+++ w.ts\n@@\n-a\r\n-b\r\n+a\r\n+c\r")
         let write = PiTools.info(id: "w", name: "write", args: ["path": "b.ts", "content": "export {};\n"])
         #expect(write == ToolCallInfo(id: "w", category: .fileChange, title: "Write b.ts", detail: "export {};\n"))
         let read = PiTools.info(id: "r", name: "read", args: ["path": "README.md", "offset": 10, "limit": 5])

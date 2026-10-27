@@ -25,32 +25,10 @@ enum DiffGeneratorChecks {
         let context = Int(flags >> 5)
 
         checkUnifiedDiff(old: flags & 1 != 0 ? nil : old, new: new, context: context)
-
-        // Linux Foundation splits on "\n" by Character, so "\r\n" stays in one line there; on macOS,
-        // where Coincide runs, CursorDiff's components(separatedBy:) splits it. Check CRLF on macOS only.
-        #if canImport(Darwin)
-        let cursorOld = old
-        let cursorNew = new
-        #else
-        let cursorOld = withoutCRLF(old)
-        let cursorNew = withoutCRLF(new)
-        #endif
-        checkCursorDiff(
-            old: flags & 1 != 0 ? nil : cursorOld, new: flags & 0b10 != 0 ? nil : cursorNew, context: context)
+        checkCursorDiff(old: flags & 1 != 0 ? nil : old, new: flags & 0b10 != 0 ? nil : new, context: context)
     }
 
     private static func decode(_ bytes: [UInt8]) -> String { String(decoding: bytes, as: UTF8.self) }
-
-    /// `text` without any carriage return that directly precedes a line feed (including runs of them).
-    private static func withoutCRLF(_ text: String) -> String {
-        var kept: [Unicode.Scalar] = []
-        for scalar in text.unicodeScalars.reversed() where !(scalar == "\r" && kept.last == "\n") {
-            kept.append(scalar)
-        }
-        var result = String.UnicodeScalarView()
-        result.append(contentsOf: kept.reversed())
-        return String(result)
-    }
 
     private static func text(_ bytes: [UInt8], trailingNewline: Bool) -> String {
         let lines = bytes.map { vocabulary[Int($0) % vocabulary.count] }

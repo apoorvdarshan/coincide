@@ -209,9 +209,10 @@ enum PiTools {
         return lines.joined(separator: "\n")
     }
 
+    /// Split at each "\n" scalar, keeping any "\r": "\r\n" is one Character, so a CRLF edit would be one line.
     private static func diffLines(_ text: String) -> [String] {
         guard !text.isEmpty else { return [] }
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var lines = text.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false).map { String(Substring($0)) }
         if lines.last == "" { lines.removeLast() }
         return lines
     }

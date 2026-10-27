@@ -36,9 +36,13 @@ enum CursorDiff {
         return (header + hunks(diff(lines(old), lines(new)), context: context)).joined(separator: "\n")
     }
 
+    /// Lines as git sees them, split at each "\n" scalar with any "\r" kept on its line. (Foundation splits
+    /// "\r\n" this way on macOS but not on Linux, where it compares Characters.)
     private nonisolated static func lines(_ text: String?) -> [String] {
         guard let text, !text.isEmpty else { return [] }
-        var lines = text.components(separatedBy: "\n")
+        var lines = text.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false).map {
+            String(Substring($0))
+        }
         if lines.last == "" { lines.removeLast() }
         return lines
     }

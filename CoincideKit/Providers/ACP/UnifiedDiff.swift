@@ -106,9 +106,13 @@ enum UnifiedDiff {
         return script
     }
 
+    /// Lines as git sees them, split at each "\n" scalar with any "\r" kept on its line. ("\r\n" is one
+    /// Character, so splitting Characters would leave a CRLF file as one line.)
     private nonisolated static func lines(_ text: String) -> [String] {
         guard !text.isEmpty else { return [] }
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var lines = text.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false).map {
+            String(Substring($0))
+        }
         if lines.last == "" { lines.removeLast() }
         return lines
     }
