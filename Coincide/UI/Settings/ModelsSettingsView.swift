@@ -140,8 +140,7 @@ struct ModelsSettingsView: View {
                 Button("Use for New Threads") { model.setDefaultModel(row.option) }
                     .disabled(row.isDefault)
                 Button("Copy Model ID") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(row.modelID, forType: .string)
+                    NSPasteboard.general.setText(row.modelID)
                 }
                 Divider()
                 Button("Show \(row.option.provider.displayName) Settings") {

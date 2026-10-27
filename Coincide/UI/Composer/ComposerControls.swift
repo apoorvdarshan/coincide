@@ -50,8 +50,7 @@ final class ComposerControlButton: NSButton {
         self.symbolName = symbolName
         symbolColor = symbolTint
         showsChevron = chevron
-        image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
+        image = Theme.symbol(symbolName, size: 12, weight: .medium)
         updateTitle()
     }
 
@@ -74,8 +73,7 @@ final class ComposerControlButton: NSButton {
         }
         if showsChevron {
             let chevron = NSTextAttachment()
-            chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .bold))
+            chevron.image = Theme.symbol("chevron.down", size: 8, weight: .bold)
             if text.length > 0 { text.append(NSAttributedString(string: " ")) }
             text.append(NSAttributedString(attachment: chevron))
         }
@@ -236,8 +234,7 @@ final class ComposerSendButton: NSButton {
             case .queue: "text.line.last.and.arrowtriangle.forward"
             case .stop: "stop.fill"
             }
-        image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: mode == .stop ? 10 : 12, weight: .bold))
+        image = Theme.symbol(symbol, size: mode == .stop ? 10 : 12, weight: .bold)
         let fill: NSColor =
             if !isEnabled {
                 NSColor.labelColor.withAlphaComponent(0.1)

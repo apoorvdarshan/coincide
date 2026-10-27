@@ -42,9 +42,7 @@ class ComposerBanner: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     static func icon(_ symbolName: String, color: NSColor) -> NSImageView {
-        let view = NSImageView(
-            image: NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)) ?? NSImage())
+        let view = NSImageView(image: Theme.symbol(symbolName, size: 13, weight: .semibold) ?? NSImage())
         view.contentTintColor = color
         view.setContentHuggingPriority(.required, for: .horizontal)
         view.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -80,7 +78,7 @@ final class ComposerApprovalBanner: ComposerBanner {
     private var textInput: TextInputSpec?
 
     init() {
-        super.init(tint: NSColor.systemOrange.withAlphaComponent(0.1))
+        super.init(tint: Theme.approvalTint)
         counter.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         counter.setContentCompressionResistancePriority(.required, for: .horizontal)
         summary.maximumNumberOfLines = 2
@@ -130,11 +128,18 @@ final class ComposerApprovalBanner: ComposerBanner {
         heading.stringValue = kind
         agent.stringValue = item.provider?.displayName ?? ""
         counter.stringValue = othersWaiting > 0 ? String(localized: "\(othersWaiting) more waiting") : ""
-        summary.stringValue = item.title ?? kind
+        // Titles use Markdown code spans for commands, as in the transcript.
+        let title = NSMutableAttributedString(
+            attributedString: TranscriptText.inlineLabel(
+                item.title ?? kind, font: .systemFont(ofSize: 12, weight: .medium), color: .labelColor))
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        title.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: title.length))
+        summary.attributedStringValue = title
         let detailText = item.detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         detail.stringValue = detailText
         detail.isHidden = detailText.isEmpty || detailText == item.title
-        setAccessibilityLabel([kind, item.provider?.displayName, item.title].compactMap { $0 }.joined(separator: ", "))
+        setAccessibilityLabel([kind, item.provider?.displayName, title.string].compactMap { $0 }.joined(separator: ", "))
 
         textInput = item.approval?.textInput
         input.isHidden = textInput == nil
@@ -242,7 +247,7 @@ final class ComposerQuestionBanner: ComposerBanner, NSTextFieldDelegate {
     private var pendingAdvance: DispatchWorkItem?
 
     init() {
-        super.init(tint: NSColor.controlAccentColor.withAlphaComponent(0.08))
+        super.init(tint: Theme.questionTint)
         counter.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         counter.setContentCompressionResistancePriority(.required, for: .horizontal)
         let dismiss = NSButton(

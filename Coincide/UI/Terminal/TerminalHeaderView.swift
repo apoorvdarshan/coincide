@@ -44,6 +44,7 @@ final class TerminalHeaderView: NSView {
         tabStrip.setAccessibilityLabel(String(localized: "Terminal tabs"))
 
         newTabButton.toolTip = String(localized: "New Terminal (⌘T)")
+        hideButton.toolTip = String(localized: "Hide Terminal (⌘J)")
         directoryIcon.image = Theme.symbol("folder", size: 11)
         directoryIcon.contentTintColor = .tertiaryLabelColor
         directoryIcon.setAccessibilityElement(false)
@@ -178,8 +179,7 @@ final class TerminalHeaderView: NSView {
 
     @objc private func copyDirectory() {
         guard let directory else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(directory.path, forType: .string)
+        NSPasteboard.general.setText(directory.path)
     }
 
     @objc private func revealDirectory() {

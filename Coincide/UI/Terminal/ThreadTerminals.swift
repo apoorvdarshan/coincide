@@ -178,6 +178,9 @@ final class TerminalSessionManager {
         TerminalKeyRouter.install()
     }
 
+    /// Terminals running a command that quitting would stop.
+    var busySessionCount: Int { terminalsByThread.values.reduce(0) { $0 + $1.sessions.filter(\.isBusy).count } }
+
     func terminals(for threadID: UUID) -> ThreadTerminals {
         if let existing = terminalsByThread[threadID] { return existing }
         let terminals = ThreadTerminals(threadID: threadID)

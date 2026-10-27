@@ -482,8 +482,7 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
     private func copySelection() {
         let text = selectedText()
         guard !text.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        NSPasteboard.general.setText(text)
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -900,7 +899,6 @@ final class FileActionTarget: NSObject {
 
     @objc func copy(_ sender: NSMenuItem) {
         guard let text = sender.representedObject as? String else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        NSPasteboard.general.setText(text)
     }
 }

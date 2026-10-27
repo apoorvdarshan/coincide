@@ -191,6 +191,20 @@ final class MainMenu: NSObject, NSMenuDelegate {
             menu.addItem(jump)
         }
         menu.addItem(.separator())
+        // The composer's pickers (T3's modelPicker.toggle, composer.effort and composer.mode).
+        menu.addItem(
+            item(
+                String(localized: "Choose Agent and Model…"), #selector(MainWindowController.showModelPicker(_:)), "m",
+                [.command, .shift]))
+        menu.addItem(
+            item(
+                String(localized: "Reasoning Effort…"), #selector(MainWindowController.showEffortPicker(_:)), "e",
+                [.command, .shift]))
+        menu.addItem(
+            item(String(localized: "Access…"), #selector(MainWindowController.showAccessPicker(_:)), "a", [.command, .shift]))
+        // Shift-Tab toggles it in the composer; as a menu shortcut it would take Shift-Tab from every field.
+        menu.addItem(item(String(localized: "Plan Mode"), #selector(MainWindowController.togglePlanMode(_:))))
+        menu.addItem(.separator())
         menu.addItem(item(String(localized: "Rename…"), #selector(MainWindowController.renameThread(_:))))
         menu.addItem(
             item(String(localized: "Pin Thread"), #selector(MainWindowController.togglePinThread(_:)), "p", [.command, .shift]))

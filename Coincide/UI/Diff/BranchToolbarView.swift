@@ -62,6 +62,8 @@ final class BranchToolbarView: NSView {
                 self.scheduleRefresh()
             case .items(threadID, _, true):
                 self.render()
+            case .projects:
+                if self.cwd != self.statusFolder { self.scheduleRefresh() }
             default:
                 break
             }
@@ -251,8 +253,7 @@ final class BranchToolbarView: NSView {
 
     @objc private func copyFolderPath(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(path, forType: .string)
+        NSPasteboard.general.setText(path)
     }
 
     // MARK: Branches

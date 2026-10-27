@@ -16,49 +16,11 @@ protocol TranscriptHost: AnyObject {
     func editMessage(_ itemID: UUID)
     func revertTurn(_ itemID: UUID)
     func canRevert(_ itemID: UUID) -> Bool
-    func respond(to itemID: UUID, optionID: String, text: String?)
-    func answer(_ itemID: UUID, answers: [String: [String]])
-    func dismissQuestion(_ itemID: UUID)
-    /// What the user has entered on a waiting card so far.
-    func inputDraft(for itemID: UUID) -> TranscriptInputDraft
     func showDiff(turnID: UUID, path: String?)
     func openLink(_ link: Any) -> Bool
     func previewAttachments(_ paths: [String], selected: Int)
     func changedFiles(for turnID: UUID) -> [ChangedFile]
     func modelLabel(for meta: AssistantMeta) -> String
-}
-
-/// Input on a waiting question or approval card. The host keeps it, so it survives cell reuse and
-/// transcript updates until the card is answered.
-@MainActor
-final class TranscriptInputDraft {
-    /// Chosen option labels per question id.
-    var selections: [String: Set<String>] = [:]
-    /// Typed text per question id; an approval's text uses `approvalTextKey`.
-    var texts: [String: String] = [:]
-
-    static let approvalTextKey = ""
-
-    /// Answers in the agent's terms: each question's chosen labels in option order, then its typed text.
-    func answers(for request: UserInputRequest) -> [String: [String]] {
-        var answers: [String: [String]] = [:]
-        for question in request.questions {
-            let chosen = selections[question.id] ?? []
-            var values = question.options.map(\.label).filter(chosen.contains)
-            let typed = (texts[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !typed.isEmpty { values.append(typed) }
-            if !values.isEmpty { answers[question.id] = values }
-        }
-        return answers
-    }
-
-    /// Every question that can be answered has an answer.
-    func isComplete(for request: UserInputRequest) -> Bool {
-        let answers = answers(for: request)
-        return request.questions.allSatisfy { question in
-            (question.options.isEmpty && !question.allowsFreeText) || answers[question.id] != nil
-        }
-    }
 }
 
 /// Shared transcript geometry. Everything lays out in a centered column.

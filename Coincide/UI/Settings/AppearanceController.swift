@@ -8,8 +8,7 @@ final class AppearanceController {
     private var token: ObservationToken?
     private var applied: AppearanceMode?
 
-    /// Applies the saved appearance, keeps it in sync with settings and starts handling requests to open
-    /// the settings window. Called once at launch.
+    /// Applies the saved appearance and keeps it in sync with settings. Called once at launch.
     func start() {
         guard token == nil else { return }
         apply(AppStore.shared.settings.appearance)
@@ -17,7 +16,6 @@ final class AppearanceController {
             guard change == .settings else { return }
             self?.apply(AppStore.shared.settings.appearance)
         }
-        SettingsWindowController.shared.startHandlingRequests()
     }
 
     private func apply(_ mode: AppearanceMode) {
