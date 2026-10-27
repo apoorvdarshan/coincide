@@ -110,6 +110,27 @@ struct GitServiceTests {
         #expect(!FileManager.default.fileExists(atPath: worktree.path))
     }
 
+    @Test func keepsTheWorktreesFolderOwnerOnly() async throws {
+        let repository = try await TestRepository.make()
+        func mode(_ url: URL) throws -> Int? {
+            try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        }
+
+        // A new folder, and the parent folder created with it.
+        let data = try TestRepository.makeDirectory("data").appendingPathComponent(".coincide", isDirectory: true)
+        let fresh = GitService(worktreesRoot: data.appendingPathComponent("worktrees", isDirectory: true))
+        _ = try await fresh.createThreadWorktree(projectPath: repository.url, baseBranch: nil, prefix: "coincide/")
+        #expect(try mode(fresh.worktreesRoot) == 0o700)
+        #expect(try mode(data) == 0o700)
+
+        // A folder an earlier version created readable by everyone.
+        let existing = try TestRepository.makeDirectory("worktrees")
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: existing.path)
+        let older = GitService(worktreesRoot: existing)
+        _ = try await older.createThreadWorktree(projectPath: repository.url, baseBranch: nil, prefix: "coincide/")
+        #expect(try mode(existing) == 0o700)
+    }
+
     @Test func discardsOnlyUnusedWorktrees() async throws {
         let repository = try await TestRepository.make()
         let unused = try await git.createThreadWorktree(projectPath: repository.url, baseBranch: nil, prefix: "coincide/")
