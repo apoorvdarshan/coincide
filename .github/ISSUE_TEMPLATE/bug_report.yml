@@ -1,0 +1,121 @@
+name: Bug report
+description: Something in Coincide isn't working as expected
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. The details below help reproduce it quickly.
+        Security issues belong in [private vulnerability reporting](https://github.com/apoorvdarshan/coincide/security/advisories/new), not here.
+        **Never paste API keys, tokens, cookies or private code.** Agent output and logs can contain them, so check before you post.
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Apple menu → About This Mac. Include the build number if you can.
+      placeholder: e.g. macOS 26.1 (25B78)
+    validations:
+      required: true
+  - type: input
+    id: coincide-version
+    attributes:
+      label: Coincide version
+      description: Coincide → About Coincide, or the commit you built from.
+      placeholder: e.g. 0.1.0 (1), or main at abc1234
+    validations:
+      required: true
+  - type: dropdown
+    id: agents
+    attributes:
+      label: Agent
+      description: Which agents were involved? Pick "Not agent-specific" if it happens without one.
+      multiple: true
+      options:
+        - Claude Code
+        - Codex
+        - Cursor
+        - Grok Build
+        - OpenCode
+        - Pi
+        - Antigravity
+        - Not agent-specific
+    validations:
+      required: true
+  - type: input
+    id: agent-version
+    attributes:
+      label: Agent CLI version
+      description: The output of the agent's version command, such as `claude --version`, `codex --version` or `cursor-agent --version`.
+      placeholder: e.g. claude 2.3.1, codex-cli 0.98.0
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Starting or signing in to an agent
+        - Model picker or switching agents mid-thread
+        - Transcript or composer
+        - Approvals, questions or plan mode
+        - Git (diffs, checkpoints, worktrees, commits, pull requests)
+        - Terminal
+        - Projects, threads or sidebar
+        - Settings
+        - Something else
+  - type: dropdown
+    id: access-mode
+    attributes:
+      label: Access mode
+      options:
+        - Full access
+        - Ask for approval
+        - Not sure or not relevant
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps someone else can follow, starting from opening Coincide.
+      placeholder: |
+        1. Open a project and start a thread with …
+        2. Send …
+        3. Switch to …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and error text
+      description: |
+        Error text shown in Coincide, the agent CLI's own output if you can reproduce it in Terminal, or a crash report (Console → Crash Reports, or `~/Library/Logs/DiagnosticReports/Coincide-*.ips`).
+        Remove keys, tokens, cookies, email addresses and private code first.
+      render: shell
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots or screen recording
+      description: Drag images or a short video here if they help. Check them for secrets and private code too.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Anything else that might help, such as recent setting changes, a large repository, or whether it also happens in T3 Code.
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed API keys, tokens, cookies and private code from everything above.
+          required: true

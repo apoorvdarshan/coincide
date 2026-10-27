@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/apoorvdarshan/coincide/security/advisories/new
+    about: Report security issues privately, never in a public issue. See SECURITY.md.
+  - name: Installing or signing in to an agent
+    url: https://github.com/apoorvdarshan/coincide#agents
+    about: Install and sign-in steps for each agent CLI. Problems in an agent itself belong with its maker.

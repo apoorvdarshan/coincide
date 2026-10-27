@@ -1,0 +1,1 @@
+../../../CoincideKit/Providers/Cursor/CursorDiff.swift
