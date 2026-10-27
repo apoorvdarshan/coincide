@@ -416,6 +416,7 @@ struct ClaudeMapperTests {
             #"{"type":"system","subtype":"informational","content":"debug only","level":"info"}"#,
             #"{"type":"system","subtype":"local_command_output","content":"Total cost: $0.01","uuid":"cmd-1"}"#,
             #"{"type":"system","subtype":"status","status":null,"permissionMode":"acceptEdits"}"#,
+            #"{"type":"system","subtype":"session_title_changed","title":"Fix the build","uuid":"t1"}"#,
         ]
         let events = mapLines(frames, into: &mapper)
         #expect(
@@ -1207,10 +1208,11 @@ struct ClaudeSessionTests {
 
     private func input(
         _ text: String = "Reply with exactly: pong", model: String = "haiku", effort: String? = "low", access: AccessMode = .approval,
-        interaction: InteractionMode = .build, images: [String] = [], recap: String? = nil, newSessionRecap: String? = nil
+        interaction: InteractionMode = .build, images: [String] = [], recap: String? = nil, newSessionRecap: String? = nil,
+        title: String? = nil
     ) -> AgentTurnInput {
         AgentTurnInput(
-            message: text, handoffRecap: recap, newSessionRecap: newSessionRecap ?? recap, imagePaths: images,
+            message: text, handoffRecap: recap, newSessionRecap: newSessionRecap ?? recap, threadTitle: title, imagePaths: images,
             selection: ModelSelection(provider: .claude, modelID: model, effort: effort), accessMode: access,
             interactionMode: interaction)
     }
@@ -1971,6 +1973,25 @@ struct ClaudeSessionTests {
         #expect(replies(since: start).isEmpty)
         #expect(!events.value.contains { if case .notice = $0 { true } else { false } })
         #expect(completions == [.completed, .completed, .completed])
+    }
+
+    @Test func newConversationsAreNamedAfterTheThread() async throws {
+        let session = makeSession()
+        try await session.start()
+        let uuid = try await startTurn(session, input(title: "Fix the flaky build"))
+        try await waitUntil { transport.controlRequests.contains { $0["subtype"] == "rename_session" } }
+        // After the message, so the conversation it names is saved.
+        #expect(transport.written.last { $0["type"] == "user" || $0.at("request.subtype") == "rename_session" }?["type"] == "control_request")
+        #expect(transport.controlRequests.last == ["subtype": "rename_session", "title": "Fix the flaky build", "source": "host"])
+        transport.emit([ClaudeFixture.pongResult, ClaudeFixture.lifecycle(uuid, "completed")])
+
+        // Later turns, and conversations that were saved before, keep their name.
+        try await session.send(input(title: "Renamed thread"))
+        let resumed = makeSession(resume: "29718ecd-ee07-4e0c-9590-9666442ec28f")
+        try await resumed.start()
+        try await resumed.send(input(title: "Fix the flaky build"))
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(transports.value.flatMap { $0.controlRequests }.filter { $0["subtype"] == "rename_session" }.count == 1)
     }
 
     @Test func aTurnClaudeStartsByItselfShowsWhatOnlyItsResultCarries() async throws {

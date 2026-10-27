@@ -155,6 +155,7 @@ final class ClaudeSession: AgentSession {
             mapper.beginTurn()
             transport.write(Self.userMessage(texts: texts, images: images, uuid: turnID).compactJSON)
             turn?.accepted = true
+            if !conversationExists, let title = TerminalText.nonEmpty(input.threadTitle) { name(title) }
             conversationExists = true
         } catch {
             if turn?.id == turnID { turn = nil }
@@ -436,6 +437,15 @@ final class ClaudeSession: AgentSession {
         mapper.notePermissionMode(response["mode"]?.string ?? mode)
         if mode == "bypassPermissions", let applied = response["mode"]?.string, applied != mode {
             await fallBackFromFullAccess()
+        }
+    }
+
+    /// Names a new conversation after the thread, as OpenCode's sessions are, so Claude Code's own session list
+    /// (`claude --resume`) shows the thread's title. Claude Code takes it as a name the user chose; should it refuse,
+    /// the conversation keeps the title Claude Code gives it.
+    private func name(_ title: String) {
+        Task { [weak self] in
+            _ = try? await self?.control(["subtype": "rename_session", "title": .string(title), "source": "host"], timeout: 10)
         }
     }
 

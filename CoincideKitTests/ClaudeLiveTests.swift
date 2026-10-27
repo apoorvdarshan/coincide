@@ -44,19 +44,41 @@ struct ClaudeLiveTests {
         return session
     }
 
-    private func input(_ text: String, access: AccessMode = .approval, interaction: InteractionMode = .build) -> AgentTurnInput {
-        AgentTurnInput(text: text, selection: Self.selection, accessMode: access, interactionMode: interaction)
+    private func input(
+        _ text: String, access: AccessMode = .approval, interaction: InteractionMode = .build, title: String? = nil
+    ) -> AgentTurnInput {
+        AgentTurnInput(
+            message: text, handoffRecap: nil, newSessionRecap: nil, threadTitle: title, selection: Self.selection,
+            accessMode: access, interactionMode: interaction)
     }
 
     /// Sends a message and waits for its turn to end.
     private func run(
         _ session: ClaudeSession, _ text: String, access: AccessMode = .approval, interaction: InteractionMode = .build,
-        recorder: LiveRecorder
+        title: String? = nil, recorder: LiveRecorder
     ) async throws -> (outcome: TurnOutcome, reply: String) {
         let start = recorder.events.count
-        try await session.send(input(text, access: access, interaction: interaction))
+        try await session.send(input(text, access: access, interaction: interaction, title: title))
         let outcome = try await recorder.completion(after: start)
         return (outcome, recorder.reply(after: start))
+    }
+
+    /// Whether Claude Code saved `title` as the conversation's name, in whichever project folder holds its transcript.
+    private static func isNamed(_ sessionID: String, _ title: String) async throws -> Bool {
+        let root =
+            environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
+        let projects = root.appendingPathComponent("projects", isDirectory: true)
+        let entry = #""customTitle":"\#(title)""#
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
+            for folder in (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? [] {
+                let transcript = try? String(contentsOf: folder.appendingPathComponent("\(sessionID).jsonl"), encoding: .utf8)
+                if transcript?.contains(entry) == true { return true }
+            }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        return false
     }
 
     @Test func detectsTheInstalledCLIAndItsModels() async throws {
@@ -77,10 +99,12 @@ struct ClaudeLiveTests {
         let id = try #require(session.sessionID)
         #expect(recorder.events.contains(.sessionStarted(id: id)))
 
-        let first = try await run(session, "Reply with exactly: pong", recorder: recorder)
+        let first = try await run(session, "Reply with exactly: pong", title: "Coincide live test", recorder: recorder)
         #expect(first.outcome == .completed)
         #expect(first.reply.lowercased().contains("pong"))
         #expect(recorder.events.contains { if case .usage(let usage) = $0 { (usage.inputTokens ?? 0) > 0 } else { false } })
+        // The new conversation carries the thread's name in Claude Code's own session list.
+        #expect(try await Self.isNamed(id, "Coincide live test"))
 
         let second = try await run(
             session, "What single word did you just reply with? Reply with only that word.", recorder: recorder)
