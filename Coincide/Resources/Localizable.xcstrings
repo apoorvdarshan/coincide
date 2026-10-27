@@ -400,6 +400,9 @@
     "A command is still running in a terminal." : {
 
     },
+    "A downloaded Antigravity file no longer matches its SHA-256. Remove the runtime and install it again." : {
+
+    },
     "A feature branch can only be created when committing." : {
 
     },
@@ -501,6 +504,9 @@
       }
     },
     "Added to %@’s environment on top of your login shell’s, for example API keys or a custom base URL." : {
+
+    },
+    "Address" : {
 
     },
     "After installing or signing in, choose Check Again." : {
@@ -613,10 +619,22 @@
     "Always block %@" : {
 
     },
+    "An Antigravity file isn’t signed by Google. Nothing was installed." : {
+
+    },
     "An MCP server" : {
 
     },
     "An agent is still working." : {
+
+    },
+    "An archive member exceeded its pinned size." : {
+
+    },
+    "An archive member was truncated." : {
+
+    },
+    "An extracted Antigravity file failed its SHA-256 check. Nothing was installed." : {
 
     },
     "Another thread has worked in this folder since this turn, so restoring files would undo its changes too. Rewind the conversation without restoring files instead." : {
@@ -628,10 +646,40 @@
     "Answer below" : {
 
     },
-    "Antigravity needs you to sign in with Google. Finish signing in in your browser: %@" : {
+    "Antigravity Runtime" : {
 
     },
-    "Antigravity needs you to sign in with Google. Start the turn again to open the sign-in page." : {
+    "Antigravity couldn’t reach Google. Check this Mac’s network connection, then start sign-in again." : {
+
+    },
+    "Antigravity download" : {
+
+    },
+    "Antigravity exited unexpectedly (status %d)." : {
+
+    },
+    "Antigravity hasn’t reached Google after 30 seconds. Check this Mac’s network connection; broken IPv6 is a common cause." : {
+
+    },
+    "Antigravity needs IPv6 networking. Turn IPv6 on for this Mac’s network, then try again." : {
+
+    },
+    "Antigravity needs at least %lld MB of free space to install." : {
+
+    },
+    "Antigravity runs from the custom path below. Installing here keeps that path; clear it to use the downloaded runtime." : {
+
+    },
+    "Antigravity sign-out failed. Try again." : {
+
+    },
+    "Antigravity signed in, but couldn’t start a session or load models." : {
+
+    },
+    "Antigravity started more than one Google sign-in request. Start sign-in again." : {
+
+    },
+    "Antigravity uses your Google account’s subscription. Coincide keeps this sign-in in its own Antigravity profile, separate from ~/.gemini and any other Antigravity install." : {
 
     },
     "Antigravity's %@ helper is missing next to %@. Install both files from the same release." : {
@@ -643,6 +691,12 @@
           }
         }
       }
+    },
+    "Antigravity’s browser helper could not be written." : {
+
+    },
+    "Antigravity’s browser suppression could not be verified." : {
+
     },
     "Appearance" : {
 
@@ -840,10 +894,22 @@
     "Checked out in %@" : {
 
     },
+    "Checking Antigravity access and models." : {
+
+    },
     "Checking out changes the branch of the project folder." : {
 
     },
     "Checking providers…" : {
+
+    },
+    "Checking the downloaded runtime." : {
+
+    },
+    "Checking the downloaded runtime…" : {
+
+    },
+    "Checking your account…" : {
 
     },
     "Checking…" : {
@@ -1100,6 +1166,9 @@
     "Coincide could not tell which Pi version is installed. Pi %@ or newer is required." : {
 
     },
+    "Coincide downloads Google’s Antigravity runtime from dl.google.com, checks it against the release Coincide expects (size, SHA-256 and Google’s signature), and keeps it in Coincide’s data folder." : {
+
+    },
     "Coincide is a native macOS port of T3 Code, the open-source agent app by T3 Tools Inc., and is used under the MIT License." : {
 
     },
@@ -1110,6 +1179,9 @@
 
     },
     "Coincide runs your coding agents in a folder on your Mac. Add one, then start a thread." : {
+
+    },
+    "Coincide’s data folder path contains a character that stops Antigravity’s browser launches from being redirected to Coincide. Move the data folder to a path without colons." : {
 
     },
     "Collapse" : {
@@ -1279,6 +1351,9 @@
     "Copy Path" : {
 
     },
+    "Copy Sign-in Link" : {
+
+    },
     "Copy Thread ID" : {
 
     },
@@ -1416,6 +1491,48 @@
 
     },
     "Couldn't start Cursor: %@" : {
+
+    },
+    "Couldn’t activate Antigravity. The previous runtime is unchanged. Try again." : {
+
+    },
+    "Couldn’t create Antigravity’s folder in Coincide’s data folder." : {
+
+    },
+    "Couldn’t deliver the sign-in response. Start sign-in again." : {
+
+    },
+    "Couldn’t download Antigravity from Google. Check your internet connection and try again." : {
+
+    },
+    "Couldn’t extract the Antigravity runtime." : {
+
+    },
+    "Couldn’t extract the Antigravity runtime. Check free disk space and try again." : {
+
+    },
+    "Couldn’t install Antigravity. Check free disk space and folder access, then try again." : {
+
+    },
+    "Couldn’t open the verified archive." : {
+
+    },
+    "Couldn’t publish the Antigravity runtime. The previous release is unchanged. Try again." : {
+
+    },
+    "Couldn’t record the Antigravity installation." : {
+
+    },
+    "Couldn’t remove the downloaded Antigravity runtime. Check for open processes and try again." : {
+
+    },
+    "Couldn’t save the Antigravity download." : {
+
+    },
+    "Couldn’t save the Antigravity download. Check free disk space." : {
+
+    },
+    "Couldn’t start Antigravity: %@" : {
 
     },
     "Create %@" : {
@@ -1619,6 +1736,22 @@
     "Down Arrow" : {
 
     },
+    "Downloading %@ of %@…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Downloading %1$@ of %2$@…"
+          }
+        }
+      }
+    },
+    "Downloading %@…" : {
+
+    },
+    "Downloading Google’s official Antigravity runtime." : {
+
+    },
     "Each turn's changes appear here once the agent starts working." : {
 
     },
@@ -1732,6 +1865,12 @@
 
     },
     "Extra High" : {
+
+    },
+    "Extracting Antigravity…" : {
+
+    },
+    "Extracting the verified runtime." : {
 
     },
     "Failed" : {
@@ -1852,6 +1991,9 @@
     "Find…" : {
 
     },
+    "Finish signing in in your browser." : {
+
+    },
     "Folder" : {
 
     },
@@ -1921,10 +2063,34 @@
     "Go to Thread 1–9" : {
 
     },
+    "Google Account" : {
+
+    },
+    "Google doesn’t publish an Antigravity runtime for this Mac (%@). Choose your own executable instead." : {
+
+    },
+    "Google doesn’t publish an Antigravity runtime for this Mac." : {
+
+    },
     "Google requires an eligible Antigravity subscription for this account." : {
 
     },
-    "Google sign-in is checked when a session starts." : {
+    "Google sign-in expired. Start sign-in again." : {
+
+    },
+    "Google sign-in failed. Start sign-in again." : {
+
+    },
+    "Google sign-in was cancelled by sign-out." : {
+
+    },
+    "Google sign-in was cancelled." : {
+
+    },
+    "Google sign-in wasn’t approved. Start sign-in again." : {
+
+    },
+    "Google’s download server answered with HTTP %lld. Try again later." : {
 
     },
     "Grant additional permissions" : {
@@ -2035,13 +2201,22 @@
     "Install" : {
 
     },
+    "Install Antigravity" : {
+
+    },
+    "Install Antigravity below to download Google’s runtime, then sign in with Google. To use your own copy instead, choose agy_acp_server (with its localharness_external helper beside it) as the custom path." : {
+
+    },
+    "Install Antigravity first, then sign in with Google." : {
+
+    },
     "Install Antigravity, open it once and sign in with your Google account." : {
 
     },
     "Install Claude Code and run `claude auth login`." : {
 
     },
-    "Install Google's Antigravity ACP agent (agy_acp_server with its localharness_external helper) from the ACP Registry, then put it on PATH or choose it in Settings." : {
+    "Install Managed Runtime" : {
 
     },
     "Install OpenCode and run `opencode auth login`." : {
@@ -2060,6 +2235,9 @@
 
     },
     "Install the Grok Build CLI and run `grok login`." : {
+
+    },
+    "Installation cancelled. The previous runtime is unchanged." : {
 
     },
     "Interrupt a subagent" : {
@@ -2492,6 +2670,9 @@
     "Not installed." : {
 
     },
+    "Not installed. %@ download." : {
+
+    },
     "Not signed in" : {
 
     },
@@ -2555,10 +2736,16 @@
     "Open in %@" : {
 
     },
+    "Open in Browser" : {
+
+    },
     "Open in Editor" : {
 
     },
     "Open or close the selected entry" : {
+
+    },
+    "Open the Google sign-in page and finish there. If your browser is on another device, paste the address it ends on here." : {
 
     },
     "Open this link and finish there, then continue:\n%@" : {
@@ -2632,6 +2819,9 @@
 
     },
     "Paste and Match Style" : {
+
+    },
+    "Paste the complete address from the Google sign-in page." : {
 
     },
     "Pasted image" : {
@@ -2994,6 +3184,9 @@
     "Refresh Providers" : {
 
     },
+    "Reinstall Antigravity" : {
+
+    },
     "Reload Models" : {
 
     },
@@ -3009,6 +3202,9 @@
     "Remove Custom Model" : {
 
     },
+    "Remove Downloaded Runtime" : {
+
+    },
     "Remove custom model" : {
 
     },
@@ -3016,6 +3212,9 @@
 
     },
     "Remove from queue" : {
+
+    },
+    "Remove the downloaded Antigravity runtime?" : {
 
     },
     "Remove the selected custom models" : {
@@ -3080,6 +3279,12 @@
 
     },
     "Resume a subagent" : {
+
+    },
+    "Retry Installation" : {
+
+    },
+    "Retry Sign-in" : {
 
     },
     "Retrying after a provider error (attempt %lld of %lld)." : {
@@ -3172,6 +3377,9 @@
 
     },
     "Runs commands and edits files without asking." : {
+
+    },
+    "Runtime" : {
 
     },
     "Save" : {
@@ -3309,6 +3517,9 @@
     "Select an existing thread or create a new one to get started." : {
 
     },
+    "Send" : {
+
+    },
     "Send (↩)" : {
 
     },
@@ -3426,7 +3637,43 @@
     "Sidebar Options" : {
 
     },
+    "Sign In Again" : {
+
+    },
+    "Sign Out" : {
+
+    },
+    "Sign Out…" : {
+
+    },
     "Sign in" : {
+
+    },
+    "Sign in to Antigravity in Settings before you continue." : {
+
+    },
+    "Sign in with Google" : {
+
+    },
+    "Sign in with Google in Settings to use Antigravity." : {
+
+    },
+    "Sign out of Google in Antigravity?" : {
+
+    },
+    "Sign-in" : {
+
+    },
+    "Signed in with Google." : {
+
+    },
+    "Signed out of Google." : {
+
+    },
+    "Signing in from another device? After Google sign-in, paste the address its browser ends on." : {
+
+    },
+    "Signing out…" : {
 
     },
     "Skill" : {
@@ -3495,6 +3742,12 @@
     "Starting %@…" : {
 
     },
+    "Starting Google sign-in." : {
+
+    },
+    "Starting sign-in…" : {
+
+    },
     "Starting…" : {
 
     },
@@ -3511,6 +3764,9 @@
 
     },
     "Stop Agent" : {
+
+    },
+    "Stop Antigravity sessions and sign-in before removing the downloaded runtime." : {
 
     },
     "Stop Speaking" : {
@@ -3609,6 +3865,21 @@
     "That custom model is already added." : {
 
     },
+    "The Antigravity download exceeded the pinned release size." : {
+
+    },
+    "The Antigravity download failed its size or SHA-256 check. Nothing was installed." : {
+
+    },
+    "The Antigravity download size didn’t match the pinned release." : {
+
+    },
+    "The Antigravity profile folder could not be created." : {
+
+    },
+    "The Antigravity profile settings could not be written." : {
+
+    },
     "The Claude API is overloaded (529). Try again shortly." : {
 
     },
@@ -3662,6 +3933,12 @@
     "The OpenCode session no longer exists. Send the message again to continue in a new session." : {
 
     },
+    "The address isn’t a Google sign-in response." : {
+
+    },
+    "The address must contain one Google sign-in response." : {
+
+    },
     "The agent asked a question" : {
 
     },
@@ -3677,6 +3954,18 @@
     "The agent working in it is stopped and the conversation is deleted. Files on disk are not changed." : {
 
     },
+    "The archive contains an unexpected, unsafe, or incorrectly sized member." : {
+
+    },
+    "The archive is damaged. Nothing was installed." : {
+
+    },
+    "The archive is missing the Antigravity executable or its harness." : {
+
+    },
+    "The archive must contain exactly the Antigravity executable and its harness." : {
+
+    },
     "The branch has diverged from its upstream. Rebase or merge first." : {
 
     },
@@ -3690,6 +3979,24 @@
 
     },
     "The diff for this file is too large to show." : {
+
+    },
+    "The downloaded Antigravity runtime couldn’t start on this Mac." : {
+
+    },
+    "The downloaded Antigravity runtime didn’t answer in time. Try again." : {
+
+    },
+    "The downloaded Antigravity runtime is incomplete. Install it again in Settings." : {
+
+    },
+    "The downloaded Antigravity runtime is incomplete. Remove it and install it again." : {
+
+    },
+    "The downloaded release has the wrong version. Remove it before installing again." : {
+
+    },
+    "The downloaded runtime didn’t identify as the expected Google Antigravity release." : {
 
     },
     "The folder and its files are not changed." : {
@@ -3732,6 +4039,15 @@
     "The server is not an OpenCode 2 server." : {
 
     },
+    "The sign-in response address is too long." : {
+
+    },
+    "The sign-in response timed out. Start sign-in again." : {
+
+    },
+    "The sign-in response was already sent. Wait for Google to finish." : {
+
+    },
     "The subagent failed." : {
 
     },
@@ -3766,6 +4082,12 @@
 
     },
     "Thinking…" : {
+
+    },
+    "This Antigravity version can’t sign out. Update Antigravity." : {
+
+    },
+    "This address doesn’t belong to the current sign-in." : {
 
     },
     "This branch has no upstream yet. Push it first." : {
@@ -3818,6 +4140,9 @@
 
     },
     "Thread failed" : {
+
+    },
+    "Thread history is kept. Antigravity asks you to sign in again before its next turn." : {
 
     },
     "Threads" : {
@@ -3906,6 +4231,9 @@
     "Turn on %@ to load its models." : {
 
     },
+    "Turn on Antigravity to sign in." : {
+
+    },
     "Turn on checkpoints in Settings to see each turn's changes." : {
 
     },
@@ -3952,6 +4280,9 @@
 
     },
     "Up Arrow" : {
+
+    },
+    "Update Antigravity" : {
 
     },
     "Update the Codex CLI to 0.156 or later for full support." : {
@@ -4012,6 +4343,9 @@
         }
       }
     },
+    "Using Antigravity found on your PATH." : {
+
+    },
     "Value" : {
 
     },
@@ -4024,6 +4358,19 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "Version %1$@ (%2$@)"
+          }
+        }
+      }
+    },
+    "Version %@ installed." : {
+
+    },
+    "Version %@ installed. Version %@ is available." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version %1$@ installed. Version %2$@ is available."
           }
         }
       }
@@ -4047,6 +4394,12 @@
 
     },
     "Wait for subagents" : {
+
+    },
+    "Wait for the Google sign-in link before you paste an address." : {
+
+    },
+    "Waiting for Google to finish sign-in." : {
 
     },
     "Waiting for your answer below" : {
@@ -4119,6 +4472,12 @@
 
     },
     "You" : {
+
+    },
+    "Your Google sign-in and thread history are kept. You can install the runtime again at any time." : {
+
+    },
+    "Your custom Antigravity path points into the downloaded runtime. Clear it before removing the runtime." : {
 
     },
     "Zoom" : {
