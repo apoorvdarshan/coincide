@@ -27,13 +27,19 @@ final class CodexProcessTransport: CodexTransport {
     }
 
     func start() throws {
-        try process.start()
         process.onLine = { [weak self] line in self?.onLine?(line) }
         // Holds the transport until the process is gone, so a closed session still reaps its child.
         process.onExit = { [self] status, stderrTail in
             onExit?(status, stderrTail)
             process.onLine = nil
             process.onExit = nil
+        }
+        do {
+            try process.start()
+        } catch {
+            process.onLine = nil
+            process.onExit = nil
+            throw error
         }
     }
 

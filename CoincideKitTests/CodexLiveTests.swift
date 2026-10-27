@@ -1,5 +1,8 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 
 @testable import CoincideKit
 
@@ -85,8 +88,12 @@ struct CodexLiveTests {
         session.onEvent = { [weak session] event in
             recorder.events.append(event)
             // Plan mode may ask questions; pick the first answer so the turn can finish.
-            if recorder.answersQuestions, case .approvalRequested(let request) = event, let option = request.options.first {
-                session?.respond(to: request.id, optionID: option.id)
+            if recorder.answersQuestions, case .userInputRequested(let request) = event {
+                var answers: [String: [String]] = [:]
+                for question in request.questions {
+                    answers[question.id] = [question.options.first?.label ?? "Use your best judgment."]
+                }
+                session?.answer(userInput: request.id, answers: answers)
             }
         }
         try await session.start()
@@ -110,6 +117,36 @@ struct CodexLiveTests {
         let completions = recorder.completions(since: start)
         #expect(completions.count == 1)
         return (completions[0], recorder.assistantText(since: start))
+    }
+
+    /// Archives a thread through its own short-lived app server.
+    private func archive(_ threadID: String, in directory: URL) async throws {
+        let found = await ShellEnvironment.shared.which("codex")
+        let executable = try #require(found, "codex is not on PATH")
+        let environment = await ShellEnvironment.shared.environment()
+        let connection = CodexConnection(
+            transport: CodexProcessTransport(executable: executable, workingDirectory: directory, environment: environment))
+        try connection.start()
+        defer { connection.close() }
+        _ = try await connection.request("initialize", CodexProtocol.initializeParams(), timeout: .seconds(20))
+        connection.notify("initialized")
+        _ = try await connection.request("thread/archive", ["threadId": .string(threadID)], timeout: .seconds(20))
+    }
+
+    /// A small solid red PNG.
+    private static func writeSolidPNG(to url: URL) throws {
+        let size = 64
+        let context = try #require(
+            CGContext(
+                data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+        let image = try #require(context.makeImage())
+        let destination = try #require(
+            CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
     }
 
     @Test func detectsTheSignedInCLIAndItsModels() async throws {
@@ -142,6 +179,9 @@ struct CodexLiveTests {
         #expect(secondReply.lowercased().contains("pong"))
         first.shutdown()
 
+        // An archived thread is unarchived and resumed, as T3 Code does.
+        try await Task.sleep(for: .seconds(1))
+        try await archive(threadID, in: directory)
         let (resumed, resumedRecorder) = try await makeSession(in: directory, resume: threadID)
         #expect(resumed.sessionID == threadID)
         // Resuming reports the same thread (and may report its last usage first).
@@ -152,6 +192,31 @@ struct CodexLiveTests {
         #expect(thirdOutcome == .completed)
         #expect(thirdReply.lowercased().contains("pong"))
         resumed.shutdown()
+    }
+
+    @Test func aMissingThreadIsReplacedByAFreshOne() async throws {
+        let directory = try workingDirectory()
+        let missing = UUID().uuidString.lowercased()
+        let (session, recorder) = try await makeSession(in: directory, resume: missing)
+        defer { session.shutdown() }
+        let ids = sessionIDs(recorder)
+        #expect(ids.count == 1)
+        #expect(ids.first != missing)
+        #expect(session.sessionID == ids.first)
+        #expect(recorder.events.contains { if case .notice(let text) = $0 { text.contains("could not be resumed") } else { false } })
+    }
+
+    @Test func imageAttachmentsReachTheModel() async throws {
+        let directory = try workingDirectory()
+        let image = directory.appendingPathComponent("swatch.png")
+        try Self.writeSolidPNG(to: image)
+        let (session, recorder) = try await makeSession(in: directory)
+        defer { session.shutdown() }
+        var turn = input("What color fills the attached image? Reply with one lowercase word.")
+        turn.imagePaths = [image.path]
+        let (outcome, reply) = try await run(session, recorder, turn)
+        #expect(outcome == .completed)
+        #expect(reply.lowercased().contains("red"))
     }
 
     @Test func approvalRoundTrip() async throws {
@@ -219,5 +284,10 @@ struct CodexLiveTests {
         try await waitUntil(.seconds(30)) { !recorder.completions(since: start).isEmpty }
         try await Task.sleep(for: .seconds(1))
         #expect(recorder.completions(since: start) == [.interrupted])
+        // Codex confirmed the stop itself; the watchdog did not have to end the process.
+        #expect(!recorder.events[start...].contains { if case .sessionExited = $0 { true } else { false } })
+        let (outcome, reply) = try await run(session, recorder, input("Reply with exactly: ok"))
+        #expect(outcome == .completed)
+        #expect(reply.lowercased().contains("ok"))
     }
 }

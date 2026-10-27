@@ -22,29 +22,36 @@ final class CodexSession: AgentSession {
     private var turn: Turn?
     private var interruptWatchdog: Task<Void, Never>?
     private var approvals: [String: PendingApproval] = [:]
-    /// Answers collected so far for `request_user_input` requests, by JSON-RPC id.
-    private var questionSets: [JSONValue: QuestionSet] = [:]
-    private let approvalPrefix = String(UUID().uuidString.prefix(8))
-    private var approvalSerial = 0
+    private var questions: [String: PendingQuestions] = [:]
+    private let requestPrefix = String(UUID().uuidString.prefix(8))
+    private var requestSerial = 0
+    private var modelsRequested = false
 
     private struct Turn {
         let token = UUID()
         var id: String?
+        /// `turn/start` was sent, so Codex may be running it.
+        var sent = false
         /// `turn/started` arrived; Codex only accepts `turn/interrupt` after it.
         var started = false
         var interruptRequested = false
         var interruptSent = false
         var failure: String?
+        /// The last retry notice without its numbers, so a streak of retries is shown once.
+        var retryKind: String?
     }
 
     private struct PendingApproval {
         let rpcID: JSONValue
         let approval: CodexApproval
+        /// The turn it arrived in; requests that arrive between turns stay open until answered.
+        let turnToken: UUID?
     }
 
-    private struct QuestionSet {
-        var unanswered: Set<String>
-        var answers: [String: JSONValue]
+    private struct PendingQuestions {
+        let rpcID: JSONValue
+        let input: CodexUserInput
+        let turnToken: UUID?
     }
 
     convenience init(launch: AgentLaunch) {
@@ -54,7 +61,7 @@ final class CodexSession: AgentSession {
         }
     }
 
-    /// `interruptGracePeriod` is how long Codex gets to confirm a stop before the process is replaced.
+    /// `interruptGracePeriod` is how long Codex gets to confirm a stop before its process is ended.
     init(launch: AgentLaunch, interruptGracePeriod: Duration, makeTransport: @escaping (AgentLaunch) -> CodexTransport) {
         self.launch = launch
         self.interruptGracePeriod = interruptGracePeriod
@@ -66,7 +73,7 @@ final class CodexSession: AgentSession {
 
     func start() async throws {
         let connection = try await connect()
-        try await openThread(on: connection)
+        if !threadLoaded { try await openThread(on: connection) }
     }
 
     func send(_ input: AgentTurnInput) async throws {
@@ -74,15 +81,22 @@ final class CodexSession: AgentSession {
         guard turn == nil else {
             throw AgentError.providerError(String(localized: "Codex is still working on the previous message."))
         }
-        let connection = try await connect()
-        if !threadLoaded { try await openThread(on: connection) }
-        guard let threadID = mapper.threadID else { throw AgentError.notRunning }
+        // Registered before any waiting, so a stop requested meanwhile is not lost.
         let current = Turn()
         turn = current
-        mapper.beginTurn()
-        let params = CodexProtocol.turnStartParams(
-            threadID: threadID, cwd: launch.workingDirectory.path, input: input, fallbackModel: threadModel)
         do {
+            let connection = try await connect()
+            if !threadLoaded { try await openThread(on: connection) }
+            guard turn?.token == current.token else { return }
+            if turn?.interruptRequested == true {
+                finishTurn(.interrupted)
+                return
+            }
+            guard let threadID = mapper.threadID else { throw AgentError.notRunning }
+            mapper.beginTurn()
+            turn?.sent = true
+            let params = CodexProtocol.turnStartParams(
+                threadID: threadID, cwd: launch.workingDirectory.path, input: input, fallbackModel: threadModel)
             let result = try await connection.request("turn/start", params, timeout: .seconds(60))
             // Stopped or lost while waiting: the turn has already been reported.
             guard turn?.token == current.token else { return }
@@ -92,8 +106,16 @@ final class CodexSession: AgentSession {
             adoptTurn(id, alreadyStarted: !(result.at("turn.startedAt")?.isNull ?? true))
         } catch {
             guard turn?.token == current.token else { return }
+            let sent = turn?.sent == true
             turn = nil
+            interruptWatchdog?.cancel()
+            interruptWatchdog = nil
             mapper.endTurn()
+            cancelPendingRequests(of: current.token)
+            if sent, case CodexRPCError.timedOut = error {
+                // Codex may still start the turn; end the process so it cannot run unseen.
+                endProcess(error: error.localizedDescription)
+            }
             throw error
         }
     }
@@ -101,18 +123,20 @@ final class CodexSession: AgentSession {
     func respond(to approvalID: String, optionID: String) {
         guard let pending = approvals[approvalID], let response = pending.approval.responses[optionID] else { return }
         approvals[approvalID] = nil
-        if let questionID = pending.approval.questionID {
-            answer(pending.rpcID, approvalID: approvalID, questionID: questionID, with: response)
-        } else {
-            connection?.respond(to: pending.rpcID, result: response)
-        }
+        connection?.respond(to: pending.rpcID, result: response)
+    }
+
+    func answer(userInput requestID: String, answers: [String: [String]]) {
+        guard let pending = questions.removeValue(forKey: requestID) else { return }
+        connection?.respond(to: pending.rpcID, result: pending.input.response(to: answers))
     }
 
     func interrupt() {
-        guard turn != nil, turn?.interruptRequested == false else { return }
+        guard let current = turn, !current.interruptRequested else { return }
         turn?.interruptRequested = true
-        cancelApprovals()
-        if turn?.started == true { sendInterrupt() }
+        cancelPendingRequests(of: current.token)
+        // Before `turn/start` was sent, `send` stops the turn itself once it has a process.
+        if current.started { sendInterrupt() }
         let grace = interruptGracePeriod
         interruptWatchdog = Task { [weak self] in
             try? await Task.sleep(for: grace)
@@ -127,8 +151,6 @@ final class CodexSession: AgentSession {
         interruptWatchdog?.cancel()
         interruptWatchdog = nil
         turn = nil
-        approvals.removeAll()
-        questionSets.removeAll()
         dropConnection()
     }
 
@@ -159,6 +181,7 @@ final class CodexSession: AgentSession {
             if self.connection === connection { dropConnection() }
             throw error
         }
+        guard self.connection === connection else { throw CodexRPCError.closed(nil) }
         return connection
     }
 
@@ -167,19 +190,22 @@ final class CodexSession: AgentSession {
         let cwd = launch.workingDirectory.path
         let model = CodexProtocol.modelID(launch.selection) ?? threadModel
         if let resumeID = sessionID ?? launch.resumeSessionID {
-            mapper.threadID = resumeID
             do {
-                try adoptThread(try await resume(resumeID, cwd: cwd, model: model, on: connection))
+                try adoptThread(try await resume(resumeID, cwd: cwd, model: model, on: connection), on: connection)
                 return
-            } catch CodexRPCError.server {
-                mapper.threadID = nil
-                let notice = String(localized: "The previous Codex session could not be resumed, so a new one was started.")
+            } catch CodexRPCError.server(_, let message) {
+                let result = try await connection.request(
+                    "thread/start", CodexProtocol.threadStartParams(cwd: cwd, model: model), timeout: .seconds(60))
+                try adoptThread(result, on: connection)
+                let notice = String(
+                    localized: "The previous Codex session could not be resumed, so a new one was started. (\(message))")
                 emit(.notice(notice))
+                return
             }
         }
         let result = try await connection.request(
             "thread/start", CodexProtocol.threadStartParams(cwd: cwd, model: model), timeout: .seconds(60))
-        try adoptThread(result)
+        try adoptThread(result, on: connection)
     }
 
     private func resume(_ threadID: String, cwd: String, model: String?, on connection: CodexConnection) async throws
@@ -194,7 +220,8 @@ final class CodexSession: AgentSession {
         }
     }
 
-    private func adoptThread(_ result: JSONValue) throws {
+    private func adoptThread(_ result: JSONValue, on connection: CodexConnection) throws {
+        guard self.connection === connection, !isShutDown else { throw CodexRPCError.closed(nil) }
         guard let id = result.at("thread.id")?.string else {
             throw AgentError.protocolError(String(localized: "Codex returned no thread id."))
         }
@@ -204,32 +231,53 @@ final class CodexSession: AgentSession {
         threadModel = result["model"]?.string ?? threadModel
         emit(.sessionStarted(id: id))
         if let threadModel { emit(.modelResolved(threadModel)) }
+        reportModels(on: connection)
+    }
+
+    /// Refreshes the model picker once per session from the catalog this process uses.
+    private func reportModels(on connection: CodexConnection) {
+        guard !modelsRequested else { return }
+        modelsRequested = true
+        Task { [weak self] in
+            guard let models = try? await CodexProbe.modelList(connection), !models.isEmpty else { return }
+            self?.emit(.modelsDiscovered(models))
+        }
     }
 
     private func dropConnection() {
         let old = connection
         connection = nil
         threadLoaded = false
+        approvals.removeAll()
+        questions.removeAll()
         old?.close()
+    }
+
+    /// Ends the process for good and tells the runner, which resumes the thread in a new session next time.
+    private func endProcess(error: String?) {
+        guard !isShutDown else { return }
+        emit(.sessionExited(error: error))
+        shutdown()
     }
 
     private func connectionLost(status: Int32, stderrTail: String) {
         connection = nil
         threadLoaded = false
         approvals.removeAll()
-        questionSets.removeAll()
+        questions.removeAll()
         let message = CodexPresentation.exitMessage(status: status, stderr: stderrTail)
-        // A turn still waiting for `turn/start` fails through `send` instead.
+        // A turn whose `turn/start` has no answer yet fails through `send` instead.
         if let current = turn, current.id != nil {
             finishTurn(current.interruptRequested ? .interrupted : .failed(message))
         }
         emit(.sessionExited(error: message))
+        isShutDown = true
     }
 
     // MARK: Turns
 
     private func adoptTurn(_ id: String, alreadyStarted: Bool) {
-        guard turn != nil, turn?.id == nil, id != mapper.previousTurnID else { return }
+        guard turn != nil, turn?.id == nil, !mapper.isFinished(id) else { return }
         turn?.id = id
         mapper.adoptTurn(id)
         if alreadyStarted { turn?.started = true }
@@ -250,24 +298,24 @@ final class CodexSession: AgentSession {
     private func interruptTimedOut() {
         guard turn?.interruptRequested == true else { return }
         finishTurn(.interrupted)
-        // Codex did not stop in time; replace the process so the stuck turn cannot leak into the next one.
-        dropConnection()
+        // Codex did not stop in time; end its process so the stuck turn cannot leak into the next one.
+        endProcess(error: nil)
     }
 
     private func finishTurn(_ outcome: TurnOutcome) {
-        guard turn != nil else { return }
+        guard let current = turn else { return }
         turn = nil
         interruptWatchdog?.cancel()
         interruptWatchdog = nil
         mapper.endTurn()
-        approvals.removeAll()
-        questionSets.removeAll()
+        // The transcript shows prompts left open by the turn as declined; tell Codex the same.
+        cancelPendingRequests(of: current.token)
         emit(.turnCompleted(outcome))
     }
 
     private func isCurrentTurn(_ id: String?) -> Bool {
-        guard let id, let turn else { return false }
-        return turn.id == id || (turn.id == nil && id != mapper.previousTurnID)
+        guard let id, let turn, turn.sent else { return false }
+        return turn.id == id || (turn.id == nil && !mapper.isFinished(id))
     }
 
     // MARK: Notifications
@@ -293,9 +341,15 @@ final class CodexSession: AgentSession {
                 finishTurn(.completed)
             }
         case "error":
-            guard isOurThread, turn != nil, params["turnId"]?.string.map({ isCurrentTurn($0) }) ?? true else { return }
+            guard isOurThread, let current = turn, current.sent,
+                params["turnId"]?.string.map({ isCurrentTurn($0) }) ?? true
+            else { return }
             let message = CodexPresentation.errorMessage(params["error"]) ?? String(localized: "Codex reported an error.")
             if params["willRetry"]?.bool == true {
+                // "Reconnecting... 2/5" after "1/5" adds nothing new.
+                let kind = message.filter { !$0.isNumber }
+                guard kind != current.retryKind else { return }
+                turn?.retryKind = kind
                 emit(.notice(message))
             } else {
                 turn?.failure = message
@@ -314,70 +368,58 @@ final class CodexSession: AgentSession {
 
     private func handleRequest(id: JSONValue, method: String, params: JSONValue) {
         guard let connection else { return }
-        approvalSerial += 1
-        let approvalID = "\(approvalPrefix)-\(approvalSerial)"
+        requestSerial += 1
+        let requestID = "\(requestPrefix)-\(requestSerial)"
         let changes = params["itemId"]?.string.flatMap { mapper.fileChanges(for: $0) }
-        switch CodexServerRequests.action(
-            method: method, params: params, approvalID: approvalID, presentation: mapper.presentation,
+        let action = CodexServerRequests.action(
+            method: method, params: params, requestID: requestID, presentation: mapper.presentation,
             fileChanges: changes)
-        {
+        // A prompt that arrives while stopping is turned down right away.
+        let stopping = turn?.interruptRequested == true
+        let thread = params["threadId"]?.string ?? params["conversationId"]?.string
+        let fromSubagent = thread != nil && mapper.threadID != nil && thread != mapper.threadID
+        switch action {
         case .respond(let result):
             connection.respond(to: id, result: result)
         case .reject(let message):
             connection.respondError(to: id, code: -32601, message: message)
-        case .approval(let approval):
-            // A request that arrives while stopping is turned down right away.
-            guard turn?.interruptRequested != true else {
-                connection.respond(to: id, result: approval.cancelResponse)
-                return
-            }
-            approvals[approval.request.id] = PendingApproval(rpcID: id, approval: approval)
+        case .approval(var approval):
+            guard !stopping else { return connection.respond(to: id, result: approval.cancelResponse) }
+            if fromSubagent { approval.request.title = String(localized: "Subagent: \(approval.request.title)") }
+            approvals[requestID] = PendingApproval(rpcID: id, approval: approval, turnToken: turn?.token)
             emit(.approvalRequested(approval.request))
-        case .questions(let questions, let answered, let notices):
-            for notice in notices { emit(.notice(notice)) }
-            guard !questions.isEmpty, turn?.interruptRequested != true else {
-                connection.respond(to: id, result: ["answers": .object(answered)])
-                return
+        case .userInput(var input):
+            guard !stopping else { return connection.respond(to: id, result: input.dismissResponse) }
+            if fromSubagent {
+                input.request.title = input.request.title.map { String(localized: "Subagent: \($0)") }
+                    ?? String(localized: "A subagent has a question")
             }
-            questionSets[id] = QuestionSet(unanswered: Set(questions.map(\.request.id)), answers: answered)
-            for question in questions {
-                approvals[question.request.id] = PendingApproval(rpcID: id, approval: question)
-                emit(.approvalRequested(question.request))
-            }
+            questions[requestID] = PendingQuestions(rpcID: id, input: input, turnToken: turn?.token)
+            emit(.userInputRequested(input.request))
         }
     }
 
-    private func answer(_ rpcID: JSONValue, approvalID: String, questionID: String, with answer: JSONValue) {
-        guard var set = questionSets[rpcID] else { return }
-        set.answers[questionID] = answer
-        set.unanswered.remove(approvalID)
-        guard set.unanswered.isEmpty else {
-            questionSets[rpcID] = set
-            return
+    /// Answers the prompts a turn left open with their "stop" choice, so Codex is not left waiting.
+    private func cancelPendingRequests(of turnToken: UUID) {
+        for (requestID, pending) in approvals.sorted(by: { $0.key < $1.key }) where pending.turnToken == turnToken {
+            approvals[requestID] = nil
+            connection?.respond(to: pending.rpcID, result: pending.approval.cancelResponse)
         }
-        questionSets[rpcID] = nil
-        connection?.respond(to: rpcID, result: ["answers": .object(set.answers)])
-    }
-
-    /// Answers every open prompt with its "stop" choice so Codex is not left waiting.
-    private func cancelApprovals() {
-        let pending = approvals
-        approvals.removeAll()
-        for (approvalID, entry) in pending.sorted(by: { $0.key < $1.key }) {
-            if let questionID = entry.approval.questionID {
-                answer(entry.rpcID, approvalID: approvalID, questionID: questionID, with: entry.approval.cancelResponse)
-            } else {
-                connection?.respond(to: entry.rpcID, result: entry.approval.cancelResponse)
-            }
+        for (requestID, pending) in questions.sorted(by: { $0.key < $1.key }) where pending.turnToken == turnToken {
+            questions[requestID] = nil
+            connection?.respond(to: pending.rpcID, result: pending.input.dismissResponse)
         }
     }
 
     /// Codex settled a request itself, for example because the turn ended.
     private func requestResolved(_ rpcID: JSONValue) {
-        questionSets[rpcID] = nil
-        for approvalID in approvals.keys.sorted() where approvals[approvalID]?.rpcID == rpcID {
-            approvals[approvalID] = nil
-            emit(.approvalResolved(id: approvalID))
+        for (requestID, pending) in approvals.sorted(by: { $0.key < $1.key }) where pending.rpcID == rpcID {
+            approvals[requestID] = nil
+            emit(.approvalResolved(id: requestID))
+        }
+        for (requestID, pending) in questions.sorted(by: { $0.key < $1.key }) where pending.rpcID == rpcID {
+            questions[requestID] = nil
+            emit(.userInputResolved(id: requestID))
         }
     }
 

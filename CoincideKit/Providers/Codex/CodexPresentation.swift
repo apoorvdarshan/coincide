@@ -39,7 +39,7 @@ struct CodexPresentation: Sendable {
 
     /// Classifies a command by Codex's parsed actions: pure reads and searches get their own category.
     func commandInfo(id: String, command: String, actions: [JSONValue]) -> ToolCallInfo {
-        let display = Self.displayCommand(command, actions: actions)
+        let display = Self.head(Self.displayCommand(command, actions: actions))
         let types = actions.compactMap { $0["type"]?.string }
         guard !types.isEmpty, types.count == actions.count, !types.contains("unknown") else {
             return ToolCallInfo(id: id, category: .command, title: Self.runTitle(display), detail: display)
@@ -52,15 +52,29 @@ struct CodexPresentation: Sendable {
             let title = searchTitle(query: search["query"]?.string, path: search["path"]?.string)
             return ToolCallInfo(id: id, category: .search, title: title, detail: display)
         }
-        let path = actions.lazy.compactMap { $0["path"]?.string }.first
-        let title = path.map { String(localized: "List \(relativePath($0))") } ?? String(localized: "List files")
-        return ToolCallInfo(id: id, category: .search, title: title, detail: display)
+        if types.allSatisfy({ $0 == "listFiles" }) {
+            let path = actions.lazy.compactMap { $0["path"]?.string }.first { relativePath($0) != "." }
+            let title = path.map { String(localized: "List \(relativePath($0))") } ?? String(localized: "List files")
+            return ToolCallInfo(id: id, category: .search, title: title, detail: display)
+        }
+        // Reads mixed with listings: still only looking around.
+        return ToolCallInfo(id: id, category: .read, title: Self.runTitle(display), detail: display)
     }
 
     /// The command without the shell wrapper Codex adds, e.g. `npm test` for `/bin/zsh -lc 'npm test'`.
     static func displayCommand(_ command: String, actions: [JSONValue]) -> String {
         if actions.count == 1, let inner = actions[0]["command"]?.string, !inner.isEmpty { return inner }
         return unwrapShell(command)
+    }
+
+    /// An argv as one command line, without a `sh -c` wrapper: `["/bin/zsh", "-lc", "make"]` → `make`.
+    static func unwrapShell(argv: [String]) -> String {
+        if argv.count == 3, ["-lc", "-c"].contains(argv[1]),
+            argv[0].range(of: #"(?:^|/)(?:ba|z|da|k)?sh$"#, options: .regularExpression) != nil
+        {
+            return argv[2]
+        }
+        return argv.joined(separator: " ")
     }
 
     static func unwrapShell(_ command: String) -> String {
@@ -146,12 +160,39 @@ struct CodexPresentation: Sendable {
         return cut ? line + "…" : line
     }
 
-    /// Codex's aggregated output, with the exit code when the command failed.
+    /// Codex's aggregated output (its end, when very long), with the exit code when the command failed.
     static func commandOutput(_ output: String?, exitCode: Int?) -> String? {
-        guard let output else { return nil }
+        guard let output = output.map({ tail($0) }) else { return nil }
         guard let exitCode, exitCode != 0 else { return output }
         let separator = output.isEmpty || output.hasSuffix("\n") ? "" : "\n"
         return output + separator + String(localized: "Exit code \(exitCode)")
+    }
+
+    // MARK: Long text
+
+    /// The text without surrounding whitespace, or nil when nothing is left.
+    static func nonEmpty(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Outputs keep their end, like a terminal; the transcript keeps at most this much of one item.
+    static let outputLimit = 150_000
+    /// Inputs (commands, diffs, arguments) keep their start.
+    static let detailLimit = 200_000
+
+    /// The last `limit` characters, starting at a line break when one is near, after a note that text was cut.
+    static func tail(_ text: String, limit: Int = outputLimit) -> String {
+        guard text.utf8.count > limit, text.count > limit else { return text }
+        var kept = text.suffix(limit)
+        if let newline = kept.prefix(2_000).firstIndex(of: "\n") { kept = kept[kept.index(after: newline)...] }
+        return String(localized: "[Earlier output not shown]") + "\n" + kept
+    }
+
+    /// The first `limit` characters, with a note when text was cut.
+    static func head(_ text: String, limit: Int = detailLimit) -> String {
+        guard text.utf8.count > limit, text.count > limit else { return text }
+        return String(text.prefix(limit)) + "\n" + String(localized: "[Rest not shown]")
     }
 
     // MARK: File changes
@@ -185,7 +226,7 @@ struct CodexPresentation: Sendable {
                 path: path, kind: change.at("kind.type")?.string, movePath: change.at("kind.move_path")?.string,
                 body: change["diff"]?.string ?? "")
         }
-        return diffs.isEmpty ? nil : diffs.joined()
+        return diffs.isEmpty ? nil : Self.head(diffs.joined())
     }
 
     /// The same for the legacy `applyPatchApproval` shape, `{path: {type, content | unified_diff, move_path}}`.
@@ -196,7 +237,7 @@ struct CodexPresentation: Sendable {
                 path: path, kind: change["type"]?.string, movePath: change["move_path"]?.string,
                 body: change["unified_diff"]?.string ?? change["content"]?.string ?? "")
         }
-        return diffs.isEmpty ? nil : diffs.joined()
+        return diffs.isEmpty ? nil : Self.head(diffs.joined())
     }
 
     func fileDiff(path: String, kind: String?, movePath: String?, body: String) -> String {
@@ -247,7 +288,7 @@ struct CodexPresentation: Sendable {
     static func argumentsText(_ value: JSONValue?) -> String? {
         guard let value, !value.isNull else { return nil }
         if let object = value.object, object.isEmpty { return nil }
-        return value.string ?? value.prettyJSON
+        return head(value.string ?? value.prettyJSON)
     }
 
     /// Text blocks of an MCP result, else its structured content.
@@ -262,16 +303,21 @@ struct CodexPresentation: Sendable {
             default: block.compactJSON
             }
         }
-        if !blocks.isEmpty { return blocks.joined(separator: "\n") }
-        if let structured = result["structuredContent"], !structured.isNull { return structured.prettyJSON }
+        if !blocks.isEmpty { return tail(blocks.joined(separator: "\n")) }
+        if let structured = result["structuredContent"], !structured.isNull { return tail(structured.prettyJSON) }
         return nil
     }
 
     static func dynamicToolOutput(_ items: JSONValue?) -> String? {
         let texts = (items?.array ?? []).compactMap { item -> String? in
-            item["type"]?.string == "inputText" ? item["text"]?.string : String(localized: "[image]")
+            switch item["type"]?.string {
+            case "inputText": item["text"]?.string
+            case "inputImage": String(localized: "[image]")
+            case "inputAudio": String(localized: "[audio]")
+            default: nil
+            }
         }
-        return texts.isEmpty ? nil : texts.joined(separator: "\n")
+        return texts.isEmpty ? nil : tail(texts.joined(separator: "\n"))
     }
 
     static func webSearchInfo(_ item: JSONValue, id: String) -> ToolCallInfo {
@@ -325,17 +371,73 @@ struct CodexPresentation: Sendable {
         return ToolCallInfo(id: id, category: .task, title: title, detail: prompt)
     }
 
-    /// The subagents' latest messages, or their states when they have none.
+    /// The subagents' latest messages, or how they ended when they have none.
     static func collabOutput(_ item: JSONValue) -> String? {
         let states = item["agentsStates"]?.object ?? [:]
         let lines = states.keys.sorted().compactMap { key -> String? in
             guard let state = states[key] else { return nil }
-            return state["message"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? state["status"]?.string
+            if let message = state["message"]?.string.flatMap(nonEmpty) { return message }
+            return switch state["status"]?.string {
+            case "errored": String(localized: "The subagent failed.")
+            case "interrupted": String(localized: "The subagent was interrupted.")
+            case "shutdown": String(localized: "The subagent was closed.")
+            case "notFound": String(localized: "The subagent was not found.")
+            // Still starting or running: nothing to report yet.
+            default: nil
+            }
         }
-        return lines.isEmpty ? nil : lines.joined(separator: "\n\n")
+        return lines.isEmpty ? nil : tail(lines.joined(separator: "\n\n"))
     }
 
     // MARK: Plans and messages
+
+    /// An asynchronous question message (`delivery: "async"`) with its suggested answers; the user replies
+    /// with their next message.
+    static func asyncQuestionsMarkdown(text: String, questions: [JSONValue]) -> String {
+        var parts = [text.trimmingCharacters(in: .whitespacesAndNewlines)]
+        for question in questions {
+            let title = question["title"]?.string.flatMap(nonEmpty)
+            let options = (question["options"]?.array ?? []).compactMap { $0.string.flatMap(nonEmpty) }
+            var lines: [String] = []
+            if let title, !text.contains(title) { lines.append("**\(title)**") }
+            lines += options.map { "- \($0)" }
+            if !lines.isEmpty { parts.append(lines.joined(separator: "\n")) }
+        }
+        return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    /// A notice for an MCP server that could not start, or nil while it is starting or ready.
+    static func mcpStartupNotice(_ params: JSONValue) -> String? {
+        guard params["status"]?.string == "failed", let name = params["name"]?.string else { return nil }
+        if params["failureReason"]?.string == "reauthenticationRequired" {
+            return String(
+                localized: "The MCP server “\(name)” needs you to sign in again: run `codex mcp login \(name)`.")
+        }
+        guard let error = params["error"]?.string.flatMap(nonEmpty) else {
+            return String(localized: "The MCP server “\(name)” could not start.")
+        }
+        return String(localized: "The MCP server “\(name)” could not start: \(error)")
+    }
+
+    /// A hook that failed or blocked Codex, with what it reported; nil for hooks that ran normally.
+    static func hookNotice(_ run: JSONValue?) -> String? {
+        guard let run, let status = run["status"]?.string, status == "failed" || status == "blocked" else { return nil }
+        let event = run["eventName"]?.string ?? "hook"
+        let summary =
+            status == "blocked"
+            ? String(localized: "A \(event) hook stopped Codex.") : String(localized: "A \(event) hook failed.")
+        let entries = (run["entries"]?.array ?? []).filter { $0["kind"]?.string != "context" }.map { $0["text"]?.string }
+        let details = ([run["statusMessage"]?.string] + entries).compactMap { $0.flatMap(nonEmpty) }
+        return ([summary] + details).joined(separator: "\n")
+    }
+
+    /// `configWarning`: its summary and details.
+    static func configWarning(_ params: JSONValue) -> String? {
+        guard let summary = params["summary"]?.string.flatMap(nonEmpty) else { return nil }
+        let details = params["details"]?.string.flatMap(nonEmpty)
+        let path = params["path"]?.string.flatMap(nonEmpty)
+        return [summary, details, path].compactMap { $0 }.joined(separator: "\n")
+    }
 
     /// `turn/plan/updated` as a markdown checklist.
     static func todoMarkdown(explanation: String?, steps: [JSONValue]) -> String {
