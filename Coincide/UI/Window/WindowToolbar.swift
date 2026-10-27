@@ -32,11 +32,18 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         toolbarDefaultItemIdentifiers(toolbar) + [.space]
     }
 
+    /// With `flag` false, AppKit wants an item for the Customize Toolbar palette: a static copy that is
+    /// neither kept in `toolbarItems` nor given the live run status view. An item dragged from the palette
+    /// into the toolbar is asked for again with `flag` true.
     func toolbar(
         _ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
         let item: NSToolbarItem
         switch itemIdentifier {
+        case .runStatus where !flag:
+            item = paletteItem(itemIdentifier, label: String(localized: "Status"), symbol: "clock")
+        case .openIn where !flag:
+            item = paletteItem(itemIdentifier, label: String(localized: "Open In"), symbol: "arrow.up.forward.app")
         case .newThread:
             item = button(
                 itemIdentifier, label: String(localized: "New Thread"), symbol: "square.and.pencil",
@@ -70,9 +77,26 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         default:
             return nil
         }
+        guard flag else { return item }
         toolbarItems[itemIdentifier] = item
         updatePanelItems()
         updateOpenInItem()
+        return item
+    }
+
+    /// Forgets an item the user took out of the toolbar, so updates stop going to it.
+    func toolbarDidRemoveItem(_ notification: Notification) {
+        guard let item = notification.userInfo?["item"] as? NSToolbarItem,
+            toolbarItems[item.itemIdentifier] === item
+        else { return }
+        toolbarItems[item.itemIdentifier] = nil
+    }
+
+    private func paletteItem(_ identifier: NSToolbarItem.Identifier, label: String, symbol: String) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = label
+        item.paletteLabel = label
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         return item
     }
 
