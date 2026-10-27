@@ -9,6 +9,7 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
 
     private enum Kind: String {
         case approval
+        case question
         case completed
         case failed
     }
@@ -30,11 +31,16 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
             previousApproval?(threadID, request)
             self?.approvalRequested(threadID, request: request)
         }
+        let previousQuestion = runner.onUserInputRequested
+        runner.onUserInputRequested = { [weak self] threadID, request in
+            previousQuestion?(threadID, request)
+            self?.questionAsked(threadID, request: request)
+        }
     }
 
     /// Clears delivered notifications for a thread the user is now looking at.
     func clearDelivered(for threadID: UUID) {
-        let ids = [Kind.approval, .completed, .failed].map { identifier(threadID, $0) }
+        let ids = [Kind.approval, .question, .completed, .failed].map { identifier(threadID, $0) }
         center.removeDeliveredNotifications(withIdentifiers: ids)
     }
 
@@ -53,6 +59,11 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
 
     private func approvalRequested(_ threadID: UUID, request: ApprovalRequest) {
         post(.approval, threadID: threadID, title: String(localized: "Approval needed"), body: request.title)
+    }
+
+    private func questionAsked(_ threadID: UUID, request: UserInputRequest) {
+        let body = request.title ?? request.questions.first?.prompt
+        post(.question, threadID: threadID, title: String(localized: "Input needed"), body: body)
     }
 
     private func post(_ kind: Kind, threadID: UUID, title: String, body: String?) {

@@ -37,7 +37,12 @@ public final class ThreadRunner {
     private var starting: Set<UUID> = []
     private var idleTimer: Timer?
 
-    /// Called when a turn ends. The app uses it for notifications.
+    /// Posted when a turn ends. userInfo: "threadID" (UUID), "outcome" (TurnOutcome).
+    public static let turnFinishedNotification = Notification.Name("coincide.turnFinished")
+    /// Posted when an agent asks for approval or asks a question. userInfo: "threadID" (UUID).
+    public static let attentionNeededNotification = Notification.Name("coincide.attentionNeeded")
+
+    /// Called when a turn ends. The app shell owns this; other modules observe `turnFinishedNotification`.
     public var onTurnFinished: ((UUID, TurnOutcome) -> Void)?
     /// Called when an agent asks for approval.
     public var onApprovalRequested: ((UUID, ApprovalRequest) -> Void)?
@@ -359,6 +364,7 @@ public final class ThreadRunner {
                 approval: ApprovalInfo(requestID: request.id, options: request.options))
             store.append(item, to: threadID)
             onApprovalRequested?(threadID, request)
+            NotificationCenter.default.post(name: Self.attentionNeededNotification, object: self, userInfo: ["threadID": threadID])
         case .approvalResolved(let id):
             guard
                 let item = store.thread(threadID)?.items.last(where: {
@@ -377,6 +383,7 @@ public final class ThreadRunner {
                 externalID: request.id, questions: request)
             store.append(item, to: threadID)
             onUserInputRequested?(threadID, request)
+            NotificationCenter.default.post(name: Self.attentionNeededNotification, object: self, userInfo: ["threadID": threadID])
         case .userInputResolved(let id):
             guard
                 let item = store.thread(threadID)?.items.last(where: {
@@ -456,6 +463,8 @@ public final class ThreadRunner {
             Task { await CheckpointService.shared.captureAfterTurn(threadID: threadID, userItemID: userItemID, cwd: cwd) }
         }
         onTurnFinished?(threadID, outcome)
+        NotificationCenter.default.post(
+            name: Self.turnFinishedNotification, object: self, userInfo: ["threadID": threadID, "outcome": outcome])
         // Queued follow-ups only continue a turn that finished normally; after a stop or error the user decides.
         if outcome == .completed, let next = queues[threadID]?.first {
             removeQueued(threadID: threadID, id: next.id)
