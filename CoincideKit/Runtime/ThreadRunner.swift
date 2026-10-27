@@ -74,6 +74,12 @@ public final class ThreadRunner {
     private var idleTimer: Timer?
     /// Seconds a stopped turn waits for the provider's confirmation. Tests shorten it.
     var stopTimeout: TimeInterval = ThreadRunner.defaultStopTimeout
+    /// Where turns' snapshots are kept. Tests use their own.
+    var checkpoints = CheckpointService.shared
+    /// Turns whose before snapshot is still being taken; their after snapshot waits for it.
+    private var capturingBefore: Set<UUID> = []
+    /// After snapshots being taken, so quitting can let them finish.
+    private var pendingCaptures: [UUID: Task<Void, Never>] = [:]
 
     /// Posted when a turn ends. userInfo: "threadID" (UUID), "outcome" (TurnOutcome).
     public static let turnFinishedNotification = Notification.Name("coincide.turnFinished")
@@ -173,8 +179,15 @@ public final class ThreadRunner {
                 return
             }
             if store.settings.checkpointsEnabled {
-                await CheckpointService.shared.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: cwd)
-                guard isActive(threadID, turnID) else { return }
+                capturingBefore.insert(turnID)
+                await checkpoints.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: cwd)
+                capturingBefore.remove(turnID)
+                guard isActive(threadID, turnID) else {
+                    // The turn ended meanwhile (a Stop timed out, or quitting), and `finishTurn` left its after
+                    // snapshot to this, as there was nothing to complete yet.
+                    captureAfterTurn(threadID, turnID, cwd: cwd)
+                    return
+                }
                 guard turns[threadID]?.interruptRequested == false else {
                     finishTurn(threadID, turnID, outcome: .interrupted)
                     return
@@ -345,6 +358,21 @@ public final class ThreadRunner {
         for threadID in threadIDs { shutdown(threadID: threadID) }
         // Sessions stop their processes asynchronously, which a quitting app does not wait for.
         ChildProcesses.terminateAllAndWait()
+        // The turns just ended still need their after snapshots, or their changes could never be shown.
+        waitForCheckpoints(timeout: 3)
+    }
+
+    /// True while snapshots of ended turns are still being taken.
+    var isCapturingCheckpoints: Bool { !capturingBefore.isEmpty || !pendingCaptures.isEmpty }
+
+    /// Lets the snapshots of ended turns finish, for at most `timeout` seconds. They run on the main actor,
+    /// so the main run loop keeps turning meanwhile. That serves the main queue when quitting from a menu,
+    /// key command or Apple event; called from a main-queue block, this just waits out the timeout.
+    private func waitForCheckpoints(timeout: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while isCapturingCheckpoints, Date() < deadline {
+            RunLoop.main.run(mode: .default, before: min(deadline, Date().addingTimeInterval(0.05)))
+        }
     }
 
     // MARK: Sessions
@@ -681,8 +709,11 @@ public final class ThreadRunner {
             store.updateThread(threadID, touch: true) { _ in }
         }
         store.notify(.runState(threadID))
-        if store.settings.checkpointsEnabled, let cwd = store.workingDirectory(for: threadID) {
-            Task { await CheckpointService.shared.captureAfterTurn(threadID: threadID, userItemID: turnID, cwd: cwd) }
+        // A before snapshot still being taken has nothing to complete yet; `send` takes the after one once it is done.
+        if store.settings.checkpointsEnabled, !capturingBefore.contains(turnID),
+            let cwd = store.workingDirectory(for: threadID)
+        {
+            captureAfterTurn(threadID, turnID, cwd: cwd)
         }
         onTurnFinished?(threadID, outcome)
         NotificationCenter.default.post(
@@ -693,6 +724,15 @@ public final class ThreadRunner {
         if proceed, let next = queues[threadID]?.first {
             removeQueued(threadID: threadID, id: next.id)
             Task { await send(threadID: threadID, text: next.text, imagePaths: next.imagePaths) }
+        }
+    }
+
+    /// Snapshots the folder after a turn ended, recording what the turn changed. Quitting waits for it.
+    private func captureAfterTurn(_ threadID: UUID, _ turnID: UUID, cwd: URL) {
+        let id = UUID()
+        pendingCaptures[id] = Task {
+            await checkpoints.captureAfterTurn(threadID: threadID, userItemID: turnID, cwd: cwd)
+            pendingCaptures[id] = nil
         }
     }
 

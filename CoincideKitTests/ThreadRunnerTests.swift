@@ -195,6 +195,29 @@ struct ThreadRunnerTests {
         #expect(claude.last?.sent.map(\.message) == ["one"])
     }
 
+    @Test func aTurnStoppedWhileItsBeforeSnapshotIsTakenStillGetsAnAfterSnapshot() async throws {
+        let repository = try await TestRepository.make()
+        // Enough files that taking the snapshot outlasts the stop timeout.
+        for index in 0..<500 { try repository.write("files/\(index).txt", "\(index)\n") }
+        let checkpoints = CheckpointService(store: store, directory: try TestRepository.makeDirectory("checkpoints"))
+        runner.checkpoints = checkpoints
+        runner.stopTimeout = 0.001
+        store.updateSettings { $0.checkpointsEnabled = true }
+        let project = store.addProject(at: repository.url)
+        let thread = store.createThread(in: project.id, selection: ModelSelection(provider: .claude, modelID: "m"))
+
+        let sending = Task { await runner.send(threadID: thread.id, text: "one") }
+        #expect(await eventually { runner.isCapturingCheckpoints })
+        runner.stop(threadID: thread.id)
+        #expect(await eventually { !runner.isRunning(thread.id) })
+        await sending.value
+        #expect(await eventually { !runner.isCapturingCheckpoints })
+        // The turn ended before its prompt was sent, while its before snapshot was still being taken.
+        #expect(claude.last?.sent.isEmpty == true)
+        let turnID = try #require(store.thread(thread.id)?.items.first { $0.kind == .user }?.id)
+        #expect(checkpoints.checkpoint(threadID: thread.id, userItemID: turnID)?.isComplete == true)
+    }
+
     // MARK: Idle sessions
 
     @Test func anIdleSessionIsKeptWhileItsAgentRunsBackgroundWork() async {
