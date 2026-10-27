@@ -42,9 +42,9 @@ enum GitParse {
         while index < records.count {
             let record = records[index]
             index += 1
-            guard let first = record.first else { continue }
-            if record.hasPrefix("# ") {
-                let parts = record.dropFirst(2).split(separator: " ", maxSplits: 1)
+            guard let first = record.unicodeScalars.first else { continue }
+            if let header = record.afterScalarPrefix("# ") {
+                let parts = header.splitScalars(at: " ", maxSplits: 1)
                 guard parts.count == 2 else { continue }
                 let value = String(parts[1])
                 switch parts[0] {
@@ -70,10 +70,10 @@ enum GitParse {
             default: continue
             }
             if first == "!" { continue }
-            let fields = record.split(separator: " ", maxSplits: fieldsBeforePath, omittingEmptySubsequences: false)
+            let fields = record.splitScalars(at: " ", maxSplits: fieldsBeforePath, omittingEmptySubsequences: false)
             guard fields.count == fieldsBeforePath + 1 else { continue }
             let xy = fieldsBeforePath > 1 ? String(fields[1]) : "??"
-            var entry = StatusEntry(kind: first, xy: xy, path: String(fields[fieldsBeforePath]))
+            var entry = StatusEntry(kind: Character(first), xy: xy, path: String(fields[fieldsBeforePath]))
             // A rename record is followed by its original path as a separate record.
             if first == "2", index < records.count {
                 entry.originalPath = String(records[index])
@@ -128,17 +128,16 @@ enum GitParse {
             if field.isEmpty {
                 if let worktree = current { result.append(worktree) }
                 current = nil
-            } else if field.hasPrefix("worktree ") {
+            } else if let path = field.afterScalarPrefix("worktree ") {
                 if let worktree = current { result.append(worktree) }
-                current = GitWorktree(path: String(field.dropFirst("worktree ".count)), isMain: result.isEmpty)
-            } else if field.hasPrefix("HEAD ") {
-                current?.head = String(field.dropFirst("HEAD ".count))
-            } else if field.hasPrefix("branch ") {
-                let ref = field.dropFirst("branch ".count)
-                current?.branch = ref.hasPrefix("refs/heads/") ? String(ref.dropFirst("refs/heads/".count)) : String(ref)
-            } else if field == "prunable" || field.hasPrefix("prunable ") {
+                current = GitWorktree(path: String(path), isMain: result.isEmpty)
+            } else if let head = field.afterScalarPrefix("HEAD ") {
+                current?.head = String(head)
+            } else if let ref = field.afterScalarPrefix("branch ") {
+                current?.branch = String(ref.afterScalarPrefix("refs/heads/") ?? ref)
+            } else if field == "prunable" || field.hasScalarPrefix("prunable ") {
                 current?.isPrunable = true
-            } else if field == "locked" || field.hasPrefix("locked ") {
+            } else if field == "locked" || field.hasScalarPrefix("locked ") {
                 current?.isLocked = true
             }
         }
@@ -158,9 +157,13 @@ enum GitParse {
 
     /// Undoes git's C-style quoting of a path (`"a\tb"`, octal escapes for raw bytes).
     static func unquote<S: StringProtocol>(_ value: S) -> String {
-        guard value.count >= 2, value.first == "\"", value.last == "\"" else { return String(value) }
+        // By bytes: a name starting with a combining mark would join the opening quote into one Character.
+        let utf8 = Array(value.utf8)
+        guard utf8.count >= 2, utf8.first == UInt8(ascii: "\""), utf8.last == UInt8(ascii: "\"") else {
+            return String(value)
+        }
         var bytes: [UInt8] = []
-        var iterator = Array(value.utf8.dropFirst().dropLast())[...]
+        var iterator = utf8.dropFirst().dropLast()
         while let byte = iterator.popFirst() {
             guard byte == UInt8(ascii: "\\"), let next = iterator.popFirst() else {
                 bytes.append(byte)
@@ -216,17 +219,18 @@ enum DiffParser {
             var line = Substring(rawLine)
             if line.hasSuffix("\r") { line = line.dropLast() }
 
-            if line.hasPrefix("diff --git ") {
+            if let header = line.afterScalarPrefix("diff --git ") {
                 finishFile()
-                let paths = headerPaths(line.dropFirst("diff --git ".count))
+                let paths = headerPaths(header)
                 file = FileDiff(path: paths.new, oldPath: nil, status: .modified)
                 continue
             }
             guard file != nil else { continue }
 
             if hunk != nil, oldRemaining > 0 || newRemaining > 0 {
-                let marker = line.first
-                let text = String(line.dropFirst())
+                // By scalar: a line starting with a combining mark would join it to the marker.
+                let marker = line.unicodeScalars.first
+                let text = String(Substring(line.unicodeScalars.dropFirst()))
                 switch marker {
                 case "+":
                     hunk?.lines.append(DiffLine(kind: .addition, text: text, newLine: newLine))
@@ -251,7 +255,7 @@ enum DiffParser {
                 continue
             }
 
-            if line.hasPrefix("@@") {
+            if line.hasScalarPrefix("@@") {
                 finishHunk()
                 guard let parsed = hunkHeader(line) else { continue }
                 hunk = parsed
@@ -261,41 +265,41 @@ enum DiffParser {
                 newRemaining = parsed.newCount
                 continue
             }
-            if line.hasPrefix("\\") {
+            if line.hasScalarPrefix("\\") {
                 hunk?.lines.append(DiffLine(kind: .noNewline, text: String(line)))
                 continue
             }
             if inBinaryPatch { continue }
 
-            if line.hasPrefix("new file mode") {
+            if line.hasScalarPrefix("new file mode") {
                 file?.status = .added
-            } else if line.hasPrefix("deleted file mode") {
+            } else if line.hasScalarPrefix("deleted file mode") {
                 file?.status = .deleted
-            } else if line.hasPrefix("old mode ") {
-                file?.modeChange = String(line.dropFirst("old mode ".count))
-            } else if line.hasPrefix("new mode ") {
+            } else if let mode = line.afterScalarPrefix("old mode ") {
+                file?.modeChange = String(mode)
+            } else if let mode = line.afterScalarPrefix("new mode ") {
                 let old = file?.modeChange ?? ""
-                file?.modeChange = "\(old) → \(line.dropFirst("new mode ".count))"
-            } else if line.hasPrefix("rename from ") {
-                file?.oldPath = GitParse.unquote(line.dropFirst("rename from ".count))
+                file?.modeChange = "\(old) → \(mode)"
+            } else if let name = line.afterScalarPrefix("rename from ") {
+                file?.oldPath = GitParse.unquote(name)
                 file?.status = .renamed
-            } else if line.hasPrefix("rename to ") {
-                file?.path = GitParse.unquote(line.dropFirst("rename to ".count))
-            } else if line.hasPrefix("copy to ") {
-                file?.path = GitParse.unquote(line.dropFirst("copy to ".count))
+            } else if let name = line.afterScalarPrefix("rename to ") {
+                file?.path = GitParse.unquote(name)
+            } else if let name = line.afterScalarPrefix("copy to ") {
+                file?.path = GitParse.unquote(name)
                 file?.status = .added
-            } else if line.hasPrefix("Binary files ") {
+            } else if line.hasScalarPrefix("Binary files ") {
                 file?.isBinary = true
-            } else if line.hasPrefix("GIT binary patch") {
+            } else if line.hasScalarPrefix("GIT binary patch") {
                 file?.isBinary = true
                 inBinaryPatch = true
-            } else if line.hasPrefix("--- ") {
-                if let path = markerPath(line.dropFirst(4), prefix: "a/"), file?.status != .renamed {
+            } else if let name = line.afterScalarPrefix("--- ") {
+                if let path = markerPath(name, prefix: "a/"), file?.status != .renamed {
                     let newPath = file?.path
                     file?.oldPath = path == newPath ? nil : path
                 }
-            } else if line.hasPrefix("+++ ") {
-                if let path = markerPath(line.dropFirst(4), prefix: "b/") {
+            } else if let name = line.afterScalarPrefix("+++ ") {
+                if let path = markerPath(name, prefix: "b/") {
                     file?.path = path
                 }
             }
@@ -306,35 +310,37 @@ enum DiffParser {
 
     /// Paths from `a/<old> b/<new>`, which are ambiguous when names contain " b/".
     private static func headerPaths(_ value: Substring) -> (old: String, new: String) {
-        if value.hasPrefix("\"") {
-            var index = value.index(after: value.startIndex)
+        let scalars = value.unicodeScalars
+        if scalars.first == "\"" {
+            var index = scalars.index(after: scalars.startIndex)
             var escaped = false
-            while index < value.endIndex {
-                let character = value[index]
+            while index < scalars.endIndex {
+                let scalar = scalars[index]
                 if escaped {
                     escaped = false
-                } else if character == "\\" {
+                } else if scalar == "\\" {
                     escaped = true
-                } else if character == "\"" {
+                } else if scalar == "\"" {
                     break
                 }
-                index = value.index(after: index)
+                index = scalars.index(after: index)
             }
-            let end = index < value.endIndex ? value.index(after: index) : value.endIndex
-            let old = stripPrefix(GitParse.unquote(value[..<end]), "a/")
-            let rest = value[end...].drop { $0 == " " }
+            let end = index < scalars.endIndex ? scalars.index(after: index) : scalars.endIndex
+            let old = stripPrefix(GitParse.unquote(Substring(scalars[..<end])), "a/")
+            let rest = Substring(scalars[end...].drop { $0 == " " })
             return (old, stripPrefix(GitParse.unquote(rest), "b/"))
         }
         // Without a rename both halves are the same path, so split where they match.
-        let characters = Array(value)
-        if characters.count >= 5, (characters.count - 5) % 2 == 0 {
-            let length = (characters.count - 5) / 2
-            let left = String(characters[2..<(2 + length)])
-            let right = String(characters[(5 + length)...])
-            if left == right, value.hasPrefix("a/") { return (left, right) }
+        let count = scalars.count
+        if count >= 5, (count - 5) % 2 == 0, value.hasScalarPrefix("a/") {
+            let length = (count - 5) / 2
+            let left = scalars.dropFirst(2).prefix(length)
+            let right = scalars.suffix(length)
+            if left.elementsEqual(right) { return (String(Substring(left)), String(Substring(right))) }
         }
-        if let range = value.range(of: " b/", options: .backwards) {
-            return (stripPrefix(String(value[..<range.lowerBound]), "a/"), String(value[range.upperBound...]))
+        if let range = scalars.ranges(of: " b/".unicodeScalars).last {
+            let old = String(Substring(scalars[..<range.lowerBound]))
+            return (stripPrefix(old, "a/"), String(Substring(scalars[range.upperBound...])))
         }
         return (String(value), String(value))
     }
@@ -348,7 +354,7 @@ enum DiffParser {
     }
 
     private static func stripPrefix(_ value: String, _ prefix: String) -> String {
-        value.hasPrefix(prefix) ? String(value.dropFirst(prefix.count)) : value
+        value[...].afterScalarPrefix(prefix).map(String.init) ?? value
     }
 
     /// No file in a diff has this many lines. Capping hunk numbers here keeps the line numbers and counts
@@ -358,10 +364,10 @@ enum DiffParser {
     /// Parses `@@ -a,b +c,d @@ section`; a missing count means 1. A negative or absurdly large number,
     /// which git never writes, makes the line not a hunk header.
     static func hunkHeader(_ line: Substring) -> DiffHunk? {
-        let parts = line.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true)
-        guard parts.count >= 4, parts[0] == "@@", parts[3] == "@@" || parts[3].hasPrefix("@@") else { return nil }
+        let parts = line.splitScalars(at: " ", maxSplits: 4, omittingEmptySubsequences: true)
+        guard parts.count >= 4, parts[0] == "@@", parts[3] == "@@" || parts[3].hasScalarPrefix("@@") else { return nil }
         func range(_ value: Substring) -> (Int, Int)? {
-            let pieces = value.dropFirst().split(separator: ",", omittingEmptySubsequences: false)
+            let pieces = Substring(value.unicodeScalars.dropFirst()).splitScalars(at: ",", omittingEmptySubsequences: false)
             guard let start = Int(pieces[0]) else { return nil }
             let count = pieces.count > 1 ? Int(pieces[1]) ?? 1 : 1
             guard (0...maxLineNumber).contains(start), (0...maxLineNumber).contains(count) else { return nil }
@@ -370,6 +376,28 @@ enum DiffParser {
         guard let old = range(parts[1]), let new = range(parts[2]) else { return nil }
         let section = parts.count > 4 ? String(parts[4]) : ""
         return DiffHunk(oldStart: old.0, oldCount: old.1, newStart: new.0, newCount: new.1, section: section)
+    }
+}
+
+/// Git writes bytes, but `hasPrefix`, `split` and `dropFirst` work on Characters, where a combining mark
+/// joins the character before it: a name or line starting with one would hide the space, slash or marker in
+/// front of it. These work on Unicode scalars, which for git's ASCII syntax is the same as on its bytes.
+extension Substring {
+    fileprivate func hasScalarPrefix(_ prefix: String) -> Bool {
+        unicodeScalars.starts(with: prefix.unicodeScalars)
+    }
+
+    /// The text after `prefix`, or nil when it does not start with it.
+    fileprivate func afterScalarPrefix(_ prefix: String) -> Substring? {
+        guard hasScalarPrefix(prefix) else { return nil }
+        return Substring(unicodeScalars.dropFirst(prefix.unicodeScalars.count))
+    }
+
+    fileprivate func splitScalars(
+        at separator: Unicode.Scalar, maxSplits: Int = .max, omittingEmptySubsequences: Bool = true
+    ) -> [Substring] {
+        unicodeScalars.split(separator: separator, maxSplits: maxSplits, omittingEmptySubsequences: omittingEmptySubsequences)
+            .map(Substring.init)
     }
 }
 

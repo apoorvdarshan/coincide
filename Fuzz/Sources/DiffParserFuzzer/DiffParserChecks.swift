@@ -29,7 +29,8 @@ enum DiffParserChecks {
         for rawLine in patch.utf8.split(separator: 0x0A, omittingEmptySubsequences: false) {
             var line = Substring(rawLine)
             if line.hasSuffix("\r") { line = line.dropLast() }
-            if line.hasPrefix("diff --git ") { headers += 1 }
+            // By scalar, as git writes bytes: a combining mark after the space does not hide the header.
+            if line.unicodeScalars.starts(with: "diff --git ".unicodeScalars) { headers += 1 }
         }
         expectEqual(files.count, headers, "one file per `diff --git` line")
         for file in files { checkConsistency(file) }
@@ -217,7 +218,7 @@ enum DiffParserChecks {
         if input.bool() {
             let section = input.lineText()
             header += " " + section
-            hunk.section = String(stripCR(" " + section).dropFirst())
+            hunk.section = stripCR(section)
         }
         lines.append(header)
         lines += body

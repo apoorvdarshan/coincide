@@ -57,7 +57,9 @@ enum GitOutputChecks {
 
     static func rawUnquote(_ value: String) {
         let result = GitParse.unquote(value)
-        if !(value.count >= 2 && value.first == "\"" && value.last == "\"") {
+        // By bytes, as git quotes: a combining mark after the opening quote does not hide it.
+        let utf8 = Array(value.utf8)
+        if !(utf8.count >= 2 && utf8.first == UInt8(ascii: "\"") && utf8.last == UInt8(ascii: "\"")) {
             expectEqual(result, value, "an unquoted path is returned as is")
         }
     }

@@ -119,6 +119,46 @@ struct GitParsingTests {
         #expect(files[5].modeChange == "100644 → 100755")
     }
 
+    @Test func namesAndLinesStartingWithACombiningMarkParseByScalar() throws {
+        // As Characters, a leading combining mark joined the space, slash, quote or marker in front of it.
+        let mark = "\u{301}"
+        let oid = String(repeating: "0", count: 40)
+        #expect(GitParse.unquote("\"\(mark)\\tq\"") == "\(mark)\tq")
+
+        let status = GitParse.porcelainV2("1 .M N... 100644 100644 100644 \(oid) \(oid) \(mark)a\0? \(mark)b\0")
+        #expect(status.entries.map(\.path) == ["\(mark)a", "\(mark)b"])
+
+        let worktrees = GitParse.worktrees(
+            "worktree \(mark)w\0HEAD \(oid)\0branch refs/heads/\(mark)x\0locked \(mark)why\0\0worktree /y\0HEAD \(oid)\0detached\0\0")
+        #expect(worktrees.map(\.path) == ["\(mark)w", "/y"])
+        #expect(worktrees.map(\.isMain) == [true, false])
+        #expect(worktrees.first?.branch == "\(mark)x")
+        #expect(worktrees.first?.isLocked == true)
+
+        let patch = """
+            diff --git a/\(mark)f b/\(mark)f
+            --- a/\(mark)f
+            +++ b/\(mark)f
+            @@ -1,2 +1,2 @@ \(mark)section
+            -\(mark)old
+            +\(mark)new
+             \(mark)same
+            diff --git a/\(mark)r b/\(mark)s
+            rename from "\(mark)\\tr"
+            rename to \(mark)s
+
+            """
+        let files = DiffParser.parse(patch)
+        #expect(files.map(\.path) == ["\(mark)f", "\(mark)s"])
+        #expect(files[0].oldPath == nil)
+        #expect(files[0].additions == 1 && files[0].deletions == 1)
+        let hunk = try #require(files[0].hunks.first)
+        #expect(hunk.section == "\(mark)section")
+        #expect(hunk.lines.map(\.kind) == [.deletion, .addition, .context])
+        #expect(hunk.lines.map(\.text) == ["\(mark)old", "\(mark)new", "\(mark)same"])
+        #expect(files[1].status == .renamed && files[1].oldPath == "\(mark)\tr")
+    }
+
     @Test func absurdHunkNumbersAreNotHunkHeaders() {
         // Counting lines from these used to overflow Int and trap.
         #expect(DiffParser.hunkHeader("@@ -9223372036854775807,2 +1,2 @@") == nil)
