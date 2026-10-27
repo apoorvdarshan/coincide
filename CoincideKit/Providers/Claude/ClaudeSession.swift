@@ -253,21 +253,19 @@ final class ClaudeSession: AgentSession {
                 identity: identity, model: settings.model, effort: settings.effort, permissionMode: settings.permissionMode,
                 allowsBypass: settings.allowsBypass)
         }
-        let hadConversation = sessionID != nil
         do {
             try await spawn(config(identity))
         } catch let failure as StartFailure where failure.missingConversation {
             guard case .resume = identity else { throw failure }
             conversationExists = false
             try await spawn(config(.fresh(Self.newID())))
-            if hadConversation {
-                // The new conversation gets the turn's recap of the whole thread (`send` sends it), not the history itself.
-                emit(
-                    .notice(
-                        String(
-                            localized:
-                                "Claude Code could not find this thread's saved conversation, so it started a new one with a recap of the earlier messages.")))
-            }
+            // The new conversation gets the next turn's recap of the whole thread (the runner builds it once `start`
+            // reported the new id, `send` once a relaunch did), not the history itself.
+            emit(
+                .notice(
+                    String(
+                        localized:
+                            "Claude Code could not find this thread's saved conversation, so it started a new one with a recap of the earlier messages.")))
         } catch let failure as StartFailure where failure.sessionInUse {
             guard case .fresh(let id) = identity else { throw failure }
             try await spawn(config(.resume(id)))

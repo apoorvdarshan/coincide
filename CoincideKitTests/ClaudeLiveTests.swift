@@ -234,6 +234,18 @@ struct ClaudeLiveTests {
         // The context meter drops to what the summary takes.
         #expect(recorder.events[start...].contains { if case .usage(let usage) = $0 { (usage.inputTokens ?? 0) > 0 } else { false } })
     }
+
+    @Test func aLostConversationStartsFreshAndSaysSo() async throws {
+        let recorder = LiveRecorder()
+        let lost = UUID().uuidString.lowercased()
+        let session = try makeSession(resume: lost, recorder: recorder)
+        defer { session.shutdown() }
+        try await session.start()
+        let id = try #require(session.sessionID)
+        #expect(id != lost)
+        #expect(recorder.events.contains(.sessionStarted(id: id)))
+        #expect(recorder.events.contains { if case .notice = $0 { true } else { false } })
+    }
 }
 
 @MainActor

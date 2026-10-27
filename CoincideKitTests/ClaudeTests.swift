@@ -1215,6 +1215,16 @@ struct ClaudeSessionTests {
             interactionMode: interaction)
     }
 
+    private var notices: [String] {
+        events.value.compactMap { event in
+            if case .notice(let text) = event { return text }
+            return nil
+        }
+    }
+
+    private static let lostConversationNotice =
+        "Claude Code could not find this thread's saved conversation, so it started a new one with a recap of the earlier messages."
+
     private var completions: [TurnOutcome] {
         events.value.compactMap { event in
             if case .turnCompleted(let outcome) = event { return outcome }
@@ -1269,9 +1279,10 @@ struct ClaudeSessionTests {
         #expect(transport.config.identity == .resume("29718ecd-ee07-4e0c-9590-9666442ec28f"))
         #expect(transport.config.arguments.contains("--resume=29718ecd-ee07-4e0c-9590-9666442ec28f"))
         #expect(events.value.contains(.sessionStarted(id: "29718ecd-ee07-4e0c-9590-9666442ec28f")))
+        #expect(notices.isEmpty)
     }
 
-    @Test func missingConversationStartsFresh() async throws {
+    @Test func missingConversationStartsFreshAndSaysSo() async throws {
         let session = makeSession(resume: "23ace05f-68cb-41ed-96e9-fc4b637bc343") { index, transport, request in
             guard index == 0, request["subtype"] == "initialize" else { return nil }
             transport.later { transport in
@@ -1288,7 +1299,10 @@ struct ClaudeSessionTests {
         }
         #expect(id != "23ace05f-68cb-41ed-96e9-fc4b637bc343")
         #expect(session.sessionID == id)
-        #expect(events.value.contains(.sessionStarted(id: id)))
+        // The runner sends the next turn's recap of the whole thread to the new id, as for the other providers.
+        let started = try #require(events.value.firstIndex(of: .sessionStarted(id: id)))
+        #expect(events.value[started...].contains(.notice(Self.lostConversationNotice)))
+        #expect(notices == [Self.lostConversationNotice])
     }
 
     @Test func startFailureExplainsWhy() async throws {
@@ -1648,9 +1662,7 @@ struct ClaudeSessionTests {
         #expect(events.value.contains(.sessionStarted(id: fresh)))
         // The new conversation has seen nothing, so it gets the recap of the whole thread.
         #expect(transport.userMessages.last?.at("message.content")?.string == recap + "\n\nReply with exactly: pong")
-        #expect(
-            events.value.contains(
-                .notice("Claude Code could not find this thread's saved conversation, so it started a new one with a recap of the earlier messages.")))
+        #expect(notices == [Self.lostConversationNotice])
         #expect(!events.value.contains { if case .usage(let usage) = $0 { return usage.costUSD == 0 } else { return false } })
 
         // Frames sent before the new process reports its id must not switch back to the lost one.
