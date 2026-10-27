@@ -1,0 +1,69 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "%@ exited unexpectedly." : {
+
+    },
+    "%@ is not installed or could not be found on PATH." : {
+
+    },
+    "%@ support is not available yet." : {
+
+    },
+    "Allow" : {
+
+    },
+    "Always allow" : {
+
+    },
+    "Ask for approval" : {
+
+    },
+    "Build" : {
+
+    },
+    "Dark" : {
+
+    },
+    "Deny" : {
+
+    },
+    "Disabled in Settings" : {
+
+    },
+    "Full access" : {
+
+    },
+    "Interrupted" : {
+
+    },
+    "Light" : {
+
+    },
+    "New thread" : {
+
+    },
+    "Plan" : {
+
+    },
+    "Resolved by the agent" : {
+
+    },
+    "System" : {
+
+    },
+    "The agent session is not running." : {
+
+    },
+    "The project folder is missing." : {
+
+    },
+    "Timed out waiting for %@." : {
+
+    },
+    "Unexpected response from the agent: %@" : {
+
+    }
+  },
+  "version" : "1.0"
+}

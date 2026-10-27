@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+    paths-ignore:
+      - "**.md"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test
+    # Coincide builds against the macOS 27 SDK; this image ships Xcode 27 on macOS 27.
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build and run unit tests
+        run: |
+          xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData test -collect-test-diagnostics never

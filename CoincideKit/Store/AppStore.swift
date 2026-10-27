@@ -251,7 +251,8 @@ public final class AppStore {
             // Anything left running when the app quit can no longer finish.
             for index in thread.items.indices
             where thread.items[index].status == .running || thread.items[index].status == .waiting {
-                thread.items[index].status = thread.items[index].kind == .approval ? .declined : .failed
+                let kind = thread.items[index].kind
+                thread.items[index].status = kind == .approval || kind == .question ? .declined : .failed
             }
             threads[thread.id] = thread
         }
