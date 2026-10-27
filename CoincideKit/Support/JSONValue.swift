@@ -73,7 +73,11 @@ public enum JSONValue: Sendable, Hashable, Codable {
         return nil
     }
 
-    public nonisolated var int: Int? { number.map { Int($0) } }
+    /// The number as an Int, or nil when it is not finite or does not fit.
+    public nonisolated var int: Int? {
+        guard let number, number.isFinite, number >= -9.2e18, number <= 9.2e18 else { return nil }
+        return Int(number)
+    }
 
     public nonisolated var bool: Bool? {
         if case .bool(let value) = self { return value }

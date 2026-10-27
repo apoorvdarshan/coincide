@@ -428,7 +428,8 @@ public final class ThreadRunner {
             store.append(TranscriptItem(kind: .notice, text: text, provider: provider), to: threadID)
 
         case .turnCompleted(let outcome):
-            guard turns[threadID]?.provider == provider else { return }
+            // While the next turn is still starting, a completion can only be a late one from an abandoned turn.
+            guard turns[threadID]?.provider == provider, !starting.contains(threadID) else { return }
             finishTurn(threadID, provider: provider, outcome: outcome)
         case .sessionExited(let error):
             if sessions[threadID]?[provider] === session { sessions[threadID]?[provider] = nil }
