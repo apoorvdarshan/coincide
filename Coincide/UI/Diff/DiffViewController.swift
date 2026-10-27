@@ -327,24 +327,33 @@ final class DiffViewController: NSViewController {
             document.rootURL = root
             let unchanged = diff == self.diff
             self.diff = diff
-            if !unchanged { show(diff, keepPosition: keepPosition) }
-            summaryLabel.attributedStringValue = Self.summary(diff)
-            if let path = pendingPath, let index = diff.files.firstIndex(where: { $0.path == path }) {
-                document.scrollToFile(at: index)
-                fileList.select(index)
-            }
+            let target = pendingPath.flatMap { path in diff.files.firstIndex { $0.path == path } }
             pendingPath = nil
+            if !unchanged {
+                show(diff, keepPosition: keepPosition, revealing: target)
+            } else if let target {
+                document.scrollToFile(at: target)
+                fileList.select(target)
+            }
+            summaryLabel.attributedStringValue = Self.summary(diff)
         }
         updateActionsBar()
     }
 
-    private func show(_ diff: GitDiff, keepPosition: Bool) {
+    /// Shows `diff`, and the file at `target` once the document has it: the document only gets the new
+    /// diff after its presentation is made in the background.
+    private func show(_ diff: GitDiff, keepPosition: Bool, revealing target: Int? = nil) {
         fileList.show(diff.files)
         sizeFileList(fileCount: diff.files.count)
         Task { [weak self] in
             let presentation = await Task.detached(priority: .userInitiated) { DiffPresentation.make(diff) }.value
             guard let self, self.diff == diff else { return }
-            self.document.show(diff, presentation: presentation, keepPosition: keepPosition)
+            self.document.show(diff, presentation: presentation, keepPosition: keepPosition && target == nil)
+            if let target {
+                self.document.scrollToFile(at: target)
+                // After the scroll, which may have reported another file at the top.
+                self.fileList.select(target)
+            }
         }
     }
 
