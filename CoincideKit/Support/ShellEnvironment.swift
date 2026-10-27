@@ -20,9 +20,9 @@ public final class ShellEnvironment: @unchecked Sendable {
         }
         env["PATH"] = Self.mergedPath(env["PATH"] ?? "")
         env["TERM"] = env["TERM"] ?? "xterm-256color"
-        // Never let a child agent think it is nested inside another Claude Code session.
-        env.removeValue(forKey: "CLAUDECODE")
-        env.removeValue(forKey: "CLAUDE_CODE_ENTRYPOINT")
+        // Never let a child agent think it is nested inside another Claude Code session
+        // (Coincide may itself be started from one).
+        for key in Self.parentAgentKeys { env.removeValue(forKey: key) }
         env.removeValue(forKey: "COINCIDE_RESOLVING_ENVIRONMENT")
         let result = env
         lock.withLock { cached = result }
@@ -50,6 +50,12 @@ public final class ShellEnvironment: @unchecked Sendable {
     }
 
     private static let ignoredKeys: Set<String> = ["PWD", "OLDPWD", "SHLVL", "_", "TERM_PROGRAM", "TERM_SESSION_ID"]
+
+    private static let parentAgentKeys = [
+        "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_BRIDGE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH", "CLAUDE_PID", "CLAUDE_EFFORT",
+    ]
 
     private nonisolated static func mergedPath(_ path: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
