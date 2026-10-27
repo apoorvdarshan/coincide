@@ -196,7 +196,10 @@ final class ChatViewController: NSViewController {
         composer.threadID = threadID
         pendingItemIDs.removeAll()
         needsFullReload = false
+        // Revisions restart, so heights cached for them could describe content that changed while the
+        // thread was hidden.
         revisions.removeAll()
+        list.forgetHeights()
         changedFileSignatures.removeAll()
         guard let threadID, store.thread(threadID) != nil else {
             displayedThreadID = nil
