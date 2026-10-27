@@ -5,6 +5,11 @@ options:
     macOS: "26.0"
   createIntermediateGroups: true
   developmentLanguage: en
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    # 1.19 and later run a build-tool plug-in that xcodebuild refuses without -skipPackagePluginValidation.
+    exactVersion: 1.18.0
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -39,6 +44,7 @@ targets:
       - path: Coincide
     dependencies:
       - target: CoincideKit
+      - package: SwiftTerm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide
