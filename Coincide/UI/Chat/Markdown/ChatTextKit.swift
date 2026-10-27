@@ -288,9 +288,10 @@ final class ChatTextView: NSTextView {
         return super.validateUserInterfaceItem(item)
     }
 
+    /// Links go only to `onOpenLink`. NSTextView's own handling would give any URL to the system, which
+    /// launches apps and runs scripts that agent-written links can point at.
     override func clicked(onLink link: Any, at charIndex: Int) {
-        if onOpenLink?(link) == true { return }
-        super.clicked(onLink: link, at: charIndex)
+        _ = onOpenLink?(link)
     }
 
     /// The transcript scrolls; the text itself never does.

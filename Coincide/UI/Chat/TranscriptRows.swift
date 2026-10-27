@@ -62,6 +62,25 @@ struct TranscriptRow: Equatable {
     }
 }
 
+/// The rows of a thread's finished turns, kept by `TranscriptBuilder.build(reusing:changed:)` between
+/// builds together with what they were built from.
+struct TranscriptSettledRows {
+    fileprivate struct Key: Equatable {
+        /// Where the turns that can still change start, and the item there.
+        var end: Int
+        var endID: UUID?
+        var showReasoning: Bool
+        var expanded: Set<TranscriptRowID>
+        var agentTurnIDs: Set<UUID>
+        var changedFiles: [UUID: Int]
+    }
+
+    fileprivate var key: Key
+    fileprivate var rows: [TranscriptRow]
+    /// The items the rows were built from.
+    fileprivate var itemIDs: Set<UUID>
+}
+
 /// Footer of the turn's final reply: who answered, so a provider switch is visible.
 struct AssistantMeta: Hashable {
     var provider: ProviderKind
@@ -103,26 +122,67 @@ struct TranscriptBuilder {
     var changedFiles: [UUID: Int] = [:]
 
     func build() -> [TranscriptRow] {
+        finish(turnRows(items[...]))
+    }
+
+    /// Builds the same rows as `build()`, reusing `settled` for the turns before the last one unless
+    /// something they show changed, and keeping the new ones there. `changed` lists the items whose
+    /// content or revision changed since `settled` was last offered. While a turn streams, only its own
+    /// rows are laid out again, however long the thread is.
+    func build(reusing settled: inout TranscriptSettledRows?, changed: Set<UUID>) -> [TranscriptRow] {
+        let end = tailStart
+        let key = TranscriptSettledRows.Key(
+            end: end, endID: end < items.count ? items[end].id : nil, showReasoning: showReasoning, expanded: expanded,
+            agentTurnIDs: agentTurnIDs, changedFiles: changedFiles)
+        let reused = settled.flatMap { cached in
+            cached.key == key && !changed.contains(where: cached.itemIDs.contains) ? cached.rows : nil
+        }
+        let head = reused ?? turnRows(items[..<end])
+        if reused == nil { settled = TranscriptSettledRows(key: key, rows: head, itemIDs: Set(items[..<end].lazy.map(\.id))) }
+        // The tail opens with a turn's first row, which is never part of a work log, so `continuesWork`
+        // never spans the two parts.
+        return finish(head, then: turnRows(items[end...]))
+    }
+
+    /// Where the turns that can still change start: the last turn's opening item, or the running turn's
+    /// when that comes earlier. The turns before it are over, and their rows depend only on their items.
+    private var tailStart: Int {
+        guard let last = items.lastIndex(where: opensTurn) else { return 0 }
+        guard let runningTurnID, !items[last...].contains(where: { $0.id == runningTurnID }) else { return last }
+        return items[..<last].lastIndex { $0.id == runningTurnID && opensTurn($0) } ?? last
+    }
+
+    /// The rows of the turns in `slice`, which starts where a turn does or at the first item.
+    private func turnRows(_ slice: ArraySlice<TranscriptItem>) -> [TranscriptRow] {
         var rows: [TranscriptRow] = []
-        var start = 0
-        for index in items.indices where index > start && opensTurn(items[index]) {
+        var start = slice.startIndex
+        for index in slice.indices where index > start && opensTurn(items[index]) {
             appendTurn(items[start..<index], to: &rows)
             start = index
         }
-        if start < items.count { appendTurn(items[start...], to: &rows) }
-
-        if let runningTurnID, needsLiveRow(after: rows.last, turnID: runningTurnID) {
-            let status: LiveStatus =
-                isStarting ? .starting(runningProvider ?? .claude) : .thinking
-            rows.append(row(.live, .live(status)))
-        }
+        if start < slice.endIndex { appendTurn(items[start..<slice.endIndex], to: &rows) }
         for index in rows.indices.dropLast() where rows[index].isWorkLog && rows[index + 1].isWorkLog {
             rows[index].continuesWork = true
         }
-        if !rows.isEmpty {
-            rows.insert(row(.header, .spacer(height: TranscriptMetrics.edgePadding + topReserve)), at: 0)
-            rows.append(row(.footer, .spacer(height: TranscriptMetrics.edgePadding)))
+        return rows
+    }
+
+    /// The rows of every turn, `turns` and then `later`, with the live row and the spacers around them.
+    private func finish(_ turns: [TranscriptRow], then later: [TranscriptRow] = []) -> [TranscriptRow] {
+        var live: TranscriptRow?
+        if let runningTurnID, needsLiveRow(after: later.last ?? turns.last, turnID: runningTurnID) {
+            let status: LiveStatus =
+                isStarting ? .starting(runningProvider ?? .claude) : .thinking
+            live = row(.live, .live(status))
         }
+        guard !turns.isEmpty || !later.isEmpty || live != nil else { return [] }
+        var rows: [TranscriptRow] = []
+        rows.reserveCapacity(turns.count + later.count + 3)
+        rows.append(row(.header, .spacer(height: TranscriptMetrics.edgePadding + topReserve)))
+        rows += turns
+        rows += later
+        if let live { rows.append(live) }
+        rows.append(row(.footer, .spacer(height: TranscriptMetrics.edgePadding)))
         return rows
     }
 
@@ -253,7 +313,13 @@ struct TranscriptBuilder {
             guard let id = last.itemID, let item = items.last(where: { $0.id == id }) else { return true }
             return item.status != .running
         case .group(let ids, _):
-            return !items.contains { ids.contains($0.id) && $0.status == .running }
+            // The group's calls are among the newest items, so look from the end and stop once all are seen.
+            var unseen = Set(ids)
+            for item in items.reversed() where unseen.remove(item.id) != nil {
+                if item.status == .running { return false }
+                if unseen.isEmpty { break }
+            }
+            return true
         case .assistant:
             guard let id = last.itemID, let item = items.last(where: { $0.id == id }) else { return true }
             return item.status != .running
@@ -377,9 +443,15 @@ enum TranscriptLabels {
         return String(format: "%dh %02dm", hours, minutes % 60)
     }
 
+    /// How much of a thought its preview reads: the row shows one line, and a thought that streams for a
+    /// while would otherwise be parsed whole on every update.
+    private static let previewSourceLength = 4096
+
     /// The first sentence of a thought, flattened to one line, for a collapsed reasoning row.
     static func thoughtPreview(_ markdown: String) -> String {
-        let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        var head = markdown.drop(while: \.isWhitespace).prefix(previewSourceLength)
+        if head.endIndex < markdown.endIndex, let lineEnd = head.lastIndex(where: \.isNewline) { head = head[..<lineEnd] }
+        let trimmed = head.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("**"), let end = trimmed.dropFirst(2).range(of: "**") {
             return String(trimmed[trimmed.index(trimmed.startIndex, offsetBy: 2)..<end.lowerBound])
         }

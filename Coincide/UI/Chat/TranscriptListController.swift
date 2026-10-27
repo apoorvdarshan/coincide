@@ -158,6 +158,12 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         }
     }
 
+    /// Forgets every measurement without reloading, for when another thread loads: row revisions start
+    /// over then, so a height measured on an earlier visit could pass for one of content changed since.
+    func forgetHeights() {
+        heights.removeAll()
+    }
+
     /// Forgets every measurement, for font size changes.
     func invalidateHeights() {
         heights.removeAll()
