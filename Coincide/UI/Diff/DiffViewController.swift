@@ -20,6 +20,8 @@ final class DiffViewController: NSViewController {
             pullRequest = nil
             banner.dismiss()
             reload()
+            // A git action that finished while another thread was shown reports when its thread is back.
+            if let threadID, let report = deferredReports.removeValue(forKey: threadID) { report() }
         }
     }
 
@@ -50,6 +52,10 @@ final class DiffViewController: NSViewController {
     private var statusTask: Task<Void, Never>?
     private var generation = 0
     private var actionProgress: String?
+    /// The thread the running git action belongs to. Only one action runs at a time.
+    private var actionThreadID: UUID?
+    /// Results of git actions that finished while another thread was shown, shown when it is again.
+    private var deferredReports: [UUID: () -> Void] = [:]
     private var observation: ObservationToken?
     private var liveTimer: Timer?
     private var needsReload = false
@@ -511,7 +517,8 @@ final class DiffViewController: NSViewController {
         actionsBar.update(
             GitActionsBar.State(
                 branch: status.branch, ahead: status.ahead, behind: status.behind, upstream: status.upstream,
-                pullRequest: pullRequest, quickAction: quickAction, progress: actionProgress))
+                // Another thread's action shows here as busy buttons, not as this thread's progress.
+                pullRequest: pullRequest, quickAction: quickAction, progress: actionThreadID == threadID ? actionProgress : nil))
     }
 
     private func runQuickAction() {
@@ -568,8 +575,11 @@ final class DiffViewController: NSViewController {
     private func showCommitSheet() {
         guard let status, status.hasChanges else { return }
         let sheet = CommitSheetController(branch: status.branch, isDefaultBranch: status.isDefaultBranch, files: status.files)
+        let threadID = self.threadID
         sheet.onCommit = { [weak self] choice in
-            self?.perform(.commit, message: choice.message, paths: choice.paths, featureBranch: choice.onNewBranch)
+            // The files picked are in this thread's folder.
+            guard let self, self.threadID == threadID else { return }
+            self.perform(.commit, message: choice.message, paths: choice.paths, featureBranch: choice.onNewBranch)
         }
         presentAsSheet(sheet)
     }
@@ -579,16 +589,20 @@ final class DiffViewController: NSViewController {
         _ action: GitStackedAction, message: String? = nil, paths: [String]? = nil, featureBranch: Bool = false,
         confirmed: Bool = false
     ) {
-        guard let threadID, let thread, let cwd, actionProgress == nil else { return }
+        // Without the status, whether this is the default branch (and so needs asking) is unknown.
+        guard let threadID, let thread, let cwd, let status, actionProgress == nil else { return }
         if !confirmed, !featureBranch,
-            GitQuickAction.requiresDefaultBranchConfirmation(action, isDefaultBranch: status?.isDefaultBranch ?? false)
+            GitQuickAction.requiresDefaultBranchConfirmation(action, isDefaultBranch: status.isDefaultBranch)
         {
             confirmDefaultBranch(action) { [weak self] choice in
-                self?.perform(action, message: message, paths: paths, featureBranch: choice, confirmed: true)
+                // The question named this thread's branch.
+                guard let self, self.threadID == threadID else { return }
+                self.perform(action, message: message, paths: paths, featureBranch: choice, confirmed: true)
             }
             return
         }
         actionProgress = String(localized: "Starting…")
+        actionThreadID = threadID
         banner.dismiss()
         updateActionsBar()
         let request = GitActionRequest(
@@ -596,6 +610,7 @@ final class DiffViewController: NSViewController {
             selection: thread.selection, threadContext: Handoff.transcript(thread.items, budget: 16_000))
         Task { [weak self] in
             guard let self else { return }
+            let report: () -> Void
             do {
                 let result = try await self.git.run(request, in: cwd) { [weak self] label in
                     self?.actionProgress = label
@@ -604,21 +619,34 @@ final class DiffViewController: NSViewController {
                 if let branch = result.createdBranch {
                     self.store.updateThread(threadID) { $0.branch = branch }
                 }
-                self.showResult(result)
+                report = { [weak self] in self?.showResult(result, threadID: threadID) }
             } catch {
-                self.showFailure(error)
+                report = { [weak self] in self?.showFailure(error) }
             }
-            self.actionProgress = nil
-            self.reload(keepPosition: true)
+            self.finishAction(in: threadID, report: report)
         }
     }
 
-    private func showResult(_ result: GitActionResult) {
+    /// Ends the running git action. Its result shows in the thread it ran in: now when that thread is
+    /// shown, else once it is again, so a follow-up never acts on another thread's folder.
+    private func finishAction(in threadID: UUID, report: @escaping () -> Void) {
+        actionProgress = nil
+        actionThreadID = nil
+        if self.threadID == threadID {
+            report()
+        } else {
+            deferredReports[threadID] = report
+        }
+        reload(keepPosition: true)
+    }
+
+    private func showResult(_ result: GitActionResult, threadID: UUID) {
         switch result.followUp {
         case .run(let next):
             let title = next == .push ? String(localized: "Push") : String(localized: "Create PR")
             banner.show(title: result.title, detail: result.detail, isError: false, actionTitle: title) { [weak self] in
-                self?.perform(next)
+                guard let self, self.threadID == threadID else { return }
+                self.perform(next)
             }
         case .openPullRequest(let url):
             banner.show(title: result.title, detail: result.detail, isError: false, actionTitle: String(localized: "View PR")) {
@@ -669,31 +697,32 @@ final class DiffViewController: NSViewController {
     }
 
     private func pull() {
-        guard let cwd, actionProgress == nil else { return }
+        guard let threadID, let cwd, actionProgress == nil else { return }
         actionProgress = String(localized: "Pulling…")
+        actionThreadID = threadID
         updateActionsBar()
         Task { [weak self] in
             guard let self else { return }
+            let report: () -> Void
             do {
                 let result = try await self.git.pull(cwd)
-                self.banner.show(
-                    title: result == .pulled ? String(localized: "Pulled the latest changes") : String(localized: "Already up to date"),
-                    detail: nil, isError: false)
+                let title =
+                    result == .pulled ? String(localized: "Pulled the latest changes") : String(localized: "Already up to date")
+                report = { [weak self] in self?.banner.show(title: title, detail: nil, isError: false) }
             } catch {
-                self.showFailure(error)
+                report = { [weak self] in self?.showFailure(error) }
             }
-            self.actionProgress = nil
-            self.reload(keepPosition: true)
+            self.finishAction(in: threadID, report: report)
         }
     }
 
     private func initializeRepository() {
-        guard let cwd else { return }
+        guard let threadID, let cwd else { return }
         Task { [weak self] in
             do {
                 try await self?.git.initializeRepository(cwd)
             } catch {
-                self?.showFailure(error)
+                if self?.threadID == threadID { self?.showFailure(error) }
             }
             self?.reload()
         }
