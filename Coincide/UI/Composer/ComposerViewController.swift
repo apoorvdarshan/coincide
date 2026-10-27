@@ -86,6 +86,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         wireActions()
 
         storeToken = store.observe { [weak self] change in self?.handle(change) }
+        // Switching a thread to Ask for approval must reach its live sessions too, from wherever it is switched.
+        AccessDowngrades.shared.start()
         NotificationCenter.default.addObserver(
             self, selector: #selector(focusRequested), name: .coincideFocusComposer, object: nil)
         NotificationCenter.default.addObserver(
