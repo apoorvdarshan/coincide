@@ -69,11 +69,12 @@ final class AccessDowngrades {
         if pending[threadID]?.isEmpty == true { pending[threadID] = nil }
         // The running turn's session may still be starting, so it need not be among the live ones yet.
         guard let turn = running else { return }
+        // Recorded first: stopping the turn below can end it, and its session, right away.
+        pending[threadID, default: [:]][turn.provider] = turn.userItemID
         if turn.isAgentInitiated, turn.startedAt >= switchedAt {
             // The agent started this turn by itself after the switch, still with full access.
             runner.stop(threadID: threadID)
         }
-        pending[threadID, default: [:]][turn.provider] = turn.userItemID
     }
 
     /// Once a turn changed: ends the sessions whose turns are over.
@@ -85,20 +86,25 @@ final class AccessDowngrades {
         }
         let turn = runner.turn(threadID)
         var remaining: [ProviderKind: UUID] = [:]
+        var finished: [ProviderKind] = []
+        var stopsTurn = false
         for (provider, awaited) in providers {
             guard let turn, turn.provider == provider else {
-                runner.shutdown(threadID: threadID, provider: provider)
+                finished.append(provider)
                 continue
             }
             if turn.userItemID == awaited {
                 remaining[provider] = awaited
             } else if turn.isAgentInitiated {
                 // The session that kept full access started a turn by itself before it could be ended.
-                runner.stop(threadID: threadID)
                 remaining[provider] = turn.userItemID
+                stopsTurn = true
             }
             // A message sent since then gave the session the approval mode, as every send does.
         }
+        // Recorded first: ending a session or stopping a turn can report back right away.
         pending[threadID] = remaining.isEmpty ? nil : remaining
+        for provider in finished { runner.shutdown(threadID: threadID, provider: provider) }
+        if stopsTurn { runner.stop(threadID: threadID) }
     }
 }
