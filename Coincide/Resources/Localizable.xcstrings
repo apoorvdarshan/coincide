@@ -29,6 +29,12 @@
     "%@ cannot resume sessions." : {
 
     },
+    "%@ continued after background work finished." : {
+
+    },
+    "%@ continued on its own." : {
+
+    },
     "%@ did not accept the model “%@”. Choose another model, then try again." : {
       "localizations" : {
         "en" : {
@@ -370,6 +376,9 @@
 
     },
     "A Pi extension" : {
+
+    },
+    "A Pi extension started a turn." : {
 
     },
     "A command is still running in a terminal." : {
@@ -863,10 +872,13 @@
     "Claude Code accepted the message but never started working on it." : {
 
     },
+    "Claude Code continued on its own." : {
+
+    },
     "Claude Code could not be started: %@" : {
 
     },
-    "Claude Code could not find this thread's saved conversation, so it started a new one without the earlier messages." : {
+    "Claude Code could not find this thread's saved conversation, so it started a new one with a recap of the earlier messages." : {
 
     },
     "Claude Code exited before finishing the turn." : {
@@ -1370,6 +1382,9 @@
 
     },
     "Couldn't resume the earlier %@ session, so a new one was started." : {
+
+    },
+    "Couldn't resume the earlier OpenCode session, so a new one was started." : {
 
     },
     "Couldn't start Cursor: %@" : {
@@ -2531,6 +2546,9 @@
     "OpenCode reported an error." : {
 
     },
+    "OpenCode started working on its own." : {
+
+    },
     "Opened PR #%lld" : {
 
     },
@@ -3563,6 +3581,9 @@
 
     },
     "The agent needs approval" : {
+
+    },
+    "The agent session ended" : {
 
     },
     "The agent session is not running." : {
