@@ -33,7 +33,7 @@ public final class ThreadRunner {
         /// The model the turn runs with, recorded on its items even if the thread's selection changes meanwhile.
         var modelID: String?
         /// The user's messages the turn took in while it ran (steering it), in order. Each is a user item
-        /// after `userItemID` that belongs to this turn rather than opening one.
+        /// after `userItemID`, marked `steered`, that belongs to this turn rather than opening one.
         public internal(set) var steeredItemIDs: [UUID] = []
 
         init(provider: ProviderKind, startedAt: Date, userItemID: UUID, modelID: String? = nil) {
@@ -321,9 +321,10 @@ public final class ThreadRunner {
             await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths)
             return .sent
         }
+        // Marked as steered, so it stays part of the turn it went into instead of opening one.
         let item = TranscriptItem(
             kind: .user, text: message.text, provider: turn.provider, modelID: turn.modelID,
-            attachments: message.imagePaths.isEmpty ? nil : message.imagePaths)
+            attachments: message.imagePaths.isEmpty ? nil : message.imagePaths, steered: true)
         let countBefore = store.thread(threadID)?.items.count ?? 0
         store.append(item, to: threadID)
         if isActive(threadID, turn.userItemID) {

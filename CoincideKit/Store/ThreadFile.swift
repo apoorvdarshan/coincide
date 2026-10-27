@@ -129,6 +129,7 @@ struct ThreadFile: Decodable {
                 case "questions": decoded.questions != nil
                 case "answers": decoded.answers != nil
                 case "attachments": decoded.attachments != nil
+                case "steered": decoded.steered != nil
                 case "completedAt": decoded.completedAt != nil
                 default: false
                 }

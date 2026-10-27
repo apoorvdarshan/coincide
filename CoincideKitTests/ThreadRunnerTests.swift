@@ -536,6 +536,9 @@ struct ThreadRunnerTests {
         let steer = items.last!
         #expect(steer.kind == .user && steer.text == "Also update the README" && steer.provider == .claude)
         #expect(steer.attachments == ["/tmp/a.png"])
+        // Marked, so the transcript keeps it inside the turn; the message that opened the turn is not.
+        #expect(steer.steered == true && !steer.opensUserTurn)
+        #expect(items.first { $0.id == turnID }?.steered == nil)
         #expect(runner.turn(threadID)?.userItemID == turnID)
         #expect(runner.turn(threadID)?.steeredItemIDs == [steer.id])
         #expect(runner.queuedMessages(threadID).isEmpty)
@@ -558,6 +561,8 @@ struct ThreadRunnerTests {
         session.emit(.turnCompleted(.completed))
         #expect(await eventually { session.sent.count == 2 })
         #expect(session.sent.last?.message == "two")
+        // Sent after the turn, it opens a turn of its own.
+        #expect(items.last { $0.kind == .user }?.opensUserTurn == true)
     }
 
     @Test func aMessageTheTurnRefusesWaitsForIt() async {
@@ -591,6 +596,8 @@ struct ThreadRunnerTests {
         #expect(delivery == .steered)
         #expect(!runner.isRunning(threadID))
         #expect(items.last?.kind == .user && items.last?.text == "two")
+        // The agent took it into the turn that just ended, so it stays with that turn.
+        #expect(items.last?.isSteered == true)
         #expect(session.sent.map(\.message) == ["one"])
         // The session has seen the message, so the next turn does not recap it.
         #expect(store.thread(threadID)!.sessions[.claude]!.seenItemCount == items.count)
@@ -647,7 +654,7 @@ struct ThreadRunnerTests {
         #expect(await runner.steerQueued(threadID: threadID, id: queued[1].id) == .steered)
         #expect(session.steered.map(\.message) == ["second"])
         #expect(runner.queuedMessages(threadID).map(\.text) == ["first", "third"])
-        #expect(items.last?.text == "second")
+        #expect(items.last?.text == "second" && items.last?.isSteered == true)
 
         session.onSteer = { _, _ in throw AgentError.providerError("not now") }
         #expect(await runner.steerQueued(threadID: threadID, id: queued[2].id) == .queued)

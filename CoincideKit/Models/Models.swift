@@ -275,7 +275,7 @@ public struct UserInputRequest: Codable, Hashable, Sendable {
 /// One entry in a thread's timeline.
 ///
 /// Field use by kind:
-/// - user: `text` is the message, `attachments` holds image paths.
+/// - user: `text` is the message, `attachments` holds image paths, `steered` marks one sent into a running turn.
 /// - assistant / reasoning / plan / error / notice: `text` is the (markdown) body.
 /// - tool: `title` is a short label, `detail` the input (full command, diff, JSON), `text` the output.
 /// - approval: `title`/`detail` describe the request, `approval` holds the choices.
@@ -308,6 +308,9 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
     public var questions: UserInputRequest?
     public var answers: [String: [String]]?
     public var attachments: [String]?
+    /// True for a message the user sent into a running turn (T3 Code's steer), which belongs to that turn rather
+    /// than opening one of its own. Nil for everything else, so other items are written as before.
+    public var steered: Bool?
     public var createdAt: Date
     public var completedAt: Date?
 
@@ -316,7 +319,7 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
         category: ToolCategory? = nil, status: ItemStatus? = nil, provider: ProviderKind? = nil,
         modelID: String? = nil, externalID: String? = nil, approval: ApprovalInfo? = nil,
         questions: UserInputRequest? = nil, answers: [String: [String]]? = nil, attachments: [String]? = nil,
-        createdAt: Date = Date(), completedAt: Date? = nil
+        steered: Bool? = nil, createdAt: Date = Date(), completedAt: Date? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -332,9 +335,17 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
         self.questions = questions
         self.answers = answers
         self.attachments = attachments
+        self.steered = steered
         self.createdAt = createdAt
         self.completedAt = completedAt
     }
+
+    /// Whether the user sent this message into a running turn (`steered`).
+    public nonisolated var isSteered: Bool { steered == true }
+
+    /// Whether this is a message of the user's that opens a turn: any of theirs but one steered into a running turn.
+    /// (The app also starts a turn at the notice of one an agent started on its own.)
+    public nonisolated var opensUserTurn: Bool { kind == .user && !isSteered }
 
     /// Only the id and kind are required; a field this version cannot read (a status or category added
     /// later, say) is left empty rather than failing the item.
@@ -354,6 +365,7 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
         questions = container.lenient(UserInputRequest.self, forKey: .questions)
         answers = container.lenient([String: [String]].self, forKey: .answers)
         attachments = container.lenient([String].self, forKey: .attachments)
+        steered = container.lenient(Bool.self, forKey: .steered)
         createdAt = container.lenient(Date.self, forKey: .createdAt) ?? .distantPast
         completedAt = container.lenient(Date.self, forKey: .completedAt)
     }

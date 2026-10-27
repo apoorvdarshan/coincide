@@ -71,6 +71,23 @@ struct ThreadForkTests {
         #expect(ThreadFork.canFork(source(twoTurns()), through: nil))
     }
 
+    @Test func aMessageSteeredIntoATurnDoesNotEndIt() throws {
+        var items = twoTurns()
+        let steer = TranscriptItem(kind: .user, text: "and the README", provider: .claude, steered: true)
+        let work = TranscriptItem(kind: .assistant, text: "README updated too.", provider: .claude)
+        items.insert(contentsOf: [steer, work], at: 3)
+        // From before the steer, from it or after it: the whole first turn, through the work after the steer.
+        for anchor in [items[1], steer, work] {
+            let slice = try #require(ThreadFork.forkableItems(in: items, through: anchor.id))
+            #expect(slice.map(\.id) == items[0...4].map(\.id))
+        }
+        // The fork keeps the mark, so the message stays inside its turn there too.
+        let plan = try #require(ThreadFork.makeFork(of: source(items), through: items[0].id))
+        #expect(plan.thread.items.map(\.isSteered) == [false, false, false, true, false])
+        // A steer into the running turn is part of it, so it cannot be forked from either.
+        #expect(ThreadFork.forkableItems(in: items, through: steer.id, runningTurnID: items[0].id) == nil)
+    }
+
     @Test func turnsAnAgentStartedEndTheTurnBeforeThem() throws {
         var items = twoTurns()
         let notice = TranscriptItem(kind: .notice, text: "Claude Code continued on its own.", provider: .claude)

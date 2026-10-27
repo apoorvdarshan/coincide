@@ -62,10 +62,10 @@ public enum ThreadFork {
         String(localized: "\(title) fork")
     }
 
-    /// Whether `item` opens a turn: the user's messages do, and so do the notices of turns an agent started
-    /// itself (`turnOpeners`, which only the app keeps).
+    /// Whether `item` opens a turn: the user's messages do, except those steered into a running turn, and so do the
+    /// notices of turns an agent started itself (`turnOpeners`, which only the app keeps).
     private nonisolated static func opensTurn(_ item: TranscriptItem, _ turnOpeners: Set<UUID>) -> Bool {
-        item.kind == .user || turnOpeners.contains(item.id)
+        item.opensUserTurn || turnOpeners.contains(item.id)
     }
 
     /// The items a fork through `itemID` copies: everything up to the end of the turn that holds `itemID`, or
