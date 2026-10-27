@@ -12,6 +12,7 @@ final class BranchToolbarView: NSView {
             guard threadID != oldValue else { return }
             status = nil
             statusFolder = nil
+            wasRunning = threadID.map(runner.isRunning) ?? false
             render()
             scheduleRefresh(after: 0)
         }
@@ -30,6 +31,8 @@ final class BranchToolbarView: NSView {
     private var observation: ObservationToken?
     private var refreshTask: Task<Void, Never>?
     private var popover: NSPopover?
+    /// Whether the thread's turn was running at the last run-state change.
+    private var wasRunning = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -59,7 +62,13 @@ final class BranchToolbarView: NSView {
                 if self.cwd != self.statusFolder { self.scheduleRefresh() }
             case .runState(threadID):
                 self.render()
-                self.scheduleRefresh()
+                // Also sent for every token-usage update while a turn runs. Git only needs another look when a
+                // turn starts or ends.
+                let running = self.runner.isRunning(threadID)
+                if running != self.wasRunning {
+                    self.wasRunning = running
+                    self.scheduleRefresh()
+                }
             case .items(threadID, _, true):
                 self.render()
             case .projects:

@@ -246,7 +246,8 @@ final class ProjectCell: HoverCellView {
 
     /// `hiddenStatus` is the most urgent status among threads the row hides while collapsed.
     func configure(project: Project, hiddenStatus: ThreadRowModel.Status?) {
-        nameField.stringValue = project.name
+        // During an inline rename this would replace what the user typed; ending the rename sets the name.
+        if nameField.currentEditor() == nil { nameField.stringValue = project.name }
         let exists = FileManager.default.fileExists(atPath: project.path)
         icon.image = Theme.symbol(exists ? "folder" : "questionmark.folder", size: 14)
         icon.contentTintColor = exists ? .controlAccentColor : .secondaryLabelColor
@@ -365,7 +366,8 @@ final class ThreadCell: HoverCellView {
     func configure(_ model: ThreadRowModel) {
         guard model != self.model else { return }
         self.model = model
-        titleField.stringValue = model.title
+        // During an inline rename this would replace what the user typed; ending the rename sets the title.
+        if titleField.currentEditor() == nil { titleField.stringValue = model.title }
         let unseen = model.status == .completed || model.status == .failed
         titleField.font = .systemFont(ofSize: 13, weight: unseen ? .semibold : .regular)
         pin.isHidden = !model.isPinned

@@ -19,7 +19,10 @@ final class DiffViewController: NSViewController {
             status = nil
             pullRequest = nil
             banner.dismiss()
+            lastRunKey = threadID.map(runKey)
             reload()
+            // A git action that finished while another thread was shown reports when its thread is back.
+            if let threadID, let report = deferredReports.removeValue(forKey: threadID) { report() }
         }
     }
 
@@ -50,12 +53,24 @@ final class DiffViewController: NSViewController {
     private var statusTask: Task<Void, Never>?
     private var generation = 0
     private var actionProgress: String?
+    /// The thread the running git action belongs to. Only one action runs at a time.
+    private var actionThreadID: UUID?
+    /// Results of git actions that finished while another thread was shown, shown when it is again.
+    private var deferredReports: [UUID: () -> Void] = [:]
     private var observation: ObservationToken?
-    private var liveTimer: Timer?
     private var needsReload = false
     private var fontSize = Theme.fontSize
     private var sizedFileCount = -1
     private var pendingReload: Task<Void, Never>?
+    private var pendingReloadDeadline: ContinuousClock.Instant?
+    /// When the last load started, for `liveRefreshFloor`.
+    private var lastLoadStart: ContinuousClock.Instant?
+    /// The floor of an automatic reload asked for while a load ran; it follows that load.
+    private var queuedReloadFloor: Duration?
+    /// The run state the diff was last read for (see `RunKey`).
+    private var lastRunKey: RunKey?
+    /// The finished tool that last asked for a reload, so later updates to it do not ask again.
+    private var lastWorkspaceChangeID: UUID?
     /// The folder the shown changes were read from.
     private var loadedFolder: URL?
 
@@ -156,13 +171,7 @@ final class DiffViewController: NSViewController {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible else { return }
             if self.loadTask == nil, self.needsReload || self.diff == nil { self.reload() }
-            self.updateLiveRefresh()
         }
-    }
-
-    override func viewDidDisappear() {
-        super.viewDidDisappear()
-        updateLiveRefresh()
     }
 
     private var isVisible: Bool { isViewLoaded && view.window != nil && !view.isHiddenOrHasHiddenAncestor }
@@ -182,9 +191,16 @@ final class DiffViewController: NSViewController {
             guard let self else { return }
             switch change {
             case .runState(let id) where id == self.threadID:
-                // Also sent for every usage update while a turn runs, so coalesce.
-                self.updateLiveRefresh()
+                // Also sent for every token-usage update while a turn runs. Only a turn starting or ending,
+                // or a checkpoint landing, changes what the diff shows.
+                let key = self.runKey(id)
+                guard key != self.lastRunKey else { return }
+                self.lastRunKey = key
                 self.scheduleReload()
+            case .items(let id, let changed, _) where id == self.threadID && self.finishedWorkspaceChange(changed, in: id):
+                // While a turn runs, the diff follows the agent's commands and edits, as in T3 Code: once one
+                // finishes, at most every `liveRefreshFloor`. A git diff is too costly to repeat on a timer.
+                self.scheduleReload(floor: Self.liveRefreshFloor)
             case .thread(let id) where id == self.threadID:
                 // The thread may have moved into (or out of) a worktree.
                 if self.cwd != self.loadedFolder { self.reload() }
@@ -214,14 +230,62 @@ final class DiffViewController: NSViewController {
 
     @objc private func applicationDidBecomeActive() { scheduleReload() }
 
-    /// Coalesces bursts of change notifications into one reload.
-    private func scheduleReload() {
-        pendingReload?.cancel()
-        pendingReload = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled else { return }
-            self?.reload(keepPosition: true)
+    /// The least time between automatic reloads for the agent's edits (T3 Code's live-refresh floor).
+    private static let liveRefreshFloor: Duration = .seconds(10)
+
+    /// Coalesces bursts of change notifications into one reload, `floor` after the last load started at the
+    /// earliest. A load that is running is never cut short, since its git processes would run on anyway:
+    /// the reload follows it instead.
+    private func scheduleReload(floor: Duration = .zero) {
+        guard loadTask == nil else {
+            queuedReloadFloor = min(queuedReloadFloor ?? floor, floor)
+            return
         }
+        var deadline = ContinuousClock.now + .milliseconds(400)
+        if let lastLoadStart { deadline = max(deadline, lastLoadStart + floor) }
+        if pendingReload != nil, let pending = pendingReloadDeadline, pending <= deadline { return }
+        pendingReload?.cancel()
+        pendingReloadDeadline = deadline
+        pendingReload = Task { [weak self] in
+            try? await Task.sleep(until: deadline)
+            guard !Task.isCancelled, let self else { return }
+            self.pendingReload = nil
+            self.pendingReloadDeadline = nil
+            self.reload(keepPosition: true)
+        }
+    }
+
+    /// What of the thread's run state the diff depends on.
+    private struct RunKey: Equatable {
+        var isRunning: Bool
+        var checkpointCount: Int
+        var latestCheckpoint: UUID?
+        var latestFinishedAt: Date?
+    }
+
+    private func runKey(_ threadID: UUID) -> RunKey {
+        let turns = checkpoints.checkpoints(threadID: threadID)
+        return RunKey(
+            isRunning: runner.isRunning(threadID), checkpointCount: turns.count, latestCheckpoint: turns.last?.userItemID,
+            latestFinishedAt: turns.last?.afterAt)
+    }
+
+    /// Whether a tool that can change files (a command or an edit, not a read or search) just finished in the
+    /// running turn: T3 Code's workspace mutation.
+    private func finishedWorkspaceChange(_ changed: [UUID], in threadID: UUID) -> Bool {
+        guard runner.isRunning(threadID) else { return false }
+        for id in changed.reversed() where id != lastWorkspaceChangeID {
+            guard let item = store.item(id, in: threadID), item.kind == .tool, let status = item.status,
+                status != .running, status != .waiting
+            else { continue }
+            switch item.category {
+            case .read, .search, .web, .todo: continue
+            default: break
+            }
+            lastWorkspaceChangeID = id
+            return true
+        }
+        return false
     }
 
     /// Shows one turn's changes, selecting `path` when given. Call once the inspector is open.
@@ -230,21 +294,6 @@ final class DiffViewController: NSViewController {
         guard threadID == self.threadID else { return }
         pendingPath = path
         reload()
-    }
-
-    /// While the thread's turn runs, the diff follows the agent's edits.
-    private func updateLiveRefresh() {
-        let live = isVisible && threadID.map(runner.isRunning) == true
-        guard live != (liveTimer != nil) else { return }
-        liveTimer?.invalidate()
-        liveTimer = nil
-        guard live else { return }
-        liveTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.loadTask == nil, self.actionProgress == nil else { return }
-                self.reload(keepPosition: true)
-            }
-        }
     }
 
     // MARK: Loading
@@ -264,6 +313,11 @@ final class DiffViewController: NSViewController {
         }
         needsReload = false
         pendingReload?.cancel()
+        pendingReload = nil
+        pendingReloadDeadline = nil
+        // This load reads everything reported so far.
+        queuedReloadFloor = nil
+        lastLoadStart = .now
         loadedFolder = cwd
         rebuildScopeMenu()
         generation += 1
@@ -277,6 +331,11 @@ final class DiffViewController: NSViewController {
             self.loadTask = nil
             self.spinner.stopAnimation(nil)
             self.apply(content, keepPosition: keepPosition)
+            // Changes reported while this load ran may have come too late for it.
+            if let floor = self.queuedReloadFloor {
+                self.queuedReloadFloor = nil
+                self.scheduleReload(floor: floor)
+            }
         }
         reloadStatus()
     }
@@ -327,24 +386,33 @@ final class DiffViewController: NSViewController {
             document.rootURL = root
             let unchanged = diff == self.diff
             self.diff = diff
-            if !unchanged { show(diff, keepPosition: keepPosition) }
-            summaryLabel.attributedStringValue = Self.summary(diff)
-            if let path = pendingPath, let index = diff.files.firstIndex(where: { $0.path == path }) {
-                document.scrollToFile(at: index)
-                fileList.select(index)
-            }
+            let target = pendingPath.flatMap { path in diff.files.firstIndex { $0.path == path } }
             pendingPath = nil
+            if !unchanged {
+                show(diff, keepPosition: keepPosition, revealing: target)
+            } else if let target {
+                document.scrollToFile(at: target)
+                fileList.select(target)
+            }
+            summaryLabel.attributedStringValue = Self.summary(diff)
         }
         updateActionsBar()
     }
 
-    private func show(_ diff: GitDiff, keepPosition: Bool) {
+    /// Shows `diff`, and the file at `target` once the document has it: the document only gets the new
+    /// diff after its presentation is made in the background.
+    private func show(_ diff: GitDiff, keepPosition: Bool, revealing target: Int? = nil) {
         fileList.show(diff.files)
         sizeFileList(fileCount: diff.files.count)
         Task { [weak self] in
             let presentation = await Task.detached(priority: .userInitiated) { DiffPresentation.make(diff) }.value
             guard let self, self.diff == diff else { return }
-            self.document.show(diff, presentation: presentation, keepPosition: keepPosition)
+            self.document.show(diff, presentation: presentation, keepPosition: keepPosition && target == nil)
+            if let target {
+                self.document.scrollToFile(at: target)
+                // After the scroll, which may have reported another file at the top.
+                self.fileList.select(target)
+            }
         }
     }
 
@@ -502,7 +570,8 @@ final class DiffViewController: NSViewController {
         actionsBar.update(
             GitActionsBar.State(
                 branch: status.branch, ahead: status.ahead, behind: status.behind, upstream: status.upstream,
-                pullRequest: pullRequest, quickAction: quickAction, progress: actionProgress))
+                // Another thread's action shows here as busy buttons, not as this thread's progress.
+                pullRequest: pullRequest, quickAction: quickAction, progress: actionThreadID == threadID ? actionProgress : nil))
     }
 
     private func runQuickAction() {
@@ -559,8 +628,11 @@ final class DiffViewController: NSViewController {
     private func showCommitSheet() {
         guard let status, status.hasChanges else { return }
         let sheet = CommitSheetController(branch: status.branch, isDefaultBranch: status.isDefaultBranch, files: status.files)
+        let threadID = self.threadID
         sheet.onCommit = { [weak self] choice in
-            self?.perform(.commit, message: choice.message, paths: choice.paths, featureBranch: choice.onNewBranch)
+            // The files picked are in this thread's folder.
+            guard let self, self.threadID == threadID else { return }
+            self.perform(.commit, message: choice.message, paths: choice.paths, featureBranch: choice.onNewBranch)
         }
         presentAsSheet(sheet)
     }
@@ -570,16 +642,20 @@ final class DiffViewController: NSViewController {
         _ action: GitStackedAction, message: String? = nil, paths: [String]? = nil, featureBranch: Bool = false,
         confirmed: Bool = false
     ) {
-        guard let threadID, let thread, let cwd, actionProgress == nil else { return }
+        // Without the status, whether this is the default branch (and so needs asking) is unknown.
+        guard let threadID, let thread, let cwd, let status, actionProgress == nil else { return }
         if !confirmed, !featureBranch,
-            GitQuickAction.requiresDefaultBranchConfirmation(action, isDefaultBranch: status?.isDefaultBranch ?? false)
+            GitQuickAction.requiresDefaultBranchConfirmation(action, isDefaultBranch: status.isDefaultBranch)
         {
             confirmDefaultBranch(action) { [weak self] choice in
-                self?.perform(action, message: message, paths: paths, featureBranch: choice, confirmed: true)
+                // The question named this thread's branch.
+                guard let self, self.threadID == threadID else { return }
+                self.perform(action, message: message, paths: paths, featureBranch: choice, confirmed: true)
             }
             return
         }
         actionProgress = String(localized: "Starting…")
+        actionThreadID = threadID
         banner.dismiss()
         updateActionsBar()
         let request = GitActionRequest(
@@ -587,6 +663,7 @@ final class DiffViewController: NSViewController {
             selection: thread.selection, threadContext: Handoff.transcript(thread.items, budget: 16_000))
         Task { [weak self] in
             guard let self else { return }
+            let report: () -> Void
             do {
                 let result = try await self.git.run(request, in: cwd) { [weak self] label in
                     self?.actionProgress = label
@@ -595,21 +672,34 @@ final class DiffViewController: NSViewController {
                 if let branch = result.createdBranch {
                     self.store.updateThread(threadID) { $0.branch = branch }
                 }
-                self.showResult(result)
+                report = { [weak self] in self?.showResult(result, threadID: threadID) }
             } catch {
-                self.showFailure(error)
+                report = { [weak self] in self?.showFailure(error) }
             }
-            self.actionProgress = nil
-            self.reload(keepPosition: true)
+            self.finishAction(in: threadID, report: report)
         }
     }
 
-    private func showResult(_ result: GitActionResult) {
+    /// Ends the running git action. Its result shows in the thread it ran in: now when that thread is
+    /// shown, else once it is again, so a follow-up never acts on another thread's folder.
+    private func finishAction(in threadID: UUID, report: @escaping () -> Void) {
+        actionProgress = nil
+        actionThreadID = nil
+        if self.threadID == threadID {
+            report()
+        } else {
+            deferredReports[threadID] = report
+        }
+        reload(keepPosition: true)
+    }
+
+    private func showResult(_ result: GitActionResult, threadID: UUID) {
         switch result.followUp {
         case .run(let next):
             let title = next == .push ? String(localized: "Push") : String(localized: "Create PR")
             banner.show(title: result.title, detail: result.detail, isError: false, actionTitle: title) { [weak self] in
-                self?.perform(next)
+                guard let self, self.threadID == threadID else { return }
+                self.perform(next)
             }
         case .openPullRequest(let url):
             banner.show(title: result.title, detail: result.detail, isError: false, actionTitle: String(localized: "View PR")) {
@@ -660,31 +750,32 @@ final class DiffViewController: NSViewController {
     }
 
     private func pull() {
-        guard let cwd, actionProgress == nil else { return }
+        guard let threadID, let cwd, actionProgress == nil else { return }
         actionProgress = String(localized: "Pulling…")
+        actionThreadID = threadID
         updateActionsBar()
         Task { [weak self] in
             guard let self else { return }
+            let report: () -> Void
             do {
                 let result = try await self.git.pull(cwd)
-                self.banner.show(
-                    title: result == .pulled ? String(localized: "Pulled the latest changes") : String(localized: "Already up to date"),
-                    detail: nil, isError: false)
+                let title =
+                    result == .pulled ? String(localized: "Pulled the latest changes") : String(localized: "Already up to date")
+                report = { [weak self] in self?.banner.show(title: title, detail: nil, isError: false) }
             } catch {
-                self.showFailure(error)
+                report = { [weak self] in self?.showFailure(error) }
             }
-            self.actionProgress = nil
-            self.reload(keepPosition: true)
+            self.finishAction(in: threadID, report: report)
         }
     }
 
     private func initializeRepository() {
-        guard let cwd else { return }
+        guard let threadID, let cwd else { return }
         Task { [weak self] in
             do {
                 try await self?.git.initializeRepository(cwd)
             } catch {
-                self?.showFailure(error)
+                if self?.threadID == threadID { self?.showFailure(error) }
             }
             self?.reload()
         }
