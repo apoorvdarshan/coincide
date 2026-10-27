@@ -246,7 +246,7 @@
         }
       }
     },
-    "%lld agents are still working. Quitting stops them." : {
+    "%lld agents are still working." : {
 
     },
     "%lld approvals needed" : {
@@ -256,6 +256,9 @@
 
     },
     "%lld changed files" : {
+
+    },
+    "%lld commands are still running in terminals." : {
 
     },
     "%lld commits to push, %lld to pull" : {
@@ -312,19 +315,6 @@
     "%lld pt" : {
 
     },
-    "%lld questions" : {
-
-    },
-    "%lld questions from %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$lld questions from %2$@"
-          }
-        }
-      }
-    },
     "%lld queued messages" : {
 
     },
@@ -379,6 +369,9 @@
     "A Pi extension" : {
 
     },
+    "A command is still running in a terminal." : {
+
+    },
     "A feature branch can only be created when committing." : {
 
     },
@@ -410,6 +403,9 @@
 
     },
     "Access: %@" : {
+
+    },
+    "Access…" : {
 
     },
     "Account" : {
@@ -589,13 +585,16 @@
     "Always block %@" : {
 
     },
-    "An agent is still working. Quitting stops it." : {
+    "An agent is still working." : {
 
     },
     "Another thread has worked in this folder since this turn, so restoring files would undo its changes too. Rewind the conversation without restoring files instead." : {
 
     },
     "Answer above, or send a message to skip the question" : {
+
+    },
+    "Answer below" : {
 
     },
     "Antigravity needs you to sign in with Google. Finish signing in in your browser: %@" : {
@@ -676,6 +675,12 @@
 
     },
     "Back (⌫)" : {
+
+    },
+    "Back to the composer" : {
+
+    },
+    "Back to the previous list" : {
 
     },
     "Background" : {
@@ -819,7 +824,13 @@
     "Choose" : {
 
     },
+    "Choose Agent and Model…" : {
+
+    },
     "Choose a folder to work on with your coding agents." : {
+
+    },
+    "Choose a result" : {
 
     },
     "Choose an option." : {
@@ -958,10 +969,16 @@
     "Close a subagent" : {
 
     },
+    "Close file and command suggestions" : {
+
+    },
     "Close idle agents" : {
 
     },
     "Close idle agents after" : {
+
+    },
+    "Close terminal" : {
 
     },
     "Close these terminals?" : {
@@ -1125,6 +1142,9 @@
     "Compaction was stopped." : {
 
     },
+    "Complete a folder path" : {
+
+    },
     "Completed" : {
 
     },
@@ -1174,6 +1194,9 @@
     "Continue this thread with %@" : {
 
     },
+    "Control" : {
+
+    },
     "Conversation" : {
 
     },
@@ -1214,6 +1237,9 @@
 
     },
     "Copy response" : {
+
+    },
+    "Copy the selected entry" : {
 
     },
     "Copy to the clipboard" : {
@@ -1487,6 +1513,9 @@
     "Delete Thread…" : {
 
     },
+    "Delete thread" : {
+
+    },
     "Delete “%@”?" : {
 
     },
@@ -1529,7 +1558,13 @@
     "Don’t ask again" : {
 
     },
+    "Down Arrow" : {
+
+    },
     "Each turn's changes appear here once the agent starts working." : {
+
+    },
+    "Earlier and later messages you sent" : {
 
     },
     "Edit" : {
@@ -1578,6 +1613,9 @@
     "Edit queued message" : {
 
     },
+    "Edit the last queued message" : {
+
+    },
     "Edit this message?" : {
 
     },
@@ -1608,6 +1646,9 @@
     "Error" : {
 
     },
+    "Escape" : {
+
+    },
     "Executable" : {
 
     },
@@ -1627,6 +1668,9 @@
 
     },
     "Expand All Projects" : {
+
+    },
+    "Expand or collapse the selected entry" : {
 
     },
     "Extra High" : {
@@ -1762,6 +1806,9 @@
     "Font size" : {
 
     },
+    "Forward Delete" : {
+
+    },
     "From %@" : {
 
     },
@@ -1799,6 +1846,9 @@
 
     },
     "Go to Thread %lld" : {
+
+    },
+    "Go to Thread 1–9" : {
 
     },
     "Google requires an eligible Antigravity subscription for this account." : {
@@ -1870,6 +1920,9 @@
     "High" : {
 
     },
+    "Hold" : {
+
+    },
     "Hotkeys" : {
 
     },
@@ -1904,6 +1957,9 @@
 
     },
     "Insert new line" : {
+
+    },
+    "Insert the highlighted file or command" : {
 
     },
     "Install" : {
@@ -1978,6 +2034,9 @@
     "Leave empty to look for `%@` on your shell’s PATH." : {
 
     },
+    "Left Arrow" : {
+
+    },
     "License" : {
 
     },
@@ -2041,6 +2100,9 @@
 
     },
     "Local checkout" : {
+
+    },
+    "Locate Folder…" : {
 
     },
     "Location" : {
@@ -2165,6 +2227,15 @@
         }
       }
     },
+    "Move by word" : {
+
+    },
+    "Move to the composer" : {
+
+    },
+    "Move to the start or end of the line" : {
+
+    },
     "Name" : {
 
     },
@@ -2205,6 +2276,9 @@
 
     },
     "New line" : {
+
+    },
+    "New terminal" : {
 
     },
     "New thread" : {
@@ -2393,6 +2467,9 @@
     "Open in Editor" : {
 
     },
+    "Open or close the selected entry" : {
+
+    },
     "OpenAI API key" : {
 
     },
@@ -2439,7 +2516,7 @@
     "Opens %@ in your browser" : {
 
     },
-    "Other answer" : {
+    "Option" : {
 
     },
     "Output tokens" : {
@@ -2570,6 +2647,9 @@
     "Plan" : {
 
     },
+    "Plan Mode" : {
+
+    },
     "Plan mode" : {
 
     },
@@ -2604,6 +2684,12 @@
 
     },
     "Previous Worktree (%@)" : {
+
+    },
+    "Previous and next pane" : {
+
+    },
+    "Previous and next terminal tab" : {
 
     },
     "Process exited with code %d." : {
@@ -2689,9 +2775,6 @@
     "Question %lld" : {
 
     },
-    "Question from %@" : {
-
-    },
     "Queue message" : {
 
     },
@@ -2708,6 +2791,9 @@
 
     },
     "Quit Coincide?" : {
+
+    },
+    "Quitting stops them." : {
 
     },
     "Ran %lld commands" : {
@@ -2776,6 +2862,9 @@
 
     },
     "Reasoning Effort" : {
+
+    },
+    "Reasoning Effort…" : {
 
     },
     "Reasoning effort" : {
@@ -2860,9 +2949,6 @@
     "Rename…" : {
 
     },
-    "Reply" : {
-
-    },
     "Reply to the agent" : {
 
     },
@@ -2940,6 +3026,9 @@
     "Review and confirm your commit. Leave the message empty to have the agent write one." : {
 
     },
+    "Right Arrow" : {
+
+    },
     "Run" : {
 
     },
@@ -2971,6 +3060,9 @@
 
     },
     "Run in Terminal" : {
+
+    },
+    "Run the chosen result" : {
 
     },
     "Run tool code" : {
@@ -3120,6 +3212,9 @@
     "Send message" : {
 
     },
+    "Send message, or queue it while the agent works" : {
+
+    },
     "Send messages with" : {
 
     },
@@ -3145,6 +3240,9 @@
 
     },
     "Setup" : {
+
+    },
+    "Shift" : {
 
     },
     "Shift-Return inserts a new line." : {
@@ -3204,7 +3302,13 @@
     "Show reasoning" : {
 
     },
+    "Show thread numbers for ⌘1…⌘9" : {
+
+    },
     "Show value" : {
+
+    },
+    "Sidebar" : {
 
     },
     "Sidebar Options" : {
@@ -3258,6 +3362,12 @@
     "Split Right (⌘D)" : {
 
     },
+    "Split down" : {
+
+    },
+    "Split right" : {
+
+    },
     "Start Speaking" : {
 
     },
@@ -3265,6 +3375,9 @@
 
     },
     "Start implementing the plan" : {
+
+    },
+    "Start with / or ~ to add a folder as a project." : {
 
     },
     "Starting %@…" : {
@@ -3315,6 +3428,9 @@
     "Supports reasoning effort" : {
 
     },
+    "Switch between Build and Plan" : {
+
+    },
     "Switch or create a branch" : {
 
     },
@@ -3340,6 +3456,9 @@
 
     },
     "T3 Code License" : {
+
+    },
+    "Tab" : {
 
     },
     "Task" : {
@@ -3431,6 +3550,9 @@
     "The agent session is not running." : {
 
     },
+    "The agent working in it is stopped and the conversation is deleted. Files on disk are not changed." : {
+
+    },
     "The branch has diverged from its upstream. Rebase or merge first." : {
 
     },
@@ -3472,6 +3594,15 @@
 
     },
     "The project folder is missing." : {
+
+    },
+    "The project folder was moved or deleted." : {
+
+    },
+    "The project folder was moved or deleted. Locate it from the sidebar." : {
+
+    },
+    "The project folder was moved or deleted: %@" : {
 
     },
     "The server is not an OpenCode 2 server." : {
@@ -3534,6 +3665,9 @@
           }
         }
       }
+    },
+    "This thread’s worktree no longer exists." : {
+
     },
     "This turn didn't change any files." : {
 
@@ -3654,10 +3788,16 @@
     "Turns" : {
 
     },
+    "Type @ to mention a file and / for commands." : {
+
+    },
     "Type your answer" : {
 
     },
     "Type your own answer" : {
+
+    },
+    "Typing while the conversation has focus goes to the composer." : {
 
     },
     "Unarchive" : {
@@ -3685,6 +3825,9 @@
 
     },
     "Untracked" : {
+
+    },
+    "Up Arrow" : {
 
     },
     "Update the Codex CLI to 0.156 or later for full support." : {
@@ -3782,6 +3925,9 @@
     "Wait for subagents" : {
 
     },
+    "Waiting for your answer below" : {
+
+    },
     "Web access approval" : {
 
     },
@@ -3795,6 +3941,12 @@
 
     },
     "What should we build in " : {
+
+    },
+    "Where is “%@” now?" : {
+
+    },
+    "While a terminal has focus these keys act on it instead of the menu commands they share, as in T3 Code." : {
 
     },
     "Window" : {
@@ -3843,9 +3995,6 @@
 
     },
     "You" : {
-
-    },
-    "Your answer" : {
 
     },
     "Zoom" : {
@@ -3916,6 +4065,9 @@
     },
     "now" : {
       "comment" : "Age of a thread updated less than a minute ago"
+    },
+    "or" : {
+
     },
     "performed %lld other actions" : {
 
