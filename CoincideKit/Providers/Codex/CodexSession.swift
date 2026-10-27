@@ -104,7 +104,7 @@ final class CodexSession: AgentSession {
             if replacedThreads != replaced { input.text = input.prompt(forNewSession: true) }
             let params = CodexProtocol.turnStartParams(
                 threadID: threadID, cwd: launch.workingDirectory.path, input: input, fallbackModel: threadModel)
-            let result = try await connection.request("turn/start", params, timeout: .seconds(60))
+            let result = try await connection.request("turn/start", params, timeout: .seconds(120))
             // Stopped or lost while waiting: the turn has already been reported.
             guard turn?.token == current.token else { return }
             guard let id = result.at("turn.id")?.string else {
@@ -182,7 +182,7 @@ final class CodexSession: AgentSession {
         }
         self.connection = connection
         do {
-            _ = try await connection.request("initialize", CodexProtocol.initializeParams(), timeout: .seconds(30))
+            _ = try await connection.request("initialize", CodexProtocol.initializeParams(), timeout: .seconds(60))
             connection.notify("initialized")
         } catch {
             if self.connection === connection { dropConnection() }
@@ -202,7 +202,7 @@ final class CodexSession: AgentSession {
                 return
             } catch CodexRPCError.server(_, let message) {
                 let result = try await connection.request(
-                    "thread/start", CodexProtocol.threadStartParams(cwd: cwd, model: model), timeout: .seconds(60))
+                    "thread/start", CodexProtocol.threadStartParams(cwd: cwd, model: model), timeout: .seconds(120))
                 try adoptThread(result, on: connection)
                 replacedThreads += 1
                 let notice = String(
@@ -221,10 +221,10 @@ final class CodexSession: AgentSession {
     {
         let params = CodexProtocol.threadResumeParams(threadID: threadID, cwd: cwd, model: model)
         do {
-            return try await connection.request("thread/resume", params, timeout: .seconds(60))
+            return try await connection.request("thread/resume", params, timeout: .seconds(120))
         } catch CodexRPCError.server(_, let message) where CodexProtocol.isArchivedError(message) {
             _ = try await connection.request("thread/unarchive", ["threadId": .string(threadID)], timeout: .seconds(30))
-            return try await connection.request("thread/resume", params, timeout: .seconds(60))
+            return try await connection.request("thread/resume", params, timeout: .seconds(120))
         }
     }
 

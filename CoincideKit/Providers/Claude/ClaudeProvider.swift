@@ -17,7 +17,7 @@ public final class ClaudeProvider: AgentProvider {
     public func detect(executable: URL?, environment: [String: String]) async -> ProviderStatus {
         guard let executable else { return ProviderStatus(state: .notInstalled, message: setupHint) }
         let environment = ClaudeLaunchConfig.environment(environment)
-        let versionResult = await ProcessRunner.run(executable, ["--version"], environment: environment, timeout: 20)
+        let versionResult = await ProcessRunner.run(executable, ["--version"], environment: environment, timeout: 30)
         guard versionResult.status != -1 else {
             // It could not be launched at all; the runner reports why on stderr.
             let reason = Self.outputTail(versionResult) ?? String(localized: "status \(Int(versionResult.status))")
@@ -32,7 +32,7 @@ public final class ClaudeProvider: AgentProvider {
         }
 
         let authResult = await ProcessRunner.run(
-            executable, ["auth", "status", "--json"], environment: environment, timeout: 15)
+            executable, ["auth", "status", "--json"], environment: environment, timeout: 45)
         var auth = JSONValue.parse(authResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
             .flatMap(ClaudeAuth.parseStatus)
         if auth == nil, let account = await initializeInfo(executable: executable, environment: environment)?.account {

@@ -21,7 +21,7 @@ public final class CodexProvider: AgentProvider {
             return CodexProtocol.providerStatus(account: probe.account, version: probe.version, executable: executable)
         } catch {
             probedModels = nil
-            let output = await ProcessRunner.run(executable, ["--version"], environment: environment, timeout: 10)
+            let output = await ProcessRunner.run(executable, ["--version"], environment: environment, timeout: 20)
             let version = output.succeeded ? CodexProtocol.version(fromVersionOutput: output.stdout) : nil
             if case .unsupported(let message) = CodexProtocol.versionCompatibility(version) {
                 return ProviderStatus(state: .error, version: version, executable: executable, message: message)
@@ -67,10 +67,10 @@ enum CodexProbe {
         let connection = CodexConnection(transport: transport)
         try connection.start()
         defer { connection.close() }
-        let initialize = try await connection.request("initialize", CodexProtocol.initializeParams(), timeout: .seconds(20))
+        let initialize = try await connection.request("initialize", CodexProtocol.initializeParams(), timeout: .seconds(45))
         connection.notify("initialized")
         let version = initialize["userAgent"]?.string.flatMap(CodexProtocol.version(fromUserAgent:))
-        let account = try await connection.request("account/read", [:], timeout: .seconds(15))
+        let account = try await connection.request("account/read", [:], timeout: .seconds(30))
         var models: [ModelOption]?
         let signedIn = account["account"].map { !$0.isNull } ?? false
         if signedIn || account["requiresOpenaiAuth"]?.bool == false {

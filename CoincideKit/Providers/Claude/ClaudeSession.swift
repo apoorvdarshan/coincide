@@ -297,7 +297,7 @@ final class ClaudeSession: AgentSession {
         let response: JSONValue
         do {
             response = try await control(
-                ["subtype": "initialize", "appendSystemPrompt": .string(Self.runtimeInstructions)], timeout: 90)
+                ["subtype": "initialize", "appendSystemPrompt": .string(Self.runtimeInstructions)], timeout: 180)
         } catch {
             let handshake = self.handshake ?? Handshake()
             self.handshake = nil
