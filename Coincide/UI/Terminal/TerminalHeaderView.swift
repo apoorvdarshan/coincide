@@ -44,6 +44,7 @@ final class TerminalHeaderView: NSView {
         tabStrip.setAccessibilityLabel(String(localized: "Terminal tabs"))
 
         newTabButton.toolTip = String(localized: "New Terminal (⌘T)")
+        hideButton.toolTip = String(localized: "Hide Terminal (⌘J)")
         directoryIcon.image = Theme.symbol("folder", size: 11)
         directoryIcon.contentTintColor = .tertiaryLabelColor
         directoryIcon.setAccessibilityElement(false)

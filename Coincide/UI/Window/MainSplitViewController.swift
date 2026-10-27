@@ -166,8 +166,8 @@ final class ChatTerminalSplitViewController: NSSplitViewController {
         terminal.threadID = threadID
     }
 
-    /// Opens or closes the terminal drawer. Opening moves focus into it; closing a focused
-    /// terminal returns focus to the composer.
+    /// Opens or closes the terminal drawer. Closing a focused terminal returns focus to the composer;
+    /// once open, the terminal controller starts a shell if the thread has none and focuses it.
     func toggleTerminal() {
         let opening = terminalItem.isCollapsed
         if opening {
@@ -177,7 +177,6 @@ final class ChatTerminalSplitViewController: NSSplitViewController {
                 terminalItem.isCollapsed = false
                 sizeTerminal()
             }
-            if let target = Self.firstKeyView(in: terminal.view) { view.window?.makeFirstResponder(target) }
         } else {
             let terminalHadFocus = (view.window?.firstResponder as? NSView)?.isDescendant(of: terminal.view) ?? false
             saveLayout()
@@ -201,12 +200,4 @@ final class ChatTerminalSplitViewController: NSSplitViewController {
         splitView.setPosition(max(200, position), ofDividerAt: 0)
     }
 
-    /// The first view in the terminal that takes keyboard focus.
-    private static func firstKeyView(in view: NSView) -> NSView? {
-        if view.acceptsFirstResponder { return view }
-        for subview in view.subviews {
-            if let found = firstKeyView(in: subview) { return found }
-        }
-        return nil
-    }
 }
