@@ -12,6 +12,12 @@ enum ClaudePermissions {
     static let planCapturedMessage =
         "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn."
 
+    /// Claude Code's own words before the user's note on a rejected tool call. The SDK passes a denial message
+    /// through as the tool result, and a bare note there reads like text the tool produced, which Claude rightly
+    /// distrusts.
+    static let rejectionNotePrefix =
+        "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n"
+
     static func options(allowForSession: Bool) -> [ApprovalOption] {
         var options = [ApprovalOption(id: allowID, label: String(localized: "Allow"), kind: .allowOnce)]
         if allowForSession {
@@ -33,8 +39,9 @@ enum ClaudePermissions {
             id: toolUseID ?? requestID, name: toolName, input: request["input"] ?? [:], workingDirectory: workingDirectory,
             displayName: request["display_name"]?.string, fileContents: fileContents)
         let reason = ClaudeEventMapper.cleaned(request["decision_reason"]?.string).flatMap { $0 == info.title ? nil : $0 }
+        // The path that made Claude Code ask, such as a file a command writes.
         let blocked = request["blocked_path"]?.string.map {
-            String(localized: "Outside the allowed folders: \(ClaudeTools.displayPath($0, relativeTo: workingDirectory))")
+            String(localized: "Needs access to \(ClaudeTools.displayPath($0, relativeTo: workingDirectory))")
         }
         let detail = [reason, blocked, info.detail].compactMap { $0 }.joined(separator: "\n\n")
         // Like Claude Code's "No, and tell Claude what to do differently", a denial can carry a note.
@@ -44,15 +51,20 @@ enum ClaudePermissions {
             textInput: TextInputSpec(placeholder: String(localized: "Tell Claude what to do instead (optional)")))
     }
 
-    /// The answer for the option the user picked. `feedback` replaces the message Claude reads when denied.
+    /// The answer for the option the user picked. A `feedback` note is what Claude reads when denied.
     static func response(optionID: String, request: JSONValue, feedback: String? = nil) -> JSONValue {
-        let note = feedback?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let note = rejectionNote(feedback)
         return switch optionID {
         case allowID: allow(request, forSession: false)
         case allowForSessionID: allow(request, forSession: true)
         case stopID: deny(request, message: note ?? "User cancelled tool execution.", interrupt: true)
         default: deny(request, message: note ?? "User declined tool execution.", interrupt: false)
         }
+    }
+
+    /// The user's note framed the way Claude Code frames it, or nil when there is none.
+    static func rejectionNote(_ feedback: String?) -> String? {
+        feedback?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty.map { rejectionNotePrefix + $0 }
     }
 
     static func allow(_ request: JSONValue, forSession: Bool, input: JSONValue? = nil) -> JSONValue {
@@ -75,9 +87,11 @@ enum ClaudePermissions {
     }
 
     /// Claude's own suggestions scoped to this session, or an allow rule for the whole tool.
+    /// "Always allow" never switches the session into a mode that skips more prompts than accepting edits.
     private static func sessionRules(_ request: JSONValue) -> [JSONValue] {
         let suggestions = (request["permission_suggestions"]?.array ?? []).compactMap { suggestion -> JSONValue? in
             guard case .object(var rule) = suggestion else { return nil }
+            if rule["type"]?.string == "setMode", rule["mode"]?.string != "acceptEdits" { return nil }
             rule["destination"] = "session"
             return .object(rule)
         }
@@ -103,8 +117,7 @@ enum ClaudePermissions {
 
     static func planResponse(optionID: String, request: JSONValue, feedback: String?) -> JSONValue {
         guard optionID != allowID else { return allow(request, forSession: false) }
-        let note = feedback?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        return deny(request, message: note ?? "The user wants to keep planning.", interrupt: false)
+        return deny(request, message: rejectionNote(feedback) ?? "The user wants to keep planning.", interrupt: false)
     }
 
     // MARK: Questions
@@ -148,6 +161,168 @@ enum ClaudePermissions {
         }
         let input: JSONValue = ["questions": request.at("input.questions") ?? [], "answers": .object(answered)]
         return allow(request, forSession: false, input: input)
+    }
+
+    // MARK: MCP elicitations
+
+    /// The question id of a confirmation (a form without fields, or a link to open).
+    static let elicitationConfirmID = "confirm"
+
+    /// One field of an MCP elicitation form and how its answer is encoded.
+    private enum ElicitationField {
+        case text
+        case number(integer: Bool)
+        case boolean
+        /// Option labels and the values they stand for.
+        case choice(labels: [String], values: [JSONValue], multiple: Bool)
+    }
+
+    private static var yesLabel: String { String(localized: "Yes") }
+    private static var noLabel: String { String(localized: "No") }
+    private static var continueLabel: String { String(localized: "Continue") }
+    private static var declineLabel: String { String(localized: "Decline") }
+
+    /// An MCP server's request for input as questions: a form whose fields become questions (MCP allows only
+    /// flat text, number, boolean and choice fields), or a link the user opens. Nil when a field cannot be asked.
+    static func elicitation(requestID: String, request: JSONValue) -> UserInputRequest? {
+        let server =
+            [request["display_name"]?.string, request["mcp_server_name"]?.string].compactMap { $0?.trimmingCharacters(in: .whitespaces).nilIfEmpty }
+            .first ?? String(localized: "An MCP server")
+        let message = ClaudeEventMapper.cleaned(request["message"]?.string)
+        let title = ClaudeEventMapper.cleaned(request["title"]?.string) ?? String(localized: "\(server) needs your input")
+        if request["mode"]?.string == "url" {
+            guard let url = request["url"]?.string?.trimmingCharacters(in: .whitespaces).nilIfEmpty else { return nil }
+            let prompt = [message, String(localized: "Open this link and finish there, then continue:\n\(url)")]
+                .compactMap { $0 }.joined(separator: "\n\n")
+            return UserInputRequest(
+                id: requestID, title: title,
+                questions: [
+                    UserQuestion(
+                        id: elicitationConfirmID, header: server, prompt: prompt,
+                        options: [.init(label: continueLabel), .init(label: declineLabel)], allowsFreeText: false)
+                ])
+        }
+        guard let fields = elicitationFields(request["requested_schema"]) else { return nil }
+        if fields.isEmpty {
+            return UserInputRequest(
+                id: requestID, title: title,
+                questions: [
+                    UserQuestion(
+                        id: elicitationConfirmID, header: server, prompt: message ?? title,
+                        options: [.init(label: continueLabel), .init(label: declineLabel)], allowsFreeText: false)
+                ])
+        }
+        let questions = fields.map { field -> UserQuestion in
+            let label = field.title ?? field.name
+            // A one-field form asks the server's message; larger forms ask each field's own description.
+            let prompt = (fields.count == 1 ? message : nil) ?? field.description ?? label
+            switch field.kind {
+            case .text, .number:
+                return UserQuestion(id: field.name, header: label, prompt: prompt)
+            case .boolean:
+                return UserQuestion(
+                    id: field.name, header: label, prompt: prompt, options: [.init(label: yesLabel), .init(label: noLabel)],
+                    allowsFreeText: false)
+            case .choice(let labels, _, let multiple):
+                return UserQuestion(
+                    id: field.name, header: label, prompt: prompt, options: labels.map { .init(label: $0) },
+                    allowsMultipleSelection: multiple, allowsFreeText: false)
+            }
+        }
+        return UserInputRequest(id: requestID, title: fields.count == 1 ? title : message ?? title, questions: questions)
+    }
+
+    /// The elicitation result for the user's answers: `accept` with the form's content, or `decline` / `cancel`.
+    static func elicitationResponse(_ request: JSONValue, answers: [String: [String]]) -> JSONValue {
+        let picks = answers.mapValues { values in values.compactMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty } }
+        guard picks.values.contains(where: { !$0.isEmpty }) else { return ["action": "cancel"] }
+        if request["mode"]?.string == "url" {
+            return picks[elicitationConfirmID]?.first == continueLabel ? ["action": "accept"] : ["action": "decline"]
+        }
+        guard let fields = elicitationFields(request["requested_schema"]) else { return ["action": "decline"] }
+        if fields.isEmpty {
+            return picks[elicitationConfirmID]?.first == continueLabel ? ["action": "accept", "content": [:]] : ["action": "decline"]
+        }
+        var content: [String: JSONValue] = [:]
+        for field in fields {
+            guard let values = picks[field.name], let first = values.first else { continue }
+            switch field.kind {
+            case .text:
+                content[field.name] = .string(values.joined(separator: ", "))
+            case .number(let integer):
+                guard let number = Double(first.replacingOccurrences(of: ",", with: "")), number.isFinite,
+                    !integer || number.rounded() == number
+                else { continue }
+                content[field.name] = .number(number)
+            case .boolean:
+                content[field.name] = .bool(first == yesLabel)
+            case .choice(let labels, let options, let multiple):
+                let chosen = values.compactMap { label in labels.firstIndex(of: label).map { options[$0] } }
+                if multiple {
+                    content[field.name] = .array(chosen)
+                } else if let value = chosen.first {
+                    content[field.name] = value
+                }
+            }
+        }
+        return ["action": "accept", "content": .object(content)]
+    }
+
+    private struct ElicitationFormField {
+        var name: String
+        var title: String?
+        var description: String?
+        var kind: ElicitationField
+    }
+
+    /// The form's fields, required ones first in the server's order, then the rest by name.
+    /// Nil without an object schema, since then nothing says what to send.
+    private static func elicitationFields(_ schema: JSONValue?) -> [ElicitationFormField]? {
+        guard let schema, schema["type"]?.string == "object" else { return nil }
+        let properties = schema["properties"]?.object ?? [:]
+        let required = (schema["required"]?.array ?? []).compactMap(\.string).filter { properties[$0] != nil }
+        let names = required + properties.keys.filter { !required.contains($0) }.sorted()
+        var fields: [ElicitationFormField] = []
+        for name in names {
+            guard let property = properties[name], let kind = elicitationKind(property) else { return nil }
+            fields.append(
+                ElicitationFormField(
+                    name: name, title: ClaudeEventMapper.cleaned(property["title"]?.string),
+                    description: ClaudeEventMapper.cleaned(property["description"]?.string), kind: kind))
+        }
+        return fields
+    }
+
+    private static func elicitationKind(_ property: JSONValue) -> ElicitationField? {
+        if let choice = elicitationChoices(property) { return .choice(labels: choice.labels, values: choice.values, multiple: false) }
+        switch property["type"]?.string {
+        case "string"?: return .text
+        case "number"?: return .number(integer: false)
+        case "integer"?: return .number(integer: true)
+        case "boolean"?: return .boolean
+        case "array"?:
+            guard let items = property["items"], let choice = elicitationChoices(items) else { return nil }
+            return .choice(labels: choice.labels, values: choice.values, multiple: true)
+        default: return nil
+        }
+    }
+
+    /// `enum` (with `enumNames`) or `oneOf`/`anyOf` of `const` + `title` choices.
+    private static func elicitationChoices(_ schema: JSONValue) -> (labels: [String], values: [JSONValue])? {
+        if let values = schema["enum"]?.array, !values.isEmpty {
+            let names = schema["enumNames"]?.array?.compactMap(\.string) ?? []
+            let labels = values.enumerated().map { index, value in index < names.count ? names[index] : value.displayText }
+            return Set(labels).count == labels.count ? (labels, values) : nil
+        }
+        guard let options = (schema["oneOf"] ?? schema["anyOf"])?.array, !options.isEmpty else { return nil }
+        var labels: [String] = []
+        var values: [JSONValue] = []
+        for option in options {
+            guard let value = option["const"] else { return nil }
+            labels.append(option["title"]?.string ?? value.displayText)
+            values.append(value)
+        }
+        return Set(labels).count == labels.count ? (labels, values) : nil
     }
 }
 

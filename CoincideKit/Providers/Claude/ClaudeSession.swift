@@ -1,8 +1,8 @@
 import Foundation
 
 /// A live Claude Code process for one thread, speaking the SDK's stream-json control protocol:
-/// `initialize`, user messages stamped with a uuid, `can_use_tool` permission prompts, `interrupt`,
-/// `set_model`, `apply_flag_settings` and `set_permission_mode`.
+/// `initialize`, user messages stamped with a uuid, `can_use_tool` permission prompts, MCP elicitations,
+/// `interrupt`, `set_model`, `apply_flag_settings` and `set_permission_mode`.
 @MainActor
 final class ClaudeSession: AgentSession {
     typealias TransportFactory = @MainActor (ClaudeLaunchConfig) -> ClaudeTransport
@@ -18,7 +18,7 @@ final class ClaudeSession: AgentSession {
         "<runtime_info>In case you're asked: you are running in Coincide, a macOS app that drives Claude Code and other coding agents from one window. No need to mention this otherwise.</runtime_info>"
 
     private struct Turn {
-        /// The uuid stamped on the user message; `command_lifecycle` frames refer to it.
+        /// The uuid stamped on the user message; `command_lifecycle` frames and results refer to it.
         let id: String
         /// The message was written to Claude.
         var accepted = false
@@ -32,6 +32,7 @@ final class ClaudeSession: AgentSession {
         var model: String?
         var effort: ClaudeModelCatalog.EffortPlan
         var permissionMode: String
+        var allowsBypass: Bool
     }
 
     /// What the running process was told.
@@ -39,17 +40,19 @@ final class ClaudeSession: AgentSession {
         var model: String?
         var effort: ClaudeModelCatalog.EffortPlan
         var requestedMode: String
+        var allowsBypass: Bool
 
         func effortMatches(_ other: ClaudeModelCatalog.EffortPlan) -> Bool {
             effort.cliEffort == other.cliEffort && effort.ultracode == other.ultracode
         }
     }
 
-    /// A `can_use_tool` request waiting for the user, keyed by its request id.
+    /// A request waiting for the user, keyed by its control request id.
     private enum PendingPrompt {
         case tool(JSONValue)
         case plan(JSONValue)
         case question(JSONValue)
+        case elicitation(JSONValue)
     }
 
     /// Output gathered while a process starts, to explain why it did not.
@@ -98,6 +101,7 @@ final class ClaudeSession: AgentSession {
     // MARK: AgentSession
 
     func start() async throws {
+        guard !isShutDown else { throw AgentError.notRunning }
         let settings = turnSettings(launch.selection, access: launch.accessMode, interaction: launch.interactionMode)
         let identity: ClaudeLaunchConfig.Identity = launch.resumeSessionID.map { .resume($0) } ?? .fresh(Self.newID())
         try await launchProcess(identity: identity, settings: settings)
@@ -124,7 +128,9 @@ final class ClaudeSession: AgentSession {
             if let window = ClaudeModelCatalog.contextWindow(modelID: input.selection.modelID, resolvedModel: resolved) {
                 mapper.contextWindow = window
             }
-            let text = settings.effort.ultrathink ? ClaudeModelCatalog.applyUltrathink(to: input.text) : input.text
+            let texts =
+                Self.splitTrailingCommand(input.text).map { [$0.leading, $0.command] }
+                ?? [settings.effort.ultrathink ? ClaudeModelCatalog.applyUltrathink(to: input.text) : input.text]
             let (images, skipped) = ClaudeAttachments.imageBlocks(for: input.imagePaths)
             guard turn?.id == turnID else { return }
             if turn?.interruptRequested == true {
@@ -135,9 +141,8 @@ final class ClaudeSession: AgentSession {
             for path in skipped {
                 emit(.notice(String(localized: "Couldn't attach \((path as NSString).lastPathComponent).")))
             }
-            let content: JSONValue = images.isEmpty ? .string(text) : .array([["type": "text", "text": .string(text)]] + images)
             mapper.beginTurn()
-            transport.write(Self.userMessage(content: content, uuid: turnID).compactJSON)
+            transport.write(Self.userMessage(texts: texts, images: images, uuid: turnID).compactJSON)
             turn?.accepted = true
             conversationExists = true
         } catch {
@@ -158,15 +163,22 @@ final class ClaudeSession: AgentSession {
         case .plan(let request)?:
             prompts[approvalID] = nil
             reply(to: approvalID, with: ClaudePermissions.planResponse(optionID: optionID, request: request, feedback: text))
-        case .question?, nil:
+        case .question?, .elicitation?, nil:
             break
         }
     }
 
     func answer(userInput requestID: String, answers: [String: [String]]) {
-        guard case .question(let request)? = prompts[requestID] else { return }
-        prompts[requestID] = nil
-        reply(to: requestID, with: ClaudePermissions.answersResponse(request, answers: answers))
+        switch prompts[requestID] {
+        case .question(let request)?:
+            prompts[requestID] = nil
+            reply(to: requestID, with: ClaudePermissions.answersResponse(request, answers: answers))
+        case .elicitation(let request)?:
+            prompts[requestID] = nil
+            reply(to: requestID, with: ClaudePermissions.elicitationResponse(request, answers: answers))
+        case .tool?, .plan?, nil:
+            break
+        }
     }
 
     func interrupt() {
@@ -177,7 +189,8 @@ final class ClaudeSession: AgentSession {
         let turnID = current.id
         let grace = interruptGracePeriod
         Task { [weak self] in
-            // `cancel_queued` also drops the message when Claude had not started it yet.
+            // `cancel_queued` also drops the message when Claude had not started it yet (it may be finishing a
+            // turn it began itself), and stops that turn too.
             let response = try? await self?.control(["subtype": "interrupt", "cancel_queued": true], timeout: 10)
             if let self, self.turn?.id == turnID,
                 response?["cancelled"]?.array?.contains(.string(turnID)) == true
@@ -210,25 +223,41 @@ final class ClaudeSession: AgentSession {
         return TurnSettings(
             model: ClaudeModelCatalog.launchModel(for: selection.modelID),
             effort: ClaudeModelCatalog.effortPlan(modelID: selection.modelID, resolvedModel: resolved, effort: selection.effort),
-            permissionMode: ClaudeLaunchConfig.permissionMode(access: access, interaction: interaction))
+            permissionMode: ClaudeLaunchConfig.permissionMode(access: access, interaction: interaction),
+            allowsBypass: ClaudeLaunchConfig.allowsBypass(access: access))
     }
 
-    /// Starts a process; when the saved conversation is gone, starts a fresh one instead.
+    /// Starts a process. When the saved conversation is gone it starts a fresh one; when a fresh id turns out to be
+    /// taken (its conversation was saved after all) it resumes that one.
     private func launchProcess(identity: ClaudeLaunchConfig.Identity, settings: TurnSettings) async throws {
         func config(_ identity: ClaudeLaunchConfig.Identity) -> ClaudeLaunchConfig {
             ClaudeLaunchConfig(
-                identity: identity, model: settings.model, effort: settings.effort, permissionMode: settings.permissionMode)
+                identity: identity, model: settings.model, effort: settings.effort, permissionMode: settings.permissionMode,
+                allowsBypass: settings.allowsBypass)
         }
+        let hadConversation = sessionID != nil
         do {
             try await spawn(config(identity))
         } catch let failure as StartFailure where failure.missingConversation {
             guard case .resume = identity else { throw failure }
             conversationExists = false
             try await spawn(config(.fresh(Self.newID())))
+            if hadConversation {
+                // The thread's earlier messages are not in the new conversation, and this turn's recap was already built.
+                emit(
+                    .notice(
+                        String(
+                            localized:
+                                "Claude Code could not find this thread's saved conversation, so it started a new one without the earlier messages.")))
+            }
+        } catch let failure as StartFailure where failure.sessionInUse {
+            guard case .fresh(let id) = identity else { throw failure }
+            try await spawn(config(.resume(id)))
         }
     }
 
     private func spawn(_ config: ClaudeLaunchConfig) async throws {
+        guard !isShutDown else { throw AgentError.notRunning }
         let transport = makeTransport(config)
         self.transport = transport
         handshake = Handshake()
@@ -263,13 +292,17 @@ final class ClaudeSession: AgentSession {
             throw StartFailure(error: error, handshake: handshake)
         }
         handshake = nil
+        // Shut down (or replaced) while the handshake was finishing.
+        guard !isShutDown, self.transport === transport else { throw AgentError.notRunning }
 
         let info = ClaudeInitializeInfo(response: response)
         if !info.models.isEmpty {
             knownModels = info.models
             emit(.modelsDiscovered(ClaudeModelCatalog.models(fromInitialize: info.models)))
         }
-        live = LiveSettings(model: config.model, effort: config.effort, requestedMode: config.permissionMode)
+        live = LiveSettings(
+            model: config.model, effort: config.effort, requestedMode: config.permissionMode, allowsBypass: config.allowsBypass)
+        mapper.notePermissionMode(info.permissionMode)
         if case .resume = config.identity { conversationExists = true }
         if sessionID != config.sessionID {
             sessionID = config.sessionID
@@ -282,7 +315,16 @@ final class ClaudeSession: AgentSession {
 
     /// Restarts the process on the same conversation, for changes the protocol cannot apply live.
     private func relaunch(_ settings: TurnSettings) async throws {
+        let stopped = mapper.backgroundTasks.values.sorted()
         await stopTransport()
+        if !stopped.isEmpty {
+            emit(
+                .notice(
+                    String(
+                        localized:
+                            "Claude Code restarted to apply the new settings, which stopped its background work: \(stopped.joined(separator: ", "))."
+                    )))
+        }
         try await launchProcess(identity: restartIdentity, settings: settings)
     }
 
@@ -297,6 +339,7 @@ final class ClaudeSession: AgentSession {
         guard let old = transport else { return }
         transport = nil
         cancelTails()
+        withdrawPrompts()
         failPendingControls(AgentError.notRunning)
         mapper.processRestarted()
         await withCheckedContinuation { continuation in
@@ -314,6 +357,7 @@ final class ClaudeSession: AgentSession {
     /// Claude Code refused full access (settings or policy). Like T3, fall back to auto mode, then to asking.
     private func fallBackFromFullAccess() async {
         let auto = try? await control(["subtype": "set_permission_mode", "mode": "auto"])
+        mapper.notePermissionMode(auto?["mode"]?.string)
         guard !noticedFullAccessFallback else { return }
         noticedFullAccessFallback = true
         emit(
@@ -328,17 +372,18 @@ final class ClaudeSession: AgentSession {
     /// Applies the turn's model, effort and permission mode, live when the protocol allows it.
     private func apply(_ settings: TurnSettings) async throws {
         guard var live else { throw AgentError.notRunning }
-        var needsRelaunch = false
-        if settings.model != live.model {
-            if let model = settings.model ?? ClaudeInitializeInfo.resolvedModel(for: ClaudeModelCatalog.defaultModelID, in: knownModels),
-                (try? await control(["subtype": "set_model", "model": .string(model)])) != nil
-            {
+        // Full access needs a process started for it, and leaving full access drops that process.
+        var needsRelaunch = settings.allowsBypass != live.allowsBypass
+        if !needsRelaunch, settings.model != live.model {
+            // `default` switches back to Claude Code's own default model.
+            let model = settings.model ?? ClaudeModelCatalog.defaultModelID
+            if (try? await control(["subtype": "set_model", "model": .string(model)])) != nil {
                 live.model = settings.model
             } else {
                 needsRelaunch = true
             }
         }
-        // Claude only clears an effort by reloading its settings, which takes a new process.
+        // Clearing an effort must reload the user's own setting, which takes a new process (as in T3).
         if !needsRelaunch, !live.effortMatches(settings.effort) {
             if settings.effort.cliEffort == nil, live.effort.cliEffort != nil {
                 needsRelaunch = true
@@ -361,16 +406,18 @@ final class ClaudeSession: AgentSession {
         // Claude may have entered or left plan mode itself; otherwise keep modes it chose with the user,
         // such as accepting edits after "Always allow".
         let mode = settings.permissionMode
-        guard mode != live.requestedMode || mapper.changedPlanMode else { return }
+        let planModeDiffers = mapper.permissionMode.map { ($0 == "plan") != (mode == "plan") } ?? false
+        guard mode != live.requestedMode || mapper.changedPlanMode || planModeDiffers else { return }
         let response: JSONValue
         do {
             response = try await control(["subtype": "set_permission_mode", "mode": .string(mode)])
         } catch {
-            // Claude refused the switch (for example into full access without consent); start in the mode instead.
+            // Claude refused the switch; start in the mode instead.
             try await relaunch(settings)
             return
         }
         self.live?.requestedMode = mode
+        mapper.notePermissionMode(response["mode"]?.string ?? mode)
         if mode == "bypassPermissions", let applied = response["mode"]?.string, applied != mode {
             await fallBackFromFullAccess()
         }
@@ -396,8 +443,9 @@ final class ClaudeSession: AgentSession {
             if handshake != nil {
                 handshake?.resultErrors += (frame["errors"]?.array ?? []).compactMap(\.string)
             } else {
+                let owned = ownsResult(frame)
                 emit(mapper.map(frame))
-                finishTurnIfOwned(by: frame)
+                if owned { finishTurn(withResult: frame) }
             }
         default:
             if frame["type"]?.string == "system", frame["subtype"]?.string == "task_started" { startTail(frame) }
@@ -424,10 +472,17 @@ final class ClaudeSession: AgentSession {
         lifecycleSeen = true
         switch frame["state"]?.string {
         case "started"?:
+            guard !current.started else { return }
             turn?.started = true
+            mapper.turnStarted()
         case "completed"?:
             // The result normally ends the turn first.
-            if current.accepted { finishTurn(current.interruptRequested ? .interrupted : .completed) }
+            guard current.accepted else { return }
+            if current.started || current.interruptRequested {
+                finishTurn(current.interruptRequested ? .interrupted : .completed)
+            } else {
+                finishTurn(.failed(String(localized: "Claude Code accepted the message but never started working on it.")))
+            }
         case "cancelled"?:
             finishTurn(.interrupted)
         default:
@@ -435,14 +490,31 @@ final class ClaudeSession: AgentSession {
         }
     }
 
-    private func finishTurnIfOwned(by result: JSONValue) {
-        guard let current = turn, current.accepted else { return }
-        // With lifecycle frames, a result before our message started belongs to a turn Claude began itself.
+    /// Whether a result ends the current turn rather than one Claude started by itself (to follow up on finished
+    /// background work, for example) while the message waited.
+    private func ownsResult(_ result: JSONValue) -> Bool {
+        guard let current = turn, current.accepted else { return false }
+        // Results name the messages their turn consumed; ours may also have been folded into Claude's own turn.
+        let echoed = (result["user_message_uuids"]?.array ?? []).compactMap(\.string) + [result["user_message_uuid"]?.string].compactMap { $0 }
+        if !echoed.isEmpty { return echoed.contains(current.id) }
+        if let origin = result.at("origin.kind")?.string, origin != "human" { return false }
+        // Without an echo, lifecycle frames tell whether our message has started.
         let lifecycle = lifecycleSeen || mapper.capabilities.contains("msg_lifecycle_v1")
-        if lifecycle && !current.started { return }
+        return !lifecycle || current.started
+    }
+
+    private func finishTurn(withResult result: JSONValue) {
+        guard let current = turn else { return }
         let outcome = ClaudeEventMapper.outcome(
             of: result, interruptRequested: current.interruptRequested, assistantError: mapper.assistantError)
-        if outcome == .completed, let error = mapper.assistantError, !error.text.isEmpty { emit(.notice(error.text)) }
+        if outcome == .completed {
+            if let error = mapper.assistantError, !error.text.isEmpty {
+                emit(.notice(error.text))
+            } else if !mapper.emittedReply, let reply = ClaudeEventMapper.replyText(of: result) {
+                // Only the result carries this turn's output, for example a slash command's.
+                emit(.assistantText(itemID: (result["uuid"]?.string ?? current.id) + ":result", text: reply))
+            }
+        }
         finishTurn(outcome)
     }
 
@@ -461,6 +533,7 @@ final class ClaudeSession: AgentSession {
         // Claude did not stop. End the process; the next turn resumes the saved conversation.
         guard let stuck = transport else { return }
         transport = nil
+        withdrawPrompts()
         failPendingControls(AgentError.notRunning)
         mapper.processRestarted()
         stuck.closeInput()
@@ -472,8 +545,8 @@ final class ClaudeSession: AgentSession {
         guard exited === transport else { return }
         transport = nil
         cancelTails()
-        prompts.removeAll()
         if handshake != nil {
+            prompts.removeAll()
             handshake?.exit = (status, stderrTail)
             failPendingControls(AgentError.notRunning)
             return
@@ -487,6 +560,7 @@ final class ClaudeSession: AgentSession {
                 current.interruptRequested
                     ? .interrupted : .failed(message ?? String(localized: "Claude Code exited before finishing the turn.")))
         }
+        withdrawPrompts()
         emit(.sessionExited(error: message))
     }
 
@@ -498,8 +572,14 @@ final class ClaudeSession: AgentSession {
         case "can_use_tool"?:
             handlePermission(requestID: requestID, request: request)
         case "elicitation"?:
-            // MCP servers asking for input; the SDK declines when the host has no form for it.
-            reply(to: requestID, with: ["action": "decline"])
+            // An MCP server asking for input: asked as questions when Coincide can show its form, else declined
+            // as the SDK does without a handler.
+            guard let questions = ClaudePermissions.elicitation(requestID: requestID, request: request) else {
+                reply(to: requestID, with: ["action": "decline"])
+                return
+            }
+            prompts[requestID] = .elicitation(request)
+            emit(.userInputRequested(questions))
         case "request_user_dialog"?:
             // Not declared in `initialize`, so Claude settles these itself.
             break
@@ -511,7 +591,8 @@ final class ClaudeSession: AgentSession {
     private func handlePermission(requestID: String, request: JSONValue) {
         let toolName = request["tool_name"]?.string ?? ""
         let input = request["input"] ?? [:]
-        if let toolUseID = request["tool_use_id"]?.string {
+        // A subagent's tool calls are not transcript items of their own; the approval describes the call.
+        if let toolUseID = request["tool_use_id"]?.string, request["agent_id"]?.string == nil {
             emit(mapper.ensureTool(id: toolUseID, name: toolName, input: input))
         }
         switch toolName {
@@ -533,7 +614,7 @@ final class ClaudeSession: AgentSession {
             prompts[requestID] = .question(request)
             emit(.userInputRequested(questions))
         default:
-            // Under full access only asks Claude refuses to bypass get here (ask rules, safety checks).
+            // Under full access only asks Claude refuses to bypass get here (ask rules, safety checks, plan mode).
             prompts[requestID] = .tool(request)
             emit(
                 .approvalRequested(
@@ -546,10 +627,15 @@ final class ClaudeSession: AgentSession {
     /// Claude withdrew a request, for example because the turn was interrupted.
     private func withdrawPrompt(requestID: String) {
         switch prompts.removeValue(forKey: requestID) {
-        case .question?: emit(.userInputResolved(id: requestID))
+        case .question?, .elicitation?: emit(.userInputResolved(id: requestID))
         case .tool?, .plan?: emit(.approvalResolved(id: requestID))
         case nil: break
         }
+    }
+
+    /// The process that asked is gone, so nothing can answer its requests any more.
+    private func withdrawPrompts() {
+        for requestID in Array(prompts.keys) { withdrawPrompt(requestID: requestID) }
     }
 
     // MARK: Control channel
@@ -637,8 +723,30 @@ final class ClaudeSession: AgentSession {
         onEvent?(event)
     }
 
-    static func userMessage(content: JSONValue, uuid: String) -> JSONValue {
-        ["type": "user", "message": ["role": "user", "content": content], "parent_tool_use_id": nil, "uuid": .string(uuid)]
+    /// A user message as the SDK sends it, stamped with a uuid that lifecycle frames and results echo, and marked
+    /// as typed by a person. Images go first: Claude runs a slash command or skill only when it starts the last
+    /// text block.
+    static func userMessage(texts: [String], images: [JSONValue] = [], uuid: String) -> JSONValue {
+        let texts = texts.filter { !$0.isEmpty }
+        let content: JSONValue =
+            images.isEmpty && texts.count <= 1
+            ? .string(texts.first ?? "") : .array(images + texts.map { ["type": "text", "text": .string($0)] })
+        return [
+            "type": "user", "message": ["role": "user", "content": content], "parent_tool_use_id": nil, "uuid": .string(uuid),
+            "origin": ["kind": "human"],
+        ]
+    }
+
+    /// Splits a recapped prompt whose new message is a slash command or skill (`/name …`), so the command can start
+    /// its own last text block, the only place Claude runs one. Nil for other prompts.
+    static func splitTrailingCommand(_ text: String) -> (leading: String, command: String)? {
+        // Handoff's recap: `<conversation_handoff>…</conversation_handoff>`, a line ending in a colon, then the message.
+        guard text.hasPrefix("<conversation_handoff>"), let close = text.range(of: "</conversation_handoff>"),
+            let marker = text.range(of: ":\n\n", range: close.upperBound..<text.endIndex)
+        else { return nil }
+        let message = text[marker.upperBound...]
+        guard message.range(of: #"^/[^\s/]+(\s|$)"#, options: .regularExpression) != nil else { return nil }
+        return (String(text[..<marker.upperBound]).trimmingCharacters(in: .whitespacesAndNewlines), String(message))
     }
 
     static func exitMessage(status: Int32, stderrTail: String) -> String? {
@@ -656,11 +764,14 @@ final class ClaudeSession: AgentSession {
         var message: String
         /// `--resume` named a conversation Claude no longer has.
         var missingConversation: Bool
+        /// `--session-id` named a conversation Claude already saved.
+        var sessionInUse: Bool
 
         init(error: Error, handshake: Handshake) {
             let stderr = handshake.exit.map { ClaudeEventMapper.cleaned($0.stderr) ?? "" } ?? ""
             let details = (handshake.resultErrors + [stderr]).filter { !$0.isEmpty && !$0.hasPrefix("[ede_diagnostic]") }
             missingConversation = details.contains { $0.contains("No conversation found") }
+            sessionInUse = details.contains { $0.contains("is already in use") }
             if let exit = handshake.exit {
                 let reason = details.first.map { String($0.suffix(800)) } ?? String(localized: "status \(Int(exit.status))")
                 message = String(localized: "Claude Code exited while starting: \(reason)")

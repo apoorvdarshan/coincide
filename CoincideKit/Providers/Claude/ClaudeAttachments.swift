@@ -6,7 +6,9 @@ import UniformTypeIdentifiers
 enum ClaudeAttachments {
     /// The API accepts up to 5 MB of base64 per image, which is 3.75 MB of raw bytes.
     static let maxImageBytes = 3_750_000
-    static let maxPixelSize = 2_048
+    /// Once a conversation holds many images, the API rejects any image with a side over 2000 pixels,
+    /// and it scales larger ones down anyway.
+    static let maxPixelSize = 2_000
 
     /// Image blocks for the given files, plus the files that could not be attached.
     static func imageBlocks(for paths: [String]) -> (blocks: [JSONValue], skipped: [String]) {
@@ -27,14 +29,19 @@ enum ClaudeAttachments {
 
     /// The image as-is when Claude accepts it, otherwise re-encoded (and downscaled) as PNG or JPEG.
     static func encodable(_ data: Data) -> (mediaType: String, data: Data)? {
-        if let mediaType = mediaType(of: data), data.count <= maxImageBytes { return (mediaType, data) }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetType(source) != nil,
+            CGImageSourceGetCount(source) > 0
+        else { return nil }
+        if let mediaType = mediaType(of: data), data.count <= maxImageBytes,
+            pixelSize(source).map({ max($0.width, $0.height) <= maxPixelSize }) ?? true
+        {
+            return (mediaType, data)
+        }
         let thumbnailOptions: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
         ]
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-            let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary)
-        else { return nil }
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else { return nil }
         let encodeOptions: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.85]
         for (type, mediaType) in [(UTType.png, "image/png"), (UTType.jpeg, "image/jpeg")] {
             let output = NSMutableData()
@@ -43,6 +50,15 @@ enum ClaudeAttachments {
             if CGImageDestinationFinalize(destination), output.length <= maxImageBytes { return (mediaType, output as Data) }
         }
         return nil
+    }
+
+    /// Pixel dimensions of the first image, read from its header.
+    private static func pixelSize(_ source: CGImageSource) -> (width: Int, height: Int)? {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+            let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue
+        else { return nil }
+        return (width, height)
     }
 
     /// PNG, JPEG, GIF or WebP, the formats Claude reads directly.
