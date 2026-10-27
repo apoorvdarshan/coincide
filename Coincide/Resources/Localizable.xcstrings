@@ -1,67 +1,3998 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ (truncated)" : {
+
+    },
+    "%@ Website" : {
+
+    },
+    "%@ already offers that model." : {
+
+    },
+    "%@ and %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ and %2$@"
+          }
+        }
+      }
+    },
+    "%@ are still running. Closing the terminals stops them." : {
+
+    },
+    "%@ asks for permission" : {
+
+    },
+    "%@ cannot resume sessions." : {
+
+    },
+    "%@ did not accept the model “%@”. Choose another model, then try again." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ did not accept the model “%2$@”. Choose another model, then try again."
+          }
+        }
+      }
+    },
+    "%@ does not offer the model “%@” for this account. Choose another model." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ does not offer the model “%2$@” for this account. Choose another model."
+          }
+        }
+      }
+    },
+    "%@ exited unexpectedly (status %d)." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ exited unexpectedly (status %2$d)."
+          }
+        }
+      }
+    },
     "%@ exited unexpectedly." : {
+
+    },
+    "%@ failed during %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ failed during %2$@."
+          }
+        }
+      }
+    },
+    "%@ failed." : {
 
     },
     "%@ is not installed or could not be found on PATH." : {
 
     },
+    "%@ is turned off. Turn it on in Providers or pick another model." : {
+
+    },
+    "%@ isn't available. Choose another agent below." : {
+
+    },
+    "%@ isn’t ready yet. Set it up in Providers or pick another model." : {
+
+    },
+    "%@ joins this thread and gets a recap of the conversation so far." : {
+
+    },
+    "%@ may not be able to read images." : {
+
+    },
+    "%@ needs more information" : {
+
+    },
+    "%@ needs you to sign in before it can continue." : {
+
+    },
+    "%@ no longer exists. Starting in %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ no longer exists. Starting in %2$@."
+          }
+        }
+      }
+    },
+    "%@ picks up where the other agents left off, with a recap of the %lld messages it missed." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ picks up where the other agents left off, with a recap of the %2$lld messages it missed."
+          }
+        }
+      }
+    },
+    "%@ picks up where the other agents left off, with a recap of the message it missed." : {
+
+    },
+    "%@ refused to continue this request." : {
+
+    },
+    "%@ stopped after reaching its output limit." : {
+
+    },
+    "%@ stopped after reaching its request limit for this turn." : {
+
+    },
     "%@ support is not available yet." : {
+
+    },
+    "%@ · %@. Choose the agent and model (⇧⌘M)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@. Choose the agent and model (⇧⌘M)"
+          }
+        }
+      }
+    },
+    "%@ – %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ – %2$@"
+          }
+        }
+      }
+    },
+    "%@, %@, %lld added, %lld removed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$@, %3$lld added, %4$lld removed"
+          }
+        }
+      }
+    },
+    "%@, %@, %lld added, %lld removed, %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$@, %3$lld added, %4$lld removed, %5$@"
+          }
+        }
+      }
+    },
+    "%@, %@, and %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$@, and %3$@"
+          }
+        }
+      }
+    },
+    "%@, %lld additions, %lld deletions" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$lld additions, %3$lld deletions"
+          }
+        }
+      }
+    },
+    "%@, %lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$lld of %3$lld"
+          }
+        }
+      }
+    },
+    "%@, declined" : {
+
+    },
+    "%@, failed" : {
+
+    },
+    "%@, from line %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, from line %2$lld"
+          }
+        }
+      }
+    },
+    "%@, lines %lld–%lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, lines %2$lld–%3$lld"
+          }
+        }
+      }
+    },
+    "%@, running" : {
+
+    },
+    "%@, waiting" : {
+
+    },
+    "%@: “%@”" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: “%2$@”"
+          }
+        }
+      }
+    },
+    "%lld agents are still working. Quitting stops them." : {
+
+    },
+    "%lld approvals needed" : {
+
+    },
+    "%lld changed" : {
+
+    },
+    "%lld changed files" : {
+
+    },
+    "%lld commits to push, %lld to pull" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld commits to push, %2$lld to pull"
+          }
+        }
+      }
+    },
+    "%lld files" : {
+
+    },
+    "%lld images" : {
+
+    },
+    "%lld matches" : {
+
+    },
+    "%lld more files…" : {
+
+    },
+    "%lld more queued" : {
+
+    },
+    "%lld more waiting" : {
+
+    },
+    "%lld of %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "%lld of %lld done" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld of %2$lld done"
+          }
+        }
+      }
+    },
+    "%lld points" : {
+
+    },
+    "%lld pt" : {
+
+    },
+    "%lld questions" : {
+
+    },
+    "%lld questions from %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld questions from %2$@"
+          }
+        }
+      }
+    },
+    "%lld queued messages" : {
+
+    },
+    "%lld results" : {
+
+    },
+    "(default: %@)" : {
+
+    },
+    "(detached HEAD)" : {
+
+    },
+    "(empty)" : {
+
+    },
+    "(in progress)" : {
+
+    },
+    "(optional)" : {
+
+    },
+    "(partial)" : {
+
+    },
+    "1 changed file" : {
+
+    },
+    "1 file" : {
+
+    },
+    "1 image" : {
+
+    },
+    "1 match" : {
+
+    },
+    "1 queued message" : {
+
+    },
+    "1 result" : {
+
+    },
+    "A %@ hook failed." : {
+
+    },
+    "A %@ hook stopped Codex." : {
+
+    },
+    "A Git action is running." : {
+
+    },
+    "A Pi extension" : {
+
+    },
+    "A feature branch can only be created when committing." : {
+
+    },
+    "A subagent has a question" : {
+
+    },
+    "A tab holds at most %lld terminals" : {
+
+    },
+    "API key" : {
+
+    },
+    "About" : {
+
+    },
+    "About Coincide" : {
+
+    },
+    "Accepts images" : {
+
+    },
+    "Access" : {
+
+    },
+    "Access %@ outside the project" : {
+
+    },
+    "Access files outside the project" : {
+
+    },
+    "Access: %@" : {
+
+    },
+    "Account" : {
+
+    },
+    "Acknowledgements" : {
+
+    },
+    "Actions" : {
+
+    },
+    "Add" : {
+
+    },
+    "Add Custom Model" : {
+
+    },
+    "Add Project" : {
+
+    },
+    "Add Project…" : {
+
+    },
+    "Add Variable" : {
+
+    },
+    "Add a custom model" : {
+
+    },
+    "Add a folder to start a thread with your coding agents, or drop one here." : {
+
+    },
+    "Add a project to start" : {
+
+    },
+    "Add a remote to push this repository." : {
+
+    },
+    "Add a todo" : {
+
+    },
+    "Add feedback to refine the plan, or leave this blank to implement it" : {
+
+    },
+    "Add model IDs that %@ accepts but doesn’t list. Custom models appear in the model picker." : {
+
+    },
+    "Add todo: %@" : {
+
+    },
+    "Add “%@” as a Project" : {
+
+    },
+    "Added" : {
+
+    },
+    "Added line %lld: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Added line %1$lld: %2$@"
+          }
+        }
+      }
+    },
+    "Added to %@’s environment on top of your login shell’s, for example API keys or a custom base URL." : {
+
+    },
+    "After installing or signing in, choose Check Again." : {
+
+    },
+    "Agent" : {
+
+    },
+    "Agent Settings" : {
+
+    },
+    "Agent Settings…" : {
+
+    },
+    "Agent and model: %@, %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Agent and model: %1$@, %2$@"
+          }
+        }
+      }
+    },
+    "Agent processes idle this long shut down to free memory. Threads pick up where they left off." : {
+
+    },
+    "Agents" : {
+
+    },
+    "Agents ask before running commands or editing files." : {
+
+    },
+    "Agents compact their context automatically when it fills up." : {
+
+    },
+    "Agents run commands and edit files without asking." : {
+
+    },
+    "Alerts" : {
+
+    },
+    "All" : {
+
+    },
+    "All Providers" : {
 
     },
     "Allow" : {
 
     },
+    "Allow %@" : {
+
+    },
+    "Allow %@ this session" : {
+
+    },
+    "Allow %@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Allow %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "Allow all edits this session" : {
+
+    },
+    "Allow every %@ this session" : {
+
+    },
+    "Allow for this session" : {
+
+    },
+    "Allow for this thread" : {
+
+    },
+    "Allow network access" : {
+
+    },
+    "Allow network access to %@" : {
+
+    },
+    "Allow once" : {
+
+    },
+    "Allow reading %@" : {
+
+    },
+    "Allow writing to %@" : {
+
+    },
+    "Already up to date" : {
+
+    },
     "Always allow" : {
+
+    },
+    "Always allow %@" : {
+
+    },
+    "Always allow `%@`" : {
+
+    },
+    "Always allow this session" : {
+
+    },
+    "Always block %@" : {
+
+    },
+    "An agent is still working. Quitting stops it." : {
+
+    },
+    "Another thread has worked in this folder since this turn, so restoring files would undo its changes too. Rewind the conversation without restoring files instead." : {
+
+    },
+    "Answer above, or send a message to skip the question" : {
+
+    },
+    "Antigravity needs you to sign in with Google. Finish signing in in your browser: %@" : {
+
+    },
+    "Antigravity needs you to sign in with Google. Start the turn again to open the sign-in page." : {
+
+    },
+    "Antigravity's %@ helper is missing next to %@. Install both files from the same release." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Antigravity's %1$@ helper is missing next to %2$@. Install both files from the same release."
+          }
+        }
+      }
+    },
+    "Appearance" : {
+
+    },
+    "Approval" : {
+
+    },
+    "Approval %lld" : {
+
+    },
+    "Approval needed" : {
+
+    },
+    "Approve" : {
+
+    },
+    "Approved" : {
+
+    },
+    "Archive" : {
+
+    },
+    "Archive Thread" : {
+
+    },
+    "Ask %@" : {
+
+    },
+    "Ask %@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Ask %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "Ask anything. @ files, / commands" : {
+
+    },
+    "Ask before a thread and its history are deleted." : {
+
+    },
+    "Ask every provider for its models again" : {
 
     },
     "Ask for approval" : {
 
     },
+    "Asks before running commands and changing files." : {
+
+    },
+    "Attach" : {
+
+    },
+    "Attach images" : {
+
+    },
+    "Back" : {
+
+    },
+    "Back (⌫)" : {
+
+    },
+    "Background" : {
+
+    },
+    "Binary" : {
+
+    },
+    "Binary file not shown." : {
+
+    },
+    "Branch" : {
+
+    },
+    "Branch Changes" : {
+
+    },
+    "Branch name" : {
+
+    },
+    "Branch names can’t contain spaces." : {
+
+    },
+    "Branch names can’t contain “%@”." : {
+
+    },
+    "Branch names can’t contain “..”, “@{” or “//”." : {
+
+    },
+    "Branch names can’t start with “/”, “-” or “.”." : {
+
+    },
+    "Branch prefix" : {
+
+    },
+    "Branch: %@" : {
+
+    },
+    "Branches" : {
+
+    },
+    "Bring All to Front" : {
+
+    },
+    "Bugs and feature requests on GitHub" : {
+
+    },
     "Build" : {
+
+    },
+    "Build mode. Click to have the agent plan first (⇧⇥)" : {
+
+    },
+    "Cached input" : {
+
+    },
+    "Called %lld MCP tools" : {
+
+    },
+    "Called 1 MCP tool" : {
+
+    },
+    "Cancel" : {
+
+    },
+    "Cannot create a pull request from a detached HEAD." : {
+
+    },
+    "Cannot pull into a detached HEAD." : {
+
+    },
+    "Cannot push because this repository has no remote." : {
+
+    },
+    "Cannot push from a detached HEAD." : {
+
+    },
+    "Capitalize" : {
+
+    },
+    "Change Appearance…" : {
+
+    },
+    "Changed %lld files" : {
+
+    },
+    "Changed 1 file" : {
+
+    },
+    "Changed files" : {
+
+    },
+    "Changes to show" : {
+
+    },
+    "Changes, turn diffs and checkpoints need Git." : {
+
+    },
+    "Chat" : {
+
+    },
+    "Check Again" : {
+
+    },
+    "Check All Again" : {
+
+    },
+    "Check Document Now" : {
+
+    },
+    "Check Grammar With Spelling" : {
+
+    },
+    "Check Spelling While Typing" : {
+
+    },
+    "Check again" : {
+
+    },
+    "Check out a branch before pushing or opening a pull request." : {
+
+    },
+    "Check out a branch to push or open a pull request." : {
+
+    },
+    "Checked out in %@" : {
+
+    },
+    "Checking out changes the branch of the project folder." : {
+
+    },
+    "Checking providers…" : {
+
+    },
+    "Checking…" : {
+
+    },
+    "Checkpoints" : {
+
+    },
+    "Choose" : {
+
+    },
+    "Choose a folder to work on with your coding agents." : {
+
+    },
+    "Choose an option." : {
+
+    },
+    "Choose images to send with your message." : {
+
+    },
+    "Choose the %@ executable." : {
+
+    },
+    "Choose…" : {
+
+    },
+    "Claude API %@; retrying…" : {
+
+    },
+    "Claude API rate limit reached. Try again later." : {
+
+    },
+    "Claude Code" : {
+
+    },
+    "Claude Code could not be started: %@" : {
+
+    },
+    "Claude Code exited before finishing the turn." : {
+
+    },
+    "Claude Code exited while starting: %@" : {
+
+    },
+    "Claude Code exited with status %lld." : {
+
+    },
+    "Claude Code exited." : {
+
+    },
+    "Claude Code has %lld questions" : {
+
+    },
+    "Claude Code has a question" : {
+
+    },
+    "Claude Code is installed but failed to run." : {
+
+    },
+    "Claude Code is not signed in. Run `claude auth login` in Terminal, then refresh." : {
+
+    },
+    "Claude Code is not signed in. Run `claude auth login` in Terminal, then try again." : {
+
+    },
+    "Claude Code is still working on the previous message." : {
+
+    },
+    "Claude Code rejected the request." : {
+
+    },
+    "Claude Code reported an error while running the turn." : {
+
+    },
+    "Claude Code reported an error." : {
+
+    },
+    "Claude Code v%@ is too old for %@. Upgrade to v%@ or newer to use it." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Claude Code v%1$@ is too old for %2$@. Upgrade to v%3$@ or newer to use it."
+          }
+        }
+      }
+    },
+    "Claude Code's settings don't allow full access, so it decides approvals itself (auto mode)." : {
+
+    },
+    "Claude Code's settings don't allow full access, so it will ask before using tools." : {
+
+    },
+    "Claude could not produce the requested structured output." : {
+
+    },
+    "Claude could not resume a deferred tool call: the tool is no longer available." : {
+
+    },
+    "Claude could not start the turn." : {
+
+    },
+    "Claude gave up after repeated API errors." : {
+
+    },
+    "Claude gave up after repeated malformed tool calls." : {
+
+    },
+    "Claude stopped after reaching its budget." : {
+
+    },
+    "Claude stopped after reaching the maximum number of turns." : {
+
+    },
+    "Claude stopped: an image in the conversation could not be processed." : {
+
+    },
+    "Claude stopped: the context refilled too quickly after compaction." : {
+
+    },
+    "Claude stopped: the model returned an error." : {
+
+    },
+    "Claude stopped: the prompt exceeds the model's context window. Run /compact or start a new thread." : {
+
+    },
+    "Claude stopped: the turn's token budget was exhausted." : {
+
+    },
+    "Clear" : {
+
+    },
+    "Clear todos" : {
+
+    },
+    "Close" : {
+
+    },
+    "Close %@" : {
+
+    },
+    "Close Terminal" : {
+
+    },
+    "Close Window" : {
+
+    },
+    "Close a subagent" : {
+
+    },
+    "Close idle agents" : {
+
+    },
+    "Close idle agents after" : {
+
+    },
+    "Close these terminals?" : {
+
+    },
+    "Close this terminal?" : {
+
+    },
+    "Closed by the agent" : {
+
+    },
+    "Codex %@ is too old. Update the Codex CLI to 0.156 or later." : {
+
+    },
+    "Codex CLI is not signed in. Run `codex login` and try again." : {
+
+    },
+    "Codex could not finish the turn." : {
+
+    },
+    "Codex exited unexpectedly (status %lld)." : {
+
+    },
+    "Codex is still working on the previous message." : {
+
+    },
+    "Codex reported an error." : {
+
+    },
+    "Codex returned an error." : {
+
+    },
+    "Codex returned no thread id." : {
+
+    },
+    "Codex switched from %@ to %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Codex switched from %1$@ to %2$@."
+          }
+        }
+      }
+    },
+    "Codex to answer %@" : {
+
+    },
+    "Coincide could not prepare its Pi extension: %@" : {
+
+    },
+    "Coincide could not read the image %@." : {
+
+    },
+    "Coincide could not send your answer to OpenCode: %@" : {
+
+    },
+    "Coincide could not start Pi: %@" : {
+
+    },
+    "Coincide could not tell which Pi version is installed. Pi %@ or newer is required." : {
+
+    },
+    "Coincide is a native macOS port of T3 Code, the open-source agent app by T3 Tools Inc., and is used under the MIT License." : {
+
+    },
+    "Coincide needs OpenCode 2 or newer. Run `opencode upgrade`." : {
+
+    },
+    "Coincide runs each agent’s own command-line tool with the account you already signed in to. It never sells or proxies tokens." : {
+
+    },
+    "Coincide runs your coding agents in a folder on your Mac. Add one, then start a thread." : {
+
+    },
+    "Collapse" : {
+
+    },
+    "Collapse All Files" : {
+
+    },
+    "Collapse All Projects" : {
+
+    },
+    "Command" : {
+
+    },
+    "Command Palette" : {
+
+    },
+    "Command Palette…" : {
+
+    },
+    "Command approval" : {
+
+    },
+    "Command-Return" : {
+
+    },
+    "Commands" : {
+
+    },
+    "Commit" : {
+
+    },
+    "Commit & Push" : {
+
+    },
+    "Commit (⌘↩)" : {
+
+    },
+    "Commit Changes" : {
+
+    },
+    "Commit and push to the default branch?" : {
+
+    },
+    "Commit message" : {
+
+    },
+    "Commit on New Branch" : {
+
+    },
+    "Commit, Push & Create PR" : {
+
+    },
+    "Commit, push and open a pull request from the default branch?" : {
+
+    },
+    "Committed %@" : {
+
+    },
+    "Committing…" : {
+
+    },
+    "Commit…" : {
+
+    },
+    "Compact context" : {
+
+    },
+    "Compact the conversation" : {
+
+    },
+    "Compacted context" : {
+
+    },
+    "Compacted context from %@ to about %@ tokens" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Compacted context from %1$@ to about %2$@ tokens"
+          }
+        }
+      }
+    },
+    "Compacting context" : {
+
+    },
+    "Compaction was stopped." : {
+
+    },
+    "Completed" : {
+
+    },
+    "Composer" : {
+
+    },
+    "Confirm before deleting threads" : {
+
+    },
+    "Connecting" : {
+
+    },
+    "Connecting…" : {
+
+    },
+    "Context" : {
+
+    },
+    "Context compacted" : {
+
+    },
+    "Context window" : {
+
+    },
+    "Context window: %@ tokens" : {
+
+    },
+    "Context window: %@ tokens used" : {
+
+    },
+    "Context window: %@ used (%@ of %@ tokens)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Context window: %1$@ used (%2$@ of %3$@ tokens)"
+          }
+        }
+      }
+    },
+    "Continue" : {
+
+    },
+    "Continue on %@" : {
+
+    },
+    "Continue this thread with %@" : {
+
+    },
+    "Conversation" : {
+
+    },
+    "Copied" : {
+
+    },
+    "Copy" : {
+
+    },
+    "Copy Full Path" : {
+
+    },
+    "Copy Line" : {
+
+    },
+    "Copy Lines" : {
+
+    },
+    "Copy Message" : {
+
+    },
+    "Copy Model ID" : {
+
+    },
+    "Copy Path" : {
+
+    },
+    "Copy Thread ID" : {
+
+    },
+    "Copy Version Info" : {
+
+    },
+    "Copy code" : {
+
+    },
+    "Copy message" : {
+
+    },
+    "Copy response" : {
+
+    },
+    "Copy to the clipboard" : {
+
+    },
+    "Correct Spelling Automatically" : {
+
+    },
+    "Cost" : {
+
+    },
+    "Could not commit." : {
+
+    },
+    "Could not create the pull request." : {
+
+    },
+    "Could not create the worktree." : {
+
+    },
+    "Could not create “%@”." : {
+
+    },
+    "Could not initialize a Git repository." : {
+
+    },
+    "Could not list branches." : {
+
+    },
+    "Could not list worktrees." : {
+
+    },
+    "Could not prepare the commit." : {
+
+    },
+    "Could not prepare the diff." : {
+
+    },
+    "Could not pull." : {
+
+    },
+    "Could not push “%@”." : {
+
+    },
+    "Could not reach the OpenCode server: %@" : {
+
+    },
+    "Could not read the Git status." : {
+
+    },
+    "Could not read the changes." : {
+
+    },
+    "Could not read the turn's changes." : {
+
+    },
+    "Could not remove the worktree." : {
+
+    },
+    "Could not rename “%@”." : {
+
+    },
+    "Could not restore the checkpoint." : {
+
+    },
+    "Could not save a checkpoint." : {
+
+    },
+    "Could not stage changes." : {
+
+    },
+    "Could not stage the selected files." : {
+
+    },
+    "Could not start %@." : {
+
+    },
+    "Could not start %@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Could not start %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "Could not start Codex: %@" : {
+
+    },
+    "Could not start OpenCode: %@" : {
+
+    },
+    "Could not start the Codex app server: %@" : {
+
+    },
+    "Could not start." : {
+
+    },
+    "Could not switch to “%@”." : {
+
+    },
+    "Could not verify the Claude Code sign-in." : {
+
+    },
+    "Couldn't Load the Changes" : {
+
+    },
+    "Couldn't attach %@." : {
+
+    },
+    "Couldn't read the attached image %@." : {
+
+    },
+    "Couldn't resume the earlier %@ session, so a new one was started." : {
+
+    },
+    "Couldn't start Cursor: %@" : {
+
+    },
+    "Create %@" : {
+
+    },
+    "Create %@%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Create %1$@%2$@"
+          }
+        }
+      }
+    },
+    "Create PR" : {
+
+    },
+    "Create Pull Request" : {
+
+    },
+    "Create a feature branch named after the change, then commit there." : {
+
+    },
+    "Create branch “%@”" : {
+
+    },
+    "Create checkpoints" : {
+
+    },
+    "Created PR #%lld" : {
+
+    },
+    "Creating pull request…" : {
+
+    },
+    "Current" : {
+
+    },
+    "Current Checkout" : {
+
+    },
+    "Current checkout" : {
+
+    },
+    "Current thread" : {
+
+    },
+    "Current worktree" : {
+
+    },
+    "Cursor API key" : {
+
+    },
+    "Cursor can't run the model %@: %@. Choose one of the models from your Cursor account." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Cursor can't run the model %1$@: %2$@. Choose one of the models from your Cursor account."
+          }
+        }
+      }
+    },
+    "Cursor couldn't check the sign-in." : {
+
+    },
+    "Cursor couldn't reopen the earlier chat (%@), so a new one was started." : {
+
+    },
+    "Cursor exited unexpectedly (status %d)." : {
+
+    },
+    "Cursor isn't signed in. Run `cursor-agent login` in Terminal, then try again." : {
+
+    },
+    "Cursor reported error %lld." : {
+
+    },
+    "Cursor stopped after reaching its limit of model requests for one turn." : {
+
+    },
+    "Cursor stopped because the reply reached its length limit." : {
+
+    },
+    "Custom" : {
+
+    },
+    "Custom API endpoint" : {
+
+    },
+    "Custom model" : {
+
+    },
+    "Custom model ID" : {
+
+    },
+    "Custom path" : {
+
+    },
+    "Customize Toolbar…" : {
+
+    },
+    "Cut" : {
 
     },
     "Dark" : {
 
     },
+    "Dark mode" : {
+
+    },
+    "Data Detectors" : {
+
+    },
+    "Decline" : {
+
+    },
+    "Declined" : {
+
+    },
+    "Decrease Font Size" : {
+
+    },
+    "Default" : {
+
+    },
+    "Default (%@)" : {
+
+    },
+    "Default branch" : {
+
+    },
+    "Default model" : {
+
+    },
+    "Delete" : {
+
+    },
+    "Delete %@" : {
+
+    },
+    "Delete %@%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Delete %1$@%2$@"
+          }
+        }
+      }
+    },
+    "Delete Thread…" : {
+
+    },
+    "Delete “%@”?" : {
+
+    },
+    "Deleted" : {
+
+    },
+    "Delete…" : {
+
+    },
     "Deny" : {
+
+    },
+    "Deny and stop" : {
+
+    },
+    "Detached HEAD" : {
+
+    },
+    "Details" : {
+
+    },
+    "Diff" : {
+
+    },
+    "Diff options" : {
 
     },
     "Disabled in Settings" : {
 
     },
+    "Dismiss" : {
+
+    },
+    "Dismiss without answering" : {
+
+    },
+    "Done" : {
+
+    },
+    "Don’t ask again" : {
+
+    },
+    "Each turn's changes appear here once the agent starts working." : {
+
+    },
+    "Edit" : {
+
+    },
+    "Edit %@" : {
+
+    },
+    "Edit %@%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Edit %1$@%2$@"
+          }
+        }
+      }
+    },
+    "Edit %lld files" : {
+
+    },
+    "Edit Message" : {
+
+    },
+    "Edit a file" : {
+
+    },
+    "Edit and Resend…" : {
+
+    },
+    "Edit and resend" : {
+
+    },
+    "Edit file" : {
+
+    },
+    "Edit files" : {
+
+    },
+    "Edit notebook" : {
+
+    },
+    "Edit notebook %@" : {
+
+    },
+    "Edit queued message" : {
+
+    },
+    "Edit this message?" : {
+
+    },
+    "Enable a provider in Settings to send a message" : {
+
+    },
+    "Enter" : {
+
+    },
+    "Enter Full Screen" : {
+
+    },
+    "Enter a folder path, e.g. ~/projects/my-app" : {
+
+    },
+    "Enter a model ID." : {
+
+    },
+    "Enterprise gateway" : {
+
+    },
+    "Environment Variables" : {
+
+    },
+    "Environment variables" : {
+
+    },
+    "Error" : {
+
+    },
+    "Executable" : {
+
+    },
+    "Executable path" : {
+
+    },
+    "Exit code %lld" : {
+
+    },
+    "Exit status %d." : {
+
+    },
+    "Expand" : {
+
+    },
+    "Expand All Files" : {
+
+    },
+    "Expand All Projects" : {
+
+    },
+    "Extra High" : {
+
+    },
+    "Failed" : {
+
+    },
+    "Fetch %@" : {
+
+    },
+    "Fetch a web page" : {
+
+    },
+    "File" : {
+
+    },
+    "File change" : {
+
+    },
+    "File change approval" : {
+
+    },
+    "File mode changed: %@" : {
+
+    },
+    "File read approval" : {
+
+    },
+    "Files" : {
+
+    },
+    "Files and folders" : {
+
+    },
+    "Files go back to how they were before this turn, and the conversation from this message on is removed. The message returns to the composer." : {
+
+    },
+    "Files to commit" : {
+
+    },
+    "Filter" : {
+
+    },
+    "Filter models" : {
+
+    },
+    "Filter shortcuts" : {
+
+    },
+    "Find" : {
+
+    },
+    "Find Next" : {
+
+    },
+    "Find Previous" : {
+
+    },
+    "Find `%@`" : {
+
+    },
+    "Find `%@` in %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Find `%1$@` in %2$@"
+          }
+        }
+      }
+    },
+    "Find files" : {
+
+    },
+    "Find files matching `%@`" : {
+
+    },
+    "Find files matching `%@` in %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Find files matching `%1$@` in %2$@"
+          }
+        }
+      }
+    },
+    "Find “%@”" : {
+
+    },
+    "Find “%@” in %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Find “%1$@” in %2$@"
+          }
+        }
+      }
+    },
+    "Find “%@” on %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Find “%1$@” on %2$@"
+          }
+        }
+      }
+    },
+    "Find…" : {
+
+    },
+    "Folder" : {
+
+    },
+    "Folder Not Found" : {
+
+    },
+    "Folder not found" : {
+
+    },
+    "Folder not found: %@" : {
+
+    },
+    "Folders" : {
+
+    },
+    "Follow" : {
+
+    },
+    "Font size" : {
+
+    },
+    "From %@" : {
+
+    },
+    "From line %lld" : {
+
+    },
     "Full access" : {
+
+    },
+    "General" : {
+
+    },
+    "General Settings" : {
+
+    },
+    "Generate an image" : {
+
+    },
+    "Generating commit message…" : {
+
+    },
+    "Git" : {
+
+    },
+    "Git actions" : {
+
+    },
+    "Git can check a branch out in only one folder at a time: %@" : {
+
+    },
+    "Git status is unavailable." : {
+
+    },
+    "Git's index is locked. Wait for other Git operations to finish, then try again." : {
+
+    },
+    "Go to Thread %lld" : {
+
+    },
+    "Google requires an eligible Antigravity subscription for this account." : {
+
+    },
+    "Google sign-in is checked when a session starts." : {
+
+    },
+    "Grant additional permissions" : {
+
+    },
+    "Grok Build" : {
+
+    },
+    "Grok CLI is installed but failed to run." : {
+
+    },
+    "Grok CLI is installed but not logged in. Run `grok login`." : {
+
+    },
+    "Grok CLI is installed but timed out while running `grok --version`." : {
+
+    },
+    "Grok account" : {
+
+    },
+    "Grok ended the turn with an error." : {
+
+    },
+    "Grok is not signed in. Run `grok login` in a terminal, then try again." : {
+
+    },
+    "Grok usage limit reached. Try again later." : {
+
+    },
+    "HEAD is not on a branch." : {
+
+    },
+    "Handed off from %@" : {
+
+    },
+    "Help" : {
+
+    },
+    "Hide Coincide" : {
+
+    },
+    "Hide Diff" : {
+
+    },
+    "Hide Diff (⌘D)" : {
+
+    },
+    "Hide Others" : {
+
+    },
+    "Hide Sidebar" : {
+
+    },
+    "Hide Terminal" : {
+
+    },
+    "Hide Terminal (⌘J)" : {
+
+    },
+    "Hide value" : {
+
+    },
+    "High" : {
+
+    },
+    "Hotkeys" : {
+
+    },
+    "How long the model thinks before it answers." : {
+
+    },
+    "Hunk %@" : {
+
+    },
+    "Ignore Whitespace" : {
+
+    },
+    "Implement" : {
+
+    },
+    "Implement the plan." : {
+
+    },
+    "Include %@" : {
+
+    },
+    "Include the agent’s thinking in the transcript when the model shares it." : {
+
+    },
+    "Increase Font Size" : {
+
+    },
+    "Initialize Git" : {
+
+    },
+    "Input needed" : {
+
+    },
+    "Insert new line" : {
+
+    },
+    "Install" : {
+
+    },
+    "Install Antigravity, open it once and sign in with your Google account." : {
+
+    },
+    "Install Claude Code and run `claude auth login`." : {
+
+    },
+    "Install Google's Antigravity ACP agent (agy_acp_server with its localharness_external helper) from the ACP Registry, then put it on PATH or choose it in Settings." : {
+
+    },
+    "Install OpenCode and run `opencode auth login`." : {
+
+    },
+    "Install Pi with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`, then run `pi` and sign in with /login." : {
+
+    },
+    "Install the Codex CLI and run `codex login`." : {
+
+    },
+    "Install the Cursor CLI and run `cursor-agent login`." : {
+
+    },
+    "Install the GitHub CLI (gh) and run “gh auth login” to create pull requests." : {
+
+    },
+    "Install the Grok Build CLI and run `grok login`." : {
+
+    },
+    "Interrupt a subagent" : {
 
     },
     "Interrupted" : {
 
     },
+    "Its %lld threads will be deleted. The folder and its files are not changed." : {
+
+    },
+    "Jump to Bottom" : {
+
+    },
+    "Jump to Latest" : {
+
+    },
+    "Keep planning" : {
+
+    },
+    "Keybindings" : {
+
+    },
+    "Keyboard" : {
+
+    },
+    "Keyboard Shortcuts" : {
+
+    },
+    "Keyboard shortcuts" : {
+
+    },
+    "Last checked %@" : {
+
+    },
+    "Latest Turn" : {
+
+    },
+    "Leave empty to generate a message" : {
+
+    },
+    "Leave empty to look for `%@` on your shell’s PATH." : {
+
+    },
+    "License" : {
+
+    },
     "Light" : {
+
+    },
+    "Light mode" : {
+
+    },
+    "Line %lld: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Line %1$lld: %2$@"
+          }
+        }
+      }
+    },
+    "Lines %lld–%lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Lines %1$lld–%2$lld"
+          }
+        }
+      }
+    },
+    "Lines 1–%lld" : {
+
+    },
+    "List %@" : {
+
+    },
+    "List MCP resource templates" : {
+
+    },
+    "List MCP resources" : {
+
+    },
+    "List files" : {
+
+    },
+    "List subagents" : {
+
+    },
+    "List todos" : {
+
+    },
+    "Load skill %@" : {
+
+    },
+    "Loaded %@" : {
+
+    },
+    "Loading branches…" : {
+
+    },
+    "Local" : {
+
+    },
+    "Local checkout" : {
+
+    },
+    "Location" : {
+
+    },
+    "Look for %@ again and reload its models" : {
+
+    },
+    "Lost the connection to the OpenCode server." : {
+
+    },
+    "Low" : {
+
+    },
+    "MCP tool" : {
+
+    },
+    "Make Lower Case" : {
+
+    },
+    "Make Upper Case" : {
+
+    },
+    "Mark as Read" : {
+
+    },
+    "Mark as Unread" : {
+
+    },
+    "Max" : {
+
+    },
+    "Medium" : {
+
+    },
+    "Memory" : {
+
+    },
+    "Message" : {
+
+    },
+    "Message %@" : {
+
+    },
+    "Message a subagent" : {
+
+    },
+    "Message agent" : {
+
+    },
+    "Message agent: %@" : {
+
+    },
+    "Minimal" : {
+
+    },
+    "Minimize" : {
+
+    },
+    "Model" : {
+
+    },
+    "Model ID" : {
+
+    },
+    "Model ID: %@" : {
+
+    },
+    "Model IDs can’t contain spaces." : {
+
+    },
+    "Model IDs must be 256 characters or fewer." : {
+
+    },
+    "Model Settings" : {
+
+    },
+    "Models" : {
+
+    },
+    "Models appear here once %@ is installed and signed in." : {
+
+    },
+    "Models your providers offer, plus custom model IDs you add. Right-click a model to use it for new threads." : {
+
+    },
+    "Modified" : {
+
+    },
+    "Monitor" : {
+
+    },
+    "Monitor `%@`" : {
+
+    },
+    "More %@ Models" : {
+
+    },
+    "More Actions" : {
+
+    },
+    "More Git actions" : {
+
+    },
+    "Move %@ to %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Move %1$@ to %2$@"
+          }
+        }
+      }
+    },
+    "Move %@%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Move %1$@%2$@"
+          }
+        }
+      }
+    },
+    "Name" : {
+
+    },
+    "Needs approval" : {
+
+    },
+    "Network access" : {
+
+    },
+    "New Terminal" : {
+
+    },
+    "New Terminal (⌘T)" : {
+
+    },
+    "New Thread" : {
+
+    },
+    "New Thread (⌘N)" : {
+
+    },
+    "New Thread in %@" : {
+
+    },
+    "New Thread in Project" : {
+
+    },
+    "New Thread in…" : {
+
+    },
+    "New Thread on %@" : {
+
+    },
+    "New Threads" : {
+
+    },
+    "New Worktree" : {
+
+    },
+    "New line" : {
 
     },
     "New thread" : {
 
     },
+    "New threads" : {
+
+    },
+    "New threads start with this model. You can switch models and agents in any thread." : {
+
+    },
+    "New worktree" : {
+
+    },
+    "New worktree branches are named like %@." : {
+
+    },
+    "Next" : {
+
+    },
+    "Next Thread" : {
+
+    },
+    "No" : {
+
+    },
+    "No Changes on This Branch" : {
+
+    },
+    "No Files Changed" : {
+
+    },
+    "No Matching Models" : {
+
+    },
+    "No Models Yet" : {
+
+    },
+    "No Projects" : {
+
+    },
+    "No Results" : {
+
+    },
+    "No Thread Selected" : {
+
+    },
+    "No Turns Yet" : {
+
+    },
+    "No Uncommitted Changes" : {
+
+    },
+    "No apps found" : {
+
+    },
+    "No content changes." : {
+
+    },
+    "No folders match this path." : {
+
+    },
+    "No local commits to push." : {
+
+    },
+    "No matching actions." : {
+
+    },
+    "No matching branches." : {
+
+    },
+    "No matching commands, projects, or threads." : {
+
+    },
+    "No matching files or folders." : {
+
+    },
+    "No newline at end of file" : {
+
+    },
+    "No prefix" : {
+
+    },
+    "No terminal sessions for this thread yet." : {
+
+    },
+    "No thread" : {
+
+    },
+    "No threads or projects match “%@”." : {
+
+    },
+    "No threads yet" : {
+
+    },
+    "No todos." : {
+
+    },
+    "None" : {
+
+    },
+    "Not Available" : {
+
+    },
+    "Not a Git Repository" : {
+
+    },
+    "Not answered" : {
+
+    },
+    "Not checked" : {
+
+    },
+    "Not checked yet." : {
+
+    },
+    "Not done" : {
+
+    },
+    "Not found" : {
+
+    },
+    "Not installed" : {
+
+    },
+    "Not installed." : {
+
+    },
+    "Not signed in" : {
+
+    },
+    "Not signed in." : {
+
+    },
+    "Not signed in. Run `cursor-agent login` in Terminal." : {
+
+    },
+    "Nothing differs from %@." : {
+
+    },
+    "Notifications" : {
+
+    },
+    "Notifications are turned off for Coincide in System Settings." : {
+
+    },
+    "Notify when Coincide is in the background" : {
+
+    },
+    "OK" : {
+
+    },
+    "Off" : {
+
+    },
+    "Offer its models in the model picker and let threads run it." : {
+
+    },
+    "One window for the coding agents you already use. Switch agents mid-thread while each keeps its own session." : {
+
+    },
+    "Open %@" : {
+
+    },
+    "Open File" : {
+
+    },
+    "Open In" : {
+
+    },
+    "Open Keyboard Settings…" : {
+
+    },
+    "Open Settings" : {
+
+    },
+    "Open System Settings…" : {
+
+    },
+    "Open a web page" : {
+
+    },
+    "Open in %@" : {
+
+    },
+    "Open in Editor" : {
+
+    },
+    "OpenAI API key" : {
+
+    },
+    "OpenCode %@ lists %lld models." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "OpenCode %1$@ lists %2$lld models."
+          }
+        }
+      }
+    },
+    "OpenCode could not list its models: %@" : {
+
+    },
+    "OpenCode did not return the new session." : {
+
+    },
+    "OpenCode exited unexpectedly (code %d)." : {
+
+    },
+    "OpenCode is already working on a turn in this thread." : {
+
+    },
+    "OpenCode is retrying the request: %@" : {
+
+    },
+    "OpenCode is still stopping the previous turn. Send the message again in a moment." : {
+
+    },
+    "OpenCode lists no models. Run `opencode auth login` to connect a provider." : {
+
+    },
+    "OpenCode reported an error (%@)." : {
+
+    },
+    "OpenCode reported an error." : {
+
+    },
+    "Opened PR #%lld" : {
+
+    },
+    "Opens %@ in your browser" : {
+
+    },
+    "Other answer" : {
+
+    },
+    "Output tokens" : {
+
+    },
+    "Outside the allowed folders: %@" : {
+
+    },
+    "Overview" : {
+
+    },
+    "Parts of a branch name can’t start with “.” or end with “.lock”." : {
+
+    },
+    "Paste" : {
+
+    },
+    "Paste and Match Style" : {
+
+    },
+    "Pasted image" : {
+
+    },
+    "Pending approval" : {
+
+    },
+    "Permission request" : {
+
+    },
+    "Permissions" : {
+
+    },
+    "Pi %@ is too old. Update to Pi %@ or newer with `pi update`." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Pi %1$@ is too old. Update to Pi %2$@ or newer with `pi update`."
+          }
+        }
+      }
+    },
+    "Pi asks for confirmation" : {
+
+    },
+    "Pi asks for input" : {
+
+    },
+    "Pi asks you to choose" : {
+
+    },
+    "Pi asks you to edit text" : {
+
+    },
+    "Pi cannot use the image %@." : {
+
+    },
+    "Pi could not compact the context." : {
+
+    },
+    "Pi could not resume its earlier session for this thread and started a new one." : {
+
+    },
+    "Pi could not switch to %@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Pi could not switch to %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "Pi did not answer “%@” in time." : {
+
+    },
+    "Pi did not load Coincide’s extension, so it cannot ask before running tools or stay in plan mode. Run `pi --extension \"%@\"` in a terminal to see why." : {
+
+    },
+    "Pi did not report a session." : {
+
+    },
+    "Pi exited with code %d." : {
+
+    },
+    "Pi exited." : {
+
+    },
+    "Pi gave up retrying a provider error." : {
+
+    },
+    "Pi has no usable models. Run `pi` in a terminal and sign in with /login, or set a provider’s API key." : {
+
+    },
+    "Pi is available, but Coincide could not load its models. Sessions still start with Pi’s default model." : {
+
+    },
+    "Pi is available, but its model list could not be read." : {
+
+    },
+    "Pi is installed but `pi --version` failed." : {
+
+    },
+    "Pi model ids look like provider/model, for example anthropic/claude-sonnet-4-5." : {
+
+    },
+    "Pi reported a model error." : {
+
+    },
+    "Pi reported an error." : {
+
+    },
+    "Pi stopped responding." : {
+
+    },
+    "Pick a thread to continue" : {
+
+    },
+    "Pin" : {
+
+    },
+    "Pin Thread" : {
+
+    },
+    "Pinned" : {
+
+    },
     "Plan" : {
+
+    },
+    "Plan mode" : {
+
+    },
+    "Plan mode: the agent plans before changing anything. Click to return to build mode (⇧⇥)" : {
+
+    },
+    "Plan ready" : {
+
+    },
+    "Plan update" : {
+
+    },
+    "Post a notification when a turn finishes, fails or needs your approval." : {
+
+    },
+    "Preparing feature branch…" : {
+
+    },
+    "Preparing pull request…" : {
+
+    },
+    "Preparing worktree…" : {
+
+    },
+    "Preview %@" : {
+
+    },
+    "Previous Thread" : {
+
+    },
+    "Previous Worktree" : {
+
+    },
+    "Previous Worktree (%@)" : {
+
+    },
+    "Process exited with code %d." : {
+
+    },
+    "Process terminated." : {
+
+    },
+    "Projects" : {
+
+    },
+    "Projects and threads" : {
+
+    },
+    "Provider" : {
+
+    },
+    "Provider Settings…" : {
+
+    },
+    "Providers" : {
+
+    },
+    "Providers list their models once they’re installed and signed in." : {
+
+    },
+    "Providers, custom models and the default model for new threads are kept." : {
+
+    },
+    "Pull" : {
+
+    },
+    "Pull request #%lld: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Pull request #%1$lld: %2$@"
+          }
+        }
+      }
+    },
+    "Pulled the latest changes" : {
+
+    },
+    "Pulling…" : {
+
+    },
+    "Push" : {
+
+    },
+    "Push & Create PR" : {
+
+    },
+    "Push and open a pull request from the default branch?" : {
+
+    },
+    "Push to %@" : {
+
+    },
+    "Push to the default branch?" : {
+
+    },
+    "Pushed %@ to %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Pushed %1$@ to %2$@"
+          }
+        }
+      }
+    },
+    "Pushed to %@" : {
+
+    },
+    "Pushing…" : {
+
+    },
+    "Question" : {
+
+    },
+    "Question %lld" : {
+
+    },
+    "Question from %@" : {
+
+    },
+    "Queue message" : {
+
+    },
+    "Queue message. It is sent when the current turn finishes." : {
+
+    },
+    "Queued: %@" : {
+
+    },
+    "Quit" : {
+
+    },
+    "Quit Coincide" : {
+
+    },
+    "Quit Coincide?" : {
+
+    },
+    "Ran %lld commands" : {
+
+    },
+    "Ran %lld subagents" : {
+
+    },
+    "Ran 1 command" : {
+
+    },
+    "Ran 1 subagent" : {
+
+    },
+    "Read %@" : {
+
+    },
+    "Read %@ (lines %lld–%lld)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Read %1$@ (lines %2$lld–%3$lld)"
+          }
+        }
+      }
+    },
+    "Read %@%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Read %1$@%2$@"
+          }
+        }
+      }
+    },
+    "Read %lld files" : {
+
+    },
+    "Read 1 file" : {
+
+    },
+    "Read MCP resource %@" : {
+
+    },
+    "Read a file" : {
+
+    },
+    "Read access: %@" : {
+
+    },
+    "Read an MCP resource" : {
+
+    },
+    "Read file" : {
+
+    },
+    "Read files" : {
+
+    },
+    "Ready" : {
+
+    },
+    "Reasoning" : {
+
+    },
+    "Reasoning Effort" : {
+
+    },
+    "Reasoning effort" : {
+
+    },
+    "Reasoning effort (⇧⌘E)" : {
+
+    },
+    "Reasoning effort: %@" : {
+
+    },
+    "Recent Threads" : {
+
+    },
+    "Redo" : {
+
+    },
+    "Refresh" : {
+
+    },
+    "Refresh Agents" : {
+
+    },
+    "Refresh Providers" : {
+
+    },
+    "Reload Models" : {
+
+    },
+    "Remote" : {
+
+    },
+    "Remove" : {
+
+    },
+    "Remove %@" : {
+
+    },
+    "Remove Custom Model" : {
+
+    },
+    "Remove custom model" : {
+
+    },
+    "Remove from Coincide…" : {
+
+    },
+    "Remove from queue" : {
+
+    },
+    "Remove the selected custom models" : {
+
+    },
+    "Remove variable" : {
+
+    },
+    "Remove “%@”?" : {
+
+    },
+    "Removed line %lld: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Removed line %1$lld: %2$@"
+          }
+        }
+      }
+    },
+    "Rename" : {
+
+    },
+    "Rename Thread…" : {
+
+    },
+    "Renamed" : {
+
+    },
+    "Renamed without content changes." : {
+
+    },
+    "Rename…" : {
+
+    },
+    "Reply" : {
+
+    },
+    "Reply to the agent" : {
+
+    },
+    "Report an Issue" : {
+
+    },
+    "Reset Font Size" : {
 
     },
     "Resolved by the agent" : {
 
     },
+    "Restart" : {
+
+    },
+    "Restore Defaults" : {
+
+    },
+    "Restore Defaults…" : {
+
+    },
+    "Restore general settings to their defaults?" : {
+
+    },
+    "Results" : {
+
+    },
+    "Resume a subagent" : {
+
+    },
+    "Retrying after a provider error (attempt %lld of %lld)." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Retrying after a provider error (attempt %1$lld of %2$lld)."
+          }
+        }
+      }
+    },
+    "Retrying after a provider error (attempt %lld of %lld): %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Retrying after a provider error (attempt %1$lld of %2$lld): %3$@"
+          }
+        }
+      }
+    },
+    "Return" : {
+
+    },
+    "Return inserts a new line." : {
+
+    },
+    "Reveal Folder in Finder" : {
+
+    },
+    "Reveal in Finder" : {
+
+    },
+    "Revert" : {
+
+    },
+    "Revert to Before This Message…" : {
+
+    },
+    "Revert to before this message" : {
+
+    },
+    "Revert to before this message?" : {
+
+    },
+    "Review and confirm your commit. Leave the message empty to have the agent write one." : {
+
+    },
+    "Run" : {
+
+    },
+    "Run %@" : {
+
+    },
+    "Run %lld subagents in parallel" : {
+
+    },
+    "Run `%@`" : {
+
+    },
+    "Run `%@` in the background" : {
+
+    },
+    "Run a chain of %lld subagents" : {
+
+    },
+    "Run a code mode script" : {
+
+    },
+    "Run a command" : {
+
+    },
+    "Run a subagent" : {
+
+    },
+    "Run command" : {
+
+    },
+    "Run in Terminal" : {
+
+    },
+    "Run tool code" : {
+
+    },
+    "Runs commands and edits files without asking." : {
+
+    },
+    "Save" : {
+
+    },
+    "Scroll to the newest messages" : {
+
+    },
+    "Search" : {
+
+    },
+    "Search %@" : {
+
+    },
+    "Search Settings" : {
+
+    },
+    "Search Threads" : {
+
+    },
+    "Search appearances…" : {
+
+    },
+    "Search branches" : {
+
+    },
+    "Search commands, projects, and threads" : {
+
+    },
+    "Search commands, projects, and threads…" : {
+
+    },
+    "Search files" : {
+
+    },
+    "Search for `%@`" : {
+
+    },
+    "Search for `%@` in %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Search for `%1$@` in %2$@"
+          }
+        }
+      }
+    },
+    "Search for “%@”" : {
+
+    },
+    "Search for “%@” in %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Search for “%1$@” in %2$@"
+          }
+        }
+      }
+    },
+    "Search or create a branch" : {
+
+    },
+    "Search projects…" : {
+
+    },
+    "Search the web" : {
+
+    },
+    "Search the web for `%@`" : {
+
+    },
+    "Search the web for “%@”" : {
+
+    },
+    "Search threads and projects" : {
+
+    },
+    "Search tools" : {
+
+    },
+    "Search tools for `%@`" : {
+
+    },
+    "Search “%@”" : {
+
+    },
+    "Search “%@” in %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Search “%1$@” in %2$@"
+          }
+        }
+      }
+    },
+    "Searched code %lld times" : {
+
+    },
+    "Searched code once" : {
+
+    },
+    "Searched the web %lld times" : {
+
+    },
+    "Searched the web once" : {
+
+    },
+    "Searching files…" : {
+
+    },
+    "Select All" : {
+
+    },
+    "Select a thread to open a terminal." : {
+
+    },
+    "Select a thread to see the changes in its folder." : {
+
+    },
+    "Select a thread to start" : {
+
+    },
+    "Select an existing thread or create a new one to get started." : {
+
+    },
+    "Send (↩)" : {
+
+    },
+    "Send (⌘↩)" : {
+
+    },
+    "Send a message to decline and redirect the agent" : {
+
+    },
+    "Send input to `%@`" : {
+
+    },
+    "Send message" : {
+
+    },
+    "Send messages with" : {
+
+    },
+    "Services" : {
+
+    },
+    "Session not found: %@" : {
+
+    },
+    "Sessions" : {
+
+    },
+    "Set Up Providers" : {
+
+    },
+    "Set Up a Provider" : {
+
+    },
+    "Settings" : {
+
+    },
+    "Settings…" : {
+
+    },
+    "Setup" : {
+
+    },
+    "Shift-Return inserts a new line." : {
+
+    },
+    "Shortcuts for Coincide’s commands. Standard macOS shortcuts such as Copy and Close Window work as usual." : {
+
+    },
+    "Show %@ Settings" : {
+
+    },
+    "Show %@ settings" : {
+
+    },
+    "Show %lld more" : {
+
+    },
+    "Show All" : {
+
+    },
+    "Show Archived Threads" : {
+
+    },
+    "Show Diff" : {
+
+    },
+    "Show Diff (⌘D)" : {
+
+    },
+    "Show Sidebar" : {
+
+    },
+    "Show Spelling and Grammar" : {
+
+    },
+    "Show Substitutions" : {
+
+    },
+    "Show Terminal" : {
+
+    },
+    "Show Terminal (⌘J)" : {
+
+    },
+    "Show Toolbar" : {
+
+    },
+    "Show full message" : {
+
+    },
+    "Show in Finder" : {
+
+    },
+    "Show less" : {
+
+    },
+    "Show reasoning" : {
+
+    },
+    "Show value" : {
+
+    },
+    "Sidebar Options" : {
+
+    },
+    "Sign in" : {
+
+    },
+    "Skill" : {
+
+    },
+    "Skill: %@" : {
+
+    },
+    "Smart Copy/Paste" : {
+
+    },
+    "Smart Dashes" : {
+
+    },
+    "Smart Links" : {
+
+    },
+    "Smart Quotes" : {
+
+    },
+    "Snapshot the working tree before each turn so you can review or revert what it changed." : {
+
+    },
+    "Source Code" : {
+
+    },
+    "Space" : {
+
+    },
+    "Speech" : {
+
+    },
+    "Spelling and Grammar" : {
+
+    },
+    "Split Down" : {
+
+    },
+    "Split Down (⇧⌘D)" : {
+
+    },
+    "Split Right" : {
+
+    },
+    "Split Right (⌘D)" : {
+
+    },
+    "Start Speaking" : {
+
+    },
+    "Start a subagent" : {
+
+    },
+    "Start implementing the plan" : {
+
+    },
+    "Starting %@…" : {
+
+    },
+    "Starting…" : {
+
+    },
+    "Status" : {
+
+    },
+    "Step %lld" : {
+
+    },
+    "Stop" : {
+
+    },
+    "Stop (⌘.)" : {
+
+    },
+    "Stop Agent" : {
+
+    },
+    "Stop Speaking" : {
+
+    },
+    "Stop task" : {
+
+    },
+    "Stop task %@" : {
+
+    },
+    "Subagent" : {
+
+    },
+    "Subagent: %@" : {
+
+    },
+    "Submit" : {
+
+    },
+    "Submit Answers" : {
+
+    },
+    "Substitutions" : {
+
+    },
+    "Supports reasoning effort" : {
+
+    },
+    "Switch or create a branch" : {
+
+    },
+    "Switch the agent or model for this thread" : {
+
+    },
+    "Switch this thread back to build mode" : {
+
+    },
+    "Switch this thread into plan mode" : {
+
+    },
+    "Switch to build mode and implement the plan" : {
+
+    },
+    "Switched to %@" : {
+
+    },
+    "Sync Branch" : {
+
+    },
     "System" : {
+
+    },
+    "T3 Code License" : {
+
+    },
+    "Task" : {
+
+    },
+    "Task: %@" : {
+
+    },
+    "Tell Claude what to do instead (optional)" : {
+
+    },
+    "Terminal" : {
+
+    },
+    "Terminal %lld" : {
+
+    },
+    "Terminal tabs" : {
+
+    },
+    "Text Replacement" : {
+
+    },
+    "Text size" : {
+
+    },
+    "That custom model is already added." : {
+
+    },
+    "The Claude API is overloaded (529). Try again shortly." : {
+
+    },
+    "The Codex app server stopped." : {
+
+    },
+    "The MCP server “%@” could not start." : {
+
+    },
+    "The MCP server “%@” could not start: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The MCP server “%1$@” could not start: %2$@"
+          }
+        }
+      }
+    },
+    "The MCP server “%@” needs you to sign in again: run `codex mcp login %@`." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The MCP server “%1$@” needs you to sign in again: run `codex mcp login %2$@`."
+          }
+        }
+      }
+    },
+    "The OpenCode event stream stopped: %@" : {
+
+    },
+    "The OpenCode server closed the event stream." : {
+
+    },
+    "The OpenCode server did not answer in time." : {
+
+    },
+    "The OpenCode server exited before it started (code %d)." : {
+
+    },
+    "The OpenCode server refused the event stream (HTTP %lld)." : {
+
+    },
+    "The OpenCode server returned HTTP %lld." : {
+
+    },
+    "The OpenCode server sent a response Coincide could not read." : {
+
+    },
+    "The OpenCode session no longer exists. Send the message again to continue in a new session." : {
+
+    },
+    "The agent asked a question" : {
+
+    },
+    "The agent needs approval" : {
 
     },
     "The agent session is not running." : {
 
     },
+    "The branch has diverged from its upstream. Rebase or merge first." : {
+
+    },
+    "The branch is up to date. Nothing to do." : {
+
+    },
+    "The branch the new worktree starts from" : {
+
+    },
+    "The conversation from this message on is removed so you can change it and send it again. Files on disk are not changed." : {
+
+    },
+    "The diff for this file is too large to show." : {
+
+    },
+    "The folder and its files are not changed." : {
+
+    },
+    "The folder this turn ran in no longer exists." : {
+
+    },
+    "The installed Claude Code is too old for %@. Upgrade to v%@ or newer to use it." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The installed Claude Code is too old for %1$@. Upgrade to v%2$@ or newer to use it."
+          }
+        }
+      }
+    },
+    "The model declined to continue." : {
+
+    },
+    "The new worktree starts from this branch." : {
+
+    },
+    "The previous Codex session could not be resumed, so a new one was started. (%@)" : {
+
+    },
     "The project folder is missing." : {
+
+    },
+    "The server is not an OpenCode 2 server." : {
+
+    },
+    "The subagent failed." : {
+
+    },
+    "The subagent was closed." : {
+
+    },
+    "The subagent was interrupted." : {
+
+    },
+    "The subagent was not found." : {
+
+    },
+    "The working tree matches the last commit." : {
+
+    },
+    "Theme" : {
+
+    },
+    "There are no changes to commit, so a feature branch can't be named." : {
+
+    },
+    "There are no changes to commit." : {
+
+    },
+    "There is no checkpoint for this turn." : {
+
+    },
+    "There’s no executable file at this path." : {
+
+    },
+    "Thinking" : {
+
+    },
+    "Thinking…" : {
+
+    },
+    "This branch has no upstream yet. Push it first." : {
+
+    },
+    "This branch has not been pushed. Push it before creating a pull request." : {
+
+    },
+    "This folder is not a Git repository." : {
+
+    },
+    "This permanently deletes the conversation. Files on disk are not changed." : {
+
+    },
+    "This thread started on %@; the folder is now on %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This thread started on %1$@; the folder is now on %2$@."
+          }
+        }
+      }
+    },
+    "This turn didn't change any files." : {
+
+    },
+    "This turn's changes are no longer available." : {
+
+    },
+    "This works on “%@”. You can continue on this branch, or create a feature branch and run the same action there." : {
+
+    },
+    "Thought" : {
+
+    },
+    "Thought %lld times" : {
+
+    },
+    "Thought for %@" : {
+
+    },
+    "Thread" : {
+
+    },
+    "Thread completed" : {
+
+    },
+    "Thread failed" : {
+
+    },
+    "Threads" : {
+
+    },
+    "Threads per Project" : {
+
+    },
+    "Timed out connecting to the OpenCode event stream." : {
 
     },
     "Timed out waiting for %@." : {
 
     },
+    "Timed out waiting for the OpenCode server to start." : {
+
+    },
+    "Timeout" : {
+
+    },
+    "To change a menu shortcut, add an App Shortcut for Coincide in System Settings › Keyboard." : {
+
+    },
+    "To sign in, run `pi` in Terminal and type `/login`." : {
+
+    },
+    "Toggle a todo" : {
+
+    },
+    "Toggle todo #%lld" : {
+
+    },
+    "Tool" : {
+
+    },
+    "Tool approval" : {
+
+    },
+    "Tool call" : {
+
+    },
+    "Tracks %@" : {
+
+    },
+    "Transformations" : {
+
+    },
+    "Try a different filter or provider." : {
+
+    },
+    "Turn" : {
+
+    },
+    "Turn %lld" : {
+
+    },
+    "Turn %lld · %@ · %lld files" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Turn %1$lld · %2$@ · %3$lld files"
+          }
+        }
+      }
+    },
+    "Turn %lld · %@ · 1 file" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Turn %1$lld · %2$@ · 1 file"
+          }
+        }
+      }
+    },
+    "Turn %lld · Running" : {
+
+    },
+    "Turn Checkpoints Are Off" : {
+
+    },
+    "Turn checkpoints are off" : {
+
+    },
+    "Turn on %@ to load its models." : {
+
+    },
+    "Turn on checkpoints in Settings to see each turn's changes." : {
+
+    },
+    "Turns" : {
+
+    },
+    "Type your answer" : {
+
+    },
+    "Type your own answer" : {
+
+    },
+    "Unarchive" : {
+
+    },
+    "Unarchive Thread" : {
+
+    },
+    "Unavailable" : {
+
+    },
+    "Uncommitted Changes" : {
+
+    },
+    "Undo" : {
+
+    },
     "Unexpected response from the agent: %@" : {
+
+    },
+    "Unpin" : {
+
+    },
+    "Unpin Thread" : {
+
+    },
+    "Untracked" : {
+
+    },
+    "Update the Codex CLI to 0.156 or later for full support." : {
+
+    },
+    "Update the todo list" : {
+
+    },
+    "Update todos" : {
+
+    },
+    "Updated the plan" : {
+
+    },
+    "Updated the plan %lld times" : {
+
+    },
+    "Use %@" : {
+
+    },
+    "Use Selection for Find" : {
+
+    },
+    "Use a Feature Branch" : {
+
+    },
+    "Use for New Threads" : {
+
+    },
+    "Use the ID the provider’s CLI accepts. It appears in the model picker even if the CLI doesn’t list it." : {
+
+    },
+    "Use the web" : {
+
+    },
+    "Used %lld tools" : {
+
+    },
+    "Used 1 tool" : {
+
+    },
+    "Used for the transcript and the composer." : {
+
+    },
+    "Used tools" : {
+
+    },
+    "Using %@" : {
+
+    },
+    "Using %@ · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Using %1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "Value" : {
+
+    },
+    "Version" : {
+
+    },
+    "Version %@ (%@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Version %1$@ (%2$@)"
+          }
+        }
+      }
+    },
+    "View" : {
+
+    },
+    "View %@" : {
+
+    },
+    "View Diff" : {
+
+    },
+    "View PR" : {
+
+    },
+    "View Pull Request #%lld" : {
+
+    },
+    "Wait %lld s" : {
+
+    },
+    "Wait for subagents" : {
+
+    },
+    "Web access approval" : {
+
+    },
+    "Web request" : {
+
+    },
+    "Web search" : {
+
+    },
+    "What should change? (optional)" : {
+
+    },
+    "What should we build in " : {
+
+    },
+    "Window" : {
+
+    },
+    "Worked for %@" : {
+
+    },
+    "Working" : {
+
+    },
+    "Working %@" : {
+
+    },
+    "Working directory %@" : {
+
+    },
+    "Working for %@" : {
+
+    },
+    "Workspace: %@" : {
+
+    },
+    "Worktree" : {
+
+    },
+    "Worktree branch prefix" : {
+
+    },
+    "Write %@" : {
+
+    },
+    "Write a file" : {
+
+    },
+    "Write access: %@" : {
+
+    },
+    "Write file" : {
+
+    },
+    "Writing pull request…" : {
+
+    },
+    "Yes" : {
+
+    },
+    "You" : {
+
+    },
+    "Your answer" : {
+
+    },
+    "Zoom" : {
+
+    },
+    "[Attached image: %@]" : {
+
+    },
+    "[Earlier output not shown]" : {
+
+    },
+    "[Rest not shown]" : {
+
+    },
+    "[audio]" : {
+
+    },
+    "[image]" : {
+
+    },
+    "^[%lld model](inflect: true)" : {
+
+    },
+    "`opencode --version` failed." : {
+
+    },
+    "`opencode --version` failed: %@" : {
+
+    },
+    "access outside the project" : {
+
+    },
+    "checking" : {
+
+    },
+    "collapsed" : {
+
+    },
+    "command" : {
+
+    },
+    "current" : {
+
+    },
+    "default" : {
+
+    },
+    "expanded" : {
+
+    },
+    "file edit" : {
+
+    },
+    "in a worktree" : {
+
+    },
+    "in progress" : {
+
+    },
+    "model-id" : {
+
+    },
+    "not installed" : {
+
+    },
+    "not signed in" : {
+
+    },
+    "now" : {
+      "comment" : "Age of a thread updated less than a minute ago"
+    },
+    "performed %lld other actions" : {
+
+    },
+    "performed 1 other action" : {
+
+    },
+    "ready" : {
+
+    },
+    "status %lld" : {
+
+    },
+    "the page" : {
+
+    },
+    "this project" : {
+
+    },
+    "turn/start returned no turn id." : {
+
+    },
+    "unavailable" : {
+
+    },
+    "value" : {
+
+    },
+    "web request" : {
+
+    },
+    "xAI API key" : {
+
+    },
+    "“%@” is checked out in another worktree." : {
+
+    },
+    "“%@” is not a valid branch name." : {
+
+    },
+    "“%@” is set more than once." : {
+
+    },
+    "“%@” is still running. Closing the terminal stops it." : {
+
+    },
+    "“%@” isn’t a valid name. Use letters, digits and underscores." : {
+
+    },
+    "… %lld earlier characters not shown" : {
+
+    },
+    "… %lld more characters not shown" : {
+
+    },
+    "… earlier output trimmed …" : {
+
+    },
+    "↑↓ Navigate" : {
+
+    },
+    "↩ Add Project" : {
+
+    },
+    "↩ Open" : {
+
+    },
+    "⇥ Complete" : {
+
+    },
+    "⌫ Back" : {
+
+    },
+    "⎋ Back" : {
+
+    },
+    "⎋ Close" : {
 
     }
   },
