@@ -412,6 +412,7 @@ final class SidebarViewController: NSViewController {
         var place = project?.name ?? ""
         if let branch = thread.branch, !branch.isEmpty { place += place.isEmpty ? branch : " · \(branch)" }
         if !place.isEmpty { lines.append(place) }
+        if let forkedFrom = ThreadForking.forkedFromDescription(thread.id) { lines.append(forkedFrom) }
         lines.append("\(thread.selection.provider.displayName) · \(ProviderRegistry.shared.displayName(for: thread.selection))")
         let others = thread.sessions.keys.filter { $0 != thread.selection.provider }.sorted { $0.rawValue < $1.rawValue }
         if !others.isEmpty {
@@ -427,7 +428,8 @@ final class SidebarViewController: NSViewController {
         return ThreadRowModel(
             title: thread.title, provider: thread.selection.provider, isPinned: thread.isPinned,
             isArchived: thread.isArchived, status: status, updatedAt: thread.updatedAt,
-            canArchive: ThreadActions.canArchive(thread.id), toolTip: lines.joined(separator: "\n"),
+            canArchive: ThreadActions.canArchive(thread.id), canFork: ThreadForking.canFork(thread.id),
+            toolTip: lines.joined(separator: "\n"),
             accessibilityLabel: [thread.title, status.label, project?.name].compactMap(\.self).joined(separator: ", "),
             jumpHint: jumpHint)
     }
@@ -641,6 +643,7 @@ final class SidebarViewController: NSViewController {
         switch command {
         case .togglePin: ThreadActions.togglePin(id)
         case .rename: beginRename(threadID: id)
+        case .fork: ThreadForking.fork(id)
         case .toggleArchived: ThreadActions.toggleArchived(id)
         case .delete: ThreadActions.delete(id, in: view.window)
         }
@@ -901,6 +904,9 @@ extension SidebarViewController: NSMenuDelegate {
         if let branch = thread.branch, !branch.isEmpty {
             menu.addItem(item(String(localized: "New Thread on \(branch)"), #selector(newThreadOnBranch(_:)), id))
         }
+        let fork = item(String(localized: "Fork Thread"), #selector(forkFromMenu(_:)), id)
+        fork.isEnabled = ThreadForking.canFork(id)
+        menu.addItem(fork)
         menu.addItem(.separator())
         addOpenItems(to: menu)
         menu.addItem(item(String(localized: "Copy Thread ID"), #selector(copyThreadID(_:)), id))
@@ -972,6 +978,12 @@ extension SidebarViewController: NSMenuDelegate {
     @objc private func newThreadOnBranch(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID, let thread = store.thread(id) else { return }
         ThreadActions.newThread(in: thread.projectID, basedOn: thread)
+    }
+
+    /// Forks the conversation through its latest settled turn and opens the fork.
+    @objc private func forkFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        ThreadForking.fork(id)
     }
 
     @objc private func copyThreadID(_ sender: NSMenuItem) {

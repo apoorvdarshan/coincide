@@ -10,9 +10,29 @@ enum TranscriptRowID: Hashable {
     /// A collapsible group of consecutive tool calls, keyed by its first item.
     case group(UUID)
     case changedFiles(UUID)
+    /// A divider for a fork, keyed by the other thread: the parent in a fork, the fork in its parent.
+    case fork(UUID)
     case live
     case header
     case footer
+}
+
+/// T3's fork dividers: in a fork, "Forked from conversation" after the copied history; in the thread it was
+/// forked from, "Conversation fork" after the turn the fork copied through.
+struct TranscriptForkMarker: Hashable {
+    enum Direction: Hashable {
+        /// This thread was forked from `threadID`.
+        case forkedFrom
+        /// `threadID` was forked from this thread.
+        case forkedTo
+    }
+
+    var direction: Direction
+    var threadID: UUID
+    /// The other thread's title (the parent's title when it was forked, once the parent is gone).
+    var title: String
+    /// Whether the other thread still exists, so it can be opened.
+    var isAvailable: Bool
 }
 
 struct TranscriptRow: Equatable {
@@ -29,6 +49,7 @@ struct TranscriptRow: Equatable {
         case notice
         case turnHeader(TurnHeader)
         case changedFiles(turnID: UUID)
+        case fork(TranscriptForkMarker)
         case live(LiveStatus)
         /// Breathing room above the first row and between the last row and the composer.
         case spacer(height: CGFloat)
@@ -73,6 +94,7 @@ struct TranscriptSettledRows {
         var expanded: Set<TranscriptRowID>
         var agentTurnIDs: Set<UUID>
         var changedFiles: [UUID: Int]
+        var forkMarkers: TranscriptForkMarkers
     }
 
     fileprivate var key: Key
@@ -85,6 +107,13 @@ struct TranscriptSettledRows {
 struct AssistantMeta: Hashable {
     var provider: ProviderKind
     var modelID: String?
+}
+
+/// Where fork dividers go: after the turns they follow, keyed by the item that opens the turn, or above
+/// the first turn.
+struct TranscriptForkMarkers: Equatable {
+    var afterTurn: [UUID: [TranscriptForkMarker]] = [:]
+    var leading: [TranscriptForkMarker] = []
 }
 
 enum TurnHeader: Hashable {
@@ -120,6 +149,22 @@ struct TranscriptBuilder {
     var revisions: [UUID: Int] = [:]
     /// Turns (by user item) that changed files, with a signature of the change set.
     var changedFiles: [UUID: Int] = [:]
+    /// Dividers for the thread's parent and forks (see `placeForkMarkers`).
+    var forkMarkers = TranscriptForkMarkers()
+
+    /// Puts each divider after the turn that holds its anchor item. One without an anchor, or whose anchor
+    /// comes before the first turn, goes above the first turn.
+    func placeForkMarkers(_ markers: [(anchor: UUID?, marker: TranscriptForkMarker)]) -> TranscriptForkMarkers {
+        var placed = TranscriptForkMarkers()
+        for (anchor, marker) in markers {
+            if let opener = anchor.flatMap(turnOpener(of:)) {
+                placed.afterTurn[opener, default: []].append(marker)
+            } else {
+                placed.leading.append(marker)
+            }
+        }
+        return placed
+    }
 
     func build() -> [TranscriptRow] {
         finish(turnRows(items[...]))
@@ -133,7 +178,7 @@ struct TranscriptBuilder {
         let end = tailStart
         let key = TranscriptSettledRows.Key(
             end: end, endID: end < items.count ? items[end].id : nil, showReasoning: showReasoning, expanded: expanded,
-            agentTurnIDs: agentTurnIDs, changedFiles: changedFiles)
+            agentTurnIDs: agentTurnIDs, changedFiles: changedFiles, forkMarkers: forkMarkers)
         let reused = settled.flatMap { cached in
             cached.key == key && !changed.contains(where: cached.itemIDs.contains) ? cached.rows : nil
         }
@@ -179,6 +224,7 @@ struct TranscriptBuilder {
         var rows: [TranscriptRow] = []
         rows.reserveCapacity(turns.count + later.count + 3)
         rows.append(row(.header, .spacer(height: TranscriptMetrics.edgePadding + topReserve)))
+        appendForkMarkers(forkMarkers.leading, to: &rows)
         rows += turns
         rows += later
         if let live { rows.append(live) }
@@ -199,7 +245,19 @@ struct TranscriptBuilder {
         return items[...index].last(where: opensTurn)?.id
     }
 
+    /// A turn's rows, then the dividers of forks made through it.
     private func appendTurn(_ turn: ArraySlice<TranscriptItem>, to rows: inout [TranscriptRow]) {
+        appendTurnRows(turn, to: &rows)
+        if let opener = turn.first, opensTurn(opener), let markers = forkMarkers.afterTurn[opener.id] {
+            appendForkMarkers(markers, to: &rows)
+        }
+    }
+
+    private func appendForkMarkers(_ markers: [TranscriptForkMarker], to rows: inout [TranscriptRow]) {
+        for marker in markers { rows.append(row(.fork(marker.threadID), .fork(marker))) }
+    }
+
+    private func appendTurnRows(_ turn: ArraySlice<TranscriptItem>, to rows: inout [TranscriptRow]) {
         let opener = turn.first.flatMap { opensTurn($0) ? $0 : nil }
         let body = turn.dropFirst(opener == nil ? 0 : 1).filter(isVisible)
         if let opener { rows.append(row(.item(opener.id), opener.kind == .user ? .user : .notice)) }

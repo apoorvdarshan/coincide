@@ -13,9 +13,13 @@ protocol TranscriptHost: AnyObject {
     func isExpanded(_ id: TranscriptRowID) -> Bool
     func toggle(_ id: TranscriptRowID)
     func copyToPasteboard(_ text: String)
-    func editMessage(_ itemID: UUID)
-    func revertTurn(_ itemID: UUID)
-    func canRevert(_ itemID: UUID) -> Bool
+    /// T3's "Edit from here": rewinds the conversation to before a message of the user's and hands the
+    /// message back to the composer, optionally restoring files too.
+    func rewindTurn(_ itemID: UUID)
+    /// T3's "Fork from this response": a new thread with the conversation through the turn holding the item.
+    func forkTurn(_ itemID: UUID)
+    func canFork(_ itemID: UUID) -> Bool
+    func openThread(_ threadID: UUID)
     func showDiff(turnID: UUID, path: String?)
     func openLink(_ link: Any) -> Bool
     func previewAttachments(_ paths: [String], selected: Int)

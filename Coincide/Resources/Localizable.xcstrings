@@ -87,6 +87,9 @@
     "%@ failed." : {
 
     },
+    "%@ fork" : {
+
+    },
     "%@ is not installed or could not be found on PATH." : {
 
     },
@@ -1255,6 +1258,9 @@
     "Conversation" : {
 
     },
+    "Conversation fork" : {
+
+    },
     "Copied" : {
 
     },
@@ -1644,22 +1650,25 @@
     "Edit %lld files" : {
 
     },
-    "Edit Message" : {
-
-    },
     "Edit a file" : {
-
-    },
-    "Edit and Resend…" : {
-
-    },
-    "Edit and resend" : {
 
     },
     "Edit file" : {
 
     },
     "Edit files" : {
+
+    },
+    "Edit from Here" : {
+
+    },
+    "Edit from Here…" : {
+
+    },
+    "Edit from here" : {
+
+    },
+    "Edit from here?" : {
 
     },
     "Edit notebook" : {
@@ -1672,9 +1681,6 @@
 
     },
     "Edit the last queued message" : {
-
-    },
-    "Edit this message?" : {
 
     },
     "Enable a provider in Settings to send a message" : {
@@ -1762,9 +1768,6 @@
 
     },
     "Files and folders" : {
-
-    },
-    "Files go back to how they were before this turn, and the conversation from this message on is removed. The message returns to the composer." : {
 
     },
     "Files to commit" : {
@@ -1871,6 +1874,21 @@
 
     },
     "Font size" : {
+
+    },
+    "Fork Thread" : {
+
+    },
+    "Fork from Here" : {
+
+    },
+    "Fork from this response" : {
+
+    },
+    "Forked from conversation" : {
+
+    },
+    "Forked from “%@”" : {
 
     },
     "Forward Delete" : {
@@ -2552,6 +2570,9 @@
     "Open a web page" : {
 
     },
+    "Open fork" : {
+
+    },
     "Open in %@" : {
 
     },
@@ -2559,6 +2580,9 @@
 
     },
     "Open or close the selected entry" : {
+
+    },
+    "Open source conversation" : {
 
     },
     "Open this link and finish there, then continue:\n%@" : {
@@ -3117,13 +3141,10 @@
     "Revert" : {
 
     },
-    "Revert to Before This Message…" : {
+    "Revert Files Too" : {
 
     },
-    "Revert to before this message" : {
-
-    },
-    "Revert to before this message?" : {
+    "Revert and Keep Changes" : {
 
     },
     "Review and confirm your commit. Leave the message empty to have the agent write one." : {
@@ -3686,7 +3707,10 @@
     "The branch the new worktree starts from" : {
 
     },
-    "The conversation from this message on is removed so you can change it and send it again. Files on disk are not changed." : {
+    "The conversation is rewound to before this message, which returns to the composer. Files on disk are not changed." : {
+
+    },
+    "The conversation is rewound to before this message, which returns to the composer. “Revert Files Too” also puts files back the way they were before it, undoing any edits since." : {
 
     },
     "The diff for this file is too large to show." : {
@@ -3778,6 +3802,9 @@
 
     },
     "This permanently deletes the conversation. Files on disk are not changed." : {
+
+    },
+    "This thread is no longer available" : {
 
     },
     "This thread started on %@; the folder is now on %@." : {
