@@ -1,0 +1,61 @@
+# Static analysis (SAST) of the Swift code (CoincideKit and the app) with GitHub CodeQL.
+#
+# CodeQL's Swift extractor needs a macOS runner and a full xcodebuild under its tracer, so this runs
+# weekly, on release tags (v*) and on demand only: never on pull requests or pushes to main, and it
+# is not a required check. Pull requests get the Actions analysis in codeql.yml.
+
+name: CodeQL (Swift)
+
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    # Weekly on Mondays.
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-swift-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    name: Analyze (swift)
+    # Coincide builds against the macOS 27 SDK; this image ships Xcode 27 on macOS 27.
+    runs-on: xcode-27
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      # Upload results to code scanning.
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: swift
+          build-mode: manual
+
+      # CodeQL only analyzes what it sees compiled, so this is a clean, unsigned build with no cache.
+      - name: Build for CodeQL
+        run: |
+          xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' \
+            -derivedDataPath build/CodeQL build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:swift

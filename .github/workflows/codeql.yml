@@ -1,0 +1,55 @@
+# Static analysis (SAST) of the GitHub Actions workflows with GitHub CodeQL, on every pull request,
+# every push to main, weekly and on demand.
+#
+# Swift (CoincideKit and the app) is analyzed by codeql-swift.yml. Its extractor needs a macOS
+# runner and a full traced xcodebuild, so it runs weekly and on release tags only.
+
+name: CodeQL
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Weekly on Mondays.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to a pull request replaces its older analysis; pushes to main, the weekly schedule
+# and manual runs are never cancelled.
+concurrency:
+  group: codeql-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze (actions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # Upload results to code scanning.
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: actions
+          build-mode: none
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:actions

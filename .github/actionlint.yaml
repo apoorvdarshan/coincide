@@ -1,0 +1,5 @@
+# actionlint settings (https://github.com/rhysd/actionlint/blob/main/docs/config.md).
+self-hosted-runner:
+  # The GitHub-hosted macOS image with Xcode 27 that ci.yml and codeql-swift.yml run on.
+  labels:
+    - xcode-27
