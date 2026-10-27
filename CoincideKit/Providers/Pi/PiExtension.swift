@@ -80,22 +80,34 @@ enum PiExtension {
           /\bsudo\b/i, /\bsu\b/i, /\bkill\b/i, /\bpkill\b/i, /\bkillall\b/i, /\breboot\b/i, /\bshutdown\b/i,
           /\bsystemctl\s+(start|stop|restart|enable|disable)/i, /\bservice\s+\S+\s+(start|stop|restart)/i,
           /\b(vim?|nano|emacs|code|subl)\b/i,
-          // find can delete or run anything; awk can run commands; sed -i edits in place; curl can write files or send data.
-          /\s-(delete|exec|execdir|ok|okdir|fprint\w*)\b/, /\bsystem\s*\(/, /\bsed\b[^|;&]*\s-[a-zA-Z]*i/,
-          /\bcurl\b[^|;&]*\s(-[a-zA-Z]*[oOTdFX]|--(output|remote-name|upload-file|data[\w-]*|form|request|json))\b/,
+          // find can delete, write or run anything; sed -i edits in place; curl can write files or send data.
+          /\s-(delete|exec|execdir|ok|okdir|fprint\w*|fls)\b/, /\bsystem\s*\(/, /\bsed\b[^|;&]*\s-[a-zA-Z]*i/,
+          /\bcurl\b[^|;&]*\s(-[a-zA-Z]*[oOTdFXcDK]|--(output|remote-name|upload-file|data[\w-]*|form|request|json|dump-header|cookie-jar|config|trace[\w-]*|libcurl|stderr|etag-save|hsts|alt-svc)\b)/,
+          // git grep -O runs any command as a pager; log, diff and show --output write a file. Abbreviations count.
+          /\bgit\b[^|;&]*\s(-[a-zA-Z]*O|--op|--out)/,
+          /\bgit\s+remote\b[^|;&]*\s(add|remove|rm|rename|set-\w+|prune|update)\b/i,
+          /\bgit\s+reflog\b[^|;&]*\s(expire|delete)\b/i,
+          /\bnpm\s+audit\s+fix\b/i,
         ];
-        // Commands that only read. Every command of a pipeline, list or substitution has to be one of them.
+        // Commands that only read. Every command of a pipeline, list or substitution has to be one of them, so
+        // commands that can also run programs or write files are listed only in their reading forms (awk, fd,
+        // xxd and pagers not at all).
         const READ_ONLY_COMMANDS = [
-          /^cat\b/, /^head\b/, /^tail\b/, /^less\b/, /^more\b/, /^e?f?grep\b/, /^find\b/, /^ls\b/, /^pwd\b/, /^echo\b/,
-          /^printf\b/, /^wc\b/, /^sort\b/, /^uniq\b/, /^diff\b/, /^file\b/, /^stat\b/, /^du\b/, /^df\b/, /^tree\b/,
+          /^cat\b/, /^head\b/, /^tail\b/, /^e?f?grep\b/, /^find\b/, /^ls\b/, /^pwd\b/, /^echo\b/,
+          /^printf\b/, /^wc\b/, /^diff\b/, /^file\b/, /^stat\b/, /^du\b/, /^df\b/,
           /^which\b/, /^whereis\b/, /^type\b/, /^env$/, /^printenv\b/, /^uname\b/, /^whoami\b/, /^id\b/, /^date\b/,
           /^cal\b/, /^uptime\b/, /^ps\b/, /^top\b/, /^free\b/, /^nl\b/, /^cut\b/, /^tr\b/, /^column\b/, /^comm\b/,
           /^cmp\b/, /^basename\b/, /^dirname\b/, /^realpath\b/, /^readlink\b/, /^(md5|shasum|sha\d+sum)\b/,
-          /^xxd\b/, /^od\b/, /^hexdump\b/, /^strings\b/, /^cd\b/, /^pushd\b/, /^popd\b/, /^true\b/, /^false\b/,
-          /^git\s+(status|log|diff|show|branch|remote|config\s+--get|ls-|grep|blame|rev-parse|describe|shortlog|cat-file|reflog)/i,
+          /^od\b/, /^hexdump\b/, /^strings\b/, /^cd\b/, /^pushd\b/, /^popd\b/, /^true\b/, /^false\b/,
+          /^git\s+(status|log|diff|show|branch(\s+-[avrl]+|\s+--(list|all|remotes|verbose|show-current))*\s*$|remote(\s+-v|\s+show\b|\s+get-url\b|\s*$)|config\s+--get|ls-|grep|blame|rev-parse|describe|shortlog|cat-file|reflog)/i,
           /^npm\s+(list|ls|view|info|search|outdated|audit)/i, /^yarn\s+(list|info|why|audit)/i,
-          /^(node|python3?|swift|ruby|go|cargo|rustc)\s+-{0,2}version\b/i, /^curl\s/i, /^wget\s+-O\s*-/i, /^jq\b/,
-          /^sed\s+-n/i, /^awk\b/, /^rg\b/, /^fd\b/, /^bat\b/, /^eza\b/,
+          /^(node|python3?|swift|ruby|go|cargo|rustc)\s+-{0,2}version\b/i, /^curl\s/i, /^jq\b/, /^eza\b/,
+          // sort -o and --compress-program, tree -o, a second uniq operand: these write or run something.
+          /^sort\b(?!.*\s(-[a-zA-Z]*o|--o|--co))/, /^uniq(\s+-\S+)*(\s+[^\s-]\S*)?$/, /^tree\b(?!.*\s(-[a-zA-Z]*o|--o))/,
+          // rg --pre and --hostname-bin run a command; bat runs its pager.
+          /^rg\b(?!.*\s--(pre|hostname-bin)\b)/, /^bat\b(?!.*\s(--pag|--gen|cache\b))/,
+          // sed only printing lines by number: its w, W and e commands write files and run commands.
+          /^sed\s+-n\s+(['"]?)[\d\s,$;p]+\1(\s+[^\s-]\S*)*$/, /^wget\s+(-q\s+)?-O\s*-\s+[^\s-]\S*$/,
         ];
 
         // Splits a command at pipes, lists and command substitutions, outside quotes.
