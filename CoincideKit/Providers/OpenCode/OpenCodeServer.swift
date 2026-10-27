@@ -453,15 +453,16 @@ enum OpenCodeServerLedger {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         guard !files.isEmpty else { return }
         for file in files where file.pathExtension == "json" {
+            // A pid that does not fit pid_t makes the entry unreadable rather than trapping.
             guard let data = try? Data(contentsOf: file), let entry = JSONValue.parse(data),
-                let pid = entry["pid"]?.int, let start = entry["start"]?.number, let owner = entry["owner"]?.int,
-                let ownerStart = entry["ownerStart"]?.number
+                let pid = entry["pid"]?.int.flatMap({ pid_t(exactly: $0) }), let start = entry["start"]?.number,
+                let owner = entry["owner"]?.int.flatMap({ pid_t(exactly: $0) }), let ownerStart = entry["ownerStart"]?.number
             else {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }
-            if isRunning(Int32(owner), startedAt: ownerStart) { continue }
-            if isRunning(Int32(pid), startedAt: start) { kill(Int32(pid), SIGTERM) }
+            if isRunning(owner, startedAt: ownerStart) { continue }
+            if isRunning(pid, startedAt: start) { kill(pid, SIGTERM) }
             try? FileManager.default.removeItem(at: file)
         }
     }

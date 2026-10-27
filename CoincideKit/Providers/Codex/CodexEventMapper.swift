@@ -301,7 +301,8 @@ struct CodexEventMapper {
                 id: id, category: .other, title: String(localized: "Generate an image"),
                 detail: item["revisedPrompt"]?.string)
         case "sleep":
-            let seconds = Int(((item["durationMs"]?.number ?? 0) / 1000).rounded())
+            // An absurd duration that does not fit an Int shows as unknown (0), like a missing one.
+            let seconds = Int(exactly: ((item["durationMs"]?.number ?? 0) / 1000).rounded()) ?? 0
             return ToolCallInfo(id: id, category: .other, title: String(localized: "Wait \(seconds) s"))
         default:
             return nil

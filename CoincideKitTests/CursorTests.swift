@@ -635,6 +635,12 @@ struct CursorModelsTests {
         #expect(CursorModels.contextWindow("1M") == 1_000_000)
         #expect(CursorModels.contextWindow("200000") == 200_000)
         #expect(CursorModels.contextWindow("big") == nil)
+        // Sizes past Int's range are unknown rather than a trap, including a JSON number such as 1e19.
+        #expect(CursorModels.contextWindow("inf") == nil)
+        #expect(CursorModels.contextWindow("1e300k") == nil)
+        let huge = CursorConfigOption(["id": "context", "currentValue": .number(1e19)])
+        #expect(huge?.currentValue == "1e+19")
+        #expect(CursorModels.contextWindow(huge?.currentValue) == nil)
         #expect(CursorModels.contextWindow(modelID: "grok-4.7[context=256k,reasoning_effort=medium,fast=false]") == 256_000)
         #expect(CursorModels.contextWindow(modelID: "composer-2.5[fast=false]") == nil)
         #expect(CursorModels.contextWindow(modelID: "composer-2.5") == nil)

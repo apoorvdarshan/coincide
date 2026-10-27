@@ -525,6 +525,19 @@ struct CodexEventMapperTests {
             ])
     }
 
+    @Test func sleepDurationsPastIntsRangeDoNotTrap() throws {
+        var mapper = mapper()
+        let events = try mapper.feed([
+            #"{"method":"item/started","params":{"item":{"type":"sleep","id":"s-1","durationMs":1500},"threadId":"T","turnId":"R1","startedAtMs":1}}"#,
+            #"{"method":"item/started","params":{"item":{"type":"sleep","id":"s-2","durationMs":1e25},"threadId":"T","turnId":"R1","startedAtMs":2}}"#,
+        ])
+        #expect(
+            events == [
+                .toolStarted(ToolCallInfo(id: "s-1", category: .other, title: "Wait 2 s")),
+                .toolStarted(ToolCallInfo(id: "s-2", category: .other, title: "Wait 0 s")),
+            ])
+    }
+
     @Test func failedAndBlockingHooksAreReported() throws {
         var mapper = mapper()
         let events = try mapper.feed([

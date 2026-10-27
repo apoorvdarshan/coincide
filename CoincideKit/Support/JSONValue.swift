@@ -112,7 +112,9 @@ public enum JSONValue: Sendable, Hashable, Codable {
         case .null: return ""
         case .bool(let value): return value ? "true" : "false"
         case .number(let value):
-            return value.rounded() == value ? String(Int64(value)) : String(value)
+            // A whole number past Int64's range (an id of 1e19, say) keeps its floating-point spelling.
+            if value.rounded() == value, let integer = Int64(exactly: value) { return String(integer) }
+            return String(value)
         case .string(let value): return value
         case .array, .object: return compactJSON
         }

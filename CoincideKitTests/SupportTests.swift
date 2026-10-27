@@ -41,4 +41,16 @@ struct SupportTests {
         #expect(JSONValue.number(1e20).exactInt == nil)
         #expect(JSONValue.string("3").exactInt == nil)
     }
+
+    @Test func wholeNumbersPastInt64DisplayWithoutTrapping() throws {
+        // An agent's JSON-RPC id is matched by its displayText; these used to trap converting to Int64.
+        for text in ["1e19", "-9.3e18", "9223372036854775808", "-1e300"] {
+            let value = try #require(JSONValue.parse(text))
+            #expect(Double(value.displayText) == value.number, "\(text) displays as \(value.displayText)")
+        }
+        #expect(JSONValue.parse(#"{"id":1e19}"#)?["id"]?.displayText == "1e+19")
+        #expect(JSONValue.number(-9_223_372_036_854_775_808).displayText == "-9223372036854775808")
+        #expect(JSONValue.number(42).displayText == "42")
+        #expect(JSONValue.number(1.5).displayText == "1.5")
+    }
 }

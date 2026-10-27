@@ -106,7 +106,8 @@ enum CursorModels {
             text.removeLast()
         }
         guard let number = Double(text), number > 0 else { return nil }
-        return Int(number * Double(multiplier))
+        // nil for a size too large for an Int (`1e19`, `inf`) rather than trapping.
+        return Int(exactly: (number * Double(multiplier)).rounded(.towardZero))
     }
 
     /// The `context` parameter of a bracketed model id such as `grok-4.7[context=256k,fast=false]`.
