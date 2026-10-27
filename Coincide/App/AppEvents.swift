@@ -1,4 +1,5 @@
 import Foundation
+import CoincideKit
 
 /// App-wide requests that cross view controllers. Post with `AppEvents`, observe with NotificationCenter.
 extension Notification.Name {
@@ -12,7 +13,8 @@ extension Notification.Name {
     static let coincideToggleSidebar = Notification.Name("coincide.toggleSidebar")
     static let coincideFocusComposer = Notification.Name("coincide.focusComposer")
     static let coincideShowCommandPalette = Notification.Name("coincide.showCommandPalette")
-    /// userInfo["section"]: String (SettingsSection raw value), optional
+    /// userInfo["section"]: String (SettingsSection raw value), optional;
+    /// userInfo["provider"]: String (ProviderKind raw value), optional
     static let coincideShowSettings = Notification.Name("coincide.showSettings")
 }
 
@@ -25,6 +27,13 @@ enum AppEvents {
         var info: [String: Any] = [:]
         if let projectID { info["projectID"] = projectID }
         NotificationCenter.default.post(name: .coincideNewThread, object: nil, userInfo: info)
+    }
+
+    static func showSettings(section: SettingsSection? = nil, provider: ProviderKind? = nil) {
+        var info: [String: Any] = [:]
+        if let section { info["section"] = section.rawValue }
+        if let provider { info["provider"] = provider.rawValue }
+        NotificationCenter.default.post(name: .coincideShowSettings, object: nil, userInfo: info)
     }
 
     static func post(_ name: Notification.Name, _ info: [String: Any] = [:]) {
