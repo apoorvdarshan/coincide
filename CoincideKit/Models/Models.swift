@@ -178,16 +178,88 @@ public struct ApprovalOption: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+/// A text field shown with an approval, for agents that want typed input along with the choice.
+public struct TextInputSpec: Codable, Hashable, Sendable {
+    public var placeholder: String?
+    public var initialText: String?
+    public var isMultiline: Bool
+
+    public nonisolated init(placeholder: String? = nil, initialText: String? = nil, isMultiline: Bool = false) {
+        self.placeholder = placeholder
+        self.initialText = initialText
+        self.isMultiline = isMultiline
+    }
+}
+
 public struct ApprovalInfo: Codable, Hashable, Sendable {
     public var requestID: String
     public var options: [ApprovalOption]
     /// Label of the option the user picked, or a note when the agent resolved it.
     public var resolution: String?
+    public var textInput: TextInputSpec?
+    /// Text the user sent with their choice.
+    public var responseText: String?
 
-    public nonisolated init(requestID: String, options: [ApprovalOption], resolution: String? = nil) {
+    public nonisolated init(
+        requestID: String, options: [ApprovalOption], resolution: String? = nil, textInput: TextInputSpec? = nil,
+        responseText: String? = nil
+    ) {
         self.requestID = requestID
         self.options = options
         self.resolution = resolution
+        self.textInput = textInput
+        self.responseText = responseText
+    }
+}
+
+/// One question an agent asks the user.
+public struct UserQuestion: Codable, Hashable, Sendable, Identifiable {
+    public struct Option: Codable, Hashable, Sendable {
+        public var label: String
+        public var detail: String?
+
+        public nonisolated init(label: String, detail: String? = nil) {
+            self.label = label
+            self.detail = detail
+        }
+    }
+
+    public var id: String
+    /// Short label, e.g. "Database".
+    public var header: String?
+    public var prompt: String
+    public var options: [Option]
+    public var allowsMultipleSelection: Bool
+    /// Whether the user may type their own answer instead of (or besides) picking an option.
+    public var allowsFreeText: Bool
+    /// The answer should be entered in a secure field and not echoed into the transcript.
+    public var isSecret: Bool
+
+    public nonisolated init(
+        id: String, header: String? = nil, prompt: String, options: [Option] = [], allowsMultipleSelection: Bool = false,
+        allowsFreeText: Bool = true, isSecret: Bool = false
+    ) {
+        self.id = id
+        self.header = header
+        self.prompt = prompt
+        self.options = options
+        self.allowsMultipleSelection = allowsMultipleSelection
+        self.allowsFreeText = allowsFreeText
+        self.isSecret = isSecret
+    }
+}
+
+/// A set of questions an agent asks in one go.
+public struct UserInputRequest: Codable, Hashable, Sendable {
+    /// Id the session needs back in `answer(userInput:answers:)`.
+    public var id: String
+    public var title: String?
+    public var questions: [UserQuestion]
+
+    public nonisolated init(id: String, title: String? = nil, questions: [UserQuestion]) {
+        self.id = id
+        self.title = title
+        self.questions = questions
     }
 }
 
@@ -198,6 +270,7 @@ public struct ApprovalInfo: Codable, Hashable, Sendable {
 /// - assistant / reasoning / plan / error / notice: `text` is the (markdown) body.
 /// - tool: `title` is a short label, `detail` the input (full command, diff, JSON), `text` the output.
 /// - approval: `title`/`detail` describe the request, `approval` holds the choices.
+/// - question: `questions` holds what the agent asked, `answers` what the user replied (question id → values).
 public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
     public enum Kind: String, Codable, Sendable {
         case user
@@ -208,6 +281,7 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
         case plan
         case error
         case notice
+        case question
     }
 
     public var id: UUID
@@ -222,6 +296,8 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
     /// The provider's id for the item, used to apply streamed updates.
     public var externalID: String?
     public var approval: ApprovalInfo?
+    public var questions: UserInputRequest?
+    public var answers: [String: [String]]?
     public var attachments: [String]?
     public var createdAt: Date
     public var completedAt: Date?
@@ -229,7 +305,8 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
     public nonisolated init(
         id: UUID = UUID(), kind: Kind, text: String = "", title: String? = nil, detail: String? = nil,
         category: ToolCategory? = nil, status: ItemStatus? = nil, provider: ProviderKind? = nil,
-        modelID: String? = nil, externalID: String? = nil, approval: ApprovalInfo? = nil, attachments: [String]? = nil,
+        modelID: String? = nil, externalID: String? = nil, approval: ApprovalInfo? = nil,
+        questions: UserInputRequest? = nil, answers: [String: [String]]? = nil, attachments: [String]? = nil,
         createdAt: Date = Date(), completedAt: Date? = nil
     ) {
         self.id = id
@@ -243,6 +320,8 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
         self.modelID = modelID
         self.externalID = externalID
         self.approval = approval
+        self.questions = questions
+        self.answers = answers
         self.attachments = attachments
         self.createdAt = createdAt
         self.completedAt = completedAt
