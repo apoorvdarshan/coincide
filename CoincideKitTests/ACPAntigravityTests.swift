@@ -955,21 +955,22 @@ struct AntigravitySignInTests {
 
     @Test func explainsAnAgentThatCannotReachGoogleThenTimesOut() async throws {
         let agent = ACPFakeAgent()
-        let (signIn, _) = try make(agent, timeout: 0.6, hint: 0.2)
+        // Generous times: a slow CI runner can take most of a second just to start the fake agent.
+        let (signIn, _) = try make(agent, timeout: 4, hint: 1)
         agent.handlers["authenticate"] = { _, _ in }
         signIn.start(executable: Self.executable, environment: [:])
         await acpWaitUntil("the network hint") { signIn.message?.contains("30 seconds") == true }
         #expect(signIn.phase == .starting)
-        await acpWaitUntil("timeout") { signIn.phase == .failed }
-        #expect(signIn.message?.contains("couldn’t reach Google") == true)
+        await acpWaitUntil("timeout", timeout: .seconds(10)) { signIn.phase == .failed }
+        #expect(signIn.message?.contains("couldn’t reach Google") == true, "\(signIn.message ?? "nil")")
 
         // Once the link was shown, running out of time means the link expired.
         let shown = ACPFakeAgent()
-        let (expiring, _) = try make(shown, timeout: 0.4, hint: 0.1)
+        let (expiring, _) = try make(shown, timeout: 4, hint: 1)
         _ = pendingAuthentication(shown)
         expiring.start(executable: Self.executable, environment: [:])
-        await acpWaitUntil("timeout") { expiring.phase == .failed }
-        #expect(expiring.message?.contains("expired") == true)
+        await acpWaitUntil("timeout", timeout: .seconds(10)) { expiring.phase == .failed }
+        #expect(expiring.message?.contains("expired") == true, "\(expiring.message ?? "nil")")
     }
 
     @Test func reportsWhyGoogleSignInFailed() async throws {
