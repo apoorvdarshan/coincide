@@ -1,0 +1,80 @@
+name: Coincide
+options:
+  bundleIdPrefix: com.apoorvdarshan
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    SWIFT_EMIT_LOC_STRINGS: YES
+targets:
+  CoincideKit:
+    type: framework
+    platform: macOS
+    sources:
+      - path: CoincideKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.kit
+        # Kit code states its isolation explicitly (@MainActor on stores, registry, runner and sessions).
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        DEFINES_MODULE: YES
+  Coincide:
+    type: application
+    platform: macOS
+    sources:
+      - path: Coincide
+    dependencies:
+      - target: CoincideKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide
+        PRODUCT_NAME: Coincide
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Coincide
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Apoorv Darshan"
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_APP_SANDBOX: NO
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+  CoincideKitTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: CoincideKitTests
+    dependencies:
+      - target: CoincideKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.tests
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Coincide:
+    build:
+      targets:
+        Coincide: all
+        CoincideKit: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - CoincideKitTests
+    archive:
+      config: Release

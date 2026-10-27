@@ -1,0 +1,106 @@
+import Foundation
+
+/// Builds the recap a provider gets when other providers worked on the thread since it last ran.
+/// Each provider keeps its own native session; it only needs to hear about turns it missed.
+public enum Handoff {
+    /// Character budget for the recap, so a long thread does not flood the next model's context.
+    public nonisolated static let defaultBudget = 24_000
+
+    /// Returns the items `provider` has not seen, or an empty slice when its session is current.
+    public nonisolated static func missedItems(in thread: ChatThread, for provider: ProviderKind) -> ArraySlice<TranscriptItem> {
+        let start = min(thread.sessions[provider]?.seenItemCount ?? 0, thread.items.count)
+        guard start < thread.items.count else { return [] }
+        let missed = thread.items[start...]
+        let fromOthers = missed.contains { item in
+            switch item.kind {
+            case .user, .notice: return false
+            default: return item.provider != nil && item.provider != provider
+            }
+        }
+        let hasUserTurns = missed.contains { $0.kind == .user }
+        return fromOthers || (thread.sessions[provider] == nil && hasUserTurns) ? missed : []
+    }
+
+    /// Wraps the user's message with a recap of what happened while this provider was away.
+    /// `thread` must not yet contain the new message.
+    public nonisolated static func prompt(
+        for message: String, thread: ChatThread, provider: ProviderKind, budget: Int = defaultBudget
+    ) -> String {
+        let missed = missedItems(in: thread, for: provider)
+        guard !missed.isEmpty else { return message }
+        let recap = transcript(Array(missed), budget: budget)
+        guard !recap.isEmpty else { return message }
+        let firstTime = thread.sessions[provider] == nil
+        let intro =
+            firstTime
+            ? "You are joining an existing conversation in Coincide, a desktop app that lets the user switch coding agents mid-thread. Earlier turns were handled by other agents in this same working directory. Here is the conversation so far:"
+            : "While you were away, the user continued this conversation with other coding agents in this same working directory. Here is what happened since your last reply:"
+        return """
+            <conversation_handoff>
+            \(intro)
+
+            \(recap)
+            </conversation_handoff>
+
+            Continue from here. Files on disk already reflect the work above. The user's new message:
+
+            \(message)
+            """
+    }
+
+    /// A compact, plain-text transcript. Keeps the most recent entries when over budget.
+    public nonisolated static func transcript(_ items: [TranscriptItem], budget: Int) -> String {
+        let blocks = items.compactMap(render)
+        var total = 0
+        var kept: [String] = []
+        for block in blocks.reversed() {
+            if total + block.count > budget {
+                kept.append("[… \(blocks.count - kept.count) earlier entries omitted …]")
+                break
+            }
+            kept.append(block)
+            total += block.count + 2
+        }
+        return kept.reversed().joined(separator: "\n\n")
+    }
+
+    private nonisolated static func agentLabel(_ item: TranscriptItem) -> String {
+        guard let provider = item.provider else { return "Agent" }
+        if let model = item.modelID, !model.isEmpty, model != "default" { return "\(provider.displayName) (\(model))" }
+        return provider.displayName
+    }
+
+    private nonisolated static func render(_ item: TranscriptItem) -> String? {
+        switch item.kind {
+        case .user:
+            var text = "User:\n\(item.text)"
+            if let attachments = item.attachments, !attachments.isEmpty {
+                text += "\n[attached: \(attachments.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))]"
+            }
+            return text
+        case .assistant:
+            let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : "\(agentLabel(item)):\n\(text)"
+        case .tool:
+            let status = item.status.map { " [\($0.rawValue)]" } ?? ""
+            var line = "\(agentLabel(item)) tool\(status): \(item.title ?? item.text)"
+            let output = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if item.category == .command, !output.isEmpty {
+                line += "\n" + truncateMiddle(output, limit: 600)
+            }
+            return line
+        case .plan:
+            return "\(agentLabel(item)) plan:\n\(item.text)"
+        case .error:
+            return "Error: \(item.text)"
+        case .reasoning, .approval, .notice:
+            return nil
+        }
+    }
+
+    nonisolated static func truncateMiddle(_ text: String, limit: Int) -> String {
+        guard text.count > limit else { return text }
+        let half = limit / 2
+        return String(text.prefix(half)) + "\n…\n" + String(text.suffix(half))
+    }
+}
