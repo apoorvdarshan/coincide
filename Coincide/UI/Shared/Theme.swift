@@ -27,6 +27,15 @@ enum Theme {
     static var warning: NSColor { .systemOrange }
     static let addition = dynamic(.systemGreen, alpha: 0.16)
     static let deletion = dynamic(.systemRed, alpha: 0.16)
+    /// The outline of a card that waits for the user.
+    static let waitingStroke = dynamic(.systemOrange, alpha: 0.45)
+    static let failureFill = dynamic(.systemRed, alpha: 0.07)
+    static let failureStroke = dynamic(.systemRed, alpha: 0.3)
+    /// Glass tints of the banners above the composer.
+    static let approvalTint = dynamic(.systemOrange, alpha: 0.1)
+    static let questionTint = dynamic(.controlAccentColor, alpha: 0.08)
+    static let dropTint = dynamic(.controlAccentColor, alpha: 0.12)
+    static let tableHeaderFill = dynamic(.labelColor, alpha: 0.04)
 
     /// `withAlphaComponent` resolves a dynamic color once, for whatever appearance is current, so colors
     /// kept on views or layers would go stale after a light/dark switch. This one re-resolves per appearance.
