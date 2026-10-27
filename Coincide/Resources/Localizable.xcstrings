@@ -99,6 +99,9 @@
     "%@ needs you to sign in before it can continue." : {
 
     },
+    "%@ needs your input" : {
+
+    },
     "%@ no longer exists. Starting in %@." : {
       "localizations" : {
         "en" : {
@@ -585,6 +588,9 @@
     "Always block %@" : {
 
     },
+    "An MCP server" : {
+
+    },
     "An agent is still working." : {
 
     },
@@ -854,7 +860,13 @@
     "Claude Code" : {
 
     },
+    "Claude Code accepted the message but never started working on it." : {
+
+    },
     "Claude Code could not be started: %@" : {
+
+    },
+    "Claude Code could not find this thread's saved conversation, so it started a new one without the earlier messages." : {
 
     },
     "Claude Code exited before finishing the turn." : {
@@ -894,6 +906,9 @@
 
     },
     "Claude Code reported an error." : {
+
+    },
+    "Claude Code restarted to apply the new settings, which stopped its background work: %@." : {
 
     },
     "Claude Code v%@ is too old for %@. Upgrade to v%@ or newer to use it." : {
@@ -2239,6 +2254,9 @@
     "Name" : {
 
     },
+    "Needs access to %@" : {
+
+    },
     "Needs approval" : {
 
     },
@@ -2470,6 +2488,9 @@
     "Open or close the selected entry" : {
 
     },
+    "Open this link and finish there, then continue:\n%@" : {
+
+    },
     "OpenAI API key" : {
 
     },
@@ -2520,9 +2541,6 @@
 
     },
     "Output tokens" : {
-
-    },
-    "Outside the allowed folders: %@" : {
 
     },
     "Overview" : {
