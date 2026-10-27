@@ -27,8 +27,8 @@ public final class ThreadRunner {
         /// `send` was called (or the agent started the turn), so the provider may be running it.
         var promptSent = false
         /// Once the turn ends, the provider's session has seen the whole thread: it got the prompt (`send`
-        /// returned while the turn ran, or the turn produced output), or for a turn it started itself,
-        /// it had already seen everything before. Only then are the turn's items counted as seen.
+        /// returned while the turn ran, or the turn produced output after the prompt was sent), or for a turn
+        /// it started itself, it had already seen everything before. Only then are the turn's items counted as seen.
         var delivered = false
 
         init(provider: ProviderKind, startedAt: Date, userItemID: UUID) {
@@ -431,9 +431,10 @@ public final class ThreadRunner {
     private func handle(_ event: AgentEvent, threadID: UUID, provider: ProviderKind, session: AgentSession) {
         lastActivity[threadID, default: [:]][provider] = Date()
         let modelID = store.thread(threadID)?.selection.modelID
-        // Output from the provider of the running turn shows it has the prompt.
+        // Output from the provider of the running turn shows it has the prompt, once the prompt was sent.
+        // Before that it comes from something else, such as a turn the agent started on its own meanwhile.
         let turnOfProvider = turns[threadID]?.provider == provider
-        if turnOfProvider, turns[threadID]?.isAgentInitiated == false, Self.showsDelivery(event) {
+        if turnOfProvider, let turn = turns[threadID], !turn.isAgentInitiated, turn.promptSent, Self.showsDelivery(event) {
             turns[threadID]?.delivered = true
         }
         switch event {

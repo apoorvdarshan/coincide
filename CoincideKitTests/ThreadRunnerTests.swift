@@ -238,6 +238,46 @@ struct ThreadRunnerTests {
         #expect(store.thread(threadID)!.sessions[.claude]!.seenItemCount == items.count)
     }
 
+    @Test func outputBeforeThePromptIsSentDoesNotCountAsDelivery() async {
+        await completeTurn("one", reply: "Claude did it")
+        select(.codex)
+        await completeTurn("two", reply: "Codex did it")
+        select(.claude)
+        let seen = store.thread(threadID)!.sessions[.claude]!.seenItemCount
+        runner.shutdown(threadID: threadID, provider: .claude)
+
+        // While Claude's next process starts, it answers a finished background task on its own.
+        let ownOutput: (ScriptedSession) -> Void = { session in
+            session.emit(.agentTurnStarted(note: nil))
+            session.emit(.assistantTextDelta(itemID: UUID().uuidString, delta: "The background tests passed."))
+        }
+        // The prompt then never reaches it: sending fails…
+        claude.configure = { session in
+            session.onStart = { ownOutput($0) }
+            session.onSend = { _, _ in throw AgentError.providerError("could not relaunch") }
+        }
+        await runner.send(threadID: threadID, text: "three")
+        #expect(items.last?.kind == .error)
+        #expect(store.thread(threadID)!.sessions[.claude]!.seenItemCount == seen)
+
+        // …or the process exits before the prompt is handed over.
+        runner.shutdown(threadID: threadID, provider: .claude)
+        claude.configure = { session in
+            session.onStart = { session in
+                ownOutput(session)
+                throw AgentError.providerError("exited")
+            }
+        }
+        await runner.send(threadID: threadID, text: "four")
+        #expect(items.last?.kind == .error)
+        #expect(store.thread(threadID)!.sessions[.claude]!.seenItemCount == seen)
+
+        // The next prompt that gets through still recaps Codex's turn.
+        claude.configure = { session in session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) } }
+        await runner.send(threadID: threadID, text: "five")
+        #expect(claude.last?.sent.last?.handoffRecap?.contains("Codex did it") == true)
+    }
+
     @Test func theInputCarriesTheRecapForANewNativeSession() async {
         await completeTurn("one", reply: "Claude did it")
         select(.codex)
