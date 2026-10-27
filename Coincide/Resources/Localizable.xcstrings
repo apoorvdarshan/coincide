@@ -32,6 +32,9 @@
     "%@ asks for permission" : {
 
     },
+    "%@ can't take messages while it works." : {
+
+    },
     "%@ cannot resume sessions." : {
 
     },
@@ -149,6 +152,32 @@
     "%@ support is not available yet." : {
 
     },
+    "%@ usage limit reached." : {
+
+    },
+    "%@ usage limit reached. The %@ limit resets in %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ usage limit reached. The %2$@ limit resets in %3$@."
+          }
+        }
+      }
+    },
+    "%@ usage limits" : {
+
+    },
+    "%@ usage limits. %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ usage limits. %2$@"
+          }
+        }
+      }
+    },
     "%@ · %@. Choose the agent and model (⇧⌘M)" : {
       "localizations" : {
         "en" : {
@@ -251,6 +280,16 @@
     "%@, waiting" : {
 
     },
+    "%@: %lld%% left" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: %2$lld%% left"
+          }
+        }
+      }
+    },
     "%@: “%@”" : {
       "localizations" : {
         "en" : {
@@ -344,6 +383,52 @@
 
     },
     "%lld results" : {
+
+    },
+    "%lld%% left" : {
+
+    },
+    "%lld%% of your %@ %@ limit is used." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld%% of your %2$@ %3$@ limit is used."
+          }
+        }
+      }
+    },
+    "%lld%% of your %@ %@ limit is used. It resets in %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld%% of your %2$@ %3$@ limit is used. It resets in %4$@."
+          }
+        }
+      }
+    },
+    "%lldd %lldh" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lldd %2$lldh"
+          }
+        }
+      }
+    },
+    "%lldh %lldm" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lldh %2$lldm"
+          }
+        }
+      }
+    },
+    "%lldm" : {
 
     },
     "(default: %@)" : {
@@ -538,6 +623,9 @@
 
     },
     "Agents run commands and edit files without asking." : {
+
+    },
+    "Ahead of pace" : {
 
     },
     "Alerts" : {
@@ -897,6 +985,9 @@
     "Claude Code accepted the message but never started working on it." : {
 
     },
+    "Claude Code can't take a message for this turn now." : {
+
+    },
     "Claude Code continued on its own." : {
 
     },
@@ -1052,6 +1143,9 @@
 
     },
     "Codex CLI is not signed in. Run `codex login` and try again." : {
+
+    },
+    "Codex can't take a message for this turn now." : {
 
     },
     "Codex could not finish the turn." : {
@@ -2268,6 +2362,15 @@
     "Monitor `%@`" : {
 
     },
+    "Monthly" : {
+
+    },
+    "Monthly credit limit" : {
+
+    },
+    "Monthly spend" : {
+
+    },
     "More %@ Models" : {
 
     },
@@ -2423,6 +2526,9 @@
     "No folders match this path." : {
 
     },
+    "No limits reported." : {
+
+    },
     "No local commits to push." : {
 
     },
@@ -2522,6 +2628,9 @@
     "Offer its models in the model picker and let threads run it." : {
 
     },
+    "On pace" : {
+
+    },
     "One window for the coding agents you already use. Switch agents mid-thread while each keeps its own session." : {
 
     },
@@ -2580,6 +2689,9 @@
         }
       }
     },
+    "OpenCode can't take a message for this turn now." : {
+
+    },
     "OpenCode could not list its models: %@" : {
 
     },
@@ -2617,6 +2729,9 @@
 
     },
     "Option" : {
+
+    },
+    "Other" : {
 
     },
     "Output tokens" : {
@@ -2668,6 +2783,9 @@
     "Pi asks you to edit text" : {
 
     },
+    "Pi can't take a message for this turn now." : {
+
+    },
     "Pi cannot use the image %@." : {
 
     },
@@ -2686,6 +2804,9 @@
           }
         }
       }
+    },
+    "Pi could not take your message: %@" : {
+
     },
     "Pi did not answer “%@” in time." : {
 
@@ -2884,6 +3005,9 @@
     "Queue message. It is sent when the current turn finishes." : {
 
     },
+    "Queued for after the current turn" : {
+
+    },
     "Queued: %@" : {
 
     },
@@ -3059,6 +3183,9 @@
 
     },
     "Reset Font Size" : {
+
+    },
+    "Resets %@" : {
 
     },
     "Resolved by the agent" : {
@@ -3330,7 +3457,16 @@
     "Send messages with" : {
 
     },
+    "Send now, into the current turn" : {
+
+    },
+    "Sent into the current turn" : {
+
+    },
     "Services" : {
+
+    },
+    "Session" : {
 
     },
     "Session not found: %@" : {
@@ -3412,6 +3548,9 @@
 
     },
     "Show reasoning" : {
+
+    },
+    "Show this agent's usage limits" : {
 
     },
     "Show thread numbers for ⌘1…⌘9" : {
@@ -3499,6 +3638,15 @@
 
     },
     "Status" : {
+
+    },
+    "Steer message" : {
+
+    },
+    "Steer: send into the current turn (↩). ⌘↩ or ⌘-click queues it for after the turn." : {
+
+    },
+    "Steer: send into the current turn (⌘↩). ⇧⌘↩ or ⌘-click queues it for after the turn." : {
 
     },
     "Step %lld" : {
@@ -3707,6 +3855,9 @@
           }
         }
       }
+    },
+    "The mark shows where even spending across the window would be." : {
+
     },
     "The model declined to continue." : {
 
@@ -3936,6 +4087,9 @@
     "Uncommitted Changes" : {
 
     },
+    "Under pace" : {
+
+    },
     "Undo" : {
 
     },
@@ -3961,6 +4115,9 @@
 
     },
     "Update todos" : {
+
+    },
+    "Updated %@" : {
 
     },
     "Updated the plan" : {
@@ -4059,6 +4216,12 @@
 
     },
     "Web search" : {
+
+    },
+    "Weekly" : {
+
+    },
+    "Weekly · %@" : {
 
     },
     "What should change? (optional)" : {
@@ -4200,6 +4363,15 @@
 
     },
     "ready" : {
+
+    },
+    "resets in %@" : {
+
+    },
+    "resets momentarily" : {
+
+    },
+    "resets now" : {
 
     },
     "status %lld" : {
