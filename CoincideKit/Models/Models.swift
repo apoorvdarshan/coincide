@@ -369,6 +369,13 @@ public struct ProviderSessionRef: Codable, Hashable, Sendable {
         self.sessionID = sessionID
         self.seenItemCount = seenItemCount
     }
+
+    /// A negative count, which only a damaged file could hold, loads as 0 (nothing seen).
+    public nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionID = try container.decode(String.self, forKey: .sessionID)
+        seenItemCount = max(try container.decode(Int.self, forKey: .seenItemCount), 0)
+    }
 }
 
 public struct ChatThread: Codable, Hashable, Sendable, Identifiable {

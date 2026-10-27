@@ -70,6 +70,27 @@ struct HandoffTests {
         #expect(prompt.contains("joining an existing conversation"))
     }
 
+    @Test func negativeSeenCountMeansNothingSeen() throws {
+        let items = [
+            TranscriptItem(kind: .user, text: "fix the bug", provider: .claude),
+            TranscriptItem(kind: .assistant, text: "Done.", provider: .claude),
+        ]
+        // Only a damaged thread file holds a negative count; it used to trap with a negative array index.
+        let damaged = thread(items, sessions: [.claude: ProviderSessionRef(sessionID: "a", seenItemCount: -1)])
+        #expect(Handoff.missedItems(in: damaged, for: .claude) == items[...])
+        #expect(Handoff.recap(thread: damaged, provider: .claude)?.contains("joining an existing conversation") == true)
+        let empty = thread([], sessions: [.claude: ProviderSessionRef(sessionID: "a", seenItemCount: -1)])
+        #expect(Handoff.missedItems(in: empty, for: .claude).isEmpty)
+
+        // Loading such a file reads the count as 0.
+        let json = """
+            {"id":"\(UUID().uuidString)","projectID":"\(UUID().uuidString)",
+             "sessions":["claude",{"sessionID":"c","seenItemCount":-1},"codex",{"sessionID":"x","seenItemCount":2}]}
+            """
+        let loaded = try JSONDecoder().decode(ChatThread.self, from: Data(json.utf8))
+        #expect(loaded.sessions == [.claude: ProviderSessionRef(sessionID: "c", seenItemCount: 0), .codex: ProviderSessionRef(sessionID: "x", seenItemCount: 2)])
+    }
+
     @Test func recapKeepsMostRecentWithinBudget() {
         let items = (0..<50).map { TranscriptItem(kind: .assistant, text: String(repeating: "x", count: 100) + "\($0)", provider: .codex) }
         let text = Handoff.transcript(items, budget: 1_000)

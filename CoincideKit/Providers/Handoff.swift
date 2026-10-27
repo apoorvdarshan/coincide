@@ -8,7 +8,9 @@ public enum Handoff {
 
     /// Returns the items `provider` has not seen, or an empty slice when its session is current.
     public nonisolated static func missedItems(in thread: ChatThread, for provider: ProviderKind) -> ArraySlice<TranscriptItem> {
-        let start = min(thread.sessions[provider]?.seenItemCount ?? 0, thread.items.count)
+        // A negative count (only a damaged thread file could hold one) means nothing seen.
+        let seen = max(thread.sessions[provider]?.seenItemCount ?? 0, 0)
+        let start = min(seen, thread.items.count)
         guard start < thread.items.count else { return [] }
         let missed = thread.items[start...]
         let fromOthers = missed.contains { item in
@@ -19,7 +21,7 @@ public enum Handoff {
         }
         let hasUserTurns = missed.contains { $0.kind == .user }
         // A session that has seen nothing (new, or a fresh one after a failed resume) needs everything.
-        let seenNothing = (thread.sessions[provider]?.seenItemCount ?? 0) == 0
+        let seenNothing = seen == 0
         return fromOthers || (seenNothing && hasUserTurns) ? missed : []
     }
 
@@ -38,7 +40,7 @@ public enum Handoff {
         guard !missed.isEmpty else { return nil }
         let recap = neutralizingBlockTags(transcript(Array(missed), budget: budget))
         guard !recap.isEmpty else { return nil }
-        let firstTime = (thread.sessions[provider]?.seenItemCount ?? 0) == 0
+        let firstTime = (thread.sessions[provider]?.seenItemCount ?? 0) <= 0
         let intro =
             firstTime
             ? "You are joining an existing conversation in Coincide, a desktop app that lets the user switch coding agents mid-thread. Earlier turns were handled by other agents in this same working directory. Here is the conversation so far:"
