@@ -25,6 +25,13 @@ struct ACPSessionTests {
         ]
     }
 
+    private func promptText(_ agent: ACPFakeAgent, _ index: Int = -1) -> String? {
+        let prompts = agent.requests("session/prompt")
+        guard !prompts.isEmpty else { return nil }
+        let prompt = prompts[index < 0 ? prompts.count + index : index]
+        return prompt["prompt"]?[0]?["text"]?.string
+    }
+
     private static let grokOptions = [
         ("allow-once", "allow_once"), ("allow-always", "allow_always"), ("reject-once", "reject_once"),
     ]
@@ -44,11 +51,15 @@ struct ACPSessionTests {
         #expect(initialize["protocolVersion"] == 1)
         #expect(initialize.at("clientCapabilities.fs.readTextFile") == false)
         #expect(initialize.at("clientCapabilities.terminal") == false)
+        // Like T3 Code, Coincide takes session notices and form elicitations.
+        #expect(initialize.at("clientCapabilities.session.notices") == [:])
+        #expect(initialize.at("clientCapabilities.elicitation.form") == [:])
         #expect(initialize["_meta"] == ["clientType": "extension"])
         #expect(initialize.at("clientInfo.name") == "coincide")
         #expect(agent.requests("session/new").first?["cwd"] == .string(launch.workingDirectory.path))
         #expect(agent.requests("session/new").first?["mcpServers"] == [])
         #expect(agent.transport.arguments == ["--permission-mode", "default", "agent", "stdio"])
+        #expect(log.events.contains(.modelResolved("grok-4.7")))
         let models = log.events.compactMap { if case .modelsDiscovered(let models) = $0 { models } else { nil } }.first
         #expect(models?.map(\.modelID) == ["grok-build", "grok-4.7", "grok-4.6"])
     }
@@ -69,6 +80,44 @@ struct ACPSessionTests {
         #expect(session.sessionID == "old-1")
         #expect(log.events == [.sessionStarted(id: "old-1")])
         #expect(agent.requests("session/new").isEmpty)
+    }
+
+    @Test func loadEndsOnceTheReplayGoesQuietEvenWithoutAnAnswer() async throws {
+        let agent = ACPFakeAgent()
+        agent.handlers["session/load"] = { _, _ in
+            agent.update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "replayed"]], session: "old-2")
+            agent.update(
+                [
+                    "sessionUpdate": "config_option_update",
+                    "configOptions": [
+                        [
+                            "id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "m1",
+                            "options": [["value": "m1", "name": "M1"]],
+                        ]
+                    ],
+                ], session: "old-2")
+        }
+        let (session, log) = makeSession(agent, flavor: ACPPlainFlavor(), launch: acpLaunch(resume: "old-2"))
+        session.replayIdleGap = 0.1
+        try await session.start()
+
+        #expect(session.sessionID == "old-2")
+        #expect(log.sessionIDs == ["old-2"])
+        #expect(!log.events.contains { if case .assistantTextDelta = $0 { true } else { false } })
+        // Configuration sent during the replay is kept.
+        #expect(log.events.contains(.modelResolved("m1")))
+    }
+
+    @Test func resumeUnderANewIDContinuesTheSession() async throws {
+        let agent = ACPFakeAgent()
+        agent.initializeResult = json(#"{"protocolVersion":1,"agentCapabilities":{"loadSession":false,"sessionCapabilities":{"resume":{}}}}"#)
+        agent.loadResult = ["sessionId": "forked-1"]
+        let (session, log) = makeSession(agent, flavor: ACPPlainFlavor(), launch: acpLaunch(resume: "old-3"))
+        try await session.start()
+        #expect(agent.requests("session/resume").first?["sessionId"] == "old-3")
+        #expect(session.sessionID == "forked-1")
+        #expect(log.events.contains(.sessionContinued(id: "forked-1")))
+        #expect(log.sessionIDs.isEmpty)
     }
 
     @Test func failedResumeStartsAFreshSession() async throws {
@@ -100,6 +149,39 @@ struct ACPSessionTests {
         #expect(session.sessionID == "sess-1")
     }
 
+    @Test func signInUsesOnlyMethodsTheAgentCanRunByItself() async throws {
+        // The configured method must be one the agent lists.
+        let unlisted = ACPFakeAgent()
+        unlisted.initializeResult = json(#"{"protocolVersion":1,"authMethods":[{"id":"cached_token","name":"Cached"}]}"#)
+        unlisted.handlers["session/new"] = { id, _ in unlisted.fail(id, code: ACPError.authRequired, message: "Authentication required") }
+        let (first, _) = makeSession(unlisted, launch: acpLaunch(environment: ["XAI_API_KEY": "key"]))
+        await #expect(throws: ACPError.self) { try await first.start() }
+        #expect(unlisted.requests("authenticate").isEmpty)
+
+        // Without a configured method, the first agent-driven one is used; terminal sign-in is skipped.
+        let agent = ACPFakeAgent()
+        agent.initializeResult = json(
+            #"{"protocolVersion":1,"authMethods":[{"id":"cli","name":"CLI","type":"terminal"},{"id":"browser","name":"Browser"}]}"#)
+        var attempts = 0
+        agent.handlers["session/new"] = { id, _ in
+            attempts += 1
+            if attempts == 1 { agent.fail(id, code: ACPError.authRequired, message: "Authentication required") } else {
+                agent.reply(id, ["sessionId": "sess-1"])
+            }
+        }
+        let (second, _) = makeSession(agent, flavor: ACPPlainFlavor())
+        try await second.start()
+        #expect(agent.requests("authenticate").map { $0["methodId"] } == ["browser"])
+
+        // Flavors can opt out, so an agent never opens a browser sign-in on its own.
+        let quiet = ACPFakeAgent()
+        quiet.initializeResult = json(#"{"protocolVersion":1,"authMethods":[{"id":"browser","name":"Browser"}]}"#)
+        quiet.handlers["session/new"] = { id, _ in quiet.fail(id, code: ACPError.authRequired, message: "Authentication required") }
+        let (third, _) = makeSession(quiet, flavor: ACPPlainFlavor(signsInWhenRequired: false))
+        await #expect(throws: ACPError.self) { try await third.start() }
+        #expect(quiet.requests("authenticate").isEmpty)
+    }
+
     @Test func failedHandshakeStopsTheProcess() async throws {
         let agent = ACPFakeAgent()
         agent.handlers["session/new"] = { id, _ in agent.fail(id, code: -32603, message: "Internal error") }
@@ -107,6 +189,20 @@ struct ACPSessionTests {
         await #expect(throws: ACPError.self) { try await session.start() }
         #expect(agent.transport.isTerminated)
         #expect(log.events.isEmpty)
+    }
+
+    @Test func configurationSentBeforeTheSessionAnswerIsKept() async throws {
+        let agent = ACPFakeAgent()
+        agent.handlers["session/new"] = { id, _ in
+            agent.update(["sessionUpdate": "current_mode_update", "currentModeId": "yolo"])
+            agent.reply(id, json(#"{"sessionId":"sess-1","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default"},{"id":"yolo","name":"YOLO"}]}}"#))
+        }
+        let (session, _) = makeSession(agent, flavor: AntigravityFlavor(), launch: acpLaunch(.antigravity, accessMode: .fullAccess))
+        try await session.start()
+        // The agent already reported yolo, so full access needs no mode change.
+        try await session.send(acpTurn("go", .antigravity, accessMode: .fullAccess))
+        #expect(agent.requests("session/set_mode").isEmpty)
+        session.shutdown()
     }
 
     // MARK: Turns
@@ -120,7 +216,7 @@ struct ACPSessionTests {
 
         let prompt = try #require(agent.requests("session/prompt").first)
         #expect(prompt["sessionId"] == "sess-1")
-        #expect(prompt["prompt"] == [["type": "text", "text": "Reply with exactly: pong"]])
+        #expect(prompt["prompt"] == [["type": "text", "text": .string(acpInstructed("Reply with exactly: pong"))]])
         #expect(prompt.at("_meta.promptId")?.string?.isEmpty == false)
 
         agent.update(["sessionUpdate": "user_message_chunk", "content": ["type": "text", "text": "Reply with exactly: pong"]])
@@ -141,6 +237,28 @@ struct ACPSessionTests {
             ])
     }
 
+    @Test func interactionModeInstructionsTravelOnceAndOnChange() async throws {
+        let agent = ACPFakeAgent()
+        let (session, log) = makeSession(agent, flavor: ACPPlainFlavor())
+        try await session.start()
+        let turns: [(String, InteractionMode)] = [
+            ("one", .build), ("two", .build), ("three", .plan), ("four", .plan), ("/compact", .build), ("six", .build),
+        ]
+        for (index, (text, mode)) in turns.enumerated() {
+            try await session.send(acpTurn(text, interactionMode: mode))
+            agent.finishPrompt()
+            await acpWaitUntil { log.completions.count == index + 1 }
+        }
+        #expect(promptText(agent, 0) == acpInstructed("one"))
+        #expect(promptText(agent, 1) == "two")
+        #expect(promptText(agent, 2) == acpInstructed("three", .plan))
+        #expect(promptText(agent, 2)?.contains("do not edit files") == true)
+        #expect(promptText(agent, 3) == "four")
+        // Native slash commands stay at the start of the prompt.
+        #expect(promptText(agent, 4) == "/compact")
+        #expect(promptText(agent, 5) == acpInstructed("six"))
+    }
+
     @Test func updatesOutsideATurnAreIgnored() async throws {
         let agent = ACPFakeAgent()
         let (session, log) = makeSession(agent)
@@ -150,6 +268,19 @@ struct ACPSessionTests {
         agent.update(["sessionUpdate": "usage_update", "used": 5_000, "size": 200_000, "cost": ["amount": 0.25, "currency": "USD"]])
         await acpSettle()
         #expect(log.events == [.usage(TokenUsage(inputTokens: 5_000, contextWindow: 200_000, costUSD: 0.25))])
+    }
+
+    @Test func noticesAndCompactionAreShown() async throws {
+        let agent = ACPFakeAgent()
+        let (session, log) = makeSession(agent, flavor: ACPPlainFlavor())
+        try await session.start()
+        try await session.send(acpTurn("go"))
+        agent.update(["sessionUpdate": "notice", "severity": "warning", "title": "Context almost full", "description": "Compacting soon"])
+        agent.update(["sessionUpdate": "compaction_update", "compactionId": "c1", "status": "completed", "summary": [["type": "text", "text": "Summary"]]])
+        agent.finishPrompt()
+        await acpWaitUntil { !log.completions.isEmpty }
+        #expect(log.notices == ["Context almost full\nCompacting soon"])
+        #expect(log.events.contains(.toolCompleted(id: "compaction-c1", status: .completed, output: "Summary")))
     }
 
     @Test func specialStopReasonsAddANotice() async throws {
@@ -268,6 +399,16 @@ struct ACPSessionTests {
         #expect(log.approvals.isEmpty)
     }
 
+    @Test func permissionsOutsideATurnAreCancelled() async throws {
+        let agent = ACPFakeAgent()
+        let (session, log) = makeSession(agent)
+        try await session.start()
+        agent.ask(10, "session/request_permission", permission(["toolCallId": "bg", "kind": "execute", "rawInput": ["command": "ls"]]))
+        await acpWaitUntil { agent.answers[10] != nil }
+        #expect(agent.answers[10]?.at("result.outcome") == ["outcome": "cancelled"])
+        #expect(log.approvals.isEmpty)
+    }
+
     @Test func agentCanWithdrawAnApproval() async throws {
         let agent = ACPFakeAgent()
         let (session, log) = makeSession(agent)
@@ -277,11 +418,166 @@ struct ACPSessionTests {
         await acpWaitUntil { !log.approvals.isEmpty }
         agent.notify("$/cancel_request", ["requestId": 12])
         await acpWaitUntil { log.events.contains(.approvalResolved(id: log.approvals[0].id)) }
+        // The withdrawn request still gets its answer, as JSON-RPC expects.
+        #expect(agent.answers[12]?.at("error.code") == -32800)
+    }
+
+    @Test func terminalsNeedACommandApprovalInApprovalMode() async throws {
+        let agent = ACPFakeAgent()
+        let flavor = ACPPlainFlavor(capabilities: ACPClientCapabilities(terminal: true))
+        let (session, log) = makeSession(agent, flavor: flavor, launch: acpLaunch(environment: ["PATH": "/usr/bin:/bin"]))
+        defer { session.shutdown() }
+        try await session.start()
+        #expect(agent.requests("initialize").first?.at("clientCapabilities.terminal") == true)
+        try await session.send(acpTurn("run it"))
+
+        agent.ask(60, "terminal/create", ["sessionId": "sess-1", "command": "/bin/echo", "args": ["hi"]])
+        await acpWaitUntil { agent.answers[60] != nil }
+        #expect(agent.answers[60]?.at("error.code") == -32603)
+
+        agent.ask(
+            61, "session/request_permission",
+            permission(["toolCallId": "t", "kind": "execute", "rawInput": ["command": "echo hi"]], options: [("ok", "allow_once"), ("no", "reject_once")]))
+        await acpWaitUntil { !log.approvals.isEmpty }
+        session.respond(to: log.approvals[0].id, optionID: "ok")
+        agent.ask(62, "terminal/create", ["sessionId": "sess-1", "command": "/bin/echo", "args": ["hi"]])
+        await acpWaitUntil { agent.answers[62] != nil }
+        #expect(agent.answers[62]?.at("result.terminalId")?.string?.isEmpty == false)
+    }
+
+    // MARK: Questions and elicitations
+
+    @Test func grokQuestionsAreAskedTogether() async throws {
+        let agent = ACPFakeAgent()
+        let (session, log) = makeSession(agent, launch: acpLaunch(accessMode: .fullAccess))
+        try await session.start()
+        try await session.send(acpTurn("set it up", accessMode: .fullAccess))
+        // As recorded from Grok: the params arrive wrapped with their method.
+        agent.ask(
+            22, "_x.ai/ask_user_question",
+            [
+                "method": "x.ai/ask_user_question",
+                "params": [
+                    "sessionId": "sess-1", "toolCallId": "q1", "mode": "default",
+                    "questions": [
+                        [
+                            "id": "db", "question": "Which database?", "multiSelect": nil,
+                            "options": [["label": "Postgres"], ["label": "SQLite", "description": "File based", "preview": "sqlite3"]],
+                        ],
+                        ["question": "Which checks?", "multiSelect": true, "options": [["label": "Lint"], ["label": "Tests"]]],
+                        ["question": "Anything else?", "options": []],
+                    ],
+                ],
+            ])
+        await acpWaitUntil { !log.questions.isEmpty }
+        #expect(log.approvals.isEmpty)
+        let request = log.questions[0]
+        #expect(request.questions.map(\.id) == ["db", "Which checks?", "Anything else?"])
+        #expect(request.questions.map(\.prompt) == ["Which database?", "Which checks?", "Anything else?"])
+        #expect(request.questions[0].options.map(\.label) == ["Postgres", "SQLite"])
+        #expect(request.questions[0].options[1].detail == "File based")
+        #expect(request.questions.map(\.allowsMultipleSelection) == [false, true, false])
+        #expect(request.questions[2].options.map(\.label) == ["OK"])
+
+        session.answer(userInput: request.id, answers: ["db": ["SQLite"], "Which checks?": ["Lint", "Tests", "Format too"]])
+        #expect(
+            agent.answers[22]?["result"]
+                == [
+                    "outcome": "accepted",
+                    "answers": ["Which database?": ["SQLite"], "Which checks?": ["Lint", "Tests"]],
+                    "annotations": ["Which database?": ["preview": "sqlite3"], "Which checks?": ["notes": "Format too"]],
+                ])
+    }
+
+    @Test func dismissedGrokQuestionsAnswerCancelled() async throws {
+        let agent = ACPFakeAgent()
+        let (session, log) = makeSession(agent)
+        try await session.start()
+        try await session.send(acpTurn("go"))
+        agent.ask(23, "x.ai/ask_user_question", ["sessionId": "sess-1", "toolCallId": "q", "questions": [["question": "Proceed?", "options": [["label": "Yes"]]]]])
+        await acpWaitUntil { !log.questions.isEmpty }
+        session.answer(userInput: log.questions[0].id, answers: [:])
+        #expect(agent.answers[23]?["result"] == ["outcome": "cancelled"])
+
+        // Questions still open when the turn ends are answered and resolved.
+        agent.ask(24, "x.ai/ask_user_question", ["sessionId": "sess-1", "toolCallId": "q2", "questions": [["question": "Again?", "options": []]]])
+        await acpWaitUntil { log.questions.count == 2 }
+        agent.finishPrompt()
+        await acpWaitUntil { !log.completions.isEmpty }
+        #expect(agent.answers[24]?["result"] == ["outcome": "cancelled"])
+        #expect(log.events.contains(.userInputResolved(id: log.questions[1].id)))
+    }
+
+    @Test func elicitationFormsBecomeQuestions() async throws {
+        let agent = ACPFakeAgent()
+        let (session, log) = makeSession(agent, flavor: ACPPlainFlavor())
+        try await session.start()
+        try await session.send(acpTurn("configure"))
+        let form: JSONValue = [
+            "sessionId": "sess-1", "mode": "form", "message": "Choose the fixture preference.",
+            "requestedSchema": [
+                "type": "object",
+                "properties": [
+                    "preference": [
+                        "type": "string", "title": "Fixture", "description": "Strict schemas or UI flexibility?",
+                        "enum": ["Strict schemas (Recommended)", "UI flexibility"],
+                    ],
+                    "confirm": ["type": "boolean", "title": "Confirm"],
+                    "retries": ["type": "integer", "description": "How many retries?"],
+                    "targets": ["type": "array", "items": ["anyOf": [["const": "ios", "title": "iOS"], ["const": "mac", "title": "macOS"]]]],
+                    "note": ["type": "string"],
+                ],
+                "required": ["preference"],
+            ],
+        ]
+        agent.ask(70, "elicitation/create", form)
+        await acpWaitUntil { !log.questions.isEmpty }
+        let request = log.questions[0]
+        #expect(request.title == "Choose the fixture preference.")
+        #expect(request.questions.map(\.id) == ["preference", "confirm", "note", "retries", "targets"])
+        #expect(request.questions[0].header == "Fixture")
+        #expect(request.questions[0].prompt == "Strict schemas or UI flexibility?")
+        #expect(request.questions[0].allowsFreeText == false)
+        #expect(request.questions[2].allowsFreeText)
+        #expect(request.questions[4].allowsMultipleSelection)
+        #expect(request.questions[4].options.map(\.label) == ["iOS", "macOS"])
+
+        session.answer(
+            userInput: request.id,
+            answers: [
+                "preference": ["Strict schemas (Recommended)"], "confirm": ["Yes"], "retries": ["3"], "targets": ["macOS", "iOS"],
+                "note": ["Keep it short"],
+            ])
+        #expect(
+            agent.answers[70]?["result"]
+                == [
+                    "action": "accept",
+                    "content": [
+                        "preference": "Strict schemas (Recommended)", "confirm": true, "retries": 3, "targets": ["mac", "ios"],
+                        "note": "Keep it short",
+                    ],
+                ])
+
+        // The older method nests the action; dismissing cancels.
+        agent.ask(71, "session/elicitation", form)
+        await acpWaitUntil { log.questions.count == 2 }
+        session.answer(userInput: log.questions[1].id, answers: [:])
+        #expect(agent.answers[71]?["result"] == ["action": ["action": "cancel"]])
+
+        // URL elicitations are not supported, and nothing is asked outside a turn.
+        agent.ask(72, "elicitation/create", ["sessionId": "sess-1", "mode": "url", "message": "Sign in", "elicitationId": "e", "url": "https://example.com"])
+        await acpWaitUntil { agent.answers[72] != nil }
+        #expect(agent.answers[72]?["result"] == ["action": "decline"])
+        agent.finishPrompt()
+        await acpWaitUntil { !log.completions.isEmpty }
+        agent.ask(73, "elicitation/create", form)
+        await acpWaitUntil { agent.answers[73] != nil }
+        #expect(agent.answers[73]?["result"] == ["action": "cancel"])
     }
 
     // MARK: Interrupt and crashes
 
-    @Test func interruptCancelsAndRestartsGrok() async throws {
+    @Test func grokStopEndsTheTurnAtOnceAndReloadsNextTime() async throws {
         let agent = ACPFakeAgent()
         let (session, log) = makeSession(agent)
         try await session.start()
@@ -290,19 +586,37 @@ struct ACPSessionTests {
         await acpWaitUntil { !log.approvals.isEmpty }
 
         session.interrupt()
-        #expect(agent.notifications("session/cancel").first == ["sessionId": "sess-1", "_meta": ["cancelTrigger": "ctrl_c"]])
+        // Like T3 Code, Grok's process is stopped instead of waiting on session/cancel.
+        #expect(log.completions == [.interrupted])
         #expect(agent.answers[13]?.at("result.outcome") == ["outcome": "cancelled"])
-        agent.finishPrompt("cancelled")
-        await acpWaitUntil { !log.completions.isEmpty }
+        #expect(agent.transports[0].isTerminated)
+        #expect(agent.notifications("session/cancel").isEmpty)
+        session.interrupt()
         await acpSettle()
         #expect(log.completions == [.interrupted])
-        // Grok can keep stale work after a cancel, so the next turn gets a new process.
-        #expect(agent.transports[0].isTerminated)
 
         try await session.send(acpTurn("next"))
         #expect(agent.transports.count == 2)
         #expect(agent.requests("session/load").last?["sessionId"] == "sess-1")
         #expect(agent.requests("session/prompt").count == 2)
+    }
+
+    @Test func cancelInterruptWaitsForTheAgent() async throws {
+        let agent = ACPFakeAgent()
+        let (session, log) = makeSession(agent, flavor: ACPPlainFlavor())
+        try await session.start()
+        try await session.send(acpTurn("long task"))
+        agent.update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "Working"]])
+        await acpSettle()
+        session.interrupt()
+        #expect(agent.notifications("session/cancel").first == ["sessionId": "sess-1"])
+        #expect(log.completions.isEmpty)
+        agent.finishPrompt("cancelled")
+        await acpWaitUntil { !log.completions.isEmpty }
+        await acpSettle()
+        #expect(log.completions == [.interrupted])
+        #expect(log.events.contains(.assistantText(itemID: "assistant-1-1", text: "Working")))
+        #expect(!agent.transports[0].isTerminated)
     }
 
     @Test func interruptEndsTheTurnWhenTheAgentNeverConfirms() async throws {
@@ -373,6 +687,23 @@ struct ACPSessionTests {
         await #expect(throws: AgentError.self) { try await session.send(acpTurn("again")) }
     }
 
+    @Test func shutdownClosesTheSessionWhenTheAgentSupportsIt() async throws {
+        let agent = ACPFakeAgent()
+        agent.initializeResult = json(#"{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"close":{}}}}"#)
+        var closeID: JSONValue?
+        agent.handlers["session/close"] = { id, _ in closeID = id }
+        let (session, log) = makeSession(agent)
+        try await session.start()
+        log.removeAll()
+        session.shutdown()
+        await acpWaitUntil { closeID != nil }
+        #expect(agent.requests("session/close").first == ["sessionId": "sess-1"])
+        #expect(!agent.transport.isTerminated)
+        agent.reply(try #require(closeID), ["_meta": ["x.ai/closeOutcome": "closed"]])
+        await acpWaitUntil { agent.transport.isTerminated }
+        #expect(log.events.isEmpty)
+    }
+
     // MARK: Model, effort and modes
 
     @Test func modelAndEffortUseConfigOptions() async throws {
@@ -383,7 +714,7 @@ struct ACPSessionTests {
             {"id":"model","name":"Model","category":"model","type":"select","currentValue":"grok-4.7","options":[{"value":"grok-4.7","name":"Grok 4.7"},{"value":"grok-4.6","name":"Grok 4.6"}]},
             {"id":"reasoning_effort","name":"Effort","category":"thought_level","type":"select","currentValue":"high","options":[{"value":"low","name":"Low"},{"value":"high","name":"High"}]}]}
             """)
-        let (session, log) = makeSession(agent)
+        let (session, log) = makeSession(agent, flavor: ACPPlainFlavor())
         try await session.start()
         try await session.send(acpTurn("hi", model: "grok-4.6", effort: "low"))
 
@@ -398,18 +729,17 @@ struct ACPSessionTests {
         #expect(agent.requests("session/set_config_option").count == 2)
     }
 
-    @Test func grokLegacyModelSelectionCarriesTheEffort() async throws {
+    @Test func grokSelectsModelsWithSetModelAndTheEffortInMeta() async throws {
         let agent = ACPFakeAgent()
-        agent.sessionResult = [
-            "sessionId": "sess-1",
-            "models": [
-                "currentModelId": "grok-4.7",
-                "availableModels": [
-                    ["modelId": "grok-4.7", "name": "Grok 4.7", "_meta": ["reasoningEffort": "high"]],
-                    ["modelId": "grok-4.6", "name": "Grok 4.6"],
-                ],
-            ],
-        ]
+        // Grok 1.0.44 lists both the legacy models and config options; T3 Code switches with set_model.
+        agent.sessionResult = json(
+            """
+            {"sessionId":"sess-1","models":{"currentModelId":"grok-4.7","availableModels":[
+             {"modelId":"grok-4.7","name":"Grok 4.7","_meta":{"reasoningEffort":"high"}},{"modelId":"grok-4.6","name":"Grok 4.6"}]},
+            "configOptions":[
+            {"id":"model","name":"Model","category":"model","type":"select","currentValue":"grok-4.7","options":[{"value":"grok-4.7","name":"Grok 4.7"},{"value":"grok-4.6","name":"Grok 4.6"}]},
+            {"id":"reasoning_effort","name":"Reasoning Effort","category":"thought_level","type":"select","currentValue":"high","options":[{"value":"xhigh","name":"Extra High"},{"value":"high","name":"High"}]}]}
+            """)
         let (session, log) = makeSession(agent)
         try await session.start()
 
@@ -422,11 +752,20 @@ struct ACPSessionTests {
         #expect(
             agent.requests("session/set_model").last
                 == ["sessionId": "sess-1", "modelId": "grok-4.6", "_meta": ["reasoningEffort": "xhigh"]])
+        #expect(agent.requests("session/set_config_option").isEmpty)
+        #expect(log.events.contains(.modelResolved("grok-4.6")))
         agent.finishPrompt()
         await acpWaitUntil { log.completions.count == 2 }
 
         try await session.send(acpTurn("three", model: "grok-4.6", effort: "xhigh"))
         #expect(agent.requests("session/set_model").count == 1)
+        agent.finishPrompt()
+        await acpWaitUntil { log.completions.count == 3 }
+
+        // A new effort alone keeps the model.
+        try await session.send(acpTurn("four", model: "grok-4.6", effort: "high"))
+        #expect(agent.requests("session/set_model").last?["modelId"] == "grok-4.6")
+        #expect(agent.requests("session/set_model").last?.at("_meta.reasoningEffort") == "high")
     }
 
     @Test func rejectedModelsFailTheTurnWithAClearMessage() async throws {
@@ -435,7 +774,7 @@ struct ACPSessionTests {
             #"{"sessionId":"sess-1","configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"a","options":[{"value":"a","name":"A"}]}]}"#
         )
         agent.handlers["session/set_config_option"] = { id, _ in agent.fail(id, code: ACPError.invalidParams, message: "bad model") }
-        let (session, _) = makeSession(agent)
+        let (session, _) = makeSession(agent, flavor: ACPPlainFlavor())
         try await session.start()
         do {
             try await session.send(acpTurn("hi", model: "custom-model"))
@@ -459,6 +798,8 @@ struct ACPSessionTests {
         #expect(agent.transport.arguments == ["agent", "--always-approve", "stdio"])
         #expect(agent.requests("session/load").first?["sessionId"] == "sess-1")
         #expect(log.sessionIDs == ["sess-1", "sess-1"])
+        // The reloaded session already heard the build-mode instructions.
+        #expect(promptText(agent) == "two")
     }
 
     @Test func planModeUsesTheAgentsPlanMode() async throws {
@@ -472,30 +813,119 @@ struct ACPSessionTests {
         try await session.start()
         try await session.send(acpTurn("design it", interactionMode: .plan))
         #expect(agent.requests("session/set_mode").last?["modeId"] == "architect")
-        #expect(agent.requests("session/prompt").last?.at("prompt") == [["type": "text", "text": "design it"]])
+        #expect(promptText(agent) == acpInstructed("design it", .plan))
         agent.finishPrompt()
         await acpWaitUntil { log.completions.count == 1 }
 
         try await session.send(acpTurn("build it"))
         #expect(agent.requests("session/set_mode").last?["modeId"] == "code")
+        #expect(promptText(agent)?.contains("interaction mode: Default") == true)
     }
 
-    @Test func planModeFallsBackToThePlanCommandOrAnInstruction() async throws {
-        let grok = ACPFakeAgent()
-        let (session, log) = makeSession(grok)
+    @Test func planModeSwitchesModeOptionsAndRestoresThem() async throws {
+        let agent = ACPFakeAgent()
+        agent.sessionResult = json(
+            """
+            {"sessionId":"sess-1","configOptions":[
+            {"id":"mode","name":"Mode","category":"mode","type":"select","currentValue":"agent","options":[{"value":"agent","name":"Agent"},{"value":"plan","name":"Plan"}]},
+            {"id":"collab","name":"Collaboration","category":"collaboration_mode","type":"select","currentValue":"default","options":[{"value":"default","name":"Default"},{"value":"plan","name":"Plan"}]}]}
+            """)
+        let (session, log) = makeSession(agent, flavor: ACPPlainFlavor())
         try await session.start()
-        try await session.send(acpTurn("add caching", interactionMode: .plan))
-        #expect(grok.requests("session/prompt").last?.at("prompt") == [["type": "text", "text": "/plan add caching"]])
-        grok.finishPrompt()
+        try await session.send(acpTurn("plan it", interactionMode: .plan))
+        #expect(Set(agent.requests("session/set_config_option").map { "\($0["configId"]?.string ?? "")=\($0["value"]?.string ?? "")" }) == ["mode=plan", "collab=plan"])
+        agent.finishPrompt()
         await acpWaitUntil { log.completions.count == 1 }
 
-        let plain = ACPFakeAgent()
-        let (other, _) = makeSession(plain, flavor: ACPPlainFlavor())
-        try await other.start()
-        try await other.send(acpTurn("add caching", interactionMode: .plan))
-        let text = plain.requests("session/prompt").last?.at("prompt")?[0]?["text"]?.string
-        #expect(text?.hasPrefix("[Plan mode]") == true)
-        #expect(text?.hasSuffix("add caching") == true)
+        try await session.send(acpTurn("do it"))
+        let restored = agent.requests("session/set_config_option").suffix(2).map { "\($0["configId"]?.string ?? "")=\($0["value"]?.string ?? "")" }
+        #expect(Set(restored) == ["mode=agent", "collab=default"])
+    }
+
+    @Test func leavingPlanModeKeepsTheCurrentAccessMode() async throws {
+        let agent = ACPFakeAgent()
+        agent.sessionResult = json(
+            #"{"sessionId":"sess-1","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default"},{"id":"yolo","name":"YOLO"},{"id":"plan","name":"Plan"}]}}"#
+        )
+        let flavor = ACPPlainFlavor(modeForAccess: [.fullAccess: "yolo", .approval: "default"])
+        let (session, log) = makeSession(agent, flavor: flavor, launch: acpLaunch(accessMode: .fullAccess))
+        try await session.start()
+        try await session.send(acpTurn("plan it", accessMode: .fullAccess, interactionMode: .plan))
+        #expect(agent.requests("session/set_mode").map { $0["modeId"] } == ["plan"])
+        agent.finishPrompt()
+        await acpWaitUntil { log.completions.count == 1 }
+
+        // Back to building, now asking for approval: the session must not return to yolo.
+        try await session.send(acpTurn("build it", accessMode: .approval))
+        #expect(agent.requests("session/set_mode").last?["modeId"] == "default")
+        #expect(!agent.requests("session/set_mode").contains { $0["modeId"] == "yolo" })
+    }
+
+    @Test func aNewerSendSupersedesOneStillSettingUp() async throws {
+        let agent = ACPFakeAgent()
+        agent.sessionResult = json(
+            #"{"sessionId":"sess-1","configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"a","options":[{"value":"a","name":"A"},{"value":"b","name":"B"}]}]}"#
+        )
+        var pendingSet: JSONValue?
+        agent.handlers["session/set_config_option"] = { id, _ in pendingSet = id }
+        let (session, log) = makeSession(agent, flavor: ACPPlainFlavor())
+        try await session.start()
+
+        // The user stops a turn that is still setting up, the runner gives up on it, and a new
+        // message follows. The stopped one must not reach the agent or end the newer turn.
+        async let first: Void = session.send(acpTurn("stopped", model: "b"))
+        await acpWaitUntil { pendingSet != nil }
+        session.interrupt()
+        async let second: Void = session.send(acpTurn("current", model: "b"))
+        await acpSettle()
+        agent.reply(try #require(pendingSet), [:])
+        try await first
+        try await second
+
+        #expect(log.completions.isEmpty)
+        #expect(agent.requests("session/prompt").count == 1)
+        #expect(promptText(agent)?.contains("current") == true)
+        agent.finishPrompt()
+        await acpWaitUntil { !log.completions.isEmpty }
+        #expect(log.completions == [.completed])
+    }
+
+    @Test func aLateLoadAnswerIsStillApplied() async throws {
+        let agent = ACPFakeAgent()
+        agent.handlers["session/load"] = { id, _ in
+            agent.update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "replayed"]], session: "old-4")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                MainActor.assumeIsolated {
+                    agent.reply(
+                        id,
+                        [
+                            "configOptions": [
+                                [
+                                    "id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "late",
+                                    "options": [["value": "late", "name": "Late"], ["value": "other", "name": "Other"]],
+                                ]
+                            ]
+                        ])
+                }
+            }
+        }
+        let (session, log) = makeSession(agent, flavor: ACPPlainFlavor(), launch: acpLaunch(resume: "old-4"))
+        session.replayIdleGap = 0.05
+        try await session.start()
+        #expect(session.sessionID == "old-4")
+        await acpWaitUntil { log.events.contains { if case .modelsDiscovered = $0 { true } else { false } } }
+        let models = log.events.compactMap { if case .modelsDiscovered(let models) = $0 { models } else { nil } }.last
+        #expect(models?.map(\.modelID) == ["default", "late", "other"])
+    }
+
+    @Test func grokPlanModeTravelsAsInstructions() async throws {
+        let grok = ACPFakeAgent()
+        let (session, _) = makeSession(grok)
+        try await session.start()
+        try await session.send(acpTurn("add caching", interactionMode: .plan))
+        // Grok has no plan mode over ACP, so the turn carries T3 Code's plan instructions.
+        #expect(promptText(grok) == acpInstructed("add caching", .plan))
+        #expect(grok.requests("session/set_mode").isEmpty)
     }
 
     // MARK: Grok extensions
@@ -512,30 +942,19 @@ struct ACPSessionTests {
         #expect(agent.answers[21]?.at("result.outcome") == "abandoned")
     }
 
-    @Test func grokQuestionsAreAskedOneAtATime() async throws {
+    @Test func grokExitPlanModeFallsBackToThePlanFile() async throws {
         let agent = ACPFakeAgent()
-        let (session, log) = makeSession(agent, launch: acpLaunch(accessMode: .fullAccess))
+        let (session, log) = makeSession(agent)
         try await session.start()
-        try await session.send(acpTurn("set it up", accessMode: .fullAccess))
-        agent.ask(
-            22, "x.ai/ask_user_question",
-            [
-                "sessionId": "sess-1", "toolCallId": "q1", "mode": "default",
-                "questions": [
-                    ["question": "Which database?", "options": [["label": "Postgres"], ["label": "SQLite", "description": "File based"]]],
-                    ["question": "Add tests?", "options": [["label": "Yes"], ["label": "No"]]],
-                ],
-            ])
-        await acpWaitUntil { log.approvals.count == 1 }
-        #expect(log.approvals[0].title == "Which database?")
-        #expect(log.approvals[0].options.map(\.label) == ["Postgres", "SQLite", "Cancel"])
-        #expect(log.approvals[0].detail == "File based")
-
-        session.respond(to: log.approvals[0].id, optionID: "SQLite")
-        #expect(log.approvals.count == 2)
-        session.respond(to: log.approvals[1].id, optionID: "Yes")
-        #expect(
-            agent.answers[22]?["result"] == ["outcome": "accepted", "answers": ["Which database?": ["SQLite"], "Add tests?": ["Yes"]]])
+        try await session.send(acpTurn("plan it", interactionMode: .plan))
+        let planPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.grok/sessions/abc/plan.md"
+        agent.update([
+            "sessionUpdate": "tool_call", "toolCallId": "w", "title": "Write", "kind": "edit", "status": "completed",
+            "content": [["type": "diff", "path": .string(planPath), "oldText": nil, "newText": "# Plan from file\n"]],
+        ])
+        agent.ask(25, "x.ai/exit_plan_mode", ["sessionId": "sess-1", "toolCallId": "tc"])
+        await acpWaitUntil { agent.answers[25] != nil }
+        #expect(log.events.contains(.plan(text: "# Plan from file")))
     }
 
     @Test func grokTurnCompletedNotificationEndsTheTurnWithUsage() async throws {
@@ -547,7 +966,7 @@ struct ACPSessionTests {
 
         agent.update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "Done"]], meta: ["totalTokens": 1_200])
         agent.notify(
-            "_x.ai/session/update",
+            "_x.ai/session_notification",
             [
                 "sessionId": "sess-1",
                 "update": [
@@ -566,6 +985,22 @@ struct ACPSessionTests {
         #expect(log.completions.count == 1)
     }
 
+    @Test func grokPromptErrorEndsTheTurnWithTheAgentResult() async throws {
+        let agent = ACPFakeAgent()
+        let (session, log) = makeSession(agent)
+        try await session.start()
+        try await session.send(acpTurn("go"))
+        let promptID = try #require(agent.requests("session/prompt").first?.at("_meta.promptId"))
+        // As recorded from Grok 1.0.44: completion first, then the JSON-RPC error.
+        agent.notify(
+            "_x.ai/session/prompt_complete",
+            ["sessionId": "sess-1", "promptId": promptID, "stopReason": "error", "agentResult": "API error (status 400 Bad Request)"])
+        agent.fail(try #require(agent.lastPromptID), code: -32603, message: "Internal error")
+        await acpWaitUntil { !log.completions.isEmpty }
+        await acpSettle()
+        #expect(log.completions == [.failed("API error (status 400 Bad Request)")])
+    }
+
     @Test func grokRateLimitStopReasonFailsTheTurn() async throws {
         let agent = ACPFakeAgent()
         let (session, log) = makeSession(agent)
@@ -575,6 +1010,41 @@ struct ACPSessionTests {
         agent.notify("x.ai/session/prompt_complete", ["sessionId": "sess-1", "promptId": promptID, "stopReason": "rate_limit"])
         await acpWaitUntil { !log.completions.isEmpty }
         #expect(log.completions == [.failed("Grok usage limit reached. Try again later.")])
+    }
+
+    @Test func grokBackgroundWakesStayOutOfTheTurn() async throws {
+        let agent = ACPFakeAgent()
+        let (session, log) = makeSession(agent)
+        try await session.start()
+        try await session.send(acpTurn("go"))
+        agent.update(
+            ["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "background"]],
+            meta: ["promptId": "task-completed-7"])
+        agent.notify(
+            "_x.ai/session_notification",
+            ["sessionId": "sess-1", "update": ["sessionUpdate": "turn_completed", "prompt_id": "task-completed-7", "stop_reason": "end_turn"]])
+        agent.update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "mine"]])
+        agent.finishPrompt()
+        await acpWaitUntil { !log.completions.isEmpty }
+        #expect(log.completions == [.completed])
+        #expect(log.events.contains(.assistantText(itemID: "assistant-1-1", text: "mine")))
+        #expect(!log.events.contains { if case .assistantTextDelta(_, "background") = $0 { true } else { false } })
+    }
+
+    @Test func grokModelUpdatesRefreshTheModels() async throws {
+        let agent = ACPFakeAgent()
+        agent.initializeResult = json(ACPMapperTests.grokInitialize)
+        let (session, log) = makeSession(agent)
+        try await session.start()
+        log.removeAll()
+        agent.notify("_x.ai/session_notification", ["sessionId": "sess-1", "update": ["sessionUpdate": "model_changed", "model_id": "grok-4.6", "reasoning_effort": "high"]])
+        agent.notify(
+            "_x.ai/models/update",
+            ["currentModelId": "grok-4.6", "availableModels": [["modelId": "grok-4.6", "name": "Grok 4.6"], ["modelId": "grok-4.5", "name": "Grok 4.5"]]])
+        await acpWaitUntil { log.events.contains { if case .modelsDiscovered = $0 { true } else { false } } }
+        #expect(log.events.contains(.modelResolved("grok-4.6")))
+        let models = log.events.compactMap { if case .modelsDiscovered(let models) = $0 { models } else { nil } }.last
+        #expect(models?.map(\.modelID) == ["grok-build", "grok-4.6", "grok-4.5"])
     }
 
     @Test func unknownExtensionRequestsGetMethodNotFound() async throws {
@@ -627,20 +1097,23 @@ struct ACPSessionTests {
     }
 
     @Test func antigravitySignInLinkBecomesANotice() async throws {
+        let link =
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=c&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2F&response_type=code&scope=openid&state=abc"
         let agent = ACPFakeAgent()
         agent.handlers["authenticate"] = { id, _ in
-            agent.transport.deliver(
-                "Open the following link to authenticate the ACP server: https://accounts.google.com/o/oauth2/v2/auth?state=abc")
+            agent.transport.deliver("Open the following link to authenticate the ACP server: \(link)")
+            // A look-alike link is never shown.
+            agent.transport.deliver("Open the following link to authenticate the ACP server: https://evil.example.com/o/oauth2/v2/auth?state=x")
             agent.reply(id, [:])
         }
         let (session, log) = makeSession(agent, flavor: AntigravityFlavor(), launch: acpLaunch(.antigravity))
         try await session.start()
         #expect(log.notices.count == 1)
-        #expect(log.notices.first?.contains("https://accounts.google.com/o/oauth2/v2/auth?state=abc") == true)
+        #expect(log.notices.first?.contains(link) == true)
         session.shutdown()
     }
 
-    @Test func antigravityQuestionsAlwaysAsk() async throws {
+    @Test func antigravityQuestionsBecomeUserInput() async throws {
         let agent = ACPFakeAgent()
         let (session, log) = makeSession(
             agent, flavor: AntigravityFlavor(), launch: acpLaunch(.antigravity, accessMode: .fullAccess))
@@ -651,12 +1124,37 @@ struct ACPSessionTests {
             permission(
                 ["toolCallId": "interaction_7", "title": "Which file should I start with?"],
                 options: [("opt-a", "allow_once"), ("opt-b", "allow_once")]))
-        await acpWaitUntil { !log.approvals.isEmpty }
-        #expect(log.approvals[0].title == "Which file should I start with?")
-        #expect(log.approvals[0].options.map(\.id) == ["opt-a", "opt-b", ACPApprovals.cancelOptionID])
-        session.respond(to: log.approvals[0].id, optionID: "opt-b")
+        await acpWaitUntil { !log.questions.isEmpty }
+        #expect(log.approvals.isEmpty)
+        let question = try #require(log.questions[0].questions.first)
+        #expect(question.id == "interaction_7")
+        #expect(question.prompt == "Which file should I start with?")
+        #expect(question.options.map(\.label) == ["opt-a", "opt-b"])
+        #expect(!question.allowsFreeText)
+        session.answer(userInput: log.questions[0].id, answers: ["interaction_7": ["opt-b"]])
         #expect(agent.answers[40]?.at("result.outcome.optionId") == "opt-b")
         #expect(!log.events.contains { if case .toolCompleted = $0 { true } else { false } })
+        session.shutdown()
+    }
+
+    @Test func antigravityApprovalsShowTheSecurityWarning() async throws {
+        let agent = ACPFakeAgent()
+        let (session, log) = makeSession(agent, flavor: AntigravityFlavor(), launch: acpLaunch(.antigravity))
+        try await session.start()
+        try await session.send(acpTurn("go", .antigravity))
+        agent.ask(
+            41, "session/request_permission",
+            [
+                "sessionId": "sess-1", "toolCall": ["toolCallId": "run-1", "title": "Run ls?", "kind": "execute", "rawInput": ["CommandLine": "ls"]],
+                "options": [
+                    ["optionId": "once", "name": "Allow", "kind": "allow_once"],
+                    ["optionId": "always", "name": "Always", "kind": "allow_always", "_meta": ["agy.security.warning": ["message": "Runs any shell command."]]],
+                    ["optionId": "no", "name": "Deny", "kind": "reject_once"],
+                ],
+            ])
+        await acpWaitUntil { !log.approvals.isEmpty }
+        #expect(log.approvals[0].options.map(\.label) == ["Allow once", "Allow for this thread", "Deny", "Cancel"])
+        #expect(log.approvals[0].detail?.contains("Runs any shell command.") == true)
         session.shutdown()
     }
 
@@ -681,27 +1179,32 @@ struct ACPSessionTests {
 
     // MARK: Prompt content
 
-    @Test func imagesAreSentInline() async throws {
+    @Test func imagesAreSentInlineAndNamedByPath() async throws {
         let directory = try acpTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let image = directory.appendingPathComponent("shot.png")
         try Data([0x89, 0x50, 0x4E, 0x47]).write(to: image)
+        let text = "what is this?\n\n[Attached image \"shot.png\" is saved at: \(image.path)]"
         let agent = ACPFakeAgent()
         let (session, _) = makeSession(agent)
         try await session.start()
         try await session.send(acpTurn("what is this?", images: [image.path]))
         #expect(
             agent.requests("session/prompt").last?["prompt"]
-                == [["type": "text", "text": "what is this?"], ["type": "image", "mimeType": "image/png", "data": "iVBORw=="]])
+                == [["type": "text", "text": .string(acpInstructed(text))], ["type": "image", "mimeType": "image/png", "data": "iVBORw=="]])
 
-        // Agents without image prompts get the path instead.
+        // Agents without image prompts only get the path.
         let plain = ACPFakeAgent()
         let (other, _) = makeSession(plain, flavor: ACPPlainFlavor())
         try await other.start()
         try await other.send(acpTurn("what is this?", images: [image.path]))
-        #expect(
-            plain.requests("session/prompt").last?["prompt"]
-                == [["type": "text", "text": .string("what is this?\n\n[Attached image: \(image.path)]")]])
+        #expect(plain.requests("session/prompt").last?["prompt"] == [["type": "text", "text": .string(acpInstructed(text))]])
+
+        // Antigravity takes PNG, JPEG, WebP and BMP inline, not GIF.
+        let gif = directory.appendingPathComponent("anim.gif")
+        try Data([0x47, 0x49, 0x46]).write(to: gif)
+        #expect(ACPPrompt.imageBlock(gif.path, types: AntigravityFlavor.acceptedImageTypes) == nil)
+        #expect(ACPPrompt.imageBlock(gif.path, types: ACPPrompt.commonImageTypes) != nil)
     }
 
     @Test func v2AgentsFinishPromptsWithAnIdleUpdate() async throws {
@@ -755,5 +1258,28 @@ struct ACPSessionTests {
         await acpWaitUntil(timeout: .seconds(5)) { !log.completions.isEmpty }
         #expect(log.events.contains(.assistantText(itemID: "assistant-1-1", text: "pong")))
         #expect(log.completions == [.completed])
+    }
+
+    /// Stopping an agent stops the commands it started.
+    @Test func stoppingTheProcessStopsItsChildren() async throws {
+        let directory = try acpTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = directory.appendingPathComponent("child.pid")
+        let script = directory.appendingPathComponent("spawning-agent")
+        try """
+            #!/bin/sh
+            sleep 60 &
+            echo $! > '\(marker.path)'
+            while IFS= read -r line; do :; done
+            """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let transport = ACPProcessTransport(
+            executable: script, arguments: [], workingDirectory: directory, environment: ["PATH": "/usr/bin:/bin"])
+        try transport.start()
+        await acpWaitUntil { (try? String(contentsOf: marker, encoding: .utf8))?.isEmpty == false }
+        let child = try #require(Int32((try String(contentsOf: marker, encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines)))
+        #expect(kill(child, 0) == 0)
+        transport.terminate()
+        await acpWaitUntil { kill(child, 0) != 0 }
     }
 }

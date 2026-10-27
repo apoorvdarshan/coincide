@@ -1,5 +1,14 @@
 import Foundation
 
+extension JSONValue {
+    /// The value as an `Int` when it is a whole number in range. Agents are untrusted, and
+    /// `int` traps on numbers such as `1e20`.
+    nonisolated var acpInt: Int? {
+        guard let number, number.isFinite, number.rounded(.towardZero) == number else { return nil }
+        return Int(exactly: number)
+    }
+}
+
 /// A JSON-RPC error object, as an agent returns it or as Coincide sends one back.
 public struct ACPError: LocalizedError, Sendable, Hashable {
     public var code: Int
@@ -43,7 +52,7 @@ public struct ACPError: LocalizedError, Sendable, Hashable {
     }
 
     nonisolated init?(json: JSONValue) {
-        guard let code = json["code"]?.int else { return nil }
+        guard let code = json["code"]?.acpInt else { return nil }
         self.init(code: code, message: json["message"]?.string ?? "", data: json["data"])
     }
 
@@ -128,7 +137,10 @@ public final class ACPConnection {
 
     public func respond(to request: IncomingRequest, result: JSONValue) {
         guard closedError == nil else { return }
-        write(JSONValue.object(["jsonrpc": "2.0", "id": request.id, "result": result]).compactJSON)
+        let line = JSONValue.object(["jsonrpc": "2.0", "id": request.id, "result": result]).compactJSON
+        // A result JSON cannot encode (a non-finite number) must still answer the request.
+        guard !line.isEmpty else { return respond(to: request, error: .internalError("The client could not encode its answer.")) }
+        write(line)
     }
 
     public func respond(to request: IncomingRequest, error: ACPError) {
@@ -152,10 +164,12 @@ public final class ACPConnection {
             }
             return
         }
-        guard let id = message["id"]?.int, let entry = pending.removeValue(forKey: id) else { return }
+        guard let id = message["id"]?.acpInt, let entry = pending.removeValue(forKey: id) else { return }
         entry.timer?.cancel()
-        if let error = message["error"], let rpcError = ACPError(json: error) {
-            entry.completion(.failure(rpcError))
+        if let error = message["error"], !error.isNull {
+            // A malformed error object is still a failure, never a successful empty result.
+            let message = error["message"]?.string ?? error.string ?? "The agent returned an invalid error."
+            entry.completion(.failure(ACPError(json: error) ?? .internalError(message)))
         } else {
             entry.completion(.success(message["result"] ?? .null))
         }

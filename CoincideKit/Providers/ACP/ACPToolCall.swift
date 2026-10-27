@@ -74,7 +74,7 @@ public struct ACPToolCallState: Sendable, Hashable {
             command = String(title[range].dropFirst().dropLast())
         }
         let output = rawOutput
-        exitCode = ["exit_code", "exitCode", "code"].compactMap { output?[$0]?.int }.first
+        exitCode = ["exit_code", "exitCode", "code"].compactMap { output?[$0]?.acpInt }.first
         category = nil
     }
 
@@ -166,7 +166,11 @@ extension ACPToolCallState {
         }
         locations.forEach(add)
         for entry in content {
-            if case .diff(let path, _, _) = entry { add(path) }
+            switch entry {
+            case .diff(let path, _, _): add(path)
+            case .patch(let patch): patch.changes.forEach { add($0.path) }
+            default: break
+            }
         }
         for key in Self.pathKeys { add(rawInput?[key]?.string) }
         if let paths = rawInput?["paths"]?.array { paths.forEach { add($0.string) } }
@@ -189,9 +193,10 @@ extension ACPToolCallState {
             return agentTitle ?? String(localized: "Run command")
         case .fileChange:
             guard let first = paths.first else { return agentTitle ?? String(localized: "Edit files") }
-            switch kind {
+            switch patchOperation ?? kind {
             case "delete": return String(localized: "Delete \(first)\(more)")
-            case "move": return String(localized: "Move \(first)\(more)")
+            case "move", "rename": return String(localized: "Move \(first)\(more)")
+            case "add", "copy": return String(localized: "Create \(first)\(more)")
             default:
                 let created = content.contains { if case .diff(_, .none, _) = $0 { return true } else { return false } }
                 return created ? String(localized: "Create \(first)\(more)") : String(localized: "Edit \(first)\(more)")
@@ -234,9 +239,15 @@ extension ACPToolCallState {
             return command ?? inputJSON
         case .fileChange:
             let diffs = content.compactMap { entry -> String? in
-                guard case .diff(let path, let old, let new) = entry else { return nil }
-                let diff = UnifiedDiff.make(path: Self.displayPath(path, relativeTo: directory), old: old, new: new)
-                return diff.isEmpty ? nil : diff
+                switch entry {
+                case .diff(let path, let old, let new):
+                    let diff = UnifiedDiff.make(path: Self.displayPath(path, relativeTo: directory), old: old, new: new)
+                    return diff.isEmpty ? nil : diff
+                case .patch(let patch):
+                    return patch.text.flatMap(Self.nonEmpty)
+                default:
+                    return nil
+                }
             }
             if !diffs.isEmpty { return diffs.joined(separator: "\n") }
             return paths.isEmpty ? inputJSON : paths.joined(separator: "\n")
@@ -254,7 +265,7 @@ extension ACPToolCallState {
             switch entry {
             case .content(let block): return block.displayText
             case .terminal(let id): return terminalOutput(id)
-            case .diff, .unknown: return nil
+            case .diff, .patch, .unknown: return nil
             }
         }
         var text = parts.joined(separator: "\n")
@@ -289,11 +300,20 @@ extension ACPToolCallState {
         var bytes: [UInt8] = []
         bytes.reserveCapacity(array.count)
         for element in array {
-            guard let number = element.int, (0...255).contains(number) else { return nil }
+            guard let number = element.acpInt, (0...255).contains(number) else { return nil }
             bytes.append(UInt8(number))
         }
         let text = String(decoding: bytes, as: UTF8.self)
         return text.isEmpty ? nil : text
+    }
+
+    /// The operation of a v2 patch that changes a single file.
+    private nonisolated var patchOperation: String? {
+        let changes = content.flatMap { entry -> [ACPFilePatch.Change] in
+            if case .patch(let patch) = entry { return patch.changes }
+            return []
+        }
+        return changes.count == 1 ? changes[0].operation : nil
     }
 
     private nonisolated var inputJSON: String? {

@@ -30,21 +30,39 @@ public struct ACPAuthMethod: Sendable, Hashable {
         description = json["description"]?.string
         type = json["type"]?.string
     }
+
+    /// Whether the agent can complete this method without a terminal or typed credentials.
+    public nonisolated var isAgentDriven: Bool { type == nil || type == "agent" }
 }
 
 public struct ACPClientCapabilities: Sendable, Hashable {
     public var readTextFile: Bool
     public var writeTextFile: Bool
     public var terminal: Bool
+    /// `session/update` notices (rate limits, compaction and similar announcements).
+    public var notices: Bool
+    /// Form elicitations, shown as questions.
+    public var elicitationForms: Bool
 
-    public nonisolated init(readTextFile: Bool = false, writeTextFile: Bool = false, terminal: Bool = false) {
+    public nonisolated init(
+        readTextFile: Bool = false, writeTextFile: Bool = false, terminal: Bool = false, notices: Bool = true,
+        elicitationForms: Bool = true
+    ) {
         self.readTextFile = readTextFile
         self.writeTextFile = writeTextFile
         self.terminal = terminal
+        self.notices = notices
+        self.elicitationForms = elicitationForms
     }
 
     nonisolated var json: JSONValue {
-        ["fs": ["readTextFile": .bool(readTextFile), "writeTextFile": .bool(writeTextFile)], "terminal": .bool(terminal)]
+        var object: [String: JSONValue] = [
+            "fs": ["readTextFile": .bool(readTextFile), "writeTextFile": .bool(writeTextFile)],
+            "terminal": .bool(terminal),
+        ]
+        if notices { object["session"] = ["notices": [:]] }
+        if elicitationForms { object["elicitation"] = ["form": [:]] }
+        return .object(object)
     }
 }
 
@@ -57,6 +75,7 @@ public struct ACPInitializeResult: Sendable, Hashable {
     public var agentInfo: ACPImplementation?
     public var loadSession: Bool
     public var resumeSession: Bool
+    public var closeSession: Bool
     public var promptImage: Bool
     public var promptAudio: Bool
     public var promptEmbeddedContext: Bool
@@ -64,7 +83,7 @@ public struct ACPInitializeResult: Sendable, Hashable {
     public var meta: JSONValue?
 
     public nonisolated init(json: JSONValue) {
-        protocolVersion = json["protocolVersion"]?.int ?? 1
+        protocolVersion = json["protocolVersion"]?.acpInt ?? 1
         authMethods = json["authMethods"]?.array?.compactMap(ACPAuthMethod.init(json:)) ?? []
         meta = json["_meta"]
         if json["info"] != nil || json["capabilities"] != nil {
@@ -73,6 +92,7 @@ public struct ACPInitializeResult: Sendable, Hashable {
             let session = json.at("capabilities.session")
             loadSession = session != nil && session?.isNull == false
             resumeSession = loadSession
+            closeSession = loadSession
             let prompt = session?["prompt"]
             promptImage = prompt?["image"].map { !$0.isNull } ?? false
             promptAudio = prompt?["audio"].map { !$0.isNull } ?? false
@@ -83,6 +103,7 @@ public struct ACPInitializeResult: Sendable, Hashable {
             let capabilities = json["agentCapabilities"]
             loadSession = capabilities?["loadSession"]?.bool ?? false
             resumeSession = capabilities?.at("sessionCapabilities.resume").map { !$0.isNull } ?? false
+            closeSession = capabilities?.at("sessionCapabilities.close").map { !$0.isNull } ?? false
             promptImage = capabilities?.at("promptCapabilities.image")?.bool ?? false
             promptAudio = capabilities?.at("promptCapabilities.audio")?.bool ?? false
             promptEmbeddedContext = capabilities?.at("promptCapabilities.embeddedContext")?.bool ?? false
@@ -91,6 +112,16 @@ public struct ACPInitializeResult: Sendable, Hashable {
 
     /// Grok publishes its model catalog (with per-model `_meta`) on `initialize`.
     public nonisolated var modelState: ACPModelState? { meta?["modelState"].flatMap(ACPModelState.init(json:)) }
+
+    /// The method to sign in with: with a preferred method, that method if the agent lists it
+    /// (nil otherwise, as T3 Code refuses unlisted methods); without one, the first method the
+    /// agent completes by itself.
+    public nonisolated func authMethod(preferring preferred: String?) -> ACPAuthMethod? {
+        if let preferred = preferred.flatMap(ACPToolCallState.nonEmpty) {
+            return authMethods.first { $0.id == preferred }
+        }
+        return authMethods.first(where: \.isAgentDriven)
+    }
 }
 
 public struct ACPSessionMode: Sendable, Hashable {
@@ -140,6 +171,11 @@ public struct ACPModelState: Sendable, Hashable {
                 meta: model["_meta"])
         }
     }
+
+    /// The reasoning effort the current model runs with, from its `_meta` (Grok).
+    public nonisolated var currentEffort: String? {
+        availableModels.first { $0.modelID == currentModelID }?.meta?["reasoningEffort"]?.string
+    }
 }
 
 public struct ACPConfigChoice: Sendable, Hashable {
@@ -184,6 +220,8 @@ public struct ACPConfigOption: Sendable, Hashable {
         return []
     }
 
+    public nonisolated func offers(_ value: String) -> Bool { choices.contains { $0.value == value } }
+
     /// Groups nest their choices; flatten them.
     private nonisolated static func flattenChoices(_ entries: [JSONValue]) -> [ACPConfigChoice] {
         entries.flatMap { entry -> [ACPConfigChoice] in
@@ -220,6 +258,12 @@ public struct ACPSessionSetup: Sendable, Hashable {
     }
     public nonisolated var modeOption: ACPConfigOption? { option(category: "mode", fallbackID: "mode") }
 
+    /// Select options that change how the agent works rather than what it may do
+    /// (`mode` and `collaboration_mode`); plan mode switches each to `plan` or `architect`.
+    public nonisolated var modeLikeOptions: [ACPConfigOption] {
+        configOptions.filter { ($0.category == "mode" || $0.category == "collaboration_mode") && $0.currentValue != nil }
+    }
+
     /// Modes from the dedicated field, or from a `mode` config option.
     public nonisolated var effectiveModes: ACPModeState? {
         if let modes { return modes }
@@ -230,6 +274,14 @@ public struct ACPSessionSetup: Sendable, Hashable {
     }
 
     public nonisolated var currentModelID: String? { modelOption?.currentValue ?? models?.currentModelID }
+
+    /// Updates a select option's current value, keeping its choices.
+    public nonisolated mutating func setCurrentValue(_ value: String, ofOption id: String) {
+        guard let index = configOptions.firstIndex(where: { $0.id == id }),
+            case .select(_, let choices) = configOptions[index].value
+        else { return }
+        configOptions[index].value = .select(current: value, choices: choices)
+    }
 
     private nonisolated func option(category: String, fallbackID: String) -> ACPConfigOption? {
         configOptions.first { $0.category == category && $0.currentValue != nil }
@@ -304,9 +356,22 @@ public enum ACPContentBlock: Sendable, Hashable {
     }
 }
 
+/// The v2 preview's file change: which files changed and, optionally, the patch text.
+public struct ACPFilePatch: Sendable, Hashable {
+    public struct Change: Sendable, Hashable {
+        /// `add`, `delete`, `modify`, `move` or `copy`.
+        public var operation: String
+        public var path: String
+    }
+
+    public var changes: [Change]
+    public var text: String?
+}
+
 public enum ACPToolCallContent: Sendable, Hashable {
     case content(ACPContentBlock)
     case diff(path: String, oldText: String?, newText: String)
+    case patch(ACPFilePatch)
     case terminal(id: String)
     case unknown(String)
 
@@ -314,6 +379,12 @@ public enum ACPToolCallContent: Sendable, Hashable {
         switch json["type"]?.string {
         case "content":
             self = .content(ACPContentBlock(json: json["content"] ?? .null))
+        case "diff" where json["changes"] != nil && json["path"] == nil:
+            let changes = (json["changes"]?.array ?? []).compactMap { change -> ACPFilePatch.Change? in
+                guard let path = change["path"]?.string else { return nil }
+                return ACPFilePatch.Change(operation: change["operation"]?.string ?? "modify", path: path)
+            }
+            self = .patch(ACPFilePatch(changes: changes, text: json.at("patch.text")?.string))
         case "diff":
             self = .diff(path: json["path"]?.string ?? "", oldText: json["oldText"]?.string, newText: json["newText"]?.string ?? "")
         case "terminal":
@@ -382,14 +453,21 @@ public enum ACPSessionUpdate: Sendable, Hashable {
     /// A tool call the agent announces for the first time.
     case toolCall(ACPToolCallUpdate)
     case toolCallUpdate(ACPToolCallUpdate)
+    /// v2: one more piece of a tool call's content.
+    case toolCallContentChunk(toolCallID: String, content: ACPToolCallContent)
     case plan([ACPPlanEntry])
+    /// v2: a plan written as markdown.
+    case planMarkdown(String)
     case availableCommands([ACPAvailableCommand])
     case currentMode(String)
     case configOptions([ACPConfigOption])
     /// Tokens in context, the context window, and the cumulative cost when known.
     case usage(used: Int, size: Int, costUSD: Double?)
+    case sessionInfo(title: String?)
+    /// v2: the agent compacts its context. `status` is `in_progress`, `completed`, `failed` or `cancelled`.
+    case compaction(id: String, status: String, summary: String?)
     /// ACP v2 reports the end of a prompt as a state change.
-    case idle(stopReason: String?, error: ACPError?)
+    case idle(stopReason: String?, error: ACPError?, usage: JSONValue?)
     case notice(title: String, description: String?)
     case other(String)
 
@@ -406,10 +484,22 @@ public enum ACPSessionUpdate: Sendable, Hashable {
             self = ACPToolCallUpdate(json: json).map(Self.toolCall) ?? .other(kind)
         case "tool_call_update":
             self = ACPToolCallUpdate(json: json).map(Self.toolCallUpdate) ?? .other(kind)
+        case "tool_call_content_chunk":
+            guard let id = json["toolCallId"]?.string, !id.isEmpty, let content = json["content"] else {
+                self = .other(kind)
+                return
+            }
+            self = .toolCallContentChunk(toolCallID: id, content: ACPToolCallContent(json: content))
         case "plan":
             self = .plan(Self.planEntries(json["entries"]?.array ?? []))
         case "plan_update":
-            self = .plan(Self.planEntries(json.at("plan.entries")?.array ?? []))
+            if let markdown = json.at("plan.content")?.string, json.at("plan.type")?.string == "markdown" {
+                self = .planMarkdown(markdown)
+            } else {
+                self = .plan(Self.planEntries(json.at("plan.entries")?.array ?? []))
+            }
+        case "plan_removed":
+            self = .plan([])
         case "available_commands_update":
             self = .availableCommands(
                 json["availableCommands"]?.array?.compactMap { command in
@@ -422,9 +512,21 @@ public enum ACPSessionUpdate: Sendable, Hashable {
         case "usage_update":
             let cost = json["cost"]
             let usd = cost?["currency"]?.string?.uppercased() == "USD" ? cost?["amount"]?.number : nil
-            self = .usage(used: json["used"]?.int ?? 0, size: json["size"]?.int ?? 0, costUSD: usd)
+            self = .usage(used: json["used"]?.acpInt ?? 0, size: json["size"]?.acpInt ?? 0, costUSD: usd)
+        case "session_info_update":
+            self = .sessionInfo(title: json["title"]?.string)
+        case "compaction_update":
+            let summary = (json["summary"]?.array ?? []).compactMap { ACPContentBlock(json: $0).displayText }.joined(separator: "\n")
+            self = .compaction(
+                id: json["compactionId"]?.string ?? "", status: json["status"]?.string ?? "in_progress",
+                summary: json["error"]?.string ?? (summary.isEmpty ? nil : summary))
+        case "compaction_summary_chunk":
+            self = .compaction(
+                id: json["compactionId"]?.string ?? "", status: "in_progress",
+                summary: json["content"].flatMap { ACPContentBlock(json: $0).displayText })
         case "state_update" where json["state"]?.string == "idle":
-            self = .idle(stopReason: json["stopReason"]?.string, error: json["error"].flatMap(ACPError.init(json:)))
+            self = .idle(
+                stopReason: json["stopReason"]?.string, error: json["error"].flatMap(ACPError.init(json:)), usage: json["usage"])
         case "notice":
             self = .notice(title: json["title"]?.string ?? "", description: json["description"]?.string)
         default:
@@ -461,6 +563,9 @@ public struct ACPSessionNotification: Sendable, Hashable {
         self.update = ACPSessionUpdate(json: update)
         meta = params["_meta"]
     }
+
+    /// History a `session/load` replays; the transcript already has it.
+    public nonisolated var isReplay: Bool { meta?["isReplay"]?.bool == true }
 }
 
 public struct ACPPermissionOption: Sendable, Hashable {
@@ -484,13 +589,15 @@ public struct ACPPermissionRequest: Sendable, Hashable {
     public var sessionID: String
     public var toolCall: ACPToolCallUpdate
     public var options: [ACPPermissionOption]
-    /// v2 requests carry their own title.
+    /// v2 requests carry their own title and description.
     public var title: String?
+    public var description: String?
 
     public nonisolated init?(params: JSONValue, requestID: String) {
         guard let sessionID = params["sessionId"]?.string else { return nil }
         self.sessionID = sessionID
         title = params["title"]?.string
+        description = params["description"]?.string
         if let toolCall = params["toolCall"].flatMap(ACPToolCallUpdate.init(json:)) {
             self.toolCall = toolCall
         } else if let subject = params["subject"] {
@@ -512,6 +619,30 @@ public struct ACPPermissionRequest: Sendable, Hashable {
 
     public nonisolated func option(_ kind: ACPPermissionOption.Kind) -> ACPPermissionOption? {
         options.first { $0.kind == kind && !$0.id.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+}
+
+/// An elicitation (`elicitation/create`, or the older `session/elicitation`): the agent asks the
+/// user to fill in a small form described by a JSON schema.
+public struct ACPElicitationRequest: Sendable, Hashable {
+    /// `form` or `url`.
+    public var mode: String
+    public var message: String
+    /// Set for session-scoped requests; request-scoped ones (for example during sign-in) have none.
+    public var sessionID: String?
+    public var toolCallID: String?
+    public var schema: JSONValue?
+    public var elicitationID: String?
+    public var url: String?
+
+    public nonisolated init(params: JSONValue) {
+        mode = params["mode"]?.string ?? "form"
+        message = params["message"]?.string ?? ""
+        sessionID = params["sessionId"]?.string
+        toolCallID = params["toolCallId"]?.string
+        schema = params["requestedSchema"]
+        elicitationID = params["elicitationId"]?.string
+        url = params["url"]?.string
     }
 }
 

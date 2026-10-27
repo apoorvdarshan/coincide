@@ -47,6 +47,33 @@ struct ACPConnectionTests {
         #expect(error?.localizedDescription == "Authentication required: run grok login")
     }
 
+    @Test func malformedErrorsStillFail() {
+        let (connection, _) = makeConnection()
+        var received: Result<JSONValue, Error>?
+        connection.send("session/prompt", params: [:]) { received = $0 }
+        connection.receive(#"{"jsonrpc":"2.0","id":1,"error":{"message":"no code"}}"#)
+        guard case .failure(let error)? = received else {
+            Issue.record("Expected a failure, got \(String(describing: received))")
+            return
+        }
+        #expect((error as? ACPError)?.code == ACPError.internalError)
+    }
+
+    @Test func hugeNumbersNeverTrap() {
+        #expect(JSONValue.number(1e20).acpInt == nil)
+        #expect(JSONValue.number(2.5).acpInt == nil)
+        #expect(JSONValue.number(42).acpInt == 42)
+        let (connection, wire) = makeConnection()
+        var received: Result<JSONValue, Error>?
+        connection.send("initialize", params: [:]) { received = $0 }
+        connection.receive(#"{"jsonrpc":"2.0","id":1e20,"result":{}}"#)
+        #expect(received == nil)
+        // A result that cannot be encoded still answers the request.
+        let request = ACPConnection.IncomingRequest(id: 9, method: "x", params: .null)
+        connection.respond(to: request, result: ["value": .number(.infinity)])
+        #expect(wire.lines.last?.at("error.code") == -32603)
+    }
+
     @Test func asyncRequestResumesWithResult() async throws {
         let (connection, wire) = makeConnection()
         async let result = connection.request("session/set_mode", params: ["modeId": "plan"])

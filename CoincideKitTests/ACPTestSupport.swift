@@ -173,6 +173,10 @@ final class ACPEventLog {
         events.compactMap { if case .notice(let text) = $0 { text } else { nil } }
     }
 
+    var questions: [UserInputRequest] {
+        events.compactMap { if case .userInputRequested(let request) = $0 { request } else { nil } }
+    }
+
     var sessionIDs: [String] {
         events.compactMap { if case .sessionStarted(let id) = $0 { id } else { nil } }
     }
@@ -222,9 +226,30 @@ func acpTurn(
         accessMode: accessMode, interactionMode: interactionMode)
 }
 
-/// A flavor that follows the spec with no vendor behavior.
+/// A flavor that follows the spec with no vendor behavior, with a few knobs for tests.
 struct ACPPlainFlavor: ACPAgentFlavor {
-    var provider: ProviderKind { .grok }
+    var kind: ProviderKind = .grok
+    var launchArguments: [String] = []
+    var capabilities = ACPClientCapabilities()
+    var configuredAuthMethod: String?
+    var signsInWhenRequired = true
+    var extraEnvironment: [String: String] = [:]
+    var modeForAccess: [AccessMode: String] = [:]
+
+    var provider: ProviderKind { kind }
+    func arguments(for accessMode: AccessMode) -> [String] { launchArguments }
+    func environment(_ base: [String: String], executable: URL) -> [String: String] {
+        base.merging(extraEnvironment) { $1 }
+    }
+    var clientCapabilities: ACPClientCapabilities { capabilities }
+    func authMethodID(environment: [String: String]) -> String? { configuredAuthMethod }
+    var authenticatesWhenRequired: Bool { signsInWhenRequired }
+    func sessionMode(for accessMode: AccessMode) -> String? { modeForAccess[accessMode] }
+}
+
+/// The first prompt of a session carries the interaction-mode instructions.
+func acpInstructed(_ text: String, _ mode: InteractionMode = .build) -> String {
+    ACPPrompt.text(text, mode: mode, previousMode: nil)
 }
 
 func acpTemporaryDirectory() throws -> URL {

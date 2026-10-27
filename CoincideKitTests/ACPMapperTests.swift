@@ -39,8 +39,24 @@ struct ACPMapperTests {
         #expect(result.generation == 1)
         #expect(result.protocolVersion == 2)
         #expect(result.loadSession && result.resumeSession && result.promptImage)
+        #expect(!result.closeSession)
         #expect(result.authMethods.map(\.id) == ["oauth-personal", "gemini-api-key"])
         #expect(result.agentInfo?.version == "agy_acp_server_1.1.1")
+        #expect(result.authMethod(preferring: "oauth-personal")?.id == "oauth-personal")
+        #expect(result.authMethod(preferring: "oauth-business") == nil)
+        #expect(result.authMethod(preferring: nil)?.id == "oauth-personal")
+    }
+
+    /// Grok 1.0.44's answer, as T3 Code recorded it.
+    @Test func parsesRecordedGrokInitialize() throws {
+        let json = try #require(
+            JSONValue.parse(
+                #"{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":false,"audio":false,"embeddedContext":true},"mcpCapabilities":{"http":true,"sse":true},"sessionCapabilities":{"list":{},"resume":{},"close":{}},"auth":{}},"authMethods":[{"id":"cached_token","name":"cached_token","description":"Cached token from ~/.grok/auth.json"},{"id":"grok.com","name":"Grok","description":"Sign in with Grok"}],"_meta":{"defaultAuthMethodId":"cached_token"}}"#
+            ))
+        let result = ACPInitializeResult(json: json)
+        #expect(result.generation == 1)
+        #expect(result.loadSession && result.resumeSession && result.closeSession && !result.promptImage)
+        #expect(result.authMethod(preferring: "cached_token")?.id == "cached_token")
     }
 
     @Test func parsesV2InitializeShape() throws {
@@ -250,6 +266,40 @@ struct ACPMapperTests {
         #expect(created == [.toolStarted(ToolCallInfo(id: "edit-2", category: .fileChange, title: "Create New.swift", detail: newFile))])
     }
 
+    @Test func v2ContentChunksPatchesAndPlansAreMapped() {
+        var mapper = ACPEventMapper(workingDirectory: cwd)
+        mapper.beginTurn()
+        let flavor = ACPPlainFlavor()
+        let started = map(
+            &mapper,
+            #"{"sessionUpdate":"tool_call","toolCallId":"p1","title":"Apply patch","kind":"edit","content":[{"type":"diff","changes":[{"operation":"add","path":"/Users/me/proj/New.swift"}],"patch":{"format":"git_patch","text":"diff --git a/New.swift b/New.swift"}}]}"#,
+            flavor: flavor)
+        #expect(
+            started == [
+                .toolStarted(ToolCallInfo(id: "p1", category: .fileChange, title: "Create New.swift", detail: "diff --git a/New.swift b/New.swift"))
+            ])
+
+        _ = map(&mapper, #"{"sessionUpdate":"tool_call","toolCallId":"r1","title":"Run","kind":"execute","rawInput":{"command":"make"}}"#, flavor: flavor)
+        let chunk = map(
+            &mapper, #"{"sessionUpdate":"tool_call_content_chunk","toolCallId":"r1","content":{"type":"content","content":{"type":"text","text":"built\n"}}}"#,
+            flavor: flavor)
+        #expect(chunk == [.toolOutput(id: "r1", delta: "built\n")])
+
+        let markdown = map(
+            &mapper, ##"{"sessionUpdate":"plan_update","plan":{"planId":"p","type":"markdown","content":"# Steps\n1. Build"}}"##, flavor: flavor)
+        #expect(markdown == [.plan(text: "# Steps\n1. Build")])
+        // The same plan is not reported twice.
+        #expect(map(&mapper, ##"{"sessionUpdate":"plan_update","plan":{"planId":"p","type":"markdown","content":"# Steps\n1. Build"}}"##, flavor: flavor).isEmpty)
+    }
+
+    @Test func elicitationRequestsParseBothScopes() throws {
+        let session = ACPElicitationRequest(
+            params: ["sessionId": "s", "toolCallId": "t", "mode": "form", "message": "Pick", "requestedSchema": ["type": "object"]])
+        #expect(session.sessionID == "s" && session.toolCallID == "t" && session.mode == "form")
+        let scoped = ACPElicitationRequest(params: ["requestId": 3, "mode": "url", "message": "Sign in", "elicitationId": "e1", "url": "https://x"])
+        #expect(scoped.sessionID == nil && scoped.elicitationID == "e1" && scoped.url == "https://x")
+    }
+
     @Test func antigravityCommandFieldsAndSubagents() {
         var mapper = ACPEventMapper(workingDirectory: cwd)
         mapper.beginTurn()
@@ -298,6 +348,25 @@ struct ACPMapperTests {
         #expect(bash.status == .failed)
     }
 
+    @Test func toolIDsCanBeReusedInALaterTurn() {
+        var mapper = ACPEventMapper(workingDirectory: cwd)
+        mapper.beginTurn()
+        let first = map(&mapper, #"{"sessionUpdate":"tool_call","toolCallId":"t","title":"ls","kind":"execute","rawInput":{"command":"ls"}}"#)
+        mapper.beginTurn()
+        let second = map(&mapper, #"{"sessionUpdate":"tool_call","toolCallId":"t","title":"ls","kind":"execute","rawInput":{"command":"ls"}}"#)
+        #expect(startedCategory(first) == .command)
+        #expect(startedCategory(second) == .command)
+    }
+
+    @Test func elicitationNumbersMustBeFinite() throws {
+        let request = ACPElicitationRequest(
+            params: ["sessionId": "s", "mode": "form", "message": "How many?", "requestedSchema": ["type": "object", "properties": ["count": ["type": "number"]]]])
+        let questions = try #require(ACPElicitationForm.questionSet(request))
+        #expect(questions.respond(["count": ["1e999"]]) == ["action": "accept", "content": [:]])
+        #expect(questions.respond(["count": ["2,5"]]) == ["action": "accept", "content": ["count": 2.5]])
+        #expect(questions.respond(nil) == ["action": "cancel"])
+    }
+
     @Test func declinedToolsCompleteAsDeclined() {
         var mapper = ACPEventMapper(workingDirectory: cwd)
         mapper.beginTurn()
@@ -344,7 +413,7 @@ struct ACPMapperTests {
         let initialize = ACPInitializeResult(json: try #require(JSONValue.parse(Self.grokInitialize)))
         let models = GrokFlavor().models(initialize: initialize, setup: ACPSessionSetup())
         #expect(models.map(\.modelID) == ["grok-build", "grok-4.7", "grok-4.6"])
-        #expect(models[0].displayName == "Grok Build")
+        #expect(models[0].displayName == "Grok Build (Grok 4.7)")
         #expect(models[1].efforts == ["low", "medium", "high", "xhigh"])
         #expect(models[1].defaultEffort == "high")
         #expect(models[1].contextWindow == 500_000)

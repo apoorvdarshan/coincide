@@ -26,8 +26,8 @@ public struct ACPFileSystem: Sendable {
         else {
             throw ACPError.invalidParams("'\(requested)' is not a readable text file under \(Self.maxFileBytes) bytes.")
         }
-        let line = params["line"]?.int
-        let limit = params["limit"]?.int
+        let line = params["line"]?.acpInt
+        let limit = params["limit"]?.acpInt
         guard line != nil || limit != nil else { return ["content": .string(text)] }
         // ACP lines are 1-based and `limit` counts lines.
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)

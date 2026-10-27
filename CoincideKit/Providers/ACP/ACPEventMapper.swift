@@ -29,8 +29,8 @@ struct ACPEventMapper {
     private var segmentCount = 0
     private var declined: Set<String> = []
     private var lastPlan: String?
-    /// The latest plan document the agent wrote (Grok keeps it in `…/.grok/sessions/…/plan.md`).
-    private(set) var planFileMarkdown: String?
+    /// The latest plan document the agent wrote this turn (see `ACPAgentFlavor.planDocument(in:)`).
+    private(set) var planDocument: String?
 
     init(workingDirectory: URL) {
         self.workingDirectory = workingDirectory
@@ -41,9 +41,10 @@ struct ACPEventMapper {
         segmentCount = 0
         assistant = nil
         reasoning = nil
+        tools.removeAll()
         declined.removeAll()
         lastPlan = nil
-        planFileMarkdown = nil
+        planDocument = nil
     }
 
     mutating func map(_ update: ACPSessionUpdate, flavor: ACPAgentFlavor, terminals: ACPTerminals?) -> [AgentEvent] {
@@ -76,11 +77,21 @@ struct ACPEventMapper {
             return events
         case .toolCall(let call), .toolCallUpdate(let call):
             return toolEvents(call, flavor: flavor, terminals: terminals)
+        case .toolCallContentChunk(let id, let content):
+            let existing = tools[id]?.state.content ?? []
+            return toolEvents(ACPToolCallUpdate(id: id, content: existing + [content]), flavor: flavor, terminals: terminals)
+        case .compaction(let id, let status, let summary):
+            let call = ACPToolCallUpdate(
+                id: "compaction-\(id)", title: String(localized: "Compact context"), kind: "think",
+                status: status == "completed" ? "completed" : status == "failed" || status == "cancelled" ? "failed" : "in_progress",
+                rawOutput: summary.map(JSONValue.string))
+            return toolEvents(call, flavor: flavor, terminals: terminals)
         case .plan(let entries):
             guard !entries.isEmpty else { return [] }
-            let plan = Self.planMarkdown(entries)
-            lastPlan = plan
-            return [.plan(text: plan)]
+            return plan(Self.planMarkdown(entries))
+        case .planMarkdown(let markdown):
+            guard let markdown = ACPToolCallState.nonEmpty(markdown) else { return [] }
+            return plan(markdown)
         default:
             return []
         }
@@ -99,7 +110,7 @@ struct ACPEventMapper {
             state = ACPToolCallState(call)
         }
         flavor.normalize(&state)
-        rememberPlanFile(state)
+        if let document = flavor.planDocument(in: state) { planDocument = document }
 
         let info = state.info(relativeTo: workingDirectory)
         var tool = previous ?? Tool(state: state, info: info)
@@ -111,11 +122,7 @@ struct ACPEventMapper {
         tool.state = state
         tool.info = info
         if info.category == .todo, let todos = Self.todoEntries(state.rawInput), !todos.isEmpty {
-            let plan = Self.planMarkdown(todos)
-            if plan != lastPlan {
-                lastPlan = plan
-                events.append(.plan(text: plan))
-            }
+            events += plan(Self.planMarkdown(todos))
         }
 
         let output = state.outputText { terminals?.snapshot($0) }
@@ -153,6 +160,12 @@ struct ACPEventMapper {
         closeReasoning() + closeAssistant()
     }
 
+    private mutating func plan(_ markdown: String) -> [AgentEvent] {
+        guard markdown != lastPlan else { return [] }
+        lastPlan = markdown
+        return [.plan(text: markdown)]
+    }
+
     private mutating func closeAssistant() -> [AgentEvent] {
         guard let segment = assistant else { return [] }
         assistant = nil
@@ -168,14 +181,6 @@ struct ACPEventMapper {
     private mutating func nextSegmentID(_ kind: String) -> String {
         segmentCount += 1
         return "\(kind)-\(turn)-\(segmentCount)"
-    }
-
-    private mutating func rememberPlanFile(_ state: ACPToolCallState) {
-        for entry in state.content {
-            if case .diff(let path, _, let text) = entry, path.hasSuffix("/plan.md"), path.contains("/.grok/sessions/") {
-                planFileMarkdown = text
-            }
-        }
     }
 
     private static func finalOutput(_ output: String?, state: ACPToolCallState) -> String? {
@@ -198,8 +203,9 @@ struct ACPEventMapper {
 
     /// A markdown checklist; the step in progress is bold.
     static func planMarkdown(_ entries: [ACPPlanEntry]) -> String {
-        entries.map { entry in
-            let text = entry.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        entries.enumerated().map { index, entry in
+            let trimmed = entry.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = trimmed.isEmpty ? String(localized: "Step \(index + 1)") : trimmed
             switch entry.status {
             case "completed": return "- [x] \(text)"
             case "in_progress", "inProgress": return "- [ ] **\(text)**"

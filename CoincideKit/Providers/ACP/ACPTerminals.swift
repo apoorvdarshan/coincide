@@ -51,7 +51,7 @@ public final class ACPTerminals {
         for variable in params["env"]?.array ?? [] {
             if let name = variable["name"]?.string, let value = variable["value"]?.string { environment[name] = value }
         }
-        let limit = min(params["outputByteLimit"]?.int ?? Self.defaultOutputByteLimit, Self.maxOutputByteLimit)
+        let limit = min(params["outputByteLimit"]?.acpInt ?? Self.defaultOutputByteLimit, Self.maxOutputByteLimit)
         let output = OutputBuffer(limit: max(0, limit))
 
         let process = Process()
@@ -150,6 +150,7 @@ public final class ACPTerminals {
     private func stop(_ terminal: Terminal) {
         let process = terminal.process
         guard process.isRunning else { return }
+        ACPProcessTree.terminate(ACPProcessTree.descendants(of: process.processIdentifier))
         process.terminate()
         let pid = process.processIdentifier
         DispatchQueue.global().asyncAfter(deadline: .now() + 3) {

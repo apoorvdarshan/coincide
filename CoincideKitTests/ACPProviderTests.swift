@@ -63,9 +63,11 @@ struct ACPProviderTests {
              {"id":"medium","value":"medium","label":"Medium","default":false},{"id":"low","value":"low","label":"Low","default":false}]}},
             "grok-4.7-build-fast":{"info":{"name":"Grok 4.7 Fast","context_window":256000,"supports_reasoning_effort":true,
              "reasoning_efforts":[{"value":"high","default":true},{"value":"low"}]}},
-            "grok-4.5":{"info":{"name":"Grok 4.5","supports_reasoning_effort":false,"reasoning_efforts":[{"value":"high"}]}}}}
+            "grok-4.5":{"info":{"name":"Grok 4.5","supports_reasoning_effort":false,"reasoning_efforts":[{"value":"high"}]}},
+            "grok-internal":{"info":{"name":"Internal","hidden":true}}}}
             """.utf8)
         let parsed = GrokCLI.parseModelsCache(cache)
+        #expect(parsed["grok-internal"] == nil)
         #expect(parsed["grok-4.7"] == GrokCLI.CachedModel(
             id: "grok-4.7", name: "Grok 4.7", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high", contextWindow: 256_000))
         #expect(parsed["grok-4.7-build-fast"]?.defaultEffort == "high")

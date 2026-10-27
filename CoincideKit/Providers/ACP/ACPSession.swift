@@ -1,88 +1,81 @@
 import Foundation
 
-/// Moves ACP lines between Coincide and an agent. The default runs the agent CLI as a child
-/// process; tests use an in-memory one.
-@MainActor
-public protocol ACPTransport: AnyObject {
-    var onLine: ((String) -> Void)? { get set }
-    var onStderr: ((String) -> Void)? { get set }
-    var onExit: ((_ status: Int32, _ stderrTail: String) -> Void)? { get set }
-    func start() throws
-    func write(_ line: String)
-    func terminate()
-}
-
-public typealias ACPTransportFactory = @MainActor (
-    _ executable: URL, _ arguments: [String], _ workingDirectory: URL, _ environment: [String: String]
-) -> ACPTransport
-
-/// Runs the agent with `LineProcess`.
-@MainActor
-final class ACPProcessTransport: ACPTransport {
-    var onLine: ((String) -> Void)?
-    var onStderr: ((String) -> Void)?
-    var onExit: ((_ status: Int32, _ stderrTail: String) -> Void)?
-    private let process: LineProcess
-
-    init(executable: URL, arguments: [String], workingDirectory: URL, environment: [String: String]) {
-        process = LineProcess(executable: executable, arguments: arguments, workingDirectory: workingDirectory, environment: environment)
-        process.onLine = { [weak self] line in self?.onLine?(line) }
-        process.onStderr = { [weak self] text in self?.onStderr?(text) }
-        process.onExit = { [weak self] status, tail in self?.onExit?(status, tail) }
-    }
-
-    func start() throws { try process.start() }
-    func write(_ line: String) { process.write(line) }
-
-    func terminate() {
-        // Stay alive until the process is gone, so the SIGKILL fallback still runs after the
-        // session lets go of this transport.
-        process.onExit = { [self] _, _ in process.onExit = nil }
-        process.terminate()
-    }
-}
-
-/// A live ACP agent session bound to one Coincide thread.
+/// A live Agent Client Protocol session bound to one Coincide thread, generic over the agent
+/// (see `ACPAgentFlavor` for what an agent can customize).
 ///
 /// It spawns the agent, runs the handshake, resumes the thread's native session when it can,
-/// applies the turn's model, effort, access and plan mode before each prompt, and maps the
-/// agent's updates, approvals and extensions to `AgentEvent`s. Every turn ends with exactly one
-/// `.turnCompleted`.
+/// applies the turn's model, effort, access and interaction mode before each prompt, and maps
+/// the agent's updates, approvals, questions, elicitations and extensions to `AgentEvent`s.
+/// Every turn ends with exactly one `.turnCompleted`.
 @MainActor
 public final class ACPSession: AgentSession {
     public let provider: ProviderKind
     public private(set) var sessionID: String?
     public var onEvent: ((AgentEvent) -> Void)?
 
-    /// How long `interrupt()` waits for the agent to confirm before the turn ends anyway.
-    public var cancelTimeout: TimeInterval = 4
+    /// How long a `.cancel` interrupt waits for the agent to confirm before the turn ends anyway
+    /// and the process is replaced. Defaults to the flavor's.
+    public var cancelTimeout: TimeInterval
+    /// Quiet time after the last replayed update that ends a `session/load` the agent never answers.
+    public var replayIdleGap: TimeInterval = 2
 
     private struct Turn {
         let promptID: String
         var interrupting = false
         var cancelTimer: Task<Void, Never>?
+        /// The user approved a command in this turn, so client terminals may run.
+        var approvedCommand = false
     }
 
-    private enum PendingApproval {
-        case permission(ACPConnection.IncomingRequest, toolCallID: String, options: [ACPPermissionOption], isQuestion: Bool)
-        case questions(QuestionFlow)
+    /// A request from the agent that waits for the user.
+    private enum Pending {
+        case approval(ACPConnection.IncomingRequest, toolCallID: String, options: [ACPPermissionOption], kind: String)
+        case question(ACPConnection.IncomingRequest, ACPQuestionSet, isElicitation: Bool)
+
+        var request: ACPConnection.IncomingRequest {
+            switch self {
+            case .approval(let request, _, _, _), .question(let request, _, _): request
+            }
+        }
     }
 
-    /// Grok's `ask_user_question` asks each question as its own approval, in order.
-    private struct QuestionFlow {
-        let request: ACPConnection.IncomingRequest
-        let toolCallID: String?
-        let questions: [XAI.Question]
-        var index = 0
-        var answers: [String: String] = [:]
+    /// The configuration plan mode replaced, restored when the thread builds again.
+    private struct BuildConfiguration {
+        var modeID: String?
+        var options: [String: String]
+    }
+
+    /// Tracks a `session/load` so replayed history is dropped and a load the agent never
+    /// answers still ends once the replay goes quiet.
+    @MainActor
+    private final class LoadGate {
+        let sessionID: String
+        var lastActivity: Date?
+        var candidateOptions: [ACPConfigOption]?
+        private var continuation: CheckedContinuation<ACPSessionSetup, Error>?
+
+        init(sessionID: String) {
+            self.sessionID = sessionID
+        }
+
+        var isFinished: Bool { continuation == nil }
+
+        func wait(_ continuation: CheckedContinuation<ACPSessionSetup, Error>) {
+            self.continuation = continuation
+        }
+
+        func finish(_ result: Result<ACPSessionSetup, Error>) {
+            guard let continuation else { return }
+            self.continuation = nil
+            continuation.resume(with: result)
+        }
     }
 
     private nonisolated static let sessionTimeout: TimeInterval = 60
     private nonisolated static let loadTimeout: TimeInterval = 90
     private nonisolated static let configTimeout: TimeInterval = 30
-    private nonisolated static let maxImageBytes = 10 * 1024 * 1024
-    private nonisolated static let planInstruction =
-        "[Plan mode] Investigate and reply with a step-by-step plan in markdown. Do not edit files or run commands that change anything until the user approves the plan.\n\n"
+    private nonisolated static let closeTimeout: TimeInterval = 2
+    private nonisolated static let maxStartupUpdates = 32
 
     private let launch: AgentLaunch
     private let flavor: ACPAgentFlavor
@@ -96,22 +89,34 @@ public final class ACPSession: AgentSession {
     private var mapper: ACPEventMapper
     private var launchedAccessMode: AccessMode
     private var accessMode: AccessMode
-    private var savedBuildModeID: String?
+    private var savedBuild: BuildConfiguration?
+    /// The reasoning effort last chosen or reported outside the config options (Grok).
     private var legacyEffort: String?
+    /// The interaction mode each native session was last told about.
+    private var instructedModes: [String: InteractionMode] = [:]
     private var publishedModels: [ModelOption] = []
     private var contextTokens: Int?
     private var turnUsage = TokenUsage()
-    private var replaying = false
+    private var loadGate: LoadGate?
+    /// Configuration updates that arrived before the agent answered `session/new` or `session/load`.
+    private var startupUpdates: [ACPSessionNotification] = []
     private var launching = false
     private var needsRestart = false
     private var isShutDown = false
-    /// Set while `send` prepares a turn; an interrupt then waits for the turn to exist.
-    private var isPreparingTurn = false
-    private var interruptPending = false
+    /// Each `send` gets a generation. A newer one supersedes an older one that is still
+    /// preparing (the runner gave up on that turn), and the older one then stops silently.
+    private var sendGeneration = 0
+    /// The generation of the `send` that is setting up its turn, if any.
+    private var preparingGeneration: Int?
+    /// A `send` the user stopped before its prompt reached the agent.
+    private var interruptedGeneration: Int?
+    private var commandsApprovedForSession = false
     private var turn: Turn?
-    private var approvals: [String: PendingApproval] = [:]
-    private var approvalCount = 0
+    private var pending: [String: Pending] = [:]
+    private var requestCount = 0
     private var stderrTail = ""
+    private var stderrLine = ""
+    private var shownNotices: Set<String> = []
     private var temporaryDirectory: URL?
 
     public init(launch: AgentLaunch, flavor: ACPAgentFlavor, transport: ACPTransportFactory? = nil) {
@@ -124,6 +129,7 @@ public final class ACPSession: AgentSession {
         mapper = ACPEventMapper(workingDirectory: launch.workingDirectory)
         launchedAccessMode = launch.accessMode
         accessMode = launch.accessMode
+        cancelTimeout = flavor.cancelTimeout
     }
 
     // MARK: AgentSession
@@ -134,13 +140,22 @@ public final class ACPSession: AgentSession {
 
     public func send(_ input: AgentTurnInput) async throws {
         guard !isShutDown else { throw AgentError.notRunning }
-        isPreparingTurn = true
-        interruptPending = false
-        defer { isPreparingTurn = false }
+        sendGeneration += 1
+        let generation = sendGeneration
+        // An earlier send may still be setting up a turn the runner gave up on; it stops at its
+        // next step. Never throw for a superseded send: the runner would fail the newer turn.
+        while preparingGeneration != nil {
+            try? await Task.sleep(for: .milliseconds(20))
+            guard generation == sendGeneration else { return }
+        }
+        guard !isShutDown else { throw AgentError.notRunning }
+        preparingGeneration = generation
+        defer { if preparingGeneration == generation { preparingGeneration = nil } }
         if let stale = turn {
             // The runner gave up on a turn the agent never confirmed; start from a fresh process.
             stale.cancelTimer?.cancel()
             turn = nil
+            cancelPending()
             needsRestart = true
         }
         if transport == nil || needsRestart || (flavor.accessModeNeedsRestart && input.accessMode != launchedAccessMode) {
@@ -148,76 +163,97 @@ public final class ACPSession: AgentSession {
             stopProcess()
             needsRestart = false
             try await open(resuming: resumeID, accessMode: input.accessMode)
+            guard generation == sendGeneration else { return }
         }
         guard let client, let sessionID else { throw AgentError.notRunning }
         try await applySelection(input.selection, client: client, sessionID: sessionID)
+        guard generation == sendGeneration else { return }
+        accessMode = input.accessMode
+        try await applyInteractionMode(input.interactionMode, client: client, sessionID: sessionID)
+        guard generation == sendGeneration else { return }
         try await applyAccessMode(input.accessMode, client: client, sessionID: sessionID)
-        let prefix = try await applyInteractionMode(input.interactionMode, client: client, sessionID: sessionID)
-        let blocks = promptBlocks(prefix + input.text, imagePaths: input.imagePaths)
-
-        guard !interruptPending else {
+        guard generation == sendGeneration else { return }
+        guard interruptedGeneration != generation else {
             // The user stopped the turn while it was being set up; nothing reached the agent yet.
             emit(.turnCompleted(.interrupted))
             return
         }
+        guard self.client === client, !isShutDown else { throw AgentError.notRunning }
+
+        let message = ACPPrompt.messageText(input.text, imagePaths: input.imagePaths)
+        let text = ACPPrompt.text(message, mode: input.interactionMode, previousMode: instructedModes[sessionID])
+        if text != message { instructedModes[sessionID] = input.interactionMode }
+        let inline = flavor.supportsImagePrompts || initialized?.promptImage == true
+        let images = inline ? input.imagePaths.compactMap { ACPPrompt.imageBlock($0, types: flavor.imageTypes) } : []
+
         let promptID = UUID().uuidString.lowercased()
         turn = Turn(promptID: promptID)
         mapper.beginTurn()
         contextTokens = nil
         turnUsage = TokenUsage()
-        client.prompt(sessionID: sessionID, blocks: blocks, meta: flavor.usesXAIExtensions ? XAI.promptMeta(promptID) : nil) {
+        client.prompt(sessionID: sessionID, blocks: [.text(text)] + images, meta: flavor.promptMeta(promptID: promptID)) {
             [weak self] result in
             self?.promptFinished(promptID, result)
         }
     }
 
     public func respond(to approvalID: String, optionID: String) {
-        guard let pending = approvals.removeValue(forKey: approvalID), let client else { return }
-        switch pending {
-        case .permission(let request, let toolCallID, let options, let isQuestion):
-            let option = options.first { $0.id == optionID }
-            client.respondToPermission(request, optionID: option?.id)
-            if option == nil || (!isQuestion && option?.isAllow == false) {
-                emit(mapper.markDeclined(toolCallID))
-            }
-        case .questions(var flow):
-            guard optionID != ACPApprovals.cancelOptionID else {
-                client.connection.respond(to: flow.request, result: ["outcome": "cancelled"])
-                return
-            }
-            flow.answers[flow.questions[flow.index].text] = optionID
-            flow.index += 1
-            if flow.index < flow.questions.count {
-                ask(flow)
-            } else {
-                client.connection.respond(to: flow.request, result: XAI.answers(flow.answers))
-            }
+        guard let entry = pending[approvalID] else { return }
+        if case .question(_, let set, _) = entry {
+            // Answering a question as an approval picks that option for its first question.
+            let answers = optionID == ACPApprovals.cancelOptionID ? [:] : set.questions.first.map { [$0.id: [optionID]] } ?? [:]
+            answer(userInput: approvalID, answers: answers)
+            return
         }
+        guard case .approval(let request, let toolCallID, let options, let kind) = entry, let client else { return }
+        pending[approvalID] = nil
+        let option = options.first { $0.id == optionID }
+        client.respondToPermission(request, optionID: option?.id)
+        guard let option, option.isAllow else {
+            emit(mapper.markDeclined(toolCallID))
+            return
+        }
+        if kind == "execute" {
+            turn?.approvedCommand = true
+            if option.kind == .allowAlways { commandsApprovedForSession = true }
+        }
+    }
+
+    public func answer(userInput requestID: String, answers: [String: [String]]) {
+        guard case .question(let request, let set, let isElicitation)? = pending.removeValue(forKey: requestID) else { return }
+        reply(to: request, set, answers: answers.isEmpty ? nil : answers, isElicitation: isElicitation)
     }
 
     public func interrupt() {
         guard var current = turn, !current.interrupting else {
-            if turn == nil && isPreparingTurn { interruptPending = true }
+            // The runner's turn belongs to the newest send, which may still be setting up.
+            if turn == nil && preparingGeneration != nil { interruptedGeneration = sendGeneration }
             return
         }
         current.interrupting = true
-        cancelApprovals()
+        turn = current
+        cancelPending()
         guard let client, let sessionID else {
-            turn = current
             finishTurn(.interrupted)
             return
         }
-        client.cancel(sessionID: sessionID, meta: flavor.cancelMeta)
-        let promptID = current.promptID
-        current.cancelTimer = Task { [weak self, timeout = cancelTimeout] in
-            try? await Task.sleep(for: .seconds(timeout))
-            guard !Task.isCancelled, let self, self.turn?.promptID == promptID else { return }
-            // The agent did not confirm; end the turn and replace the process.
-            self.finishTurn(.interrupted)
-            self.stopProcess()
-            self.needsRestart = true
+        switch flavor.interruptStyle {
+        case .terminate:
+            finishTurn(.interrupted)
+            stopProcess()
+            needsRestart = true
+        case .cancel:
+            client.cancel(sessionID: sessionID, meta: flavor.cancelMeta)
+            let promptID = current.promptID
+            turn?.cancelTimer = Task { [weak self, timeout = cancelTimeout] in
+                try? await Task.sleep(for: .seconds(timeout))
+                guard !Task.isCancelled, let self, self.turn?.promptID == promptID else { return }
+                // The agent did not confirm; end the turn and replace the process.
+                self.finishTurn(.interrupted)
+                self.stopProcess()
+                self.needsRestart = true
+            }
         }
-        turn = current
     }
 
     public func shutdown() {
@@ -225,8 +261,26 @@ public final class ACPSession: AgentSession {
         isShutDown = true
         turn?.cancelTimer?.cancel()
         turn = nil
-        cancelApprovals()
-        stopProcess()
+        cancelPending()
+        guard let transport, let client, let sessionID, initialized?.closeSession == true, !launching,
+            !client.connection.isClosed
+        else {
+            stopProcess()
+            return
+        }
+        // Let the agent close the session (its hooks and history), then stop the process.
+        // The completion keeps the client and transport alive until then.
+        detach(transport, client: client)
+        transport.onLine = { [weak connection = client.connection] in connection?.receive($0) }
+        client.closeSession(id: sessionID, timeout: Self.closeTimeout) { [client, transport] in
+            transport.terminate()
+            client.connection.close(with: AgentError.notRunning)
+        }
+        self.transport = nil
+        self.client = nil
+        terminals?.disposeAll()
+        terminals = nil
+        removeTemporaryDirectory(after: Self.closeTimeout + 4)
     }
 
     // MARK: Process and handshake
@@ -246,10 +300,12 @@ public final class ACPSession: AgentSession {
     }
 
     private func handshake(resuming resumeID: String?, client: ACPClient) async throws {
+        startupUpdates.removeAll()
         initialized = try await client.initialize(
             capabilities: flavor.clientCapabilities, clientInfo: Self.clientInfo, meta: flavor.initializeMeta,
             timeout: flavor.initializeTimeout)
         if flavor.authenticatesEagerly, let method = flavor.authMethodID(environment: launch.environment) {
+            // The configured method decides the credential source, even when the agent does not list it.
             try await client.authenticate(methodID: method, timeout: flavor.authenticateTimeout)
         }
         if let resumeID {
@@ -257,61 +313,117 @@ public final class ACPSession: AgentSession {
                 try await reopen(resumeID, client: client)
                 return
             } catch {
-                guard !client.connection.isClosed else { throw error }
+                guard !client.connection.isClosed, !isShutDown,
+                    (error as? ACPError)?.code != ACPError.authRequired
+                else { throw error }
                 emit(.notice(String(localized: "Couldn't resume the earlier \(provider.displayName) session, so a new one was started.")))
             }
         }
         let created = try await authenticated(client) {
             try await client.newSession(cwd: self.launch.workingDirectory, timeout: Self.sessionTimeout)
         }
-        adopt(created, id: created.sessionID ?? "")
+        adopt(created, id: created.sessionID ?? "", continued: false)
     }
 
     private func reopen(_ id: String, client: ACPClient) async throws {
-        let agent = initialized
-        let canResume = agent?.resumeSession == true
-        let canLoad = agent?.loadSession == true
+        let canResume = initialized?.resumeSession == true
+        let canLoad = initialized?.loadSession == true
         let reopened: ACPSessionSetup
         if canResume && (flavor.prefersResume || !canLoad) {
             reopened = try await authenticated(client) {
                 try await client.resumeSession(id: id, cwd: self.launch.workingDirectory, timeout: Self.sessionTimeout)
             }
         } else if canLoad {
-            // The agent replays the history as updates before it answers; the transcript already has it.
-            reopened = try await authenticated(client) {
-                self.replaying = true
-                defer { self.replaying = false }
-                return try await client.loadSession(id: id, cwd: self.launch.workingDirectory, timeout: Self.loadTimeout) {
-                    [weak self] in
-                    self?.replaying = false
-                }
-            }
+            reopened = try await authenticated(client) { try await self.load(id, client: client) }
         } else {
             throw AgentError.providerError(String(localized: "\(provider.displayName) cannot resume sessions."))
         }
-        adopt(reopened, id: id)
+        // An agent may answer with a new id that still holds the whole conversation.
+        if let newID = reopened.sessionID.flatMap(ACPToolCallState.nonEmpty), newID != id {
+            adopt(reopened, id: newID, continued: true)
+        } else {
+            adopt(reopened, id: id, continued: false)
+        }
+    }
+
+    /// `session/load` drops the history the agent replays (the transcript already has it). The
+    /// agent should answer once it has replayed everything; when it never does, the load ends
+    /// after `replayIdleGap` without replayed updates.
+    private func load(_ id: String, client: ACPClient) async throws -> ACPSessionSetup {
+        let gate = LoadGate(sessionID: id)
+        loadGate = gate
+        defer { if loadGate === gate { loadGate = nil } }
+        var setup = try await withCheckedThrowingContinuation { continuation in
+            gate.wait(continuation)
+            client.loadSession(id: id, cwd: launch.workingDirectory, timeout: Self.loadTimeout) { [weak self] result in
+                // Runs as the response is read, so updates after it are no longer replay.
+                if self?.loadGate === gate { self?.loadGate = nil }
+                if gate.isFinished, case .success(let late) = result {
+                    // The load already ended on a quiet replay; keep what the answer reports.
+                    self?.mergeLateLoad(late, id: id)
+                }
+                gate.finish(result)
+            }
+            Task { [weak self] in
+                while !gate.isFinished {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    guard let self, !gate.isFinished else { return }
+                    if let last = gate.lastActivity, Date().timeIntervalSince(last) >= self.replayIdleGap {
+                        if self.loadGate === gate { self.loadGate = nil }
+                        gate.finish(.success(ACPSessionSetup()))
+                    }
+                }
+            }
+        }
+        if setup.configOptions.isEmpty, let candidate = gate.candidateOptions { setup.configOptions = candidate }
+        return setup
+    }
+
+    private func mergeLateLoad(_ late: ACPSessionSetup, id: String) {
+        guard sessionID == id else { return }
+        if let modes = late.modes { setup.modes = modes }
+        if let models = late.models { setup.models = models }
+        if !late.configOptions.isEmpty { setup.configOptions = late.configOptions }
+        publishModels()
     }
 
     /// Runs `body`, signing in and retrying once when the agent answers `auth_required`.
     private func authenticated<T>(_ client: ACPClient, _ body: () async throws -> T) async throws -> T {
         do {
             return try await body()
-        } catch let error as ACPError where error.code == ACPError.authRequired && !flavor.authenticatesEagerly {
-            let advertised = initialized?.authMethods.first { $0.type == nil || $0.type == "agent" }?.id
-            guard let method = flavor.authMethodID(environment: launch.environment) ?? advertised else { throw error }
+        } catch let error as ACPError
+            where error.code == ACPError.authRequired && flavor.authenticatesWhenRequired && !flavor.authenticatesEagerly
+        {
+            guard let method = signInMethod() else { throw error }
             try await client.authenticate(methodID: method, timeout: flavor.authenticateTimeout)
             return try await body()
         }
     }
 
-    private func adopt(_ opened: ACPSessionSetup, id: String) {
+    /// The flavor's method when the agent lists it (or lists none), otherwise the first method
+    /// the agent completes by itself. Methods that need a terminal or typed credentials cannot
+    /// run here, so the original error stands.
+    private func signInMethod() -> String? {
+        let configured = flavor.authMethodID(environment: launch.environment)
+        guard let agent = initialized, !agent.authMethods.isEmpty else { return configured }
+        guard let method = agent.authMethod(preferring: configured), method.isAgentDriven else { return nil }
+        return method.id
+    }
+
+    private func adopt(_ opened: ACPSessionSetup, id: String, continued: Bool) {
+        if id != sessionID {
+            savedBuild = nil
+            legacyEffort = nil
+        }
         sessionID = id
         setup = opened
         setup.sessionID = id
-        legacyEffort = nil
-        savedBuildModeID = nil
-        emit(.sessionStarted(id: id))
-        if let model = setup.currentModelID { emit(.modelResolved(model)) }
+        // Configuration the agent reported before it answered.
+        let early = startupUpdates.filter { $0.sessionID == id }
+        startupUpdates.removeAll()
+        early.forEach { applyConfiguration($0.update) }
+        emit(continued ? .sessionContinued(id: id) : .sessionStarted(id: id))
+        if let model = setup.currentModelID ?? initialized?.modelState?.currentModelID { emit(.modelResolved(model)) }
         publishModels()
     }
 
@@ -331,6 +443,7 @@ public final class ACPSession: AgentSession {
         if capabilities.terminal {
             let terminals = ACPTerminals(workingDirectory: launch.workingDirectory, environment: environment)
             client.terminals = terminals
+            client.authorizeTerminal = { [weak self] _ in self?.terminalRefusal() }
             self.terminals = terminals
         }
         client.onSessionUpdate = { [weak self] in self?.handle($0) }
@@ -341,12 +454,17 @@ public final class ACPSession: AgentSession {
             }
             self.handlePermission(request, incoming)
         }
+        client.onElicitation = { [weak self, weak client] request, incoming in
+            guard let self else {
+                client?.respondToElicitation(incoming, action: "cancel")
+                return
+            }
+            self.handleElicitation(request, incoming)
+        }
+        client.onElicitationComplete = { [weak self] in self?.elicitationCompleted($0) }
         client.onExtensionRequest = { [weak self] in self?.handleExtensionRequest($0) ?? false }
         client.onExtensionNotification = { [weak self] in self?.handleExtensionNotification($0, $1) }
-        connection.onUnparsedLine = { [weak self] line in
-            guard let self, let notice = self.flavor.notice(forUnparsedLine: line) else { return }
-            self.emit(.notice(notice))
-        }
+        connection.onUnparsedLine = { [weak self] in self?.outputLine($0) }
         transport.onLine = { [weak connection] in connection?.receive($0) }
         transport.onStderr = { [weak self] in self?.recordStderr($0) }
         transport.onExit = { [weak self, weak transport] status, tail in
@@ -354,6 +472,7 @@ public final class ACPSession: AgentSession {
             self.processExited(transport, status: status, stderrTail: tail)
         }
         stderrTail = ""
+        stderrLine = ""
         do {
             try transport.start()
         } catch {
@@ -368,19 +487,31 @@ public final class ACPSession: AgentSession {
         return client
     }
 
-    /// Ends the process on purpose: no `.sessionExited` follows.
-    private func stopProcess() {
-        guard let transport else { return }
+    private func detach(_ transport: ACPTransport, client: ACPClient) {
         transport.onExit = nil
         transport.onLine = nil
         transport.onStderr = nil
+        client.onSessionUpdate = nil
+        client.onPermissionRequest = nil
+        client.onElicitation = nil
+        client.onElicitationComplete = nil
+        client.onExtensionRequest = nil
+        client.onExtensionNotification = nil
+        client.connection.onUnparsedLine = nil
+    }
+
+    /// Ends the process on purpose: no `.sessionExited` follows.
+    private func stopProcess() {
+        guard let transport else { return }
+        if let client { detach(transport, client: client) }
         transport.terminate()
         client?.connection.close(with: AgentError.notRunning)
         terminals?.disposeAll()
         self.transport = nil
         client = nil
         terminals = nil
-        approvals.removeAll()
+        pending.removeAll()
+        loadGate = nil
         // Give the process time to exit before its temporary folder goes away.
         removeTemporaryDirectory(after: 4)
     }
@@ -393,7 +524,7 @@ public final class ACPSession: AgentSession {
         client = nil
         terminals?.disposeAll()
         terminals = nil
-        approvals.removeAll()
+        pending.removeAll()
         removeTemporaryDirectory(after: 0)
         // Fails the pending prompt (ending the turn) or the handshake that is waiting.
         closing?.connection.close(with: AgentError.providerError(message))
@@ -403,6 +534,16 @@ public final class ACPSession: AgentSession {
 
     private func recordStderr(_ text: String) {
         stderrTail = String((stderrTail + text).suffix(4_096))
+        // Agents print sign-in links and similar notices on stderr too.
+        let lines = (stderrLine + text).split(separator: "\n", omittingEmptySubsequences: false)
+        stderrLine = String((lines.last ?? "").suffix(32_768))
+        lines.dropLast().forEach { outputLine(String($0)) }
+    }
+
+    private func outputLine(_ line: String) {
+        let line = line.hasSuffix("\r") ? String(line.dropLast()) : line
+        guard let notice = flavor.notice(forOutputLine: line), shownNotices.insert(notice).inserted else { return }
+        emit(.notice(notice))
     }
 
     private func exitMessage(status: Int32, stderr: String) -> String {
@@ -435,80 +576,128 @@ public final class ACPSession: AgentSession {
 
     // MARK: Turn configuration
 
-    /// Applies the model and effort through config options when the agent has them, otherwise
-    /// through Grok's legacy `session/set_model` with `_meta.reasoningEffort`.
+    /// Applies the model and effort: through `session/set_model` with the effort in `_meta` for
+    /// agents that select models that way (Grok), otherwise through config options, falling back
+    /// to `session/set_model` for agents that only list legacy models.
     private func applySelection(_ selection: ModelSelection, client: ACPClient, sessionID: String) async throws {
         let model = selection.modelID.trimmingCharacters(in: .whitespaces)
-        let wantsModel = !model.isEmpty && model != flavor.defaultModelID && model != "default"
+        let requested = model.isEmpty || model == flavor.defaultModelID || model == "default" ? nil : model
         let effort = selection.effort.flatMap { ACPModels.isEffortToken($0) ? $0 : nil }
+        let legacyState = setup.models ?? initialized?.modelState
 
-        if let option = setup.modelOption {
-            if wantsModel, option.currentValue != model {
-                if flavor.requiresListedModel, !option.choices.contains(where: { $0.value == model }) {
-                    throw AgentError.providerError(
-                        String(localized: "\(provider.displayName) does not offer the model “\(model)” for this account. Choose another model."))
-                }
-                try await setConfigOption(option.id, model, client: client, sessionID: sessionID, rejecting: model)
-                emit(.modelResolved(model))
-            }
-        } else if let state = setup.models ?? initialized?.modelState {
-            let target = wantsModel ? model : state.currentModelID
-            let current = legacyEffort ?? state.availableModels.first { $0.modelID == state.currentModelID }?.meta?["reasoningEffort"]?.string
-            let effortChanged = effort != nil && effort != current
-            if target != state.currentModelID || effortChanged {
-                do {
-                    try await client.setModel(
-                        sessionID: sessionID, modelID: target, meta: effort.map { ["reasoningEffort": .string($0)] },
-                        timeout: Self.configTimeout)
-                } catch let error as ACPError where error.code == ACPError.invalidParams {
-                    throw AgentError.providerError(rejectedModelMessage(target))
-                }
-                var updated = state
-                updated.currentModelID = target
-                setup.models = updated
-                if effortChanged { legacyEffort = effort }
-                emit(.modelResolved(target))
-            }
+        if flavor.selectsModelsWithSetModel, let state = legacyState {
+            let currentEffort = legacyEffort ?? setup.reasoningOption?.currentValue ?? state.currentEffort
+            let modelChanged = requested != nil && requested != state.currentModelID
+            let effortChanged = effort != nil && effort != currentEffort
+            guard modelChanged || effortChanged else { return }
+            try await setLegacyModel(requested ?? state.currentModelID, effort: effort, state: state, client: client, sessionID: sessionID)
             return
         }
 
-        if let effort, let option = setup.reasoningOption, option.currentValue != effort,
-            option.choices.contains(where: { $0.value == effort })
-        {
+        if let option = setup.modelOption {
+            if let requested, option.currentValue != requested {
+                if flavor.requiresListedModel, !option.offers(requested) {
+                    throw AgentError.providerError(unavailableModelMessage(requested))
+                }
+                try await setConfigOption(option.id, requested, client: client, sessionID: sessionID, rejecting: requested)
+                emit(.modelResolved(requested))
+            }
+        } else if let requested, let state = legacyState, state.currentModelID != requested {
+            if flavor.requiresListedModel, !state.availableModels.contains(where: { $0.modelID == requested }) {
+                throw AgentError.providerError(unavailableModelMessage(requested))
+            }
+            try await setLegacyModel(requested, effort: nil, state: state, client: client, sessionID: sessionID)
+        }
+        if let effort, let option = setup.reasoningOption, option.currentValue != effort, option.offers(effort) {
             try await setConfigOption(option.id, effort, client: client, sessionID: sessionID)
         }
     }
 
+    private func setLegacyModel(
+        _ model: String, effort: String?, state: ACPModelState, client: ACPClient, sessionID: String
+    ) async throws {
+        if flavor.requiresListedModel, !state.availableModels.contains(where: { $0.modelID == model }) {
+            throw AgentError.providerError(unavailableModelMessage(model))
+        }
+        do {
+            try await client.setModel(
+                sessionID: sessionID, modelID: model, meta: effort.map { ["reasoningEffort": .string($0)] },
+                timeout: Self.configTimeout)
+        } catch let error as ACPError where error.code == ACPError.invalidParams {
+            throw AgentError.providerError(rejectedModelMessage(model))
+        }
+        var updated = state
+        updated.currentModelID = model
+        setup.models = updated
+        if let option = setup.modelOption { setup.setCurrentValue(model, ofOption: option.id) }
+        if let effort {
+            legacyEffort = effort
+            if let option = setup.reasoningOption, option.offers(effort) { setup.setCurrentValue(effort, ofOption: option.id) }
+        }
+        emit(.modelResolved(model))
+        publishModels()
+    }
+
+    /// Runs after the interaction mode, so leaving plan mode can never bring back an access
+    /// mode the thread no longer has.
     private func applyAccessMode(_ mode: AccessMode, client: ACPClient, sessionID: String) async throws {
         accessMode = mode
         guard let target = flavor.sessionMode(for: mode), let modes = setup.effectiveModes, modes.currentModeID != target,
             modes.availableModes.contains(where: { $0.id == target })
         else { return }
+        if savedBuild != nil, Self.isPlanMode(modes.currentModeID) {
+            // Plan mode holds the session mode; build mode restores this one.
+            savedBuild?.modeID = target
+            return
+        }
         try await setSessionMode(target, client: client, sessionID: sessionID)
     }
 
-    /// Switches to the agent's plan mode, or returns a prefix that asks for a plan instead.
-    private func applyInteractionMode(_ mode: InteractionMode, client: ACPClient, sessionID: String) async throws -> String {
-        let modes = setup.effectiveModes
-        let planMode = modes?.availableModes.first { ["plan", "architect"].contains($0.id.lowercased()) }
+    /// Plan mode switches to the agent's own plan (or architect) mode and mode-like options when
+    /// it has them, remembering what to restore; the prompt also carries the mode's instructions.
+    private func applyInteractionMode(_ mode: InteractionMode, client: ACPClient, sessionID: String) async throws {
         switch mode {
         case .plan:
-            if let planMode, let modes {
-                if modes.currentModeID != planMode.id {
-                    savedBuildModeID = modes.currentModeID
-                    try await setSessionMode(planMode.id, client: client, sessionID: sessionID)
-                }
-                return ""
+            let modes = setup.effectiveModes
+            let planMode = modes?.availableModes.first { Self.isPlanMode($0.id) }
+            let planOptions = setup.modeLikeOptions.compactMap { option -> (id: String, value: String)? in
+                guard let value = option.choices.first(where: { Self.isPlanMode($0.value) })?.value, option.currentValue != value
+                else { return nil }
+                return (option.id, value)
             }
-            if let command = flavor.planCommand { return "/\(command) " }
-            return Self.planInstruction
+            let switchesMode = planMode != nil && modes?.currentModeID != planMode?.id
+            if savedBuild == nil, switchesMode || !planOptions.isEmpty {
+                savedBuild = BuildConfiguration(
+                    modeID: modes?.currentModeID,
+                    options: Dictionary(uniqueKeysWithValues: setup.modeLikeOptions.compactMap { option in
+                        option.currentValue.map { (option.id, $0) }
+                    }))
+            }
+            if let planMode, switchesMode { try await setSessionMode(planMode.id, client: client, sessionID: sessionID) }
+            for option in planOptions where setup.configOptions.first(where: { $0.id == option.id })?.currentValue != option.value {
+                try await setConfigOption(option.id, option.value, client: client, sessionID: sessionID)
+            }
         case .build:
-            if let saved = savedBuildModeID, let planMode, modes?.currentModeID == planMode.id {
-                try await setSessionMode(saved, client: client, sessionID: sessionID)
+            guard let saved = savedBuild else { return }
+            savedBuild = nil
+            // The thread's current access mode wins over the mode plan mode replaced.
+            let modeID = flavor.sessionMode(for: accessMode) ?? saved.modeID
+            if let modeID, let modes = setup.effectiveModes, modes.currentModeID != modeID,
+                modes.availableModes.contains(where: { $0.id == modeID })
+            {
+                try await setSessionMode(modeID, client: client, sessionID: sessionID)
             }
-            savedBuildModeID = nil
-            return ""
+            for (id, value) in saved.options.sorted(by: { $0.key < $1.key }) where id != setup.modeOption?.id {
+                guard let option = setup.configOptions.first(where: { $0.id == id }), option.currentValue != value,
+                    option.offers(value)
+                else { continue }
+                try await setConfigOption(id, value, client: client, sessionID: sessionID)
+            }
         }
+    }
+
+    private nonisolated static func isPlanMode(_ id: String) -> Bool {
+        ["plan", "architect"].contains(id.lowercased())
     }
 
     private func setSessionMode(_ id: String, client: ACPClient, sessionID: String) async throws {
@@ -525,18 +714,16 @@ public final class ACPSession: AgentSession {
     ) async throws {
         let options: [ACPConfigOption]?
         do {
-            options = try await client.setConfigOption(
-                sessionID: sessionID, configID: id, value: value, timeout: Self.configTimeout)
+            options = try await client.setConfigOption(sessionID: sessionID, configID: id, value: value, timeout: Self.configTimeout)
         } catch let error as ACPError where error.code == ACPError.invalidParams && model != nil {
             throw AgentError.providerError(rejectedModelMessage(model ?? value))
         }
         if let options, !options.isEmpty {
             setup.configOptions = options
-        } else if let index = setup.configOptions.firstIndex(where: { $0.id == id }),
-            case .select(_, let choices) = setup.configOptions[index].value
-        {
-            setup.configOptions[index].value = .select(current: value, choices: choices)
+        } else {
+            setup.setCurrentValue(value, ofOption: id)
         }
+        if id == setup.modeOption?.id { setup.modes?.currentModeID = value }
         publishModels()
     }
 
@@ -544,181 +731,265 @@ public final class ACPSession: AgentSession {
         String(localized: "\(provider.displayName) did not accept the model “\(model)”. Choose another model, then try again.")
     }
 
-    private func promptBlocks(_ text: String, imagePaths: [String]) -> [ACPContentBlock] {
-        var text = text
-        var images: [ACPContentBlock] = []
-        let inline = flavor.acceptsImages || initialized?.promptImage == true
-        for path in imagePaths {
-            if inline, let image = Self.imageBlock(path) {
-                images.append(image)
-            } else {
-                text += "\n\n[Attached image: \(path)]"
-            }
-        }
-        return (text.isEmpty ? [] : [.text(text)]) + images
-    }
-
-    nonisolated static func imageBlock(_ path: String) -> ACPContentBlock? {
-        let types = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
-                     "heic": "image/heic", "bmp": "image/bmp", "tif": "image/tiff", "tiff": "image/tiff"]
-        guard let mimeType = types[(path as NSString).pathExtension.lowercased()],
-            let data = FileManager.default.contents(atPath: path), !data.isEmpty, data.count <= maxImageBytes
-        else { return nil }
-        return .image(mimeType: mimeType, data: data.base64EncodedString(), uri: nil)
+    private func unavailableModelMessage(_ model: String) -> String {
+        String(localized: "\(provider.displayName) does not offer the model “\(model)” for this account. Choose another model.")
     }
 
     // MARK: Agent messages
 
     private func handle(_ notification: ACPSessionNotification) {
-        guard sessionID == nil || notification.sessionID == sessionID else { return }
-        if let tokens = notification.meta?["totalTokens"]?.int { contextTokens = tokens }
+        if let gate = loadGate, notification.sessionID == gate.sessionID {
+            if Self.isReplayActivity(notification.update) { gate.lastActivity = Date() }
+            if case .configOptions(let options) = notification.update { gate.candidateOptions = options }
+            return
+        }
+        if launching {
+            // The session id is not known yet; keep its configuration for `adopt`.
+            switch notification.update {
+            case .configOptions, .currentMode:
+                startupUpdates.append(notification)
+                if startupUpdates.count > Self.maxStartupUpdates { startupUpdates.removeFirst() }
+            case .notice(let title, let description):
+                showNotice(title, description)
+            default:
+                break
+            }
+            return
+        }
+        guard let sessionID, notification.sessionID == sessionID, !notification.isReplay else { return }
+        if let tokens = notification.meta?["totalTokens"]?.acpInt { contextTokens = tokens }
         switch notification.update {
+        case .configOptions, .currentMode:
+            applyConfiguration(notification.update)
+        case .usage(let used, let size, let costUSD):
+            emit(.usage(TokenUsage(inputTokens: used, contextWindow: size > 0 ? size : nil, costUSD: costUSD)))
+        case .idle(_, _, let usage):
+            if let usage = usage?["totalTokens"]?.acpInt { contextTokens = usage }
+        case .notice(let title, let description):
+            showNotice(title, description)
+        case .userMessageChunk, .availableCommands, .sessionInfo, .other:
+            break
+        default:
+            guard turn != nil, !flavor.isBackgroundUpdate(meta: notification.meta) else { return }
+            emit(mapper.map(notification.update, flavor: flavor, terminals: terminals))
+        }
+    }
+
+    private func showNotice(_ title: String, _ description: String?) {
+        guard let title = ACPToolCallState.nonEmpty(title) else { return }
+        emit(.notice(description.flatMap(ACPToolCallState.nonEmpty).map { "\(title)\n\($0)" } ?? title))
+    }
+
+    /// Updates that show the agent is still replaying a loaded session.
+    private nonisolated static func isReplayActivity(_ update: ACPSessionUpdate) -> Bool {
+        switch update {
+        case .agentMessageChunk(let block, _), .agentThoughtChunk(let block, _):
+            return block.displayText?.isEmpty == false
+        case .userMessageChunk, .idle, .notice, .other:
+            return false
+        default:
+            return true
+        }
+    }
+
+    private func applyConfiguration(_ update: ACPSessionUpdate) {
+        switch update {
         case .configOptions(let options):
+            let previousModel = setup.currentModelID
             setup.configOptions = options
+            if let mode = setup.modeOption?.currentValue { setup.modes?.currentModeID = mode }
+            if let model = setup.currentModelID, model != previousModel { emit(.modelResolved(model)) }
             publishModels()
         case .currentMode(let id):
             guard !id.isEmpty else { return }
             setup.modes?.currentModeID = id
-            if let index = setup.configOptions.firstIndex(where: { $0.id == setup.modeOption?.id }),
-                case .select(_, let choices) = setup.configOptions[index].value
-            {
-                setup.configOptions[index].value = .select(current: id, choices: choices)
-            }
-        case .usage(let used, let size, let costUSD):
-            emit(.usage(TokenUsage(inputTokens: used, contextWindow: size > 0 ? size : nil, costUSD: costUSD)))
-        case .notice(let title, let description):
-            guard turn != nil, !title.isEmpty else { return }
-            emit(.notice(description.map { "\(title)\n\($0)" } ?? title))
+            if let option = setup.modeOption { setup.setCurrentValue(id, ofOption: option.id) }
         default:
-            guard !replaying, notification.meta?["isReplay"]?.bool != true, turn != nil else { return }
-            emit(mapper.map(notification.update, flavor: flavor, terminals: terminals))
+            break
         }
     }
 
     private func handlePermission(_ request: ACPPermissionRequest, _ incoming: ACPConnection.IncomingRequest) {
         guard let client else { return }
-        guard turn?.interrupting == false else {
+        guard let current = turn, !current.interrupting, request.sessionID == sessionID else {
             client.respondToPermission(incoming, optionID: nil)
             return
         }
-        let isQuestion = flavor.isQuestion(request)
-        if !isQuestion { emit(mapper.toolEvents(request.toolCall, flavor: flavor, terminals: terminals)) }
-        if !isQuestion, let optionID = automaticAnswer(request) {
+        if let questions = flavor.question(for: request) {
+            ask(questions, request: incoming, isElicitation: false)
+            return
+        }
+        emit(mapper.toolEvents(request.toolCall, flavor: flavor, terminals: terminals))
+        let kind = request.toolCall.kind ?? mapper.kind(of: request.toolCall.id) ?? "other"
+        if let optionID = automaticAnswer(request, kind: kind) {
             client.respondToPermission(incoming, optionID: optionID)
+            if kind == "execute" { turn?.approvedCommand = true }
             return
         }
         let info = mapper.info(for: request.toolCall.id) ?? ACPToolCallState(request.toolCall).info(relativeTo: launch.workingDirectory)
-        let options: [ApprovalOption] =
-            isQuestion
-            ? request.options.map { ApprovalOption(id: $0.id, label: $0.name, kind: .allowOnce) } + [ACPApprovals.cancelOption]
-            : flavor.approvalOptions(for: request)
-        let title = isQuestion ? (request.toolCall.title ?? String(localized: "Choose an option.")) : (request.title ?? info.title)
-        approvalCount += 1
-        let id = "acp-approval-\(approvalCount)"
-        approvals[id] = .permission(incoming, toolCallID: request.toolCall.id, options: request.options, isQuestion: isQuestion)
+        let detail = [request.description, info.detail, flavor.approvalNote(for: request)]
+            .compactMap { $0.flatMap(ACPToolCallState.nonEmpty) }.joined(separator: "\n\n")
+        let id = nextRequestID("acp-approval")
+        pending[id] = .approval(incoming, toolCallID: request.toolCall.id, options: request.options, kind: kind)
         emit(
             .approvalRequested(
                 ApprovalRequest(
-                    id: id, category: isQuestion ? .other : info.category, title: title, detail: isQuestion ? nil : info.detail,
-                    options: options, toolCallID: request.toolCall.id)))
+                    id: id, category: info.category, title: request.title.flatMap(ACPToolCallState.nonEmpty) ?? info.title,
+                    detail: detail.isEmpty ? nil : detail, options: flavor.approvalOptions(for: request),
+                    toolCallID: request.toolCall.id)))
     }
 
     /// Full access allows everything; otherwise reads, searches and thinking need no approval.
-    private func automaticAnswer(_ request: ACPPermissionRequest) -> String? {
-        let kind = mapper.kind(of: request.toolCall.id) ?? request.toolCall.kind ?? "other"
+    /// Allow-once is preferred because allow-always can outlive the session.
+    private func automaticAnswer(_ request: ACPPermissionRequest, kind: String) -> String? {
         guard accessMode == .fullAccess || ["read", "search", "think"].contains(kind) else { return nil }
         return (request.option(.allowOnce) ?? request.option(.allowAlways))?.id
     }
 
-    private func handleExtensionRequest(_ request: ACPConnection.IncomingRequest) -> Bool {
-        guard flavor.usesXAIExtensions, let client else { return false }
-        switch XAI.method(request.method) {
-        case "exit_plan_mode":
-            if turn != nil { emit(.plan(text: XAI.exitPlanMarkdown(request.params) ?? mapper.planFileMarkdown ?? XAI.emptyPlan)) }
-            client.connection.respond(to: request, result: XAI.exitPlanResponse)
-            return true
-        case "ask_user_question":
-            let questions = XAI.questions(request.params)
-            guard turn?.interrupting == false, !questions.isEmpty else {
-                client.connection.respond(to: request, result: ["outcome": "cancelled"])
-                return true
-            }
-            ask(QuestionFlow(request: request, toolCallID: XAI.toolCallID(request.params), questions: questions))
-            return true
-        default:
-            return false
+    /// Client terminals run with Coincide's privileges: in approval mode only after the user
+    /// approved a command in this turn (or for the session).
+    private func terminalRefusal() -> ACPError? {
+        guard accessMode != .fullAccess, !commandsApprovedForSession, turn?.approvedCommand != true else { return nil }
+        return .internalError("The user has not approved running commands in this turn.")
+    }
+
+    private func handleElicitation(_ request: ACPElicitationRequest, _ incoming: ACPConnection.IncomingRequest) {
+        guard let client else { return }
+        // Session elicitations belong to a running turn; request-scoped ones can also come
+        // while the agent signs in during the handshake.
+        let inTurn = turn.map { !$0.interrupting && (request.sessionID == nil || request.sessionID == sessionID) } ?? false
+        guard inTurn || (launching && request.sessionID == nil) else {
+            client.respondToElicitation(incoming, action: "cancel")
+            return
+        }
+        guard let questions = ACPElicitationForm.questionSet(request) else {
+            client.respondToElicitation(incoming, action: "decline")
+            return
+        }
+        ask(questions, request: incoming, isElicitation: true)
+    }
+
+    private func elicitationCompleted(_ elicitationID: String) {
+        guard let entry = pending.first(where: { _, pending in
+            guard case .question(let request, _, true) = pending else { return false }
+            return request.params["elicitationId"]?.string == elicitationID
+        }) else { return }
+        pending[entry.key] = nil
+        client?.respondToElicitation(entry.value.request, action: "cancel")
+        emit(.userInputResolved(id: entry.key))
+    }
+
+    private func ask(_ questions: ACPQuestionSet, request: ACPConnection.IncomingRequest, isElicitation: Bool) {
+        let id = nextRequestID("acp-question")
+        pending[id] = .question(request, questions, isElicitation: isElicitation)
+        emit(.userInputRequested(UserInputRequest(id: id, title: questions.title, questions: questions.questions)))
+    }
+
+    private func reply(
+        to request: ACPConnection.IncomingRequest, _ questions: ACPQuestionSet, answers: [String: [String]]?,
+        isElicitation: Bool
+    ) {
+        guard let client else { return }
+        let reply = questions.respond(answers)
+        if isElicitation {
+            client.respondToElicitation(request, action: reply["action"]?.string ?? "cancel", content: reply["content"])
+        } else {
+            client.connection.respond(to: request, result: reply)
         }
     }
 
-    private func ask(_ flow: QuestionFlow) {
-        let question = flow.questions[flow.index]
-        let labels = question.options.isEmpty ? [String(localized: "OK")] : question.options
-        approvalCount += 1
-        let id = "acp-question-\(approvalCount)"
-        approvals[id] = .questions(flow)
-        emit(
-            .approvalRequested(
-                ApprovalRequest(
-                    id: id, category: .other, title: question.text,
-                    detail: question.details.isEmpty ? nil : question.details.joined(separator: "\n"),
-                    options: labels.map { ApprovalOption(id: $0, label: $0, kind: .allowOnce) } + [ACPApprovals.cancelOption],
-                    toolCallID: flow.toolCallID)))
+    private func handleExtensionRequest(_ request: ACPConnection.IncomingRequest) -> Bool {
+        guard let client, let action = flavor.extensionRequest(method: request.method, params: request.params) else {
+            return false
+        }
+        switch action {
+        case .respond(let result):
+            client.connection.respond(to: request, result: result)
+        case .capturePlan(let markdown, let placeholder, let response):
+            if turn != nil, let plan = markdown ?? mapper.planDocument.flatMap(ACPToolCallState.nonEmpty) ?? placeholder {
+                emit(.plan(text: plan))
+            }
+            client.connection.respond(to: request, result: response)
+        case .ask(let questions):
+            guard let current = turn, !current.interrupting, !questions.questions.isEmpty else {
+                client.connection.respond(to: request, result: questions.respond(nil))
+                return true
+            }
+            ask(questions, request: request, isElicitation: false)
+        }
+        return true
     }
 
     private func handleExtensionNotification(_ method: String, _ params: JSONValue) {
-        if method == "$/cancel_request", let requestID = params["requestId"] {
-            withdrawApproval(requestID)
+        if method == "$/cancel_request" {
+            withdraw(params["requestId"])
             return
         }
-        guard flavor.usesXAIExtensions, let completion = XAI.promptCompletion(method: method, params: params),
-            completion.promptID == turn?.promptID
-        else { return }
-        let window = modelContextWindow
-        if let usage = XAI.usage(completion.usage, contextTokens: contextTokens, contextWindow: window) {
-            turnUsage = usage.merged(with: turnUsage)
-        }
-        switch completion.stopReason {
-        case "cancelled": finishTurn(.interrupted)
-        case "rate_limit": finishTurn(.failed(String(localized: "Grok usage limit reached. Try again later.")))
-        case "error":
-            finishTurn(.failed(completion.agentResult ?? String(localized: "Grok ended the turn with an error.")))
-        default: finishTurn(turn?.interrupting == true ? .interrupted : .completed)
+        if let id = params["sessionId"]?.string, let sessionID, id != sessionID { return }
+        for event in flavor.extensionEvents(method: method, params: params) {
+            switch event {
+            case .promptCompleted(let promptID, let stopReason, let failure, let usage):
+                guard let current = turn, promptID == nil || promptID == current.promptID else { continue }
+                if let usage { turnUsage = usage.merged(with: turnUsage) }
+                if let failure {
+                    finishTurn(current.interrupting ? .interrupted : .failed(failure))
+                } else {
+                    complete(stopReason: stopReason ?? "end_turn", interrupting: current.interrupting)
+                }
+            case .modelState(let state):
+                setup.models = state
+                publishModels()
+            case .modelChanged(let id, let effort):
+                if let effort { legacyEffort = effort }
+                var state = setup.models ?? initialized?.modelState
+                guard state?.currentModelID != id else { continue }
+                state?.currentModelID = id
+                setup.models = state
+                if let option = setup.modelOption, option.offers(id) { setup.setCurrentValue(id, ofOption: option.id) }
+                emit(.modelResolved(id))
+                publishModels()
+            }
         }
     }
 
-    private func withdrawApproval(_ requestID: JSONValue) {
-        guard let entry = approvals.first(where: { _, pending in
-            if case .permission(let request, _, _, _) = pending { return request.id == requestID }
-            return false
-        }) else { return }
-        approvals[entry.key] = nil
-        emit(.approvalResolved(id: entry.key))
+    /// The agent withdrew one of its requests (`$/cancel_request`); it still gets an answer.
+    private func withdraw(_ requestID: JSONValue?) {
+        guard let requestID, let entry = pending.first(where: { $0.value.request.id == requestID }) else { return }
+        pending[entry.key] = nil
+        client?.connection.respond(to: entry.value.request, error: ACPError(code: ACPError.requestCancelled, message: "Request cancelled"))
+        switch entry.value {
+        case .approval: emit(.approvalResolved(id: entry.key))
+        case .question: emit(.userInputResolved(id: entry.key))
+        }
     }
 
     private func promptFinished(_ promptID: String, _ result: Result<ACPPromptResult, Error>) {
         guard let current = turn, current.promptID == promptID else { return }
         switch result {
         case .success(let response):
-            if let usage = Self.promptUsage(response.usage) { turnUsage = turnUsage.merged(with: usage) }
-            switch response.stopReason {
-            case "cancelled":
-                finishTurn(.interrupted)
-            case "refusal":
-                emit(.notice(String(localized: "\(provider.displayName) refused to continue this request.")))
-                finishTurn(.completed)
-            case "max_tokens":
-                emit(.notice(String(localized: "\(provider.displayName) stopped after reaching its output limit.")))
-                finishTurn(.completed)
-            case "max_turn_requests":
-                emit(.notice(String(localized: "\(provider.displayName) stopped after reaching its request limit for this turn.")))
-                finishTurn(.completed)
-            default:
-                finishTurn(current.interrupting ? .interrupted : .completed)
-            }
+            if let usage = Self.promptUsage(response.usage) { turnUsage = usage.merged(with: turnUsage) }
+            complete(stopReason: response.stopReason, interrupting: current.interrupting)
         case .failure(let error):
             let cancelled = (error as? ACPError)?.code == ACPError.requestCancelled
             finishTurn(current.interrupting || cancelled ? .interrupted : .failed(flavor.message(for: error)))
         }
+    }
+
+    private func complete(stopReason: String, interrupting: Bool) {
+        switch stopReason {
+        case "cancelled":
+            finishTurn(.interrupted)
+            return
+        case "refusal":
+            emit(.notice(String(localized: "\(provider.displayName) refused to continue this request.")))
+        case "max_tokens":
+            emit(.notice(String(localized: "\(provider.displayName) stopped after reaching its output limit.")))
+        case "max_turn_requests":
+            emit(.notice(String(localized: "\(provider.displayName) stopped after reaching its request limit for this turn.")))
+        default:
+            break
+        }
+        finishTurn(interrupting ? .interrupted : .completed)
     }
 
     private func finishTurn(_ outcome: TurnOutcome) {
@@ -726,32 +997,42 @@ public final class ACPSession: AgentSession {
         turn = nil
         current.cancelTimer?.cancel()
         // Anything still waiting was withdrawn by the agent when it ended the turn.
-        let withdrawn = approvals.keys.sorted()
-        cancelApprovals()
-        if outcome == .completed { withdrawn.forEach { emit(.approvalResolved(id: $0)) } }
+        let withdrawn = pending.sorted { $0.key < $1.key }
+        cancelPending()
+        if outcome == .completed {
+            for (id, entry) in withdrawn {
+                switch entry {
+                case .approval: emit(.approvalResolved(id: id))
+                case .question: emit(.userInputResolved(id: id))
+                }
+            }
+        }
         emit(mapper.closeSegments())
         var usage = turnUsage
         if usage.inputTokens == nil { usage.inputTokens = contextTokens }
         if usage.contextWindow == nil { usage.contextWindow = modelContextWindow }
         if usage != TokenUsage() { emit(.usage(usage)) }
         emit(.turnCompleted(outcome))
-        if outcome == .interrupted, flavor.restartsAfterInterrupt {
-            stopProcess()
-            needsRestart = true
+    }
+
+    /// Answers every waiting request with its cancelled form.
+    private func cancelPending() {
+        let waiting = pending.values
+        pending.removeAll()
+        guard let client else { return }
+        for entry in waiting {
+            switch entry {
+            case .approval(let request, _, _, _):
+                client.respondToPermission(request, optionID: nil)
+            case .question(let request, let questions, let isElicitation):
+                reply(to: request, questions, answers: nil, isElicitation: isElicitation)
+            }
         }
     }
 
-    /// Answers every waiting approval with `cancelled`.
-    private func cancelApprovals() {
-        let pending = approvals.values
-        approvals.removeAll()
-        guard let client else { return }
-        for entry in pending {
-            switch entry {
-            case .permission(let request, _, _, _): client.respondToPermission(request, optionID: nil)
-            case .questions(let flow): client.connection.respond(to: flow.request, result: ["outcome": "cancelled"])
-            }
-        }
+    private func nextRequestID(_ prefix: String) -> String {
+        requestCount += 1
+        return "\(prefix)-\(requestCount)"
     }
 
     private func publishModels() {
@@ -762,14 +1043,15 @@ public final class ACPSession: AgentSession {
     }
 
     private var modelContextWindow: Int? {
-        guard let current = setup.currentModelID else { return nil }
+        guard let current = setup.currentModelID ?? initialized?.modelState?.currentModelID else { return nil }
         return publishedModels.first { $0.modelID == current }?.contextWindow
     }
 
     /// ACP's prompt `usage` counts the whole turn, so only output and cache figures carry over.
     nonisolated static func promptUsage(_ value: JSONValue?) -> TokenUsage? {
         guard let value, value.object != nil else { return nil }
-        return TokenUsage(outputTokens: value["outputTokens"]?.int, cachedInputTokens: value["cachedReadTokens"]?.int)
+        let usage = TokenUsage(outputTokens: value["outputTokens"]?.acpInt, cachedInputTokens: value["cachedReadTokens"]?.acpInt)
+        return usage == TokenUsage() ? nil : usage
     }
 
     private func emit(_ event: AgentEvent) {

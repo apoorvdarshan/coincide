@@ -1,6 +1,7 @@
 import Foundation
 
-/// Grok Build (`grok agent stdio`), mirroring T3 Code's Grok provider.
+/// Grok Build (`grok agent stdio`), mirroring T3 Code's Grok provider and the message shapes in
+/// its recorded Grok 1.0.x sessions.
 struct GrokFlavor: ACPAgentFlavor {
     nonisolated static let defaultModelID = "grok-build"
     nonisolated static let apiKeyVariable = "XAI_API_KEY"
@@ -17,6 +18,8 @@ struct GrokFlavor: ACPAgentFlavor {
         }
     }
 
+    /// The launch arguments carry the access mode.
+    var accessModeNeedsRestart: Bool { true }
     /// `extension` makes Grok prompt for approvals without persisting command grants.
     var initializeMeta: JSONValue? { ["clientType": "extension"] }
     /// Grok writes the initialize result only after loading settings and skills, which can take 15 seconds.
@@ -26,18 +29,22 @@ struct GrokFlavor: ACPAgentFlavor {
         environment[Self.apiKeyVariable]?.trimmingCharacters(in: .whitespaces).isEmpty == false ? "xai.api_key" : "cached_token"
     }
 
-    /// Ctrl-C semantics stop stale background wakes until the next real user turn.
-    var cancelMeta: JSONValue? { ["cancelTrigger": "ctrl_c"] }
-    /// Grok can keep `task_already_running` after a cancel until its process exits.
-    var restartsAfterInterrupt: Bool { true }
-    var accessModeNeedsRestart: Bool { true }
     var defaultModelID: String { Self.defaultModelID }
     var defaultModelName: String { String(localized: "Grok Build") }
-    /// `/plan <task>` enters Grok's plan mode and starts the turn in one step.
-    var planCommand: String? { "plan" }
+    /// Grok answers `initialize` with protocol version 1 and switches models (with
+    /// `_meta.reasoningEffort`) through `session/set_model`, as recorded with Grok 1.0.44.
+    var selectsModelsWithSetModel: Bool { true }
     /// Grok processes image blocks even though it advertises `promptCapabilities.image: false`.
-    var acceptsImages: Bool { true }
-    var usesXAIExtensions: Bool { true }
+    var supportsImagePrompts: Bool { true }
+
+    /// Grok echoes the id when the turn completes.
+    func promptMeta(promptID: String) -> JSONValue? { ["promptId": .string(promptID), "requestId": .string(promptID)] }
+
+    /// A cancelled Grok prompt can keep stale work (and `task_already_running`) alive, so Stop
+    /// ends the process and the next turn reloads the session.
+    var interruptStyle: ACPInterruptStyle { .terminate }
+    /// Ctrl-C semantics stop stale background wakes until the next real user turn.
+    var cancelMeta: JSONValue? { ["cancelTrigger": "ctrl_c"] }
 
     func approvalOptions(for request: ACPPermissionRequest) -> [ApprovalOption] {
         var options: [ApprovalOption] = []
@@ -54,6 +61,45 @@ struct GrokFlavor: ACPAgentFlavor {
             options.append(ApprovalOption(id: reject.id, label: String(localized: "Decline"), kind: .deny))
         }
         return options + [ACPApprovals.cancelOption]
+    }
+
+    func extensionRequest(method: String, params: JSONValue) -> ACPExtensionAction? {
+        switch XAI.method(method) {
+        case "exit_plan_mode":
+            // Coincide shows the plan itself, so Grok's own approval gate is abandoned.
+            return .capturePlan(markdown: XAI.exitPlanMarkdown(params), placeholder: XAI.emptyPlan, response: XAI.exitPlanResponse)
+        case "ask_user_question":
+            return .ask(XAI.questionSet(params))
+        default:
+            return nil
+        }
+    }
+
+    func extensionEvents(method: String, params: JSONValue) -> [ACPExtensionEvent] {
+        var events: [ACPExtensionEvent] = []
+        if let completion = XAI.promptCompletion(method: method, params: params) {
+            events.append(
+                .promptCompleted(
+                    promptID: completion.promptID, stopReason: XAI.stopReason(completion.stopReason),
+                    failure: XAI.failure(completion), usage: XAI.usage(completion.usage)))
+        }
+        switch XAI.method(method) {
+        case "models/update":
+            if let state = ACPModelState(json: params) { events.append(.modelState(state)) }
+        case "session_notification", "session/update":
+            let update = params["update"]
+            if update?["sessionUpdate"]?.string == "model_changed", let model = update?["model_id"]?.string {
+                events.append(.modelChanged(id: model, effort: update?["reasoning_effort"]?.string))
+            }
+        default:
+            break
+        }
+        return events
+    }
+
+    /// Background command and subagent wakes run as Grok's own `task-completed-…` prompts.
+    func isBackgroundUpdate(meta: JSONValue?) -> Bool {
+        meta?["promptId"]?.string?.hasPrefix(XAI.backgroundPromptPrefix) == true
     }
 
     func normalize(_ toolCall: inout ACPToolCallState) {
@@ -81,6 +127,22 @@ struct GrokFlavor: ACPAgentFlavor {
         if ["task", "spawn_subagent"].contains(toolCall.toolName ?? "") { toolCall.category = .task }
     }
 
+    /// Grok keeps the plan it proposes in `~/.grok/sessions/…/plan.md`.
+    func planDocument(in toolCall: ACPToolCallState) -> String? {
+        let input = toolCall.rawInput
+        if let path = input?["file_path"]?.string ?? input?["path"]?.string, XAI.isPlanPath(path),
+            let content = input?["content"]?.string
+        {
+            return content.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        for entry in toolCall.content {
+            if case .diff(let path, _, let text) = entry, XAI.isPlanPath(path) {
+                return text.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return nil
+    }
+
     func message(for error: Error) -> String {
         if let error = error as? ACPError {
             if error.code == XAI.rateLimitedCode { return String(localized: "Grok usage limit reached. Try again later.") }
@@ -90,24 +152,71 @@ struct GrokFlavor: ACPAgentFlavor {
         }
         return error.localizedDescription
     }
+
+    /// `grok --version`, then `grok models` for the sign-in state and model ids, as T3 Code does.
+    /// Neither starts the agent.
+    func probe(executable: URL, environment: [String: String]) async -> ACPProbe {
+        let probeEnvironment = GrokCLI.probeEnvironment(environment)
+        let cache = GrokCLI.cachedModels(environment)
+        let offline = GrokCLI.modelOptions(listed: [], cache: cache)
+        let started = Date()
+        let versionRun = await ProcessRunner.run(executable, ["--version"], environment: probeEnvironment, timeout: 5)
+        let version = GrokCLI.version(from: versionRun.stdout + "\n" + versionRun.stderr)
+        guard versionRun.succeeded else {
+            // ProcessRunner stops a process that outlives its timeout with SIGTERM.
+            let timedOut = versionRun.status == SIGTERM && Date().timeIntervalSince(started) >= 5
+            return ACPProbe(
+                status: ProviderStatus(
+                    state: .error, version: version, executable: executable,
+                    message: timedOut
+                        ? String(localized: "Grok CLI is installed but timed out while running `grok --version`.")
+                        : String(localized: "Grok CLI is installed but failed to run.")),
+                models: offline)
+        }
+        let usesAPIKey = environment[Self.apiKeyVariable]?.trimmingCharacters(in: .whitespaces).isEmpty == false
+        var listing = await GrokCLI.listModels(executable, probeEnvironment)
+        // An expired token prints the logged-out line while the CLI refreshes it; ask once more.
+        if listing?.authenticated == false, !usesAPIKey, let recheck = await GrokCLI.listModels(executable, probeEnvironment),
+            recheck.authenticated != nil
+        {
+            listing = recheck
+        }
+        let models = GrokCLI.modelOptions(listed: listing?.models ?? [], cache: cache)
+        if usesAPIKey {
+            return ACPProbe(
+                status: ProviderStatus(state: .ready, version: version, executable: executable, account: String(localized: "xAI API key")),
+                models: models)
+        }
+        if listing?.authenticated == false {
+            return ACPProbe(
+                status: ProviderStatus(
+                    state: .notAuthenticated, version: version, executable: executable,
+                    message: String(localized: "Grok CLI is installed but not logged in. Run `grok login`.")),
+                models: models)
+        }
+        let authURL = GrokCLI.home(environment).appendingPathComponent("auth.json")
+        let email = FileManager.default.contents(atPath: authURL.path).flatMap(GrokCLI.accountEmail(authJSON:))
+        let account = email ?? (listing?.authenticated == true ? String(localized: "Grok account") : nil)
+        return ACPProbe(
+            status: ProviderStatus(state: .ready, version: version, executable: executable, account: account), models: models)
+    }
+
+    func offlineModels(environment: [String: String]) -> [ModelOption] {
+        GrokCLI.modelOptions(listed: [], cache: GrokCLI.cachedModels(environment))
+    }
 }
 
 /// Grok's `x.ai/*` additions to ACP. Method names arrive with or without the `_` extension prefix.
 enum XAI {
     nonisolated static let rateLimitedCode = -32003
+    nonisolated static let backgroundPromptPrefix = "task-completed-"
     nonisolated static let emptyPlan = "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)"
 
     struct PromptCompletion: Sendable, Hashable {
-        var promptID: String
+        var promptID: String?
         var stopReason: String?
         var agentResult: String?
         var usage: JSONValue?
-    }
-
-    struct Question: Sendable, Hashable {
-        var text: String
-        var options: [String]
-        var details: [String]
     }
 
     /// The method name without its `_` prefix and `x.ai/` namespace, or nil for other vendors.
@@ -116,30 +225,44 @@ enum XAI {
         return bare.hasPrefix("x.ai/") ? String(bare.dropFirst(5)) : nil
     }
 
-    /// Sent on `session/prompt`; Grok echoes the id when the turn completes.
-    nonisolated static func promptMeta(_ promptID: String) -> JSONValue {
-        ["promptId": .string(promptID), "requestId": .string(promptID)]
-    }
-
     /// Grok can report the end of a turn before (or instead of) the prompt response, either as
     /// `x.ai/session/prompt_complete` or as a `turn_completed` session notification.
     nonisolated static func promptCompletion(method name: String, params: JSONValue) -> PromptCompletion? {
         switch method(name) {
         case "session/prompt_complete":
-            guard let promptID = params["promptId"]?.string, !promptID.isEmpty else { return nil }
+            let promptID = params["promptId"]?.string.flatMap(ACPToolCallState.nonEmpty)
+            guard promptID?.hasPrefix(backgroundPromptPrefix) != true else { return nil }
             return PromptCompletion(
                 promptID: promptID, stopReason: params["stopReason"]?.string, agentResult: params["agentResult"]?.string,
                 usage: nil)
         case "session_notification", "session/update":
+            // Prompt identity is required so background completions never end the user's turn.
             guard let update = params["update"], update["sessionUpdate"]?.string == "turn_completed",
-                let promptID = update["prompt_id"]?.string ?? update["promptId"]?.string, !promptID.isEmpty,
-                !promptID.hasPrefix("task-completed-")
+                let promptID = (update["prompt_id"]?.string ?? update["promptId"]?.string).flatMap(ACPToolCallState.nonEmpty),
+                !promptID.hasPrefix(backgroundPromptPrefix)
             else { return nil }
             return PromptCompletion(
                 promptID: promptID, stopReason: update["stop_reason"]?.string ?? update["stopReason"]?.string,
                 agentResult: update["agent_result"]?.string, usage: update["usage"])
         default:
             return nil
+        }
+    }
+
+    /// Grok's stop reasons beyond ACP's (`rate_limit`, `error`) end the turn as failed instead.
+    nonisolated static func stopReason(_ value: String?) -> String {
+        switch value {
+        case "cancelled", "end_turn", "max_tokens", "max_turn_requests", "refusal": value ?? "end_turn"
+        default: "end_turn"
+        }
+    }
+
+    nonisolated static func failure(_ completion: PromptCompletion) -> String? {
+        switch completion.stopReason {
+        case "rate_limit": String(localized: "Grok usage limit reached. Try again later.")
+        case "error":
+            completion.agentResult.flatMap(ACPToolCallState.nonEmpty) ?? String(localized: "Grok ended the turn with an error.")
+        default: nil
         }
     }
 
@@ -162,31 +285,86 @@ enum XAI {
         ]
     }
 
-    nonisolated static func questions(_ params: JSONValue) -> [Question] {
-        (unwrap(params)["questions"]?.array ?? []).compactMap { question in
+    private struct Question {
+        struct Option {
+            var label: String
+            var description: String?
+            var preview: String?
+        }
+
+        var id: String
+        var text: String
+        var options: [Option]
+        var multiSelect: Bool
+    }
+
+    /// `ask_user_question` as Coincide questions. The reply follows T3 Code: answers keyed by the
+    /// question text, typed answers sent as `Other` with the text in `annotations[...].notes`.
+    @MainActor
+    static func questionSet(_ params: JSONValue) -> ACPQuestionSet {
+        var ids = Set<String>()
+        let questions = (unwrap(params)["questions"]?.array ?? []).enumerated().compactMap { index, question -> Question? in
             guard let text = question["question"]?.string.flatMap(ACPToolCallState.nonEmpty) else { return nil }
-            let options = question["options"]?.array ?? []
-            return Question(
-                text: text, options: options.compactMap { $0["label"]?.string },
-                details: options.compactMap { $0["description"]?.string })
+            var id = question["id"]?.string.flatMap(ACPToolCallState.nonEmpty) ?? text
+            if !ids.insert(id).inserted { id += "#\(index)" }
+            let options = (question["options"]?.array ?? []).compactMap { option -> Question.Option? in
+                guard let label = option["label"]?.string, !label.isEmpty else { return nil }
+                return Question.Option(
+                    label: label, description: option["description"]?.string.flatMap(ACPToolCallState.nonEmpty),
+                    preview: option["preview"]?.string.flatMap(ACPToolCallState.nonEmpty))
+            }
+            return Question(id: id, text: text, options: options, multiSelect: question["multiSelect"]?.bool == true)
+        }
+        let asked = questions.map { question in
+            UserQuestion(
+                id: question.id, prompt: question.text,
+                options: question.options.isEmpty
+                    ? [UserQuestion.Option(label: String(localized: "OK"), detail: String(localized: "Continue"))]
+                    : question.options.map { UserQuestion.Option(label: $0.label, detail: $0.description) },
+                allowsMultipleSelection: question.multiSelect, allowsFreeText: true)
+        }
+        return ACPQuestionSet(questions: asked) { answers in
+            guard let answers else { return ["outcome": "cancelled"] }
+            var selections: [String: JSONValue] = [:]
+            var annotations: [String: JSONValue] = [:]
+            for question in questions {
+                let values = (answers[question.id] ?? answers[question.text] ?? []).compactMap(ACPToolCallState.nonEmpty)
+                guard !values.isEmpty else { continue }
+                let chosen = values.compactMap { value in question.options.first { $0.label == value } }
+                let notes = values.filter { value in !question.options.contains { $0.label == value } }
+                let labels = chosen.isEmpty ? ["Other"] : chosen.map(\.label)
+                selections[question.text] = .array(labels.map(JSONValue.string))
+                var annotation: [String: JSONValue] = [:]
+                if !question.multiSelect, let preview = chosen.lazy.compactMap(\.preview).first { annotation["preview"] = .string(preview) }
+                if !notes.isEmpty { annotation["notes"] = .string(notes.joined(separator: "\n")) }
+                if !annotation.isEmpty { annotations[question.text] = .object(annotation) }
+            }
+            var reply: [String: JSONValue] = ["outcome": "accepted", "answers": .object(selections)]
+            if !annotations.isEmpty { reply["annotations"] = .object(annotations) }
+            return .object(reply)
         }
     }
 
-    nonisolated static func toolCallID(_ params: JSONValue) -> String? { unwrap(params)["toolCallId"]?.string }
-
-    /// `{"outcome":"accepted","answers":{"<question>":["<label>"]}}`
-    nonisolated static func answers(_ answers: [String: String]) -> JSONValue {
-        ["outcome": "accepted", "answers": .object(answers.mapValues { .array([.string($0)]) })]
+    /// Token counts from `turn_completed`; cost arrives in ticks of 1e-10 USD.
+    nonisolated static func usage(_ value: JSONValue?) -> TokenUsage? {
+        guard let value, value.object != nil else { return nil }
+        let ticks = value["costUsdTicks"]?.number.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+        let usage = TokenUsage(
+            outputTokens: value["outputTokens"]?.acpInt, cachedInputTokens: value["cachedReadTokens"]?.acpInt,
+            costUSD: ticks.map { $0 / 10_000_000_000 })
+        return usage == TokenUsage() ? nil : usage
     }
 
-    /// Token counts from `turn_completed`; cost arrives in ticks of 1e-10 USD.
-    nonisolated static func usage(_ value: JSONValue?, contextTokens: Int?, contextWindow: Int?) -> TokenUsage? {
-        guard let value, value.object != nil else { return nil }
-        let ticks = value["costUsdTicks"]?.number
-        return TokenUsage(
-            inputTokens: contextTokens, outputTokens: value["outputTokens"]?.int,
-            cachedInputTokens: value["cachedReadTokens"]?.int, contextWindow: contextWindow,
-            costUSD: ticks.map { $0 / 10_000_000_000 })
+    /// A plan document under `<home>/.grok/sessions/` (or `$GROK_HOME/sessions/`), without `..`.
+    nonisolated static func isPlanPath(_ path: String) -> Bool {
+        let path = path.trimmingCharacters(in: .whitespaces)
+        guard path.hasSuffix("/plan.md"), !path.split(separator: "/").contains("..") else { return false }
+        var prefixes = [FileManager.default.homeDirectoryForCurrentUser.path + "/.grok/sessions/", "~/.grok/sessions/"]
+        if let custom = ProcessInfo.processInfo.environment["GROK_HOME"].flatMap(ACPToolCallState.nonEmpty) {
+            prefixes.append((custom as NSString).expandingTildeInPath + "/sessions/")
+        }
+        if prefixes.contains(where: { path.hasPrefix($0) && path.count > $0.count + "plan.md".count }) { return true }
+        return path.range(of: #"^/(Users|home)/[^/]+/\.grok/sessions/([^/]+/)+plan\.md$"#, options: .regularExpression) != nil
     }
 }
 
@@ -211,6 +389,21 @@ enum GrokCLI {
         var efforts: [String]
         var defaultEffort: String?
         var contextWindow: Int?
+    }
+
+    /// Keeps probes from starting Grok's self-updater.
+    nonisolated static func probeEnvironment(_ environment: [String: String]) -> [String: String] {
+        var environment = environment
+        environment["GROK_DISABLE_AUTOUPDATER"] = "1"
+        return environment
+    }
+
+    /// `grok models` reports the sign-in state and model ids without starting the agent.
+    /// Only a clean exit is parsed; failures print help text that is not a model list.
+    nonisolated static func listModels(_ executable: URL, _ environment: [String: String]) async -> ModelsOutput? {
+        let run = await ProcessRunner.run(executable, ["models"], environment: environment, timeout: 10)
+        guard run.succeeded else { return nil }
+        return parseModels(run.stdout + "\n" + run.stderr)
     }
 
     nonisolated static func version(from output: String) -> String? {
@@ -238,11 +431,18 @@ enum GrokCLI {
         return ModelsOutput(authenticated: authenticated, models: models)
     }
 
+    nonisolated static func cachedModels(_ environment: [String: String]) -> [String: CachedModel] {
+        let url = home(environment).appendingPathComponent("models_cache.json")
+        return FileManager.default.contents(atPath: url.path).map(parseModelsCache) ?? [:]
+    }
+
+    /// Only catalog details are read; entries also hold credentials, which are never touched.
     nonisolated static func parseModelsCache(_ data: Data) -> [String: CachedModel] {
         guard let json = JSONValue.parse(data), let models = json["models"]?.object else { return [:] }
         var result: [String: CachedModel] = [:]
         for (id, entry) in models {
             let info = entry["info"] ?? entry
+            guard info["hidden"]?.bool != true else { continue }
             let meta: JSONValue = [
                 "supportsReasoningEffort": info["supports_reasoning_effort"] ?? .bool(true),
                 "reasoningEffort": info["reasoning_effort"] ?? .null,
@@ -251,7 +451,7 @@ enum GrokCLI {
             let efforts = ACPModels.metaEfforts(meta)
             result[id] = CachedModel(
                 id: id, name: info["name"]?.string ?? displayName(id), efforts: efforts.values,
-                defaultEffort: efforts.preferred, contextWindow: info["context_window"]?.int)
+                defaultEffort: efforts.preferred, contextWindow: info["context_window"]?.acpInt)
         }
         return result
     }

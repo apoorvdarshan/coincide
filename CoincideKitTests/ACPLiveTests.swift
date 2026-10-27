@@ -3,9 +3,139 @@ import Testing
 
 @testable import CoincideKit
 
-/// Runs against the real, signed-in Grok CLI. Opt in with `COINCIDE_LIVE_TESTS=1` (through
-/// `TEST_RUNNER_COINCIDE_LIVE_TESTS=1` for xcodebuild); `COINCIDE_LIVE_DIR` picks the parent of
-/// the scratch folders. Prompts are tiny because they use the user's own subscription.
+/// Live runs use the user's own subscriptions, so prompts are tiny. `COINCIDE_LIVE_DIR` picks the
+/// parent of the scratch folders (pass variables to xcodebuild as `TEST_RUNNER_<NAME>=…`).
+private enum LiveRun {
+    static func folder(_ prefix: String) throws -> URL {
+        let parent = ProcessInfo.processInfo.environment["COINCIDE_LIVE_DIR"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory
+        let folder = parent.appendingPathComponent("\(prefix)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    @MainActor
+    static func replyText(_ events: [AgentEvent]) -> String {
+        var texts: [String: String] = [:]
+        var order: [String] = []
+        for event in events {
+            switch event {
+            case .assistantTextDelta(let id, let delta):
+                if texts[id] == nil { order.append(id) }
+                texts[id, default: ""] += delta
+            case .assistantText(let id, let text):
+                if texts[id] == nil { order.append(id) }
+                texts[id] = text
+            default: break
+            }
+        }
+        return order.compactMap { texts[$0] }.joined(separator: "\n")
+    }
+}
+
+/// Records every line a live agent exchanges, so its wire shapes can be checked afterwards.
+@MainActor
+private final class ACPRecordingTransport: ACPTransport {
+    var onLine: ((String) -> Void)?
+    var onStderr: ((String) -> Void)?
+    var onExit: ((Int32, String) -> Void)?
+    private let inner: ACPProcessTransport
+    private let log: FileHandle?
+
+    init(inner: ACPProcessTransport, logURL: URL) {
+        self.inner = inner
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        log = try? FileHandle(forWritingTo: logURL)
+        inner.onLine = { [weak self] line in
+            self?.record("<- \(line)")
+            self?.onLine?(line)
+        }
+        inner.onStderr = { [weak self] text in
+            self?.record("!! \(text)")
+            self?.onStderr?(text)
+        }
+        inner.onExit = { [weak self] status, tail in
+            self?.record("exit \(status)")
+            self?.onExit?(status, tail)
+        }
+    }
+
+    func start() throws { try inner.start() }
+
+    func write(_ line: String) {
+        record("-> \(line)")
+        inner.write(line)
+    }
+
+    func terminate() { inner.terminate() }
+
+    private func record(_ text: String) {
+        try? log?.write(contentsOf: Data((text.hasSuffix("\n") ? text : text + "\n").utf8))
+    }
+}
+
+/// Runs the generic client against Cursor's `cursor-agent acp`. Opt in with
+/// `COINCIDE_LIVE_CURSOR_ACP=1`. It never selects a model or mode, because Cursor keeps such
+/// choices as the account's defaults, and it never signs in, so no browser opens.
+@MainActor
+@Suite(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_CURSOR_ACP"] == "1"), .serialized)
+struct ACPCursorLiveTests {
+    private func launch(_ folder: URL, resume: String? = nil) async throws -> AgentLaunch {
+        let executable = try #require(await ShellEnvironment.shared.which("cursor-agent"), "cursor-agent is not on PATH")
+        var environment = await ShellEnvironment.shared.environment()
+        environment["NO_OPEN_BROWSER"] = "1"
+        return AgentLaunch(
+            provider: .cursor, executable: executable, environment: environment, workingDirectory: folder,
+            resumeSessionID: resume, selection: ModelSelection(provider: .cursor, modelID: "default"), accessMode: .approval,
+            interactionMode: .build)
+    }
+
+    private func session(_ launch: AgentLaunch, record name: String) -> (ACPSession, ACPEventLog) {
+        let flavor = ACPPlainFlavor(kind: .cursor, launchArguments: ["acp"], signsInWhenRequired: false)
+        let folder = launch.workingDirectory
+        let session = ACPSession(launch: launch, flavor: flavor) { executable, arguments, directory, environment in
+            ACPRecordingTransport(
+                inner: ACPProcessTransport(executable: executable, arguments: arguments, workingDirectory: directory, environment: environment),
+                logURL: folder.appendingPathComponent("\(name).wire.log"))
+        }
+        let log = ACPEventLog()
+        log.attach(session)
+        return (session, log)
+    }
+
+    @Test func answersAPromptAndReloadsTheSession() async throws {
+        let folder = try LiveRun.folder("acp-cursor")
+        let (session, log) = session(try await launch(folder), record: "first")
+        try await session.start()
+        let id = try #require(session.sessionID)
+        #expect(log.sessionIDs == [id])
+
+        try await session.send(
+            AgentTurnInput(
+                text: "Reply with exactly: pong", selection: ModelSelection(provider: .cursor, modelID: "default"),
+                accessMode: .approval, interactionMode: .build))
+        await acpWaitUntil("the turn", timeout: .seconds(180)) { !log.completions.isEmpty || !log.approvals.isEmpty }
+        for approval in log.approvals { session.respond(to: approval.id, optionID: ACPApprovals.cancelOptionID) }
+        await acpWaitUntil("the turn", timeout: .seconds(60)) { !log.completions.isEmpty }
+        #expect(log.completions == [.completed])
+        #expect(LiveRun.replyText(log.events).lowercased().contains("pong"))
+        try "\(log.events)".write(to: folder.appendingPathComponent("first.events.txt"), atomically: true, encoding: .utf8)
+        session.shutdown()
+
+        // Reopening replays the history, which must not reach the transcript again. No prompt is sent.
+        let (reopened, reopenedLog) = self.session(try await launch(folder, resume: id), record: "reload")
+        defer { reopened.shutdown() }
+        try await reopened.start()
+        #expect(reopened.sessionID == id)
+        #expect(reopenedLog.sessionIDs == [id] || reopenedLog.events.contains(.sessionContinued(id: reopened.sessionID ?? "")))
+        await acpSettle()
+        #expect(!reopenedLog.events.contains { if case .assistantTextDelta = $0 { true } else { false } })
+        #expect(reopenedLog.notices.isEmpty)
+        try "\(reopenedLog.events)".write(to: folder.appendingPathComponent("reload.events.txt"), atomically: true, encoding: .utf8)
+    }
+}
+
+/// Runs against the real, signed-in Grok CLI. Opt in with `COINCIDE_LIVE_TESTS=1`.
 @MainActor
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_TESTS"] == "1"), .serialized)
 struct ACPLiveTests {
@@ -17,10 +147,7 @@ struct ACPLiveTests {
 
     private func makeAgent(resume: String? = nil, accessMode: AccessMode = .fullAccess, directory: URL? = nil) async throws -> Agent {
         let executable = try #require(await ShellEnvironment.shared.which("grok"), "grok is not on PATH")
-        let parent = ProcessInfo.processInfo.environment["COINCIDE_LIVE_DIR"].map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.temporaryDirectory
-        let folder = directory ?? parent.appendingPathComponent("acp-live-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let folder = try directory ?? LiveRun.folder("acp-live")
         let launch = AgentLaunch(
             provider: .grok, executable: executable, environment: await ShellEnvironment.shared.environment(),
             workingDirectory: folder, resumeSessionID: resume,
@@ -42,24 +169,7 @@ struct ACPLiveTests {
                 text: text, selection: ModelSelection(provider: .grok, modelID: GrokFlavor.defaultModelID), accessMode: accessMode,
                 interactionMode: mode))
         await acpWaitUntil("the turn to finish", timeout: .seconds(180)) { agent.log.completions.count > finished }
-        return Self.replyText(agent.log.events)
-    }
-
-    private static func replyText(_ events: [AgentEvent]) -> String {
-        var texts: [String: String] = [:]
-        var order: [String] = []
-        for event in events {
-            switch event {
-            case .assistantTextDelta(let id, let delta):
-                if texts[id] == nil { order.append(id) }
-                texts[id, default: ""] += delta
-            case .assistantText(let id, let text):
-                if texts[id] == nil { order.append(id) }
-                texts[id] = text
-            default: break
-            }
-        }
-        return order.compactMap { texts[$0] }.joined(separator: "\n")
+        return LiveRun.replyText(agent.log.events)
     }
 
     @Test func turnsKeepTheirContext() async throws {
@@ -105,7 +215,7 @@ struct ACPLiveTests {
             if case .toolCompleted(_, _, let output) = event { return output }
             return nil
         }
-        #expect(outputs.contains { $0.contains("coincide-ok") } || Self.replyText(agent.log.events).contains("coincide-ok"))
+        #expect(outputs.contains { $0.contains("coincide-ok") } || LiveRun.replyText(agent.log.events).contains("coincide-ok"))
     }
 
     @Test func planModeProducesAPlan() async throws {
@@ -125,7 +235,9 @@ struct ACPLiveTests {
                 text: "Count from 1 to 300, one number per line, with no other text.",
                 selection: ModelSelection(provider: .grok, modelID: GrokFlavor.defaultModelID), accessMode: .fullAccess,
                 interactionMode: .build))
-        await acpWaitUntil("output", timeout: .seconds(180)) { !Self.replyText(agent.log.events).isEmpty || !agent.log.completions.isEmpty }
+        await acpWaitUntil("output", timeout: .seconds(180)) {
+            !LiveRun.replyText(agent.log.events).isEmpty || !agent.log.completions.isEmpty
+        }
         agent.session.interrupt()
         await acpWaitUntil("the interrupted turn", timeout: .seconds(30)) { !agent.log.completions.isEmpty }
         try await Task.sleep(for: .seconds(1))

@@ -1,8 +1,9 @@
 import Foundation
 
 /// Typed Agent Client Protocol calls over a JSON-RPC connection, plus the client-side methods
-/// agents call back into (permissions, files, terminals). It speaks ACP v1 and adapts the
-/// handful of methods that differ when an agent answers `initialize` with the v2 preview shape.
+/// agents call back into (permissions, elicitations, files, terminals). It speaks ACP v1 and
+/// adapts the handful of methods that differ when an agent answers `initialize` with the v2
+/// preview shape.
 @MainActor
 public final class ACPClient {
     public let connection: ACPConnection
@@ -12,12 +13,23 @@ public final class ACPClient {
     public var fileSystem: ACPFileSystem?
     /// Serves `terminal/*` requests when set.
     public var terminals: ACPTerminals?
+    /// Decides whether `terminal/create` may run a command; return an error to refuse it.
+    public var authorizeTerminal: ((_ params: JSONValue) -> ACPError?)?
     public var onSessionUpdate: ((ACPSessionNotification) -> Void)?
     /// Answer through `respondToPermission(_:optionID:)`.
     public var onPermissionRequest: ((ACPPermissionRequest, ACPConnection.IncomingRequest) -> Void)?
+    /// Answer through `respondToElicitation(_:action:content:)`.
+    public var onElicitation: ((ACPElicitationRequest, ACPConnection.IncomingRequest) -> Void)?
+    /// The agent finished a URL elicitation by itself.
+    public var onElicitationComplete: ((_ elicitationID: String) -> Void)?
     /// Vendor extension requests. Return true when handled; others get "method not found".
     public var onExtensionRequest: ((ACPConnection.IncomingRequest) -> Bool)?
     public var onExtensionNotification: ((_ method: String, _ params: JSONValue) -> Void)?
+
+    /// Elicitation methods; only `elicitation/create` takes the flat response.
+    public nonisolated static let elicitationMethods: Set<String> = [
+        "elicitation/create", "session/elicitation", "_session/elicitation",
+    ]
 
     /// v2 prompts finish with an idle state update; v1 prompts finish with their response.
     private struct PendingPrompt {
@@ -62,27 +74,28 @@ public final class ACPClient {
         return setup
     }
 
-    /// `session/load`, which replays the conversation as `session/update` notifications before it
-    /// returns. `onResponse` runs as the response is read, before later notifications. On v2 this is
-    /// `session/resume` without replay.
+    /// Sends `session/load`, which replays the conversation as `session/update` notifications
+    /// before it answers. `completion` runs as the response is read, before later notifications.
+    /// On v2 this is `session/resume` without replay.
+    @discardableResult
     public func loadSession(
-        id: String, cwd: URL, timeout: TimeInterval? = nil, onResponse: (() -> Void)? = nil
-    ) async throws -> ACPSessionSetup {
-        let method = isV2 ? "session/resume" : "session/load"
+        id: String, cwd: URL, timeout: TimeInterval? = nil, completion: @escaping (Result<ACPSessionSetup, Error>) -> Void
+    ) -> Int {
         let params: JSONValue = ["sessionId": .string(id), "cwd": .string(cwd.path), "mcpServers": []]
-        let result = try await withCheckedThrowingContinuation { continuation in
-            connection.send(method, params: params, timeout: timeout) { result in
-                onResponse?()
-                continuation.resume(with: result)
-            }
+        return connection.send(isV2 ? "session/resume" : "session/load", params: params, timeout: timeout) { result in
+            completion(result.map(ACPSessionSetup.init(json:)))
         }
-        return ACPSessionSetup(json: result)
     }
 
     /// `session/resume`: reopens a session without replaying its history.
     public func resumeSession(id: String, cwd: URL, timeout: TimeInterval? = nil) async throws -> ACPSessionSetup {
         let params: JSONValue = ["sessionId": .string(id), "cwd": .string(cwd.path), "mcpServers": []]
         return ACPSessionSetup(json: try await connection.request("session/resume", params: params, timeout: timeout))
+    }
+
+    /// `session/close`, for agents that advertise it. `completion` runs with the answer or failure.
+    public func closeSession(id: String, timeout: TimeInterval, completion: @escaping () -> Void) {
+        connection.send("session/close", params: ["sessionId": .string(id)], timeout: timeout) { _ in completion() }
     }
 
     /// Sends `session/prompt`. `completion` runs once the agent ends the turn.
@@ -154,6 +167,15 @@ public final class ACPClient {
         connection.respond(to: request, result: ["outcome": outcome])
     }
 
+    /// Answers an elicitation with `accept` (and the form's content), `decline` or `cancel`.
+    /// The older `session/elicitation` methods nest the action one level deeper.
+    public func respondToElicitation(_ request: ACPConnection.IncomingRequest, action: String, content: JSONValue? = nil) {
+        var answer: [String: JSONValue] = ["action": .string(action)]
+        if let content { answer["content"] = content }
+        let result: JSONValue = request.method == "elicitation/create" ? .object(answer) : ["action": .object(answer)]
+        connection.respond(to: request, result: result)
+    }
+
     // MARK: Client methods
 
     private func handle(_ request: ACPConnection.IncomingRequest) {
@@ -166,12 +188,22 @@ public final class ACPClient {
                 return
             }
             onPermissionRequest(parsed, request)
+        case let method where Self.elicitationMethods.contains(method):
+            guard let onElicitation else {
+                respondToElicitation(request, action: "decline")
+                return
+            }
+            onElicitation(ACPElicitationRequest(params: request.params), request)
         case "fs/read_text_file":
             answer(request) { try Self.require(fileSystem, request).readTextFile(request.params) }
         case "fs/write_text_file":
             answer(request) { try Self.require(fileSystem, request).writeTextFile(request.params) }
         case "terminal/create":
-            answer(request) { try Self.require(terminals, request).create(request.params) }
+            answer(request) {
+                let terminals = try Self.require(terminals, request)
+                if let refusal = authorizeTerminal?(request.params) { throw refusal }
+                return try terminals.create(request.params)
+            }
         case "terminal/output":
             answer(request) { try Self.require(terminals, request).output(request.params) }
         case "terminal/kill":
@@ -198,13 +230,19 @@ public final class ACPClient {
     }
 
     private func handleNotification(_ method: String, _ params: JSONValue) {
-        guard method == "session/update" else {
+        switch method {
+        case "session/update":
+            break
+        case "elicitation/complete", "session/elicitation/complete":
+            if let id = params["elicitationId"]?.string { onElicitationComplete?(id) }
+            return
+        default:
             onExtensionNotification?(method, params)
             return
         }
         guard let notification = ACPSessionNotification(params: params) else { return }
         onSessionUpdate?(notification)
-        if isV2, case .idle(let stopReason, let error) = notification.update,
+        if isV2, case .idle(let stopReason, let error, let usage) = notification.update,
             var pending = pendingPrompts[notification.sessionID]
         {
             if let error {
@@ -212,7 +250,7 @@ public final class ACPClient {
                 pending.completion(.failure(error))
                 return
             }
-            let result = ACPPromptResult(stopReason: stopReason ?? "end_turn")
+            let result = ACPPromptResult(stopReason: stopReason ?? "end_turn", usage: usage)
             if pending.acknowledged {
                 pendingPrompts[notification.sessionID] = nil
                 pending.completion(.success(result))
