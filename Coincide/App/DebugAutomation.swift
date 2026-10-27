@@ -16,6 +16,11 @@ import CoincideKit
 /// - `{"request": "approval" | "question"}`: adds a sample request waiting for an answer, to check how it looks
 /// - `{"toggle": "sidebar" | "terminal" | "diff"}`, `{"appearance": "light" | "dark" | "system"}`
 /// - `{"settings": "general" | "providers" | "models" | "keyboard" | "about"}`: opens the settings window
+/// - `{"find": "text"}`: opens the find bar searching for the text; `{"findNext": 2}`, `{"findPrevious": 1}`,
+///   `{"closeFind": true}`
+/// - `{"palette": {"query": "model", "enter": true, "file": "/path.png"}}`: lays out the command palette for a
+///   query (optionally running the chosen result, which opens a nested list) and draws it into a PNG, offscreen
+/// - `{"snapshot": "/path.png"}`: draws the main window's content into a PNG
 /// - `{"sleep": seconds}`, `{"log": "text"}`, `{"quit": true}`
 enum DebugAutomation {
     static func startIfRequested() {
@@ -126,6 +131,23 @@ enum DebugAutomation {
                     ?? approval.options.first { $0.kind == (wanted == "deny" ? .deny : .allowOnce) }
                 if let option { runner.respond(threadID: threadID, itemID: item.id, optionID: option.id) }
                 log("answered approval with \(option?.label ?? "nothing")")
+            case "find":
+                guard let chat = mainWindow?.splitController.content.chat, let text = value.string else { continue }
+                chat.find(text)
+            case "findNext", "findPrevious":
+                guard let chat = mainWindow?.splitController.content.chat else { continue }
+                for _ in 0..<max(1, value.int ?? 1) {
+                    if name == "findNext" { chat.findNext() } else { chat.findPrevious() }
+                    try? await Task.sleep(for: .milliseconds(150))
+                }
+            case "closeFind":
+                mainWindow?.splitController.content.chat.closeFindBar()
+            case "palette":
+                guard let window = mainWindow, let query = value["query"]?.string, let file = value["file"]?.string else { continue }
+                drawPalette(for: window, query: query, enter: value["enter"]?.bool ?? false, to: URL(fileURLWithPath: file))
+            case "snapshot":
+                guard let content = mainWindow?.window?.contentView, let file = value.string else { continue }
+                draw(content, to: URL(fileURLWithPath: file))
             case "sleep":
                 try? await Task.sleep(for: .seconds(value.number ?? 1))
             case "log":
@@ -140,6 +162,51 @@ enum DebugAutomation {
         }
         store.flush()
         log("done")
+    }
+
+    private static var mainWindow: MainWindowController? {
+        NSApp.windows.compactMap { $0.windowController as? MainWindowController }.first
+    }
+
+    /// Draws a view hierarchy into a PNG, as it would look on screen (glass is left out).
+    private static func draw(_ view: NSView, to url: URL) {
+        view.layoutSubtreeIfNeeded()
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.effectiveAppearance.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: rep) }
+        try? rep.representation(using: .png, properties: [:])?.write(to: url)
+    }
+
+    /// The command palette's list for a query, laid out offscreen the way the palette panel shows it.
+    private static func drawPalette(for window: MainWindowController, query: String, enter: Bool, to url: URL) {
+        let palette = PaletteViewController()
+        palette.windowController = window
+        palette.reset()
+        let backdrop = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 600))
+        backdrop.wantsLayer = true
+        backdrop.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        backdrop.appearance = window.window?.effectiveAppearance
+        palette.view.frame = backdrop.bounds
+        backdrop.addSubview(palette.view)
+        guard let field = editableField(in: palette.view) else { return }
+        func typeQuery(_ text: String) {
+            field.stringValue = text
+            palette.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+        }
+        typeQuery(query)
+        if enter {
+            _ = palette.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:)))
+        }
+        backdrop.frame.size.height = palette.preferredHeight
+        palette.view.frame = backdrop.bounds
+        draw(backdrop, to: url)
+    }
+
+    private static func editableField(in view: NSView) -> NSTextField? {
+        if let field = view as? NSTextField, field.isEditable { return field }
+        for subview in view.subviews {
+            if let field = editableField(in: subview) { return field }
+        }
+        return nil
     }
 
     private static func sampleRequest(_ kind: String) -> TranscriptItem {
