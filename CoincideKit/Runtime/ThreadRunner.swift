@@ -409,12 +409,17 @@ public final class ThreadRunner {
         return launch.session
     }
 
-    private func shutDownIdleSessions() {
+    func shutDownIdleSessions(now: Date = Date()) {
         let limit = TimeInterval(max(1, store.settings.idleSessionTimeoutMinutes) * 60)
-        let now = Date()
         for (threadID, providers) in sessions {
-            for provider in providers.keys {
+            for (provider, session) in providers {
                 if turns[threadID]?.provider == provider { continue }
+                // Ending the session would kill the agent's background work (a dev server, a long test run).
+                // Its idle time counts from when that work ends, which emits no event.
+                if (session as? BackgroundWorkReporting)?.hasBackgroundWork == true {
+                    lastActivity[threadID, default: [:]][provider] = now
+                    continue
+                }
                 let last = lastActivity[threadID]?[provider] ?? .distantPast
                 if now.timeIntervalSince(last) > limit { shutdown(threadID: threadID, provider: provider) }
             }

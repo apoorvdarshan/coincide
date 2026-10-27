@@ -5,7 +5,7 @@ import Testing
 
 /// A session whose start and send the test controls.
 @MainActor
-final class ScriptedSession: AgentSession {
+final class ScriptedSession: AgentSession, BackgroundWorkReporting {
     let provider: ProviderKind
     var sessionID: String?
     var onEvent: ((AgentEvent) -> Void)?
@@ -13,6 +13,7 @@ final class ScriptedSession: AgentSession {
     var responses: [(id: String, option: String)] = []
     var interrupts = 0
     var isShutDown = false
+    var hasBackgroundWork = false
     /// Runs inside `start`; it can wait on the test.
     var onStart: (ScriptedSession) async throws -> Void = { _ in }
     /// Runs inside `send` after the input is recorded.
@@ -192,6 +193,26 @@ struct ThreadRunnerTests {
         await runner.send(threadID: threadID, text: "one")
         #expect(runner.isRunning(threadID))
         #expect(claude.last?.sent.map(\.message) == ["one"])
+    }
+
+    // MARK: Idle sessions
+
+    @Test func anIdleSessionIsKeptWhileItsAgentRunsBackgroundWork() async {
+        await completeTurn("one", reply: "The dev server runs in the background.")
+        let session = claude.last!
+        session.hasBackgroundWork = true
+        let later = Date().addingTimeInterval(3_600)
+        runner.shutDownIdleSessions(now: later)
+        #expect(!session.isShutDown)
+        #expect(runner.liveProviders(threadID) == [.claude])
+
+        // Once the work ends, the session counts as idle from then on.
+        session.hasBackgroundWork = false
+        runner.shutDownIdleSessions(now: later.addingTimeInterval(60))
+        #expect(!session.isShutDown)
+        runner.shutDownIdleSessions(now: later.addingTimeInterval(3_600))
+        #expect(session.isShutDown)
+        #expect(runner.liveProviders(threadID).isEmpty)
     }
 
     // MARK: What each provider has seen
