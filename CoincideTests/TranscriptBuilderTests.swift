@@ -12,12 +12,13 @@ private struct Transcript {
     @discardableResult
     mutating func add(
         _ kind: TranscriptItem.Kind, _ text: String = "text", status: ItemStatus? = nil, category: ToolCategory? = nil,
-        provider: ProviderKind? = nil, model: String? = nil, duration: TimeInterval? = nil
+        provider: ProviderKind? = nil, model: String? = nil, duration: TimeInterval? = nil, steered: Bool = false
     ) -> UUID {
         let createdAt = Self.start.addingTimeInterval(TimeInterval(items.count))
         let item = TranscriptItem(
             kind: kind, text: text, title: kind == .tool ? "Run" : nil, category: category, status: status, provider: provider,
-            modelID: model, createdAt: createdAt, completedAt: duration.map { createdAt.addingTimeInterval($0) })
+            modelID: model, steered: steered ? true : nil, createdAt: createdAt,
+            completedAt: duration.map { createdAt.addingTimeInterval($0) })
         items.append(item)
         return item.id
     }
@@ -218,6 +219,153 @@ struct TranscriptBuilderTests {
         // A new change set gives the row a new revision, so its cached height goes.
         let other = layout(TranscriptBuilder(items: silent.items, changedFiles: [message: 2]).build())
         #expect(other.last?.revision != silentRows.last?.revision)
+    }
+
+    // MARK: Steered messages
+
+    @Test func aFinishedTurnFoldsTheWorkAfterASteerUnderContinuedFor() {
+        var transcript = Transcript()
+        let user = transcript.add(.user, "Fix it")
+        let before = transcript.add(.tool, status: .completed, category: .read)
+        let steer = transcript.add(.user, "Also the docs", steered: true)
+        let after = transcript.add(.tool, status: .completed, category: .command, duration: 10)
+        let reply = transcript.add(.assistant, "Done, docs too", provider: .claude)
+        func rows(_ expanded: Set<TranscriptRowID> = []) -> [TranscriptRow] {
+            layout(TranscriptBuilder(items: transcript.items, expanded: expanded, changedFiles: [user: 3]).build())
+        }
+
+        // "Worked for" keeps the whole turn's time, to the command's end 3s + 10s in; the work after the steer folds
+        // under its own header, timed from the steer. The changed files follow the turn's final reply.
+        let collapsed = rows()
+        #expect(
+            collapsed.map(\.id) == [
+                .item(user), .turnHeader(user), .item(steer), .turnHeader(steer), .item(reply), .changedFiles(user),
+            ])
+        #expect(
+            collapsed.map(\.kind) == [
+                .user, .turnHeader(.worked(duration: 13, isExpanded: false)), .user,
+                .turnHeader(.continued(duration: 11, isExpanded: false)),
+                .assistant(meta: AssistantMeta(provider: .claude, modelID: nil)), .changedFiles(turnID: user),
+            ])
+        // Each header opens its own part.
+        #expect(
+            rows([.turnHeader(user)]).map(\.id) == [
+                .item(user), .turnHeader(user), .item(before), .item(steer), .turnHeader(steer), .item(reply), .changedFiles(user),
+            ])
+        #expect(
+            rows([.turnHeader(steer)]).map(\.id) == [
+                .item(user), .turnHeader(user), .item(steer), .turnHeader(steer), .item(after), .item(reply), .changedFiles(user),
+            ])
+        #expect(rows([.turnHeader(steer)])[3].kind == .turnHeader(.continued(duration: 11, isExpanded: true)))
+        #expect(rows()[3].isExpandable)
+
+        let builder = TranscriptBuilder(items: transcript.items)
+        #expect(builder.turnOpener(of: reply) == user)
+        #expect(builder.turnOpener(of: steer) == user)
+        #expect(builder.foldingHeader(of: before) == .turnHeader(user))
+        #expect(builder.foldingHeader(of: after) == .turnHeader(steer))
+        #expect(builder.foldingHeader(of: UUID()) == nil)
+    }
+
+    @Test func aSteerBeforeAnyOutputLeavesTheTurnInOnePart() {
+        var transcript = Transcript()
+        let user = transcript.add(.user)
+        let steer = transcript.add(.user, "Actually, use the other API", steered: true)
+        let tool = transcript.add(.tool, status: .completed)
+        let reply = transcript.add(.assistant, "Done")
+        let builder = TranscriptBuilder(items: transcript.items)
+        #expect(layout(builder.build()).map(\.id) == [.item(user), .turnHeader(user), .item(steer), .item(reply)])
+        var open = builder
+        open.expanded = [.turnHeader(user)]
+        #expect(layout(open.build()).map(\.id) == [.item(user), .turnHeader(user), .item(steer), .item(tool), .item(reply)])
+        #expect(builder.foldingHeader(of: tool) == .turnHeader(user))
+    }
+
+    @Test func steersBackToBackSplitTheWorkOnceAfterTheLast() {
+        var transcript = Transcript()
+        let user = transcript.add(.user)
+        transcript.add(.tool, status: .completed)
+        let first = transcript.add(.user, "One more thing", steered: true)
+        let second = transcript.add(.user, "And another", steered: true)
+        let tool = transcript.add(.tool, status: .completed)
+        let reply = transcript.add(.assistant, "Both done")
+        let rows = layout(TranscriptBuilder(items: transcript.items).build())
+        #expect(rows.map(\.id) == [.item(user), .turnHeader(user), .item(first), .item(second), .turnHeader(second), .item(reply)])
+        #expect(rows[4].kind == .turnHeader(.continued(duration: 2, isExpanded: false)))
+        #expect(TranscriptBuilder(items: transcript.items).foldingHeader(of: tool) == .turnHeader(second))
+    }
+
+    @Test func aPartWithNothingToFoldHasNoContinuedHeader() {
+        var transcript = Transcript()
+        let user = transcript.add(.user)
+        let interim = transcript.add(.assistant, "Starting")
+        let steer = transcript.add(.user, "Keep it short", steered: true)
+        let reply = transcript.add(.assistant, "Short answer")
+        // The reply before the steer folds under the turn's header; the part after it shows only its reply.
+        let rows = layout(TranscriptBuilder(items: transcript.items).build())
+        #expect(rows.map(\.id) == [.item(user), .turnHeader(user), .item(steer), .item(reply)])
+        let open = layout(TranscriptBuilder(items: transcript.items, expanded: [.turnHeader(user)]).build())
+        #expect(open.map(\.id) == [.item(user), .turnHeader(user), .item(interim), .item(steer), .item(reply)])
+    }
+
+    @Test func aRunningTurnShowsItsSteersLiveUnderWorking() {
+        var transcript = Transcript()
+        let user = transcript.add(.user)
+        let read = transcript.add(.tool, status: .completed, category: .read)
+        let steer = transcript.add(.user, "Also check the tests", steered: true)
+        let started = Transcript.start.addingTimeInterval(0.5)
+        func rows() -> [TranscriptRow] {
+            layout(TranscriptBuilder(items: transcript.items, runningTurnID: user, turnStartedAt: started).build())
+        }
+        // Right after the steer, the live row says the agent is on it.
+        #expect(rows().map(\.id) == [.item(user), .turnHeader(user), .item(read), .item(steer), .live])
+        #expect(rows()[1].kind == .turnHeader(.working(startedAt: started)))
+        #expect(rows()[3].kind == .user)
+        // Work after the steer stays live under "Working for…", with nothing folded.
+        let command = transcript.add(.tool, status: .running, category: .command)
+        #expect(rows().map(\.id) == [.item(user), .turnHeader(user), .item(read), .item(steer), .item(command)])
+        #expect(!rows().contains { if case .turnHeader(.worked) = $0.kind { true } else { false } })
+    }
+
+    @Test func aSteeredMessageIsMarkedOnlyWhenItWasSteered() {
+        var transcript = Transcript()
+        let first = transcript.add(.user)
+        transcript.add(.assistant, "One")
+        let steer = transcript.add(.user, steered: true)
+        let next = transcript.add(.user)
+        let builder = TranscriptBuilder(items: transcript.items)
+        #expect(builder.opensTurn(transcript[first]) && builder.opensTurn(transcript[next]))
+        #expect(!builder.opensTurn(transcript[steer]))
+        #expect(builder.turnOpener(of: steer) == first)
+    }
+
+    @Test func reusingSettledTurnsWithSteersBuildsWhatAFullBuildDoes() {
+        var transcript = Transcript()
+        var builder = TranscriptBuilder(items: [])
+        var settled: TranscriptSettledRows?
+
+        func step(_ changed: Set<UUID>, sourceLocation: SourceLocation = #_sourceLocation) {
+            builder.items = transcript.items
+            let reused = builder.build(reusing: &settled, changed: changed)
+            #expect(reused == builder.build(), sourceLocation: sourceLocation)
+        }
+
+        let user = transcript.add(.user)
+        builder.runningTurnID = user
+        step([user])
+        let tool = transcript.add(.tool, status: .completed)
+        step([tool])
+        let steer = transcript.add(.user, steered: true)
+        step([steer])
+        let reply = transcript.add(.assistant, "Done")
+        step([reply])
+        builder.runningTurnID = nil
+        step([])
+        let next = transcript.add(.user)
+        builder.runningTurnID = next
+        step([next])
+        builder.expanded = [.turnHeader(steer)]
+        step([])
     }
 
     // MARK: Running turns

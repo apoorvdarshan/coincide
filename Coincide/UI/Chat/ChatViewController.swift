@@ -635,8 +635,8 @@ final class ChatViewController: NSViewController {
         var open = expanded[threadID] ?? []
         var layout = builder(for: thread)
         var rows = layout.build()
-        if !rows.contains(where: { $0.id == rowID }), let opener = layout.turnOpener(of: match.itemID) {
-            open.insert(.turnHeader(opener))
+        if !rows.contains(where: { $0.id == rowID }), let header = layout.foldingHeader(of: match.itemID) {
+            open.insert(header)
             layout.expanded = open
             rows = layout.build()
         }

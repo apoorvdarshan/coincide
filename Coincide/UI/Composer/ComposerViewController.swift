@@ -602,8 +602,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         else { return }
         var plan: String?
         var reply: String?
+        // The latest turn's plan or reply, past any message steered into it.
         for item in thread.items.reversed() {
-            if item.kind == .user { break }
+            if item.opensUserTurn { break }
             switch item.kind {
             case .error: return
             case .plan where plan == nil: plan = item.text

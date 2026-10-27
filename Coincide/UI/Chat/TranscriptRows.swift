@@ -5,7 +5,8 @@ import Foundation
 enum TranscriptRowID: Hashable {
     case item(UUID)
     /// The "Working…" / "Worked for…" header of the turn that starts with this item: the user's message,
-    /// or the notice of a turn the agent started on its own.
+    /// or the notice of a turn the agent started on its own. For a message steered into a finished turn, the
+    /// "Continued for…" header of the work after it.
     case turnHeader(UUID)
     /// A collapsible group of consecutive tool calls, keyed by its first item.
     case group(UUID)
@@ -77,7 +78,7 @@ struct TranscriptRow: Equatable {
     var isExpandable: Bool {
         switch kind {
         case .reasoning, .tool, .group: true
-        case .turnHeader(.worked): true
+        case .turnHeader(.worked), .turnHeader(.continued): true
         default: false
         }
     }
@@ -119,6 +120,8 @@ struct TranscriptForkMarkers: Equatable {
 enum TurnHeader: Hashable {
     case working(startedAt: Date)
     case worked(duration: TimeInterval, isExpanded: Bool)
+    /// The work after a message steered into a finished turn, from that message on.
+    case continued(duration: TimeInterval, isExpanded: Bool)
 }
 
 enum LiveStatus: Hashable {
@@ -130,6 +133,8 @@ enum LiveStatus: Hashable {
 /// with the user's message; while it runs a "Working for…" header leads its live work, and once
 /// done the tool calls, reasoning and interim replies fold under "Worked for…" above the reply.
 /// A turn the agent started on its own opens with the notice saying so and lays out the same way.
+/// Messages steered into a running turn stay inside it, and once it is done the work after each
+/// folds under a "Continued for…" header of its own below it.
 /// Plans, questions and anything still waiting for the user stay in view.
 struct TranscriptBuilder {
     var items: [TranscriptItem]
@@ -234,15 +239,26 @@ struct TranscriptBuilder {
 
     // MARK: Turns
 
-    /// The user's messages open turns, and so do the notices of turns an agent started by itself.
+    /// The user's messages open turns, except those steered into a running turn, and so do the notices of turns
+    /// an agent started by itself.
     func opensTurn(_ item: TranscriptItem) -> Bool {
-        item.kind == .user || (item.kind == .notice && agentTurnIDs.contains(item.id))
+        item.opensUserTurn || (item.kind == .notice && agentTurnIDs.contains(item.id))
     }
 
     /// The item that opened the turn `itemID` belongs to, if a turn holds it.
     func turnOpener(of itemID: UUID) -> UUID? {
         guard let index = items.firstIndex(where: { $0.id == itemID }) else { return nil }
         return items[...index].last(where: opensTurn)?.id
+    }
+
+    /// The header that folds `itemID` away once its turn is over: the turn's own, or for work after a message
+    /// steered into the turn, that part's "Continued for…" header.
+    func foldingHeader(of itemID: UUID) -> TranscriptRowID? {
+        guard let index = items.firstIndex(where: { $0.id == itemID }),
+            let start = items[...index].lastIndex(where: opensTurn)
+        else { return nil }
+        let body = items[(start + 1)...index].filter(isVisible)
+        return .turnHeader(steerParts(of: body).last?.steer.id ?? items[start].id)
     }
 
     /// A turn's rows, then the dividers of forks made through it.
@@ -285,19 +301,34 @@ struct TranscriptBuilder {
                 }
             }
         }
-        if let opener, !hidden.isEmpty {
-            let isExpanded = expanded.contains(.turnHeader(opener.id))
-            let end = turn.map { $0.completedAt ?? $0.createdAt }.max() ?? opener.createdAt
-            rows.append(
-                row(
-                    .turnHeader(opener.id),
-                    .turnHeader(.worked(duration: max(0, end.timeIntervalSince(opener.createdAt)), isExpanded: isExpanded))))
-            if isExpanded { hidden.removeAll() }
-        }
 
         let terminal = terminalIndex.map { body[$0] }
         let meta = terminal.flatMap { item in item.provider.map { AssistantMeta(provider: $0, modelID: item.modelID) } }
-        appendBody(body.filter { !hidden.contains($0.id) }, terminalID: terminal?.id, meta: meta, to: &rows)
+        // As in T3, messages steered into the turn split its work into parts. "Worked for…" carries the whole
+        // turn's time and folds the first part; each later part folds under "Continued for…" below its message.
+        let parts = steerParts(of: body)
+        let bounds = [0] + parts.map(\.start) + [body.count]
+        for part in 0..<(bounds.count - 1) {
+            let slice = body[bounds[part]..<bounds[part + 1]]
+            var shown = slice.filter { !hidden.contains($0.id) }
+            if part == 0, let opener, !hidden.isEmpty {
+                let id = TranscriptRowID.turnHeader(opener.id)
+                let isExpanded = expanded.contains(id)
+                let end = turn.map { $0.completedAt ?? $0.createdAt }.max() ?? opener.createdAt
+                let duration = max(0, end.timeIntervalSince(opener.createdAt))
+                rows.append(row(id, .turnHeader(.worked(duration: duration, isExpanded: isExpanded))))
+                if isExpanded { shown = Array(slice) }
+            } else if part > 0, shown.count < slice.count {
+                let steer = parts[part - 1].steer
+                let id = TranscriptRowID.turnHeader(steer.id)
+                let isExpanded = expanded.contains(id)
+                let end = slice.map { $0.completedAt ?? $0.createdAt }.max() ?? steer.createdAt
+                let duration = max(0, end.timeIntervalSince(steer.createdAt))
+                rows.append(row(id, .turnHeader(.continued(duration: duration, isExpanded: isExpanded))))
+                if isExpanded { shown = Array(slice) }
+            }
+            appendBody(shown, terminalID: terminal?.id, meta: meta, to: &rows)
+        }
 
         if let user = opener, user.kind == .user, let signature = changedFiles[user.id] {
             let filesRow = row(.changedFiles(user.id), .changedFiles(turnID: user.id), salt: signature)
@@ -307,6 +338,27 @@ struct TranscriptBuilder {
                 rows.append(filesRow)
             }
         }
+    }
+
+    /// Where messages steered into a finished turn split its work (`body`, the turn after its opening item), as T3's
+    /// steer segments: for each later part, where in `body` it starts and the message it follows. A steer splits
+    /// the work only once the turn has shown something, and steers back to back split it once, after the last.
+    private func steerParts(of body: [TranscriptItem]) -> [(steer: TranscriptItem, start: Int)] {
+        var parts: [(steer: TranscriptItem, start: Int)] = []
+        var hasOutput = false
+        var pending: TranscriptItem?
+        for (index, item) in body.enumerated() {
+            if item.kind == .user {
+                if hasOutput { pending = item }
+                continue
+            }
+            if let steer = pending {
+                parts.append((steer, index))
+                pending = nil
+            }
+            hasOutput = true
+        }
+        return parts
     }
 
     private func appendBody(_ body: [TranscriptItem], terminalID: UUID?, meta: AssistantMeta?, to rows: inout [TranscriptRow]) {
@@ -349,7 +401,9 @@ struct TranscriptBuilder {
                 flush()
                 rows.append(row(.item(item.id), .notice))
             case .user:
+                // A message steered into the turn.
                 flush()
+                rows.append(row(.item(item.id), .user))
             }
         }
         flush()

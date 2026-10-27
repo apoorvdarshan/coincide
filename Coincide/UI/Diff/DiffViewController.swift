@@ -458,7 +458,7 @@ final class DiffViewController: NSViewController {
     private func turns(_ thread: ChatThread) -> [(number: Int, checkpoint: TurnCheckpoint)] {
         var numbers: [UUID: Int] = [:]
         var count = 0
-        for item in thread.items where item.kind == .user {
+        for item in thread.items where item.opensUserTurn {
             count += 1
             numbers[item.id] = count
         }
