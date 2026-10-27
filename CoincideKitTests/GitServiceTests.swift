@@ -166,6 +166,27 @@ struct GitServiceTests {
         #expect(try await repository.git("status", "--porcelain").contains("?? docs/"))
     }
 
+    @Test func workingTreeDiffReadsAtMostTheCappedPatch() async throws {
+        let repository = try await TestRepository.make()
+        // Untracked files holding more text than the patch limit: about 10 MB of patch.
+        let line = String(repeating: "x", count: 99) + "\n"
+        for index in 0..<5 {
+            try repository.write("part\(index).txt", String(repeating: line, count: 20_000))
+        }
+        try repository.write("README.md", "hello\nchanged\n")
+
+        let diff = try await git.workingTreeDiff(repository.url)
+        #expect(diff.isTruncated)
+        #expect(
+            Set(diff.files.map(\.path)) == ["README.md", "part0.txt", "part1.txt", "part2.txt", "part3.txt", "part4.txt"])
+        #expect(diff.files.first { $0.path == "README.md" }?.hunks.isEmpty == false)
+        let first = try #require(diff.files.first { $0.path == "part0.txt" })
+        #expect(first.status == .untracked && first.hunks.first?.lines.count == 20_000)
+        // Past the limit, files keep their counts but have no hunks.
+        let last = try #require(diff.files.first { $0.path == "part4.txt" })
+        #expect(last.hunks.isEmpty && last.additions == 20_000)
+    }
+
     @Test func diffsAnUnbornRepository() async throws {
         let repository = try await TestRepository.make(commit: false)
         try repository.write("first.txt", "a\nb\n")

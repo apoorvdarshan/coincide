@@ -92,6 +92,19 @@ enum GitCLI {
         return await ProcessRunner.run(executable, arguments, cwd: cwd, environment: env, timeout: timeout, input: input)
     }
 
+    /// Runs git keeping at most `maxOutputBytes` of its standard output. Once more arrives, git is
+    /// stopped and the run counts as succeeded with `truncated` set, so a huge patch is never read
+    /// into memory in full.
+    nonisolated static func git(
+        _ arguments: [String], in cwd: URL, environment overrides: [String: String] = [:], timeout: TimeInterval = 30,
+        maxOutputBytes: Int
+    ) async -> (result: ProcessRunner.Result, truncated: Bool) {
+        guard let executable = await gitExecutable() else { return (result: gitMissingResult, truncated: false) }
+        let env = await environment(overrides)
+        return await CappedRun.run(
+            executable, arguments, cwd: cwd, environment: env, timeout: timeout, maxOutputBytes: maxOutputBytes)
+    }
+
     /// Runs git and throws a `GitError` describing `action` when it fails.
     @discardableResult
     nonisolated static func checked(
@@ -128,4 +141,151 @@ enum GitCLI {
 
     /// The well-known id of the empty tree, used to diff an unborn HEAD.
     nonisolated static let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+}
+
+/// One `GitCLI.git(…, maxOutputBytes:)` call: like `ProcessRunner.run`, but standard output stops
+/// growing at the cap and git is stopped (with anything it started) once the cap is exceeded.
+/// Resumes the caller once git has exited and both pipes are drained.
+private final class CappedRun: @unchecked Sendable {
+    /// Standard error is only read for diagnostics; its tail is enough.
+    private nonisolated static let maxErrorBytes = 64 * 1024
+
+    private let lock = NSLock()
+    private let limit: Int
+    private var continuation: CheckedContinuation<(result: ProcessRunner.Result, truncated: Bool), Never>?
+    private var stdout = Data()
+    private var stderr = Data()
+    private var status: Int32?
+    private var stdoutOpen = true
+    private var stderrOpen = true
+    private var truncated = false
+    private var didTimeOut = false
+
+    private nonisolated init(
+        limit: Int, continuation: CheckedContinuation<(result: ProcessRunner.Result, truncated: Bool), Never>
+    ) {
+        self.limit = max(0, limit)
+        self.continuation = continuation
+    }
+
+    nonisolated static func run(
+        _ executable: URL, _ arguments: [String], cwd: URL, environment: [String: String], timeout: TimeInterval,
+        maxOutputBytes: Int
+    ) async -> (result: ProcessRunner.Result, truncated: Bool) {
+        await withCheckedContinuation { continuation in
+            let run = CappedRun(limit: maxOutputBytes, continuation: continuation)
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = arguments
+            process.currentDirectoryURL = cwd
+            process.environment = environment
+            process.standardInput = FileHandle.nullDevice
+            let stdout = Pipe()
+            let stderr = Pipe()
+            process.standardOutput = stdout
+            process.standardError = stderr
+            for (pipe, isStdout) in [(stdout, true), (stderr, false)] {
+                pipe.fileHandleForReading.readabilityHandler = { handle in
+                    let data = handle.availableData
+                    if data.isEmpty {
+                        handle.readabilityHandler = nil
+                        run.closed(stdout: isStdout)
+                    } else if run.append(data, stdout: isStdout), process.isRunning {
+                        // Past the cap: stop git instead of reading the rest. Reading goes on (and drops
+                        // what arrives) until the pipe closes.
+                        ProcessTree.terminateTree(process.processIdentifier, grace: 3)
+                    }
+                }
+            }
+            process.terminationHandler = { process in
+                run.exited(process.terminationStatus)
+                // A helper git left running can hold the pipes open; don't wait on it for long.
+                DispatchQueue.global().asyncAfter(deadline: .now() + LineProcess.drainTimeout) {
+                    stdout.fileHandleForReading.readabilityHandler = nil
+                    stderr.fileHandleForReading.readabilityHandler = nil
+                    run.closed(stdout: true)
+                    run.closed(stdout: false)
+                }
+            }
+            do {
+                try process.run()
+            } catch {
+                stdout.fileHandleForReading.readabilityHandler = nil
+                stderr.fileHandleForReading.readabilityHandler = nil
+                run.fail(error.localizedDescription)
+                return
+            }
+            let pid = process.processIdentifier
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                guard process.isRunning else { return }
+                run.timedOut()
+                ProcessTree.terminateTree(pid, grace: 3)
+            }
+        }
+    }
+
+    /// Keeps `data`, up to the cap for standard output. Returns true once, when output first goes past the cap.
+    nonisolated func append(_ data: Data, stdout isStdout: Bool) -> Bool {
+        lock.withLock {
+            guard isStdout else {
+                stderr.append(data)
+                if stderr.count > Self.maxErrorBytes { stderr = Data(stderr.suffix(Self.maxErrorBytes)) }
+                return false
+            }
+            guard !truncated else { return false }
+            guard stdout.count + data.count > limit else {
+                stdout.append(data)
+                return false
+            }
+            stdout.append(data.prefix(limit - stdout.count))
+            truncated = true
+            return true
+        }
+    }
+
+    nonisolated func closed(stdout isStdout: Bool) {
+        lock.lock()
+        if isStdout { stdoutOpen = false } else { stderrOpen = false }
+        finishIfDone()
+    }
+
+    nonisolated func exited(_ code: Int32) {
+        lock.lock()
+        status = code
+        finishIfDone()
+    }
+
+    nonisolated func timedOut() {
+        lock.withLock { didTimeOut = true }
+    }
+
+    nonisolated func fail(_ message: String) {
+        lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(
+            returning: (result: ProcessRunner.Result(status: -1, stdout: "", stderr: message), truncated: false))
+    }
+
+    /// Called with the lock held; releases it. Output is released here, so a timeout that is still
+    /// pending does not keep it alive.
+    private nonisolated func finishIfDone() {
+        guard let status, !stdoutOpen, !stderrOpen, let continuation else {
+            lock.unlock()
+            return
+        }
+        self.continuation = nil
+        var errorText = String(decoding: stderr, as: UTF8.self)
+        if didTimeOut { errorText += "\nThe command timed out." }
+        // Stopping git at the cap is not a failure: everything up to the cap was read.
+        let result = ProcessRunner.Result(
+            status: truncated && !didTimeOut ? 0 : status, stdout: String(decoding: stdout, as: UTF8.self),
+            stderr: errorText)
+        let truncated = truncated
+        stdout = Data()
+        stderr = Data()
+        lock.unlock()
+        continuation.resume(returning: (result: result, truncated: truncated))
+    }
 }

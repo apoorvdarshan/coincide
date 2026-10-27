@@ -191,6 +191,28 @@ struct CheckpointServiceTests {
         await #expect(throws: CheckpointError.self) { try await checkpoints.restore(threadID: mine.id, toBefore: turnID) }
     }
 
+    @Test func turnDiffsReadAtMostTheCappedPatch() async throws {
+        let repository = try await makeRepository()
+        let (checkpoints, _) = try makeService()
+        await checkpoints.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: repository.url)
+        // More text than the patch limit: about 10 MB of patch.
+        let line = String(repeating: "x", count: 99) + "\n"
+        for index in 0..<5 {
+            try repository.write("part\(index).txt", String(repeating: line, count: 20_000))
+        }
+        try repository.write("edit.txt", "one\nTWO\n")
+        await checkpoints.captureAfterTurn(threadID: threadID, userItemID: turnID, cwd: repository.url)
+
+        let patch = try #require(await checkpoints.turnDiff(threadID: threadID, userItemID: turnID))
+        #expect(patch.utf8.count == GitOps.maxPatchBytes + 1)
+        let diff = await GitService.parseDiff(
+            patch, files: checkpoints.changedFiles(threadID: threadID, userItemID: turnID))
+        #expect(diff.isTruncated)
+        #expect(diff.files.contains { $0.path == "edit.txt" && !$0.hunks.isEmpty })
+        #expect(diff.files.contains { $0.path == "part0.txt" && !$0.hunks.isEmpty })
+        #expect(diff.files.contains { $0.path == "part4.txt" && $0.hunks.isEmpty && $0.additions == 20_000 })
+    }
+
     @Test func forgetsTurnsCutFromTheTranscript() async throws {
         let repository = try await makeRepository()
         let store = AppStore(directory: try TestRepository.makeDirectory("store"))

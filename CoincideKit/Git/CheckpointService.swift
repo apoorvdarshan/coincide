@@ -652,7 +652,13 @@ enum CheckpointGit {
         } else {
             arguments.append(".")
         }
-        let result = await GitCLI.git(arguments, in: cwd, timeout: 120)
+        let result: ProcessRunner.Result
+        if numstat {
+            result = await GitCLI.git(arguments, in: cwd, timeout: 120)
+        } else {
+            // A byte past the cap tells the parser the patch is too long, so it cuts it at a file.
+            result = await GitCLI.git(arguments, in: cwd, timeout: 120, maxOutputBytes: GitOps.maxPatchBytes + 1).result
+        }
         guard result.succeeded else { throw GitError.failed(String(localized: "Could not read the turn's changes."), result) }
         return result.stdout
     }

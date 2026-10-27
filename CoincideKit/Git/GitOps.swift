@@ -4,8 +4,13 @@ import Foundation
 enum GitOps {
     /// Keeps untracked-file previews bounded; beyond this the working tree diff omits them.
     static let maxUntrackedFiles = 5_000
-    /// Patches beyond this size are cut at a file boundary.
+    /// Patches beyond this size are cut at a file boundary. Only this much (and a byte more, to
+    /// notice the cut) is read from git.
     static let maxPatchBytes = 8 * 1024 * 1024
+    /// Read limit for the untracked-file listing: room for `maxUntrackedFiles` paths of a kilobyte.
+    static let maxUntrackedListBytes = maxUntrackedFiles * 1024
+    /// Read limit for patches given to an agent, which uses only the first tens of kilobytes.
+    static let maxContextPatchBytes = 1_000_000
 
     // MARK: Repository
 
@@ -437,11 +442,15 @@ enum GitOps {
             }
         }
 
-        let untrackedResult = await GitCLI.git(["ls-files", "--others", "--exclude-standard", "-z"], in: root)
+        let untrackedRead = await GitCLI.git(
+            ["ls-files", "--others", "--exclude-standard", "-z"], in: root, maxOutputBytes: maxUntrackedListBytes)
+        let untrackedResult = untrackedRead.result
         let untracked = untrackedResult.succeeded ? GitParse.nulFields(untrackedResult.stdout) : []
+        // A listing cut at the read limit has too many files to preview, like one over the count.
+        let tooManyUntracked = untrackedRead.truncated || untracked.count > maxUntrackedFiles
         var reviewIndex: URL?
         var environment: [String: String] = [:]
-        if !untracked.isEmpty, untracked.count <= maxUntrackedFiles {
+        if !untracked.isEmpty, !tooManyUntracked {
             reviewIndex = try await prepareReviewIndex(root: root, untracked: untracked)
             if let reviewIndex { environment["GIT_INDEX_FILE"] = reviewIndex.path }
         }
@@ -458,12 +467,16 @@ enum GitOps {
         guard numstat.succeeded else { throw GitError.failed(String(localized: "Could not read the changes."), numstat) }
         let stats = GitParse.numstat(numstat.stdout)
         guard !stats.isEmpty else { return GitDiff(baseLabel: baseLabel) }
+        // Read a byte past the cap, so `assemble` sees the patch is too long and cuts it at a file.
         let patch = await GitCLI.git(
-            arguments + ["--patch", reference, "--"], in: root, environment: environment, timeout: 120)
-        guard patch.succeeded else { throw GitError.failed(String(localized: "Could not read the changes."), patch) }
-        var diff = assemble(patch: patch.stdout, stats: stats, untracked: Set(untracked))
+            arguments + ["--patch", reference, "--"], in: root, environment: environment, timeout: 120,
+            maxOutputBytes: maxPatchBytes + 1)
+        guard patch.result.succeeded else {
+            throw GitError.failed(String(localized: "Could not read the changes."), patch.result)
+        }
+        var diff = assemble(patch: patch.result.stdout, stats: stats, untracked: Set(untracked))
         diff.baseLabel = baseLabel
-        diff.isTruncated = diff.isTruncated || untracked.count > maxUntrackedFiles
+        diff.isTruncated = diff.isTruncated || patch.truncated || tooManyUntracked
         return diff
     }
 
@@ -626,8 +639,9 @@ enum GitOps {
         guard includePatch else { return CommitContext(summary: summary, patch: "") }
         let patch = await GitCLI.git(
             ["diff", "--no-ext-diff", "--cached", "--patch", "--minimal"], in: cwd, environment: environment,
-            timeout: 60)
-        return CommitContext(summary: summary, patch: TextLimits.limit(patch.stdout, 49_000))
+            timeout: 60, maxOutputBytes: maxContextPatchBytes)
+        return CommitContext(
+            summary: summary, patch: TextLimits.limit(patch.result.stdout, 49_000, truncated: patch.truncated))
     }
 
     // MARK: Push and pull
@@ -703,17 +717,18 @@ enum GitOps {
         async let stat = GitCLI.git(["diff", "--stat", "--end-of-options", "\(baseRef)...HEAD"], in: cwd)
         async let patch = GitCLI.git(
             ["diff", "--no-ext-diff", "--patch", "--minimal", "--end-of-options", "\(baseRef)...HEAD"], in: cwd,
-            timeout: 60)
+            timeout: 60, maxOutputBytes: maxContextPatchBytes)
+        let patchRead = await patch
         return RangeContext(
             commits: TextLimits.limit(await log.stdout, 19_000), stat: TextLimits.limit(await stat.stdout, 19_000),
-            patch: TextLimits.limit(await patch.stdout, 59_000))
+            patch: TextLimits.limit(patchRead.result.stdout, 59_000, truncated: patchRead.truncated))
     }
 }
 
 enum TextLimits {
-    /// Cuts `value` to `maxCharacters`, marking the cut.
-    static func limit(_ value: String, _ maxCharacters: Int) -> String {
-        guard value.count > maxCharacters else { return value }
+    /// Cuts `value` to `maxCharacters`, marking the cut. `truncated` marks a value already cut short.
+    static func limit(_ value: String, _ maxCharacters: Int, truncated: Bool = false) -> String {
+        guard value.count > maxCharacters else { return truncated ? value + "\n\n[truncated]" : value }
         return String(value.prefix(maxCharacters)) + "\n\n[truncated]"
     }
 }
