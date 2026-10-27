@@ -40,6 +40,7 @@ struct ACPMapperTests {
         #expect(result.protocolVersion == 2)
         #expect(result.loadSession && result.resumeSession && result.promptImage)
         #expect(!result.closeSession)
+        #expect(result.canLogout)
         #expect(result.authMethods.map(\.id) == ["oauth-personal", "gemini-api-key"])
         #expect(result.agentInfo?.version == "agy_acp_server_1.1.1")
         #expect(result.authMethod(preferring: "oauth-personal")?.id == "oauth-personal")
@@ -56,6 +57,7 @@ struct ACPMapperTests {
         let result = ACPInitializeResult(json: json)
         #expect(result.generation == 1)
         #expect(result.loadSession && result.resumeSession && result.closeSession && !result.promptImage)
+        #expect(!result.canLogout)
         #expect(result.authMethod(preferring: "cached_token")?.id == "cached_token")
     }
 

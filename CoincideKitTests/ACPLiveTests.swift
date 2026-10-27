@@ -245,3 +245,49 @@ struct ACPLiveTests {
         #expect(agent.log.completions.first == .interrupted || agent.log.completions.first == .completed)
     }
 }
+
+/// Checks Google's real Antigravity release against Coincide's pins without starting it: every pinned
+/// archive, member, file hash and Developer ID signature. Run it when the pinned release changes.
+///
+/// - `COINCIDE_ANTIGRAVITY_ARCHIVE=/path/to/agy-acp-server-<version>-darwin-<arch>.zip` checks an
+///   archive already downloaded (nothing is fetched).
+/// - `COINCIDE_LIVE_ANTIGRAVITY_DOWNLOAD=1` downloads this Mac's archive from Google (about 110 MB)
+///   and installs it into a scratch folder with the real downloader, checks and signature
+///   verification. The step that starts the agent is replaced, so no Antigravity process runs.
+@MainActor
+@Suite(.serialized, .timeLimit(.minutes(10)))
+struct ACPAntigravityReleaseLiveTests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_ANTIGRAVITY_ARCHIVE"] != nil))
+    func downloadedArchiveMatchesItsPins() async throws {
+        let archive = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["COINCIDE_ANTIGRAVITY_ARCHIVE"]))
+        let digest = try AntigravityInstaller.sha256(of: archive, isCancelled: { false })
+        let asset = try #require(
+            ["arm64", "x86_64"].compactMap { AntigravityRelease.asset(architecture: $0) }.first { $0.sha256 == digest },
+            "The archive matches no pinned release")
+        let folder = try LiveRun.folder("antigravity-release")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let installer = AntigravityInstaller(paths: AntigravityPaths(dataDirectory: folder))
+        try installer.extract(archive, into: folder, asset: asset, isCancelled: { false })
+        for file in asset.files {
+            let url = folder.appendingPathComponent(file.name)
+            #expect(try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64 == file.bytes)
+            try installer.verifyFile(url, file, isCancelled: { false })
+        }
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_ANTIGRAVITY_DOWNLOAD"] == "1"))
+    func downloadsAndVerifiesThisMacsRelease() async throws {
+        let folder = try LiveRun.folder("antigravity-download")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let paths = AntigravityPaths(dataDirectory: folder)
+        let asset = try #require(AntigravityRelease.asset(architecture: paths.architecture))
+        let runtime = AntigravityRuntime(paths: paths, asset: asset, validate: { _, _ in })
+        runtime.install()
+        await acpWaitUntil("the installation", timeout: .seconds(540)) { !runtime.state.isRunning }
+        #expect(runtime.state.phase == .succeeded, "\(runtime.state.message ?? "")")
+        #expect(runtime.state.installedVersion == AntigravityRelease.version)
+        let active = try #require(try runtime.activeRelease())
+        #expect(ACPProfile.managedAntigravityExecutable(paths: paths) == paths.managedExecutable)
+        #expect(FileManager.default.isExecutableFile(atPath: active.harness.path))
+    }
+}

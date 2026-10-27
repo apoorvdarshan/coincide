@@ -123,6 +123,8 @@ public final class ACPSession: AgentSession {
     private var stderrLine = ""
     private var shownNotices: Set<String> = []
     private var temporaryDirectory: URL?
+    /// What `prepareLaunch` handed out for the running process, released once it has ended.
+    private var launchLease: ACPLaunchLease?
 
     public init(launch: AgentLaunch, flavor: ACPAgentFlavor, transport: ACPTransportFactory? = nil) {
         self.launch = launch
@@ -307,7 +309,12 @@ public final class ACPSession: AgentSession {
         launching = true
         defer { launching = false }
         do {
-            try await handshake(resuming: resumeID, client: spawn(accessMode: accessMode))
+            let lease = try await flavor.prepareLaunch(executable: launch.executable, environment: launch.environment)
+            guard !isShutDown else {
+                lease?.release()
+                throw AgentError.notRunning
+            }
+            try await handshake(resuming: resumeID, client: spawn(accessMode: accessMode, lease: lease))
         } catch {
             // A half-open process must not serve the next turn.
             stopProcess()
@@ -445,7 +452,8 @@ public final class ACPSession: AgentSession {
         publishModels()
     }
 
-    private func spawn(accessMode: AccessMode) throws -> ACPClient {
+    private func spawn(accessMode: AccessMode, lease: ACPLaunchLease?) throws -> ACPClient {
+        launchLease = lease
         var environment = flavor.environment(launch.environment, executable: launch.executable)
         if flavor.usesPrivateTemporaryDirectory, let directory = makeTemporaryDirectory() {
             environment["TMPDIR"] = directory.path + "/"
@@ -562,8 +570,22 @@ public final class ACPSession: AgentSession {
 
     private func outputLine(_ line: String) {
         let line = line.hasSuffix("\r") ? String(line.dropLast()) : line
+        if let failure = flavor.failure(forOutputLine: line) {
+            failFromOutput(failure)
+            return
+        }
         guard let notice = flavor.notice(forOutputLine: line), shownNotices.insert(notice).inserted else { return }
         emit(.notice(notice))
+    }
+
+    /// Ends the process for something it printed: the handshake or prompt waiting on it fails with
+    /// `message`, and the next turn starts a new process.
+    private func failFromOutput(_ message: String) {
+        guard let client, !client.connection.isClosed else { return }
+        client.connection.close(with: AgentError.providerError(message))
+        if turn != nil { finishTurn(.failed(message)) }
+        stopProcess()
+        needsRestart = true
     }
 
     private func exitMessage(status: Int32, stderr: String) -> String {
@@ -584,7 +606,19 @@ public final class ACPSession: AgentSession {
         }
     }
 
+    /// Removes the process's temporary folder and ends its launch lease, `delay` seconds from now.
     private func removeTemporaryDirectory(after delay: TimeInterval) {
+        if let lease = launchLease {
+            launchLease = nil
+            if delay <= 0 {
+                lease.release()
+            } else {
+                Task {
+                    try? await Task.sleep(for: .seconds(delay))
+                    lease.release()
+                }
+            }
+        }
         guard let directory = temporaryDirectory else { return }
         temporaryDirectory = nil
         DispatchQueue.global().asyncAfter(deadline: .now() + delay) {
@@ -1126,7 +1160,7 @@ public final class ACPSession: AgentSession {
         events.forEach(emit)
     }
 
-    private nonisolated static var clientInfo: JSONValue {
+    nonisolated static var clientInfo: JSONValue {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         return ["name": "coincide", "title": "Coincide", "version": .string(version)]
     }

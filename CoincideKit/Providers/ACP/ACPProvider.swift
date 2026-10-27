@@ -17,8 +17,19 @@ public enum ACPProfile: String, Sendable, CaseIterable {
         switch self {
         case .grok: ["grok"]
         // Google's ACP agent ships as `agy_acp_server.par` beside its `localharness_external` helper.
-        case .antigravity: ["agy_acp_server.par", "agy_acp_server"]
+        // The runtime Coincide downloaded comes first, as T3 Code prefers it to one on PATH (a custom
+        // path in Settings still wins).
+        case .antigravity:
+            Self.managedAntigravityExecutable().map { [$0.path] + Self.antigravityNames } ?? Self.antigravityNames
         }
+    }
+
+    nonisolated static let antigravityNames = ["agy_acp_server.par", "agy_acp_server"]
+
+    /// The downloaded Antigravity executable, when one is installed.
+    nonisolated static func managedAntigravityExecutable(paths: AntigravityPaths = .standard) -> URL? {
+        let executable = paths.managedExecutable
+        return FileManager.default.isExecutableFile(atPath: executable.path) ? executable : nil
     }
 
     public nonisolated var setupHint: String {
@@ -27,7 +38,7 @@ public enum ACPProfile: String, Sendable, CaseIterable {
         case .antigravity:
             String(
                 localized:
-                    "Install Google's Antigravity ACP agent (agy_acp_server with its localharness_external helper) from the ACP Registry, then put it on PATH or choose it in Settings."
+                    "Install Antigravity below to download Google’s runtime, then sign in with Google. To use your own copy instead, choose agy_acp_server (with its localharness_external helper beside it) as the custom path."
             )
         }
     }

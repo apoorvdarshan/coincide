@@ -197,7 +197,7 @@ struct ACPSessionTests {
             agent.update(["sessionUpdate": "current_mode_update", "currentModeId": "yolo"])
             agent.reply(id, json(#"{"sessionId":"sess-1","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default"},{"id":"yolo","name":"YOLO"}]}}"#))
         }
-        let (session, _) = makeSession(agent, flavor: AntigravityFlavor(), launch: acpLaunch(.antigravity, accessMode: .fullAccess))
+        let (session, _) = makeSession(agent, flavor: try acpAntigravityFlavor(), launch: acpLaunch(.antigravity, accessMode: .fullAccess))
         try await session.start()
         // The agent already reported yolo, so full access needs no mode change.
         try await session.send(acpTurn("go", .antigravity, accessMode: .fullAccess))
@@ -1102,17 +1102,27 @@ struct ACPSessionTests {
             {"id":"mode","name":"Mode","category":"mode","type":"select","currentValue":"default","options":[{"value":"default","name":"Default"},{"value":"auto_edit","name":"Auto edit"},{"value":"yolo","name":"YOLO"}]}]}
             """)
         let launch = acpLaunch(
-            .antigravity, resume: "ag-1", accessMode: .fullAccess, environment: ["GEMINI_API_KEY": "secret", "PATH": "/usr/bin"])
-        let (session, log) = makeSession(agent, flavor: AntigravityFlavor(), launch: launch)
+            .antigravity, resume: "ag-1", accessMode: .fullAccess,
+            environment: ["GEMINI_API_KEY": "secret", "gemini_home": "/Users/me/.gemini", "BROWSER": "open", "PATH": "/usr/bin"])
+        let flavor = try acpAntigravityFlavor()
+        let (session, log) = makeSession(agent, flavor: flavor, launch: launch)
         try await session.start()
 
         #expect(agent.requests.map(\.method).prefix(3) == ["initialize", "authenticate", "session/resume"])
         #expect(agent.requests("authenticate").first?["methodId"] == "oauth-personal")
         #expect(agent.requests("session/load").isEmpty)
+        // The private profile, never the user's ~/.gemini or API billing.
         let environment = agent.transport.environment
         #expect(environment["GEMINI_API_KEY"] == nil)
+        #expect(environment["gemini_home"] == nil)
+        #expect(environment["GEMINI_HOME"] == flavor.profile.geminiHome.path)
+        #expect(environment["AGY_ACP_FORCE_FILE_STORAGE"] == "1")
+        #expect(environment["BROWSER"] == flavor.profile.browserCommand)
+        #expect(environment["PATH"] == "/usr/bin")
         #expect(environment["ANTIGRAVITY_HARNESS_PATH"]?.hasSuffix("/localharness_external") == true)
         #expect(environment["TMPDIR"]?.contains("Coincide-antigravity") == true)
+        // The launch prepared the profile first.
+        #expect(FileManager.default.fileExists(atPath: flavor.profile.settingsFile.path))
         #expect(log.sessionIDs == ["ag-1"])
 
         try await session.send(acpTurn("hi", .antigravity, model: "antigravity-default", accessMode: .fullAccess))
@@ -1126,27 +1136,61 @@ struct ACPSessionTests {
         session.shutdown()
     }
 
-    @Test func antigravitySignInLinkBecomesANotice() async throws {
+    @Test func antigravitySignInDuringASessionPointsToSettings() async throws {
         let link =
             "https://accounts.google.com/o/oauth2/v2/auth?client_id=c&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2F&response_type=code&scope=openid&state=abc"
-        let agent = ACPFakeAgent()
-        agent.handlers["authenticate"] = { id, _ in
-            agent.transport.deliver("Open the following link to authenticate the ACP server: \(link)")
-            // A look-alike link is never shown.
-            agent.transport.deliver("Open the following link to authenticate the ACP server: https://evil.example.com/o/oauth2/v2/auth?state=x")
-            agent.reply(id, [:])
+        // The agent's own line on stdout, then the browser helper's line on stderr.
+        for deliver in [
+            { (agent: ACPFakeAgent) in agent.transport.deliver("Open the following link to authenticate the ACP server: \(link)") },
+            { (agent: ACPFakeAgent) in agent.transport.onStderr?("noise\n\(AntigravityProfile.browserMarker)\(link)\n") },
+        ] {
+            let agent = ACPFakeAgent()
+            agent.handlers["authenticate"] = { _, _ in
+                // A look-alike link changes nothing; the agent then waits for a browser that never opens.
+                agent.transport.deliver("Open the following link to authenticate the ACP server: https://evil.example.com/o/oauth2/v2/auth?state=x")
+                deliver(agent)
+            }
+            let (session, log) = makeSession(agent, flavor: try acpAntigravityFlavor(), launch: acpLaunch(.antigravity))
+            do {
+                try await session.start()
+                Issue.record("A launch that needs Google sign-in must fail")
+            } catch {
+                #expect(error.localizedDescription == AntigravityProfile.signInRequiredMessage)
+            }
+            #expect(agent.transport.isTerminated)
+            #expect(log.notices.isEmpty)
+            #expect(agent.requests("session/new").isEmpty)
+            session.shutdown()
         }
-        let (session, log) = makeSession(agent, flavor: AntigravityFlavor(), launch: acpLaunch(.antigravity))
+    }
+
+    @Test func antigravityLaunchesHoldALeaseOnTheDownloadedRelease() async throws {
+        let data = try acpTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: data) }
+        let runtime = AntigravityRuntime(paths: AntigravityPaths(dataDirectory: data, architecture: "arm64"), asset: nil)
+        let release = runtime.paths.versionsDirectory.appendingPathComponent(String(repeating: "a", count: 64), isDirectory: true)
+        try FileManager.default.createDirectory(at: release, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: runtime.paths.currentLink.path, withDestinationPath: "versions/" + release.lastPathComponent)
+        var launch = acpLaunch(.antigravity)
+        launch.executable = runtime.paths.managedExecutable
+
+        let agent = ACPFakeAgent()
+        let (session, _) = makeSession(agent, flavor: try acpAntigravityFlavor(runtime: runtime), launch: launch)
         try await session.start()
-        #expect(log.notices.count == 1)
-        #expect(log.notices.first?.contains(link) == true)
+        #expect(runtime.leaseCount == 1)
+        #expect(throws: AntigravityInstallError.self) { try runtime.remove() }
+        // The lease ends with the process.
+        agent.transport.exit(status: 0, stderr: "")
+        await acpWaitUntil { runtime.leaseCount == 0 }
+        try runtime.remove()
+        #expect(!FileManager.default.fileExists(atPath: runtime.paths.managedDirectory.path))
         session.shutdown()
     }
 
     @Test func antigravityQuestionsBecomeUserInput() async throws {
         let agent = ACPFakeAgent()
         let (session, log) = makeSession(
-            agent, flavor: AntigravityFlavor(), launch: acpLaunch(.antigravity, accessMode: .fullAccess))
+            agent, flavor: try acpAntigravityFlavor(), launch: acpLaunch(.antigravity, accessMode: .fullAccess))
         try await session.start()
         try await session.send(acpTurn("go", .antigravity, accessMode: .fullAccess))
         agent.ask(
@@ -1169,7 +1213,7 @@ struct ACPSessionTests {
 
     @Test func antigravityApprovalsShowTheSecurityWarning() async throws {
         let agent = ACPFakeAgent()
-        let (session, log) = makeSession(agent, flavor: AntigravityFlavor(), launch: acpLaunch(.antigravity))
+        let (session, log) = makeSession(agent, flavor: try acpAntigravityFlavor(), launch: acpLaunch(.antigravity))
         try await session.start()
         try await session.send(acpTurn("go", .antigravity))
         agent.ask(
@@ -1193,7 +1237,7 @@ struct ACPSessionTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         try "line1\nline2\nline3".write(to: directory.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
         let agent = ACPFakeAgent()
-        let (session, _) = makeSession(agent, flavor: AntigravityFlavor(), launch: acpLaunch(.antigravity, directory: directory))
+        let (session, _) = makeSession(agent, flavor: try acpAntigravityFlavor(), launch: acpLaunch(.antigravity, directory: directory))
         try await session.start()
         #expect(agent.requests("initialize").first?.at("clientCapabilities.fs.writeTextFile") == true)
 

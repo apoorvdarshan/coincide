@@ -252,6 +252,16 @@ func acpInstructed(_ text: String, _ mode: InteractionMode = .build) -> String {
     ACPPrompt.text(text, mode: mode, previousMode: nil)
 }
 
+/// An Antigravity flavor whose data folder (private profile and downloaded runtime) and home folder are
+/// fresh temporary folders, so tests never touch the real `~/Library/Application Support/Coincide`.
+@MainActor
+func acpAntigravityFlavor(runtime: AntigravityRuntime? = nil) throws -> AntigravityFlavor {
+    let data = try acpTemporaryDirectory()
+    let paths = runtime?.paths ?? AntigravityPaths(dataDirectory: data)
+    let profile = AntigravityProfile(geminiHome: paths.profileDirectory, userHome: data.appendingPathComponent("home", isDirectory: true))
+    return AntigravityFlavor(paths: paths, profile: profile, runtime: runtime)
+}
+
 func acpTemporaryDirectory() throws -> URL {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-acp-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
