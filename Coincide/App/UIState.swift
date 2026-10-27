@@ -2,7 +2,8 @@ import AppKit
 import CoincideKit
 
 /// Interface state that belongs to this Mac rather than to the user's projects: window layout, the
-/// open thread, the preferred "Open in" app, and which threads finished while the user looked away.
+/// open thread, the preferred "Open in" app, which threads finished while the user looked away, and
+/// which turns agents started on their own.
 /// Stored beside the store's data, so `COINCIDE_DATA_DIR` keeps test runs apart from real use.
 final class UIState {
     static let shared = UIState(directory: AppStore.shared.directory)
@@ -29,6 +30,8 @@ final class UIState {
         var sidebarThreadLimit = 6
         /// Keyed by thread id.
         var unseen: [String: Unseen] = [:]
+        /// Ids of the notices that opened turns an agent started on its own, keyed by thread id (see `AgentTurns`).
+        var agentTurns: [String: [String]] = [:]
 
         init() {}
 
@@ -50,6 +53,7 @@ final class UIState {
             showsArchivedThreads = value(.showsArchivedThreads, defaults.showsArchivedThreads)
             sidebarThreadLimit = value(.sidebarThreadLimit, defaults.sidebarThreadLimit)
             unseen = value(.unseen, defaults.unseen)
+            agentTurns = value(.agentTurns, defaults.agentTurns)
         }
     }
 

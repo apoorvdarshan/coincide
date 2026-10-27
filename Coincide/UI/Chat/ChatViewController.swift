@@ -52,7 +52,8 @@ final class ChatViewController: NSViewController {
     /// How long the last transcript update took.
     private var updateCost: TimeInterval = 0
     private var liveTimer: Timer?
-    private var wasRunning = false
+    /// The displayed thread's turn as last seen running, to look for its checkpoint once it ends.
+    private var runningTurn: ThreadRunner.TurnState?
     private var appliedFontSize = 0.0
     private var appliedShowReasoning = true
     private var previewURLs: [URL] = []
@@ -152,6 +153,7 @@ final class ChatViewController: NSViewController {
         changedFileSignatures.removeAll()
         guard let threadID, store.thread(threadID) != nil else {
             displayedThreadID = nil
+            runningTurn = nil
             itemsByID.removeAll()
             textCache.removeAll()
             list.update([], reload: true)
@@ -160,7 +162,7 @@ final class ChatViewController: NSViewController {
             return
         }
         displayedThreadID = threadID
-        wasRunning = runner.isRunning(threadID)
+        runningTurn = runner.turn(threadID)
         refreshChangedFiles()
         rebuild(reload: true)
         textCache.retain(only: Set(itemsByID.keys))
@@ -172,17 +174,23 @@ final class ChatViewController: NSViewController {
     private func rebuild(reload: Bool = false, keeping anchor: TranscriptRowID? = nil) {
         guard let threadID, let thread = store.thread(threadID) else { return }
         itemsByID = Dictionary(thread.items.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-        let turn = runner.turn(threadID)
+        list.update(builder(for: thread).build(), reload: reload, keeping: anchor)
+    }
+
+    /// Lays out the thread's rows: what runs now, which rows are open, and the turns agents started themselves.
+    private func builder(for thread: ChatThread) -> TranscriptBuilder {
+        let turn = runner.turn(thread.id)
         var builder = TranscriptBuilder(items: thread.items)
-        builder.runningTurnID = runner.isRunning(threadID) ? turn?.userItemID : nil
+        builder.runningTurnID = turn?.userItemID
         builder.turnStartedAt = turn?.startedAt
-        builder.isStarting = runner.isStarting(threadID)
+        builder.isStarting = runner.isStarting(thread.id)
         builder.runningProvider = turn?.provider ?? thread.selection.provider
         builder.showReasoning = store.settings.showReasoning
-        builder.expanded = expanded[threadID] ?? []
+        builder.expanded = expanded[thread.id] ?? []
+        builder.agentTurnIDs = AgentTurns.shared.anchors(in: thread.id)
         builder.revisions = revisions
         builder.changedFiles = changedFileSignatures
-        list.update(builder.build(), reload: reload, keeping: anchor)
+        return builder
     }
 
     private func updateChrome() {
@@ -268,11 +276,12 @@ final class ChatViewController: NSViewController {
 
     private func runStateChanged() {
         guard let threadID = displayedThreadID else { return }
-        let running = runner.isRunning(threadID)
-        if wasRunning && !running, let last = store.thread(threadID)?.items.last(where: { $0.kind == .user }) {
-            watchCheckpoints(for: last.id)
+        let turn = runner.turn(threadID)
+        // A turn of the user's ended: its after-turn checkpoint is on its way. Agents' own turns have none.
+        if let finished = runningTurn, finished.userItemID != turn?.userItemID, !finished.isAgentInitiated {
+            watchCheckpoints(for: finished.userItemID)
         }
-        wasRunning = running
+        runningTurn = turn
         rebuild()
         list.reconfigureVisibleCells()
         updateChrome()

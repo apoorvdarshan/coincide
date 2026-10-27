@@ -418,6 +418,8 @@ final class SidebarViewController: NSViewController {
             lines.append(String(localized: "Handed off from \(others.map(\.displayName).formatted(.list(type: .and)))"))
         }
         if let label = status.label { lines.append(label) }
+        // A turn the agent started itself shows as working like any other; the tooltip says why.
+        if let note = AgentTurns.shared.runningNote(in: thread.id) { lines.append(note) }
         var jumpHint: String?
         if showsJumpHints, let index = jumpOrder.firstIndex(of: thread.id) {
             jumpHint = "⌘\(index + 1)"

@@ -151,7 +151,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         } else if runner.isStarting(id) {
             runStatus.update(.starting)
         } else if let turn = runner.turn(id) {
-            runStatus.update(.running(since: turn.startedAt))
+            // A turn the agent started itself runs and stops like any other; the tooltip says why it runs.
+            runStatus.update(.running(since: turn.startedAt, note: AgentTurns.shared.runningNote(in: id)))
         } else {
             runStatus.update(.idle)
         }

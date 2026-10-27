@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppearanceController.shared.start()
         SettingsWindowController.shared.startHandlingRequests()
         ThreadActivity.shared.start()
+        AgentTurns.shared.start()
         NotificationController.shared.start()
         mainWindow?.showWindow(nil)
         Task { await ProviderRegistry.shared.refresh() }
