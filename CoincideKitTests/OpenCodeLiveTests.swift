@@ -134,13 +134,15 @@ struct OpenCodeLiveTests {
                 return false
             }
             run.session.interrupt()
-            #expect(try await run.recorder.turnOutcome(timeout: 10) == .interrupted)
+            let outcome = try await run.recorder.turnOutcome(timeout: 10)
+            #expect(outcome == .interrupted, "Events: \(run.recorder.events)")
             try await Task.sleep(for: .seconds(2))
             #expect(run.recorder.turnEnds.count == 1)
 
             let mark = run.recorder.events.count
             try await run.session.send(live.input("Reply with exactly: ok"))
-            #expect(try await run.recorder.turnOutcome(after: mark) == .completed)
+            let next = try await run.recorder.turnOutcome(after: mark)
+            #expect(next == .completed, "Events: \(run.recorder.events.dropFirst(mark))")
         }
     }
 
@@ -188,7 +190,11 @@ struct OpenCodeLiveTests {
             let run = try await live.start(resuming: "ses_coincidemissing0000000000")
             let sessionID = try #require(run.session.sessionID)
             #expect(sessionID != "ses_coincidemissing0000000000")
-            #expect(run.recorder.events == [.sessionStarted(id: sessionID)])
+            #expect(
+                run.recorder.events == [
+                    .sessionStarted(id: sessionID),
+                    .notice("Couldn't resume the earlier OpenCode session, so a new one was started."),
+                ])
         }
     }
 

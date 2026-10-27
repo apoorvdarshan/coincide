@@ -67,7 +67,7 @@ enum GitCLI {
     ) async -> ProcessRunner.Result {
         let executable = await gitExecutable()
         let env = await environment(overrides)
-        return await CommandRunner.run(executable, arguments, cwd: cwd, environment: env, timeout: timeout, input: input)
+        return await ProcessRunner.run(executable, arguments, cwd: cwd, environment: env, timeout: timeout, input: input)
     }
 
     /// Runs git and throws a `GitError` describing `action` when it fails.
@@ -86,7 +86,7 @@ enum GitCLI {
     ) async -> ProcessRunner.Result? {
         guard let executable = await ghExecutable() else { return nil }
         let env = await environment()
-        return await CommandRunner.run(executable, arguments, cwd: cwd, environment: env, timeout: timeout, input: input)
+        return await ProcessRunner.run(executable, arguments, cwd: cwd, environment: env, timeout: timeout, input: input)
     }
 
     /// `git` on stderr when the folder is not inside a work tree.
@@ -105,140 +105,4 @@ enum GitCLI {
 
     /// The well-known id of the empty tree, used to diff an unborn HEAD.
     nonisolated static let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-}
-
-/// Runs a command to completion and collects its output, for git and gh.
-///
-/// Unlike `ProcessRunner`, input is written off the caller's thread (checkpoint and diff steps pipe
-/// thousands of paths), a helper that keeps the pipes open after the command exits is not waited
-/// on, and a command that ignores the timeout is killed.
-enum CommandRunner {
-    nonisolated static func run(
-        _ executable: URL, _ arguments: [String], cwd: URL?, environment: [String: String]?, timeout: TimeInterval,
-        input: String?
-    ) async -> ProcessRunner.Result {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = executable
-            process.arguments = arguments
-            if let cwd { process.currentDirectoryURL = cwd }
-            if let environment { process.environment = environment }
-            let stdout = Pipe()
-            let stderr = Pipe()
-            let stdin = Pipe()
-            process.standardOutput = stdout
-            process.standardError = stderr
-            process.standardInput = stdin
-            let run = CommandRun(continuation: continuation)
-            for (pipe, isStdout) in [(stdout, true), (stderr, false)] {
-                pipe.fileHandleForReading.readabilityHandler = { handle in
-                    let data = handle.availableData
-                    if data.isEmpty {
-                        handle.readabilityHandler = nil
-                        run.closed(stdout: isStdout)
-                    } else {
-                        run.append(data, stdout: isStdout)
-                    }
-                }
-            }
-            process.terminationHandler = { process in
-                run.exited(process.terminationStatus)
-                // A helper the command left running can hold the pipes open; don't wait on it for long.
-                DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                    stdout.fileHandleForReading.readabilityHandler = nil
-                    stderr.fileHandleForReading.readabilityHandler = nil
-                    run.closed(stdout: true)
-                    run.closed(stdout: false)
-                }
-            }
-            // Writing to a command that already exited should fail with EPIPE, not kill Coincide.
-            _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-            do {
-                try process.run()
-            } catch {
-                stdout.fileHandleForReading.readabilityHandler = nil
-                stderr.fileHandleForReading.readabilityHandler = nil
-                run.fail(error.localizedDescription)
-                return
-            }
-            // Write on another thread: a child that doesn't read its input must not block us.
-            DispatchQueue.global().async {
-                if let input, let data = input.data(using: .utf8) {
-                    try? stdin.fileHandleForWriting.write(contentsOf: data)
-                }
-                try? stdin.fileHandleForWriting.close()
-            }
-            let pid = process.processIdentifier
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                guard process.isRunning else { return }
-                run.timedOut()
-                process.terminate()
-                DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
-                    if process.isRunning { kill(pid, SIGKILL) }
-                }
-            }
-        }
-    }
-}
-
-/// The output of one `CommandRunner.run` call; resumes the caller once the process has exited
-/// and both pipes are drained.
-private final class CommandRun: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<ProcessRunner.Result, Never>?
-    private var stdout = Data()
-    private var stderr = Data()
-    private var status: Int32?
-    private var stdoutOpen = true
-    private var stderrOpen = true
-    private var didTimeOut = false
-
-    nonisolated init(continuation: CheckedContinuation<ProcessRunner.Result, Never>) {
-        self.continuation = continuation
-    }
-
-    nonisolated func append(_ data: Data, stdout isStdout: Bool) {
-        lock.withLock {
-            if isStdout { stdout.append(data) } else { stderr.append(data) }
-        }
-    }
-
-    nonisolated func closed(stdout isStdout: Bool) {
-        lock.lock()
-        if isStdout { stdoutOpen = false } else { stderrOpen = false }
-        finishIfDone()
-    }
-
-    nonisolated func exited(_ code: Int32) {
-        lock.lock()
-        status = code
-        finishIfDone()
-    }
-
-    nonisolated func timedOut() {
-        lock.withLock { didTimeOut = true }
-    }
-
-    nonisolated func fail(_ message: String) {
-        lock.lock()
-        let continuation = self.continuation
-        self.continuation = nil
-        lock.unlock()
-        continuation?.resume(returning: ProcessRunner.Result(status: -1, stdout: "", stderr: message))
-    }
-
-    /// Called with the lock held; releases it.
-    private nonisolated func finishIfDone() {
-        guard let status, !stdoutOpen, !stderrOpen, let continuation else {
-            lock.unlock()
-            return
-        }
-        self.continuation = nil
-        var errorText = String(decoding: stderr, as: UTF8.self)
-        if didTimeOut { errorText += "\nThe command timed out." }
-        let result = ProcessRunner.Result(
-            status: status, stdout: String(decoding: stdout, as: UTF8.self), stderr: errorText)
-        lock.unlock()
-        continuation.resume(returning: result)
-    }
 }

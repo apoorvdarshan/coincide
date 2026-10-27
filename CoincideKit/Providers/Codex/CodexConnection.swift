@@ -153,7 +153,7 @@ final class CodexConnection {
             }
             return
         }
-        guard let id = object["id"]?.int else { return }
+        guard let id = object["id"]?.exactInt else { return }
         if let error = object["error"], !error.isNull {
             let code = error["code"]?.int ?? 0
             let text = error["message"]?.string ?? String(localized: "Codex returned an error.")

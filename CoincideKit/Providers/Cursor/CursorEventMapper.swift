@@ -252,7 +252,8 @@ struct CursorEventMapper {
     nonisolated mutating func approval(id: String, params: JSONValue) -> (events: [AgentEvent], request: ApprovalRequest) {
         let events = releaseReport() + closeSegments()
         let call = params["toolCall"] ?? .null
-        let options = (params["options"]?.array ?? []).compactMap(Self.approvalOption)
+        var options = (params["options"]?.array ?? []).compactMap(Self.approvalOption)
+        if !options.contains(where: { $0.kind == .deny || $0.kind == .cancel }) { options.append(Self.cancelOption) }
         let isQuestion = options.contains { $0.id == Self.skipQuestionOptionID }
         let toolCallID = call["toolCallId"]?.string
         let callTitle = call["title"]?.string ?? ""
@@ -606,16 +607,23 @@ struct CursorEventMapper {
         return (oldHeader == "-- /dev/null" && before.isEmpty ? nil : before, newLines.joined(separator: "\n"))
     }
 
+    /// An option of a kind Coincide does not know could allow or reject, so it is left out rather than
+    /// shown as an allow (as the ACP providers do).
     nonisolated static func approvalOption(_ json: JSONValue) -> ApprovalOption? {
         guard let id = json["optionId"]?.string else { return nil }
-        let kind: ApprovalOption.Kind =
-            switch json["kind"]?.string {
-            case "allow_always": .allowAlways
-            case "reject_once", "reject_always": .deny
-            default: .allowOnce
-            }
+        let kind: ApprovalOption.Kind
+        switch json["kind"]?.string {
+        case "allow_once": kind = .allowOnce
+        case "allow_always": kind = .allowAlways
+        case "reject_once", "reject_always": kind = .deny
+        default: return nil
+        }
         return ApprovalOption(id: id, label: json["name"]?.string ?? id, kind: kind)
     }
+
+    /// Answers the request as cancelled, offered when the agent gave no way to say no.
+    nonisolated static let cancelOption = ApprovalOption(
+        id: "coincide-cancel", label: String(localized: "Cancel"), kind: .cancel)
 
     nonisolated static func usage(_ update: JSONValue) -> TokenUsage? {
         let used = update["used"]?.int
@@ -626,14 +634,13 @@ struct CursorEventMapper {
         return TokenUsage(inputTokens: used, contextWindow: size, costUSD: dollars)
     }
 
-    /// The `usage` field newer ACP agents add to the `session/prompt` result.
+    /// The `usage` field newer ACP agents add to the `session/prompt` result. Its input count adds up
+    /// every request of the turn, so it says nothing about the context in use (`usage_update` does) and
+    /// is left out, as the ACP providers do.
     nonisolated static func promptUsage(_ json: JSONValue?) -> TokenUsage? {
         guard let json, json.object != nil else { return nil }
-        let input = json["inputTokens"]?.int
-        let output = json["outputTokens"]?.int
-        guard input != nil || output != nil else { return nil }
-        let cached = json["cachedReadTokens"]?.int
-        return TokenUsage(inputTokens: input.map { $0 + (cached ?? 0) }, outputTokens: output, cachedInputTokens: cached)
+        let usage = TokenUsage(outputTokens: json["outputTokens"]?.int, cachedInputTokens: json["cachedReadTokens"]?.int)
+        return usage == TokenUsage() ? nil : usage
     }
 
     nonisolated static func resultSummary(_ output: [String: JSONValue]) -> String? {

@@ -1076,11 +1076,12 @@ struct ClaudeSessionTests {
 
     private func input(
         _ text: String = "Reply with exactly: pong", model: String = "haiku", effort: String? = "low", access: AccessMode = .approval,
-        interaction: InteractionMode = .build, images: [String] = []
+        interaction: InteractionMode = .build, images: [String] = [], recap: String? = nil, newSessionRecap: String? = nil
     ) -> AgentTurnInput {
         AgentTurnInput(
-            text: text, imagePaths: images, selection: ModelSelection(provider: .claude, modelID: model, effort: effort),
-            accessMode: access, interactionMode: interaction)
+            message: text, handoffRecap: recap, newSessionRecap: newSessionRecap ?? recap, imagePaths: images,
+            selection: ModelSelection(provider: .claude, modelID: model, effort: effort), accessMode: access,
+            interactionMode: interaction)
     }
 
     private var completions: [TurnOutcome] {
@@ -1225,6 +1226,33 @@ struct ClaudeSessionTests {
             ClaudeFixture.lifecycle(uuid, "completed"),
         ])
         #expect(completions == [.completed])
+    }
+
+    @Test func aTurnClaudeStartsByItselfIsReportedAsOne() async throws {
+        let session = makeSession()
+        try await session.start()
+        transport.emit([ClaudeFixture.initFrame])
+        // Background work finished between turns and Claude answers it.
+        transport.emit(ClaudeFixture.pongTurn + [ClaudeFixture.pongResult])
+        #expect(events.value.filter { if case .agentTurnStarted = $0 { true } else { false } } == [.agentTurnStarted(note: "Claude Code continued on its own.")])
+        #expect(completions == [.completed])
+
+        // Stopping one sends an interrupt; its result ends it as interrupted.
+        transport.emit(Array(ClaudeFixture.pongTurn.prefix(2)))
+        session.interrupt()
+        try await waitUntil { transport.controlRequests.last?["subtype"] == "interrupt" }
+        transport.emit([ClaudeFixture.interruptedResult])
+        #expect(completions == [.completed, .interrupted])
+
+        // The result of a turn of ours that ended before its result does not end anything else.
+        _ = try await startTurn(session)
+        session.interrupt()
+        let uuid = try #require(transport.userMessages.last?["uuid"]?.string)
+        transport.emit([ClaudeFixture.lifecycle(uuid, "cancelled")])
+        #expect(completions == [.completed, .interrupted, .interrupted])
+        transport.emit(Array(ClaudeFixture.pongTurn.prefix(2)) + [ClaudeFixture.interruptedResult])
+        #expect(completions == [.completed, .interrupted, .interrupted])
+        #expect(events.value.filter { if case .agentTurnStarted = $0 { true } else { false } }.count == 2)
     }
 
     @Test func aMessageClaudeNeverStartsFailsTheTurn() async throws {
@@ -1480,16 +1508,18 @@ struct ClaudeSessionTests {
         try await session.start()
         transport.emit([ClaudeFixture.initFrame])
         // Dropping the effort takes a new process, and by then the saved conversation is gone.
-        try await session.send(input(model: "claude-haiku-4-5", effort: nil))
+        let recap = "<conversation_handoff>\nthe whole thread\n</conversation_handoff>\n\nThe user's new message:"
+        try await session.send(input(model: "claude-haiku-4-5", effort: nil, recap: nil, newSessionRecap: recap))
         #expect(transports.value.count == 3)
         let fresh = try #require(session.sessionID)
         #expect(fresh != lost)
         #expect(transport.config.identity == .fresh(fresh))
         #expect(events.value.contains(.sessionStarted(id: fresh)))
-        // This turn's recap was built for the lost conversation, so the user hears that context is missing.
+        // The new conversation has seen nothing, so it gets the recap of the whole thread.
+        #expect(transport.userMessages.last?.at("message.content")?.string == recap + "\n\nReply with exactly: pong")
         #expect(
             events.value.contains(
-                .notice("Claude Code could not find this thread's saved conversation, so it started a new one without the earlier messages.")))
+                .notice("Claude Code could not find this thread's saved conversation, so it started a new one with a recap of the earlier messages.")))
         #expect(!events.value.contains { if case .usage(let usage) = $0 { return usage.costUSD == 0 } else { return false } })
 
         // Frames sent before the new process reports its id must not switch back to the lost one.
@@ -1638,19 +1668,20 @@ struct ClaudeSessionTests {
                 TranscriptItem(kind: .user, text: "Fix the build"),
                 TranscriptItem(kind: .assistant, text: "Fixed it.", provider: .codex),
             ])
-        let prompt = Handoff.prompt(for: "/review the diff", thread: thread, provider: .claude)
-        let split = try #require(ClaudeSession.splitTrailingCommand(prompt))
-        #expect(split.leading.hasPrefix("<conversation_handoff>") && split.leading.hasSuffix(":"))
-        #expect(split.command == "/review the diff")
-        #expect(ClaudeSession.splitTrailingCommand(Handoff.prompt(for: "review the diff", thread: thread, provider: .claude)) == nil)
-        #expect(ClaudeSession.splitTrailingCommand("/review the diff") == nil)
+        let recap = try #require(Handoff.recap(thread: thread, provider: .claude))
+        #expect(recap.hasPrefix("<conversation_handoff>") && recap.hasSuffix(":"))
+        #expect(ClaudeSession.promptTexts(message: "/review the diff", recap: recap, ultrathink: false) == [recap, "/review the diff"])
+        #expect(
+            ClaudeSession.promptTexts(message: "review the diff", recap: recap, ultrathink: false)
+                == [Handoff.prompt(for: "review the diff", thread: thread, provider: .claude)])
+        #expect(ClaudeSession.promptTexts(message: "/review the diff", recap: nil, ultrathink: false) == ["/review the diff"])
 
         let session = makeSession(model: "sonnet", effort: "ultrathink")
         try await session.start()
-        try await session.send(input(prompt, model: "sonnet", effort: "ultrathink"))
+        try await session.send(input("/review the diff", model: "sonnet", effort: "ultrathink", recap: recap))
         let content = try #require(transport.userMessages.last?.at("message.content")?.array)
         // Ultrathink is a request to the model, not to a command.
-        #expect(content == [["type": "text", "text": .string(split.leading)], ["type": "text", "text": "/review the diff"]])
+        #expect(content == [["type": "text", "text": .string(recap)], ["type": "text", "text": "/review the diff"]])
     }
 
     @Test func userMessagesAreMarkedAsTypedByAPerson() async throws {

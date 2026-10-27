@@ -73,10 +73,17 @@ public enum JSONValue: Sendable, Hashable, Codable {
         return nil
     }
 
-    /// The number as an Int, or nil when it is not finite or does not fit.
+    /// The number as an Int, rounded toward zero, or nil when it is not finite or does not fit.
     public nonisolated var int: Int? {
         guard let number, number.isFinite, number >= -9.2e18, number <= 9.2e18 else { return nil }
         return Int(number)
+    }
+
+    /// The number as an Int only when it is a whole number in range, for ids that must match exactly
+    /// (a JSON-RPC response id of 1.5 answers no request).
+    public nonisolated var exactInt: Int? {
+        guard let number, number.isFinite, number.rounded(.towardZero) == number else { return nil }
+        return Int(exactly: number)
     }
 
     public nonisolated var bool: Bool? {

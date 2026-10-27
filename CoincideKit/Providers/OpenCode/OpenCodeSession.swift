@@ -88,8 +88,12 @@ final class OpenCodeSession: AgentSession {
         sessionID = id
         var mapper = OpenCodeEventMapper(sessionID: id)
         mapper.contextWindow = model.flatMap { contextWindows[$0.slug] }
+        mapper.paths = PathDisplay(workingDirectory: directory)
         self.mapper = mapper
         emit(.sessionStarted(id: id))
+        if let resumeID = launch.resumeSessionID, resumeID != id {
+            emit(.notice(String(localized: "Couldn't resume the earlier OpenCode session, so a new one was started.")))
+        }
     }
 
     func send(_ input: AgentTurnInput) async throws {
@@ -99,7 +103,11 @@ final class OpenCodeSession: AgentSession {
         }
         isSending = true
         interruptBeforePrompt = false
-        defer { isSending = false }
+        mapper?.preparingPrompt = true
+        defer {
+            isSending = false
+            mapper?.preparingPrompt = false
+        }
 
         do {
             if isStopping { try await waitForStop(api: api, sessionID: sessionID) }
@@ -184,6 +192,11 @@ final class OpenCodeSession: AgentSession {
         guard let promptID = mapper?.turn?.promptID else {
             // Stop arrived while the turn's settings were being applied; end it before prompting.
             if isSending { interruptBeforePrompt = true }
+            // Work OpenCode started itself ends with its execution, as interrupted.
+            if !isSending, mapper?.agentExecution == false {
+                mapper?.requestInterrupt()
+                Task { _ = try? await api.interrupt(sessionID, timeout: 3) }
+            }
             return
         }
         mapper?.requestInterrupt()
@@ -240,7 +253,9 @@ final class OpenCodeSession: AgentSession {
         if needsTitle {
             // A titled session is not renamed by OpenCode's own model, which saves a request.
             needsTitle = false
-            if let title = Self.title(forPrompt: input.text) { try? await api.updateSession(sessionID, title: title) }
+            if let title = Self.title(threadTitle: input.threadTitle, message: input.message) {
+                try? await api.updateSession(sessionID, title: title)
+            }
         }
     }
 
@@ -382,8 +397,14 @@ final class OpenCodeSession: AgentSession {
 
     /// After the event stream was restored, settles a turn that ended while events were missed.
     private func reconcile() async {
-        guard let api, let sessionID, mapper?.turn != nil else { return }
+        guard let api, let sessionID, mapper?.turn != nil || mapper?.agentExecution != nil else { return }
         guard let active = try? await api.activeSessions(), !active.contains(sessionID) else { return }
+        guard !isClosed else { return }
+        if mapper?.turn == nil {
+            // A turn OpenCode started itself ended while the event stream was down.
+            if let end = mapper?.endAgentExecution() { emit(end) }
+            return
+        }
         let messages = (try? await api.messages(sessionID, newestFirst: true, limit: 50)) ?? []
         guard !isClosed, mapper?.turn != nil else { return }
         perform(mapper?.backfill(newestFirst: messages) ?? [])
@@ -506,14 +527,10 @@ final class OpenCodeSession: AgentSession {
         return (parts.joined(separator: "\n\n"), files)
     }
 
-    /// A title for a new session from the user's message, leaving out any handoff recap.
-    static func title(forPrompt text: String) -> String? {
-        var message = Substring(text)
-        if text.hasPrefix("<conversation_handoff>") {
-            guard let recapEnd = text.range(of: "</conversation_handoff>"),
-                let marker = text.range(of: "The user's new message:", range: recapEnd.upperBound..<text.endIndex)
-            else { return nil }
-            message = text[marker.upperBound...]
+    /// A title for a new session: the thread's, or one made from the user's message (never the handoff recap).
+    static func title(threadTitle: String?, message: String) -> String? {
+        if let threadTitle = threadTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !threadTitle.isEmpty {
+            return threadTitle
         }
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : ThreadRunner.title(from: trimmed)

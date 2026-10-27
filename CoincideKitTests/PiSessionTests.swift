@@ -39,11 +39,13 @@ final class PiSessionTests {
 
     private func input(
         _ text: String = "Respond with the following text: fixture simple ok", model: String = "default", effort: String? = nil,
-        accessMode: AccessMode = .fullAccess, interactionMode: InteractionMode = .build, images: [String] = []
+        accessMode: AccessMode = .fullAccess, interactionMode: InteractionMode = .build, images: [String] = [],
+        recap: String? = nil, newSessionRecap: String? = nil
     ) -> AgentTurnInput {
         AgentTurnInput(
-            text: text, imagePaths: images, selection: ModelSelection(provider: .pi, modelID: model, effort: effort),
-            accessMode: accessMode, interactionMode: interactionMode)
+            message: text, handoffRecap: recap, newSessionRecap: newSessionRecap ?? recap, imagePaths: images,
+            selection: ModelSelection(provider: .pi, modelID: model, effort: effort), accessMode: accessMode,
+            interactionMode: interactionMode)
     }
 
     private func models(_ records: [JSONValue]) -> [String] {
@@ -598,8 +600,7 @@ final class PiSessionTests {
     @Test func slashCommandAfterAHandoffGetsItsRecapSeparately() async throws {
         let session = makeSession()
         try await session.start()
-        let handoff = Self.handoffText(for: "/compact keep the API notes")
-        try await session.send(input(handoff))
+        try await session.send(input("/compact keep the API notes", recap: Self.handoffRecap))
         let recap = try #require(fake.sent("prompt").first?["message"]?.string)
         #expect(recap.hasPrefix("/\(PiExtension.handoffCommand) <conversation_handoff>"))
         #expect(recap.contains("Claude Code:\nThe parser is done."))
@@ -609,14 +610,15 @@ final class PiSessionTests {
         #expect(await finished())
 
         // An ordinary message keeps its recap in the prompt.
-        let plain = Self.handoffText(for: "Now add tests")
-        try await session.send(input(plain))
-        #expect(fake.sent("prompt").last?["message"]?.string == plain)
+        let plain = input("Now add tests", recap: Self.handoffRecap)
+        try await session.send(plain)
+        #expect(fake.sent("prompt").last?["message"]?.string == plain.text)
+        #expect(plain.text.hasPrefix("<conversation_handoff>") && plain.text.hasSuffix("\n\nNow add tests"))
         #expect(fake.sent("prompt").count == 2)
     }
 
-    /// What the thread runner sends Pi after another agent worked on the thread.
-    private static func handoffText(for message: String) -> String {
+    /// What the thread runner tells Pi after another agent worked on the thread.
+    private static var handoffRecap: String? {
         let thread = ChatThread(
             projectID: UUID(), selection: ModelSelection(provider: .pi, modelID: "default"),
             items: [
@@ -624,7 +626,7 @@ final class PiSessionTests {
                 TranscriptItem(kind: .assistant, text: "The parser is done.", provider: .claude),
             ],
             sessions: [.pi: ProviderSessionRef(sessionID: "/s.jsonl", seenItemCount: 0)])
-        return Handoff.prompt(for: message, thread: thread, provider: .pi)
+        return Handoff.recap(thread: thread, provider: .pi)
     }
 
     @Test func planModeKeepsPiReadOnlyAndReturnsThePlan() async throws {
@@ -724,7 +726,7 @@ final class PiSessionTests {
         #expect(fake.sent("prompt").count == 1)
     }
 
-    @Test func workAnExtensionStartsBetweenTurnsIsShownWithoutATurn() async throws {
+    @Test func workAnExtensionStartsBetweenTurnsIsATurnOfItsOwn() async throws {
         let session = makeSession()
         try await session.start()
         fake.emit([
@@ -734,13 +736,25 @@ final class PiSessionTests {
             #"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Build finished"}]}}"#,
             #"{"type":"agent_settled"}"#,
         ])
+        #expect(log.events.contains(.agentTurnStarted(note: "A Pi extension started a turn.")))
         #expect(log.events.contains(.assistantText(itemID: "w1.m1.c0", text: "Build finished")))
-        #expect(log.completions.isEmpty)
+        #expect(log.completions == [.completed])
         // The next turn is unaffected.
         try await session.send(input())
         fake.emit([#"{"type":"agent_start"}"#, #"{"type":"agent_settled"}"#])
-        #expect(await finished())
-        #expect(log.completions == [.completed])
+        #expect(await finished(count: 2))
+        #expect(log.completions == [.completed, .completed])
+        #expect(log.events.filter { if case .agentTurnStarted = $0 { true } else { false } }.count == 1)
+    }
+
+    @Test func stoppingWorkAnExtensionStartedAbortsIt() async throws {
+        let session = makeSession()
+        try await session.start()
+        fake.emit([#"{"type":"agent_start"}"#])
+        session.interrupt()
+        #expect(fake.sent("abort").count == 1)
+        fake.emit([#"{"type":"agent_settled","aborted":true}"#])
+        #expect(log.completions == [.interrupted])
     }
 
     @Test func exitBetweenTurnsIsReported() async throws {

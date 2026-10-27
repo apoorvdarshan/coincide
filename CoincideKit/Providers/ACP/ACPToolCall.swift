@@ -94,10 +94,7 @@ public struct ACPToolCallState: Sendable, Hashable {
         return parts.joined(separator: " ")
     }
 
-    nonisolated static func nonEmpty(_ text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
+    nonisolated static func nonEmpty(_ text: String) -> String? { TerminalText.nonEmpty(text) }
 }
 
 // MARK: Presentation

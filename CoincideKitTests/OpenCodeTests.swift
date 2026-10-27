@@ -294,6 +294,26 @@ struct OpenCodeEventMapperTests {
         #expect(agentEvents(effects) == [.turnCompleted(.interrupted)])
     }
 
+    @Test func anExecutionOpenCodeStartsItselfIsATurnOfItsOwn() {
+        var mapper = OpenCodeEventMapper(sessionID: session)
+        let started = feed(&mapper, #"{"type":"session.execution.started","data":{"sessionID":"\#(session)"}}"#)
+        #expect(agentEvents(started) == [.agentTurnStarted(note: "OpenCode started working on its own.")])
+        let ended = feed(&mapper, #"{"type":"session.execution.succeeded","data":{"sessionID":"\#(session)"}}"#)
+        #expect(agentEvents(ended) == [.turnCompleted(.completed)])
+
+        // Stopped by the user, it ends as interrupted.
+        _ = feed(&mapper, #"{"type":"session.execution.started","data":{"sessionID":"\#(session)"}}"#)
+        mapper.requestInterrupt()
+        let stopped = feed(&mapper, #"{"type":"session.execution.succeeded","data":{"sessionID":"\#(session)"}}"#)
+        #expect(agentEvents(stopped) == [.turnCompleted(.interrupted)])
+
+        // An execution that starts while a prompt is being prepared belongs to that prompt.
+        mapper.preparingPrompt = true
+        #expect(feed(&mapper, #"{"type":"session.execution.started","data":{"sessionID":"\#(session)"}}"#).isEmpty)
+        mapper.preparingPrompt = false
+        #expect(feed(&mapper, #"{"type":"session.execution.succeeded","data":{"sessionID":"\#(session)"}}"#).isEmpty)
+    }
+
     @Test func anEarlierExecutionEndingDoesNotEndTheTurn() {
         var mapper = OpenCodeEventMapper(sessionID: session)
         _ = feed(&mapper, #"{"type":"session.execution.started","data":{"sessionID":"\#(session)"}}"#)
@@ -826,17 +846,10 @@ struct OpenCodeSessionHelperTests {
     }
 
     @Test func titlesComeFromTheUsersMessage() {
-        #expect(OpenCodeSession.title(forPrompt: "Fix the login bug\nmore detail") == "Fix the login bug")
-        let handoff = Handoff.prompt(
-            for: "Now add tests", thread: ChatThread(
-                projectID: UUID(), selection: ModelSelection(provider: .claude, modelID: "default"),
-                items: [
-                    TranscriptItem(kind: .user, text: "Fix the bug", provider: .claude),
-                    TranscriptItem(kind: .assistant, text: "Fixed.", provider: .claude),
-                ], sessions: [.claude: ProviderSessionRef(sessionID: "a", seenItemCount: 2)]), provider: .opencode)
-        #expect(handoff.hasPrefix("<conversation_handoff>"))
-        #expect(OpenCodeSession.title(forPrompt: handoff) == "Now add tests")
-        #expect(OpenCodeSession.title(forPrompt: "   ") == nil)
+        #expect(OpenCodeSession.title(threadTitle: nil, message: "Fix the login bug\nmore detail") == "Fix the login bug")
+        #expect(OpenCodeSession.title(threadTitle: "Login bug", message: "Now add tests") == "Login bug")
+        #expect(OpenCodeSession.title(threadTitle: " ", message: "Now add tests") == "Now add tests")
+        #expect(OpenCodeSession.title(threadTitle: nil, message: "   ") == nil)
     }
 
     @Test func comparesDirectoriesThroughSymlinks() throws {

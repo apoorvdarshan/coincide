@@ -302,10 +302,7 @@ enum PiTools {
 /// Text helpers for Pi's payloads.
 enum PiText {
     /// The text with surrounding whitespace removed, or nil when nothing is left.
-    static func nonEmpty(_ text: String?) -> String? {
-        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
-        return trimmed
-    }
+    static func nonEmpty(_ text: String?) -> String? { TerminalText.nonEmpty(text) }
 
     /// The first line, shortened to `limit` characters, with an ellipsis when anything was left out.
     static func summary(_ text: String, limit: Int = 80) -> String {

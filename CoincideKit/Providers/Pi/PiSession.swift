@@ -79,6 +79,10 @@ public final class PiSession: AgentSession {
     private var turn: Turn?
     private var turnCount = 0
     private var wakeCount = 0
+    /// Work an extension started between turns, shown as a turn Pi started itself. True once it is being stopped.
+    private var wake: Bool?
+    /// How many times Pi started a new conversation instead of continuing one.
+    private var newConversations = 0
     private var dialogs: [String: OpenDialog] = [:]
     private var alwaysAllowed: Set<String>
     /// Captured from the first process before it loads a saved session, so "Default" means Pi's default.
@@ -127,6 +131,8 @@ public final class PiSession: AgentSession {
         await acquireSend()
         defer { releaseSend() }
         guard !isClosed else { throw AgentError.notRunning }
+        // Work an extension started is now part of this turn: Pi queues the prompt behind it.
+        wake = nil
         // A turn the thread runner already gave up on may still be running in Pi; restarting Pi stops it.
         let abandoned = turn != nil
         if let previous = turn?.number { discardTurn(previous) }
@@ -165,7 +171,14 @@ public final class PiSession: AgentSession {
     }
 
     public func interrupt() {
-        guard var turn, !turn.interruptRequested else { return }
+        guard var turn, !turn.interruptRequested else {
+            // Work an extension started: ask Pi to stop it; `agent_settled` then ends it as interrupted.
+            if turn == nil, wake == false, let rpc, rpc.isOpen {
+                wake = true
+                rpc.request(["type": "abort"], timeout: timing.abort) { _ in }
+            }
+            return
+        }
         turn.interruptRequested = true
         self.turn = turn
         let number = turn.number
@@ -208,15 +221,18 @@ public final class PiSession: AgentSession {
     /// Readies Pi for the turn and hands it the prompt. Returns early when the user stopped the turn first.
     private func begin(_ number: Int, input: AgentTurnInput, restart: Bool) async throws {
         let wanted = Policy(accessMode: input.accessMode, interactionMode: input.interactionMode)
+        let conversations = newConversations
         if restart || rpc?.isOpen != true || wanted != policy {
             policy = wanted
             try await reopen()
         }
         guard try proceed(number) else { return }
-        let prompt = PiPrompt(input.text)
+        // A restart that could not continue the session started a new one, which needs the whole recap.
+        let isNewConversation = newConversations != conversations
+        let prompt = PiPrompt(recap: input.recap(forNewSession: isNewConversation), message: input.message)
         // A slash command only runs at the start of a prompt, so a recap in front of one travels on its own.
         let handoff = prompt.needsSeparateRecap ? handoffCommand : nil
-        let text = handoff == nil ? input.text : prompt.message
+        let text = handoff == nil ? input.prompt(forNewSession: isNewConversation) : prompt.message
         let compact = input.imagePaths.isEmpty ? PiCompactCommand.parse(text) : nil
         let images = try PiImages.payload(input.imagePaths)
         mapper.begin(itemPrefix: "t\(number)")
@@ -483,6 +499,7 @@ public final class PiSession: AgentSession {
             lastExit = nil
             alwaysAllowed.formUnion(Self.approvalsBySession[id] ?? [])
             if !alwaysAllowed.isEmpty { Self.approvalsBySession[id] = alwaysAllowed }
+            if !continued { newConversations += 1 }
             emit(continued ? .sessionContinued(id: id) : .sessionStarted(id: id))
             if let model = currentModel { emit(.modelResolved(model)) }
             if lostSession || (resume != .fresh && !continued) {
@@ -516,6 +533,7 @@ public final class PiSession: AgentSession {
         guard client === rpc, !isClosed else { return }
         rpc = nil
         lastExit = reason
+        wake = nil
         withdrawDialogs(announce: true) { $0.turn == nil }
         guard var turn else {
             emit(.sessionExited(error: reason))
@@ -577,14 +595,25 @@ public final class PiSession: AgentSession {
                 turn.probeGeneration += 1
                 self.turn = turn
             } else if turn == nil {
-                // An extension started work between turns; it is shown, under its own item ids.
+                // An extension started work between turns; it is shown as a turn of its own, under its own item ids.
                 wakeCount += 1
                 mapper.begin(itemPrefix: "w\(wakeCount)")
+                // While a send prepares its turn, the work becomes part of that turn instead.
+                if wake == nil, !sending {
+                    wake = false
+                    emit(.agentTurnStarted(note: String(localized: "A Pi extension started a turn.")))
+                }
             }
         case "agent_settled":
             guard var turn = activeTurn else {
                 // Work that started before the turn's prompt keeps the turn's ids; it ends with the turn.
-                if turn == nil { emit(mapper.finish()) }
+                if turn == nil {
+                    emit(mapper.finish())
+                    if let stopping = wake {
+                        wake = nil
+                        emit(.turnCompleted(stopping || record["aborted"]?.bool == true ? .interrupted : .completed))
+                    }
+                }
                 return
             }
             if turn.interruptRequested {

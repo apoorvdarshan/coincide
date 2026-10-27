@@ -2,38 +2,17 @@ import Foundation
 
 /// Titles, details and markdown for Codex items, shared by the event mapper and approval prompts.
 struct CodexPresentation: Sendable {
-    /// Paths under these roots are shown relative to them: the working directory as given and as Codex may
-    /// report it (symlinks resolved, `/tmp` spelled `/private/tmp`).
-    let roots: [String]
+    /// Paths under the working directory are shown relative to it.
+    let paths: PathDisplay
+
+    /// The working directory as given and as Codex may report it.
+    var roots: [String] { paths.roots }
 
     init(workingDirectory: String) {
-        let base = workingDirectory.count > 1 && workingDirectory.hasSuffix("/")
-            ? String(workingDirectory.dropLast()) : workingDirectory
-        var roots = [base]
-        if let resolved = realpath(base, nil) {
-            roots.append(String(cString: resolved))
-            free(resolved)
-        }
-        for alias in ["/tmp", "/var", "/etc"] {
-            if base == alias || base.hasPrefix(alias + "/") {
-                roots.append("/private" + base)
-            } else if base == "/private" + alias || base.hasPrefix("/private" + alias + "/") {
-                roots.append(String(base.dropFirst("/private".count)))
-            }
-        }
-        self.roots = roots.reduce(into: []) { unique, root in
-            if !unique.contains(root) { unique.append(root) }
-        }
+        paths = PathDisplay(workingDirectory: workingDirectory)
     }
 
-    func relativePath(_ path: String) -> String {
-        for root in roots where !root.isEmpty {
-            if path == root { return "." }
-            let prefix = root.hasSuffix("/") ? root : root + "/"
-            if path.hasPrefix(prefix) { return String(path.dropFirst(prefix.count)) }
-        }
-        return path
-    }
+    func relativePath(_ path: String) -> String { paths.relative(path) }
 
     // MARK: Commands
 
@@ -171,10 +150,7 @@ struct CodexPresentation: Sendable {
     // MARK: Long text
 
     /// The text without surrounding whitespace, or nil when nothing is left.
-    static func nonEmpty(_ text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
+    static func nonEmpty(_ text: String) -> String? { TerminalText.nonEmpty(text) }
 
     /// Outputs keep their end, like a terminal; the transcript keeps at most this much of one item.
     static let outputLimit = 150_000
@@ -468,8 +444,7 @@ struct CodexPresentation: Sendable {
 
     static func exitMessage(status: Int32, stderr: String) -> String {
         let summary = String(localized: "Codex exited unexpectedly (status \(Int(status))).")
-        let tail = stderr.replacingOccurrences(of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression)
-            .split(whereSeparator: \.isNewline).suffix(3).joined(separator: "\n")
-        return tail.isEmpty ? summary : summary + "\n" + tail
+        guard let tail = TerminalText.tail(stderr, lines: 3, maxLength: 800) else { return summary }
+        return summary + "\n" + tail
     }
 }

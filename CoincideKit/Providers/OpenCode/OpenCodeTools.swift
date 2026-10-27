@@ -21,31 +21,37 @@ enum OpenCodeTools {
     }
 
     /// The tool call as shown before and while it runs. `input` is empty until OpenCode reports the call.
-    nonisolated static func info(id: String, name: String, input: [String: JSONValue]) -> ToolCallInfo {
+    /// Paths in the title are shown relative to the working directory when `paths` is given.
+    nonisolated static func info(id: String, name: String, input: [String: JSONValue], paths: PathDisplay? = nil) -> ToolCallInfo {
         let category = category(for: name)
         return ToolCallInfo(
-            id: id, category: category, title: title(name: name, category: category, input: input),
+            id: id, category: category, title: title(name: name, category: category, input: input, paths: paths),
             detail: detail(name: name, category: category, input: input))
     }
 
-    nonisolated static func title(name: String, category: ToolCategory, input: [String: JSONValue]) -> String {
+    nonisolated static func title(
+        name: String, category: ToolCategory, input: [String: JSONValue], paths: PathDisplay? = nil
+    ) -> String {
+        func path(_ keys: String...) -> String? {
+            keys.lazy.compactMap { string(input, $0) }.first.map { paths?.relative($0) ?? $0 }
+        }
         switch category {
         case .command:
             guard let command = string(input, "command", "cmd") else { return String(localized: "Run command") }
             return String(localized: "Run `\(shortened(firstLine(command), limit: 80))`")
         case .fileChange:
-            if let path = string(input, "path", "filePath", "file") {
+            if let path = path("path", "filePath", "file") {
                 return name == "write" ? String(localized: "Write \(path)") : String(localized: "Edit \(path)")
             }
-            let files = patchFiles(string(input, "patchText", "patch") ?? "")
+            let files = patchFiles(string(input, "patchText", "patch") ?? "").map { paths?.relative($0) ?? $0 }
             if !files.isEmpty { return String(localized: "Edit \(files.joined(separator: ", "))") }
             return name == "write" ? String(localized: "Write file") : String(localized: "Edit file")
         case .read:
-            guard let path = string(input, "path", "filePath", "file") else { return String(localized: "Read file") }
+            guard let path = path("path", "filePath", "file") else { return String(localized: "Read file") }
             return String(localized: "Read \(path)")
         case .search:
             let pattern = string(input, "pattern", "query")
-            let root = string(input, "path", "include")
+            let root = path("path", "include")
             switch (name, pattern, root) {
             case ("glob", let pattern?, let root?): return String(localized: "Find `\(pattern)` in \(root)")
             case ("glob", let pattern?, nil): return String(localized: "Find `\(pattern)`")

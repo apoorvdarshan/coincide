@@ -113,7 +113,7 @@ enum PiModels {
     }
 }
 
-/// A turn's text, split into the handoff recap Coincide put in front of it and the user's own message.
+/// A turn's handoff recap (see `AgentTurnInput.handoffRecap`) and the user's own message.
 ///
 /// Pi runs slash commands (extension commands, skills, prompt templates and `/compact`) only when the prompt
 /// starts with one, so a recap in front would turn the command into plain text. The session then sends the
@@ -124,24 +124,8 @@ struct PiPrompt: Equatable {
     var message: String
 
     init(recap: String? = nil, message: String) {
-        self.recap = recap
+        self.recap = recap.flatMap { $0.isEmpty ? nil : $0 }
         self.message = message
-    }
-
-    /// Splits `Handoff.prompt` output: `<conversation_handoff>…</conversation_handoff>`, a line introducing the
-    /// user's message, then the message. Text in any other shape is the message.
-    init(_ text: String) {
-        let opening = "<conversation_handoff>\n"
-        let closing = "\n</conversation_handoff>\n\n"
-        guard text.hasPrefix(opening), let end = text.range(of: closing),
-            let introduction = text.range(of: "\n\n", range: end.upperBound..<text.endIndex)
-        else {
-            self.init(message: text)
-            return
-        }
-        self.init(
-            recap: String(text[..<introduction.lowerBound]),
-            message: String(text[introduction.upperBound...]))
     }
 
     /// The recap only has to travel separately when the message is a slash command.

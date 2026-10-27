@@ -531,10 +531,19 @@ struct CursorMapperTests {
         var mapper = mapper()
         let events = mapper.handle(update: ["sessionUpdate": "usage_update", "used": 53_000, "size": 200_000, "cost": ["amount": 0.42, "currency": "USD"]])
         #expect(events == [.usage(TokenUsage(inputTokens: 53_000, contextWindow: 200_000, costUSD: 0.42))])
+        // The turn's summed input says nothing about the context in use, so the meter keeps `usage_update`'s.
         #expect(
             CursorEventMapper.promptUsage(["inputTokens": 1_000, "outputTokens": 20, "cachedReadTokens": 500])
-                == TokenUsage(inputTokens: 1_500, outputTokens: 20, cachedInputTokens: 500))
+                == TokenUsage(outputTokens: 20, cachedInputTokens: 500))
+        #expect(CursorEventMapper.promptUsage(["inputTokens": 1_000]) == nil)
         #expect(CursorEventMapper.promptUsage(nil) == nil)
+        // Options of unknown kinds are left out, and a request without a way to say no gets Cancel.
+        #expect(CursorEventMapper.approvalOption(["optionId": "x", "name": "Maybe", "kind": "reject_politely"]) == nil)
+        #expect(CursorEventMapper.approvalOption(["optionId": "x", "name": "Maybe"]) == nil)
+        var approvals = mapper
+        let (_, request) = approvals.approval(
+            id: "r1", params: ["toolCall": ["toolCallId": "t1", "title": "Run"], "options": [["optionId": "go", "name": "Go", "kind": "allow_once"]]])
+        #expect(request.options.map(\.kind) == [.allowOnce, .cancel])
     }
 
     @Test func todoStatusesInEverySpelling() {

@@ -1,12 +1,9 @@
 import Foundation
 
 extension JSONValue {
-    /// The value as an `Int` when it is a whole number in range. Agents are untrusted, and
-    /// `int` traps on numbers such as `1e20`.
-    nonisolated var acpInt: Int? {
-        guard let number, number.isFinite, number.rounded(.towardZero) == number else { return nil }
-        return Int(exactly: number)
-    }
+    /// The value as an `Int` when it is a whole number in range (`exactInt`). Agents are untrusted:
+    /// `int` would round 1.5 down to 1.
+    nonisolated var acpInt: Int? { exactInt }
 }
 
 /// A JSON-RPC error object, as an agent returns it or as Coincide sends one back.

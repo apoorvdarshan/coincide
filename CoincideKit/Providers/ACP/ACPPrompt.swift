@@ -17,6 +17,21 @@ public enum ACPPrompt {
         return "<coincide_instructions>\n\(instructions(for: mode))\n</coincide_instructions>\n\n<user_request>\n\(text)\n</user_request>"
     }
 
+    /// The prompt's text blocks: the handoff recap in front of the message, wrapped in the interaction-mode
+    /// instructions when they are due. A native slash command stays untouched, so after a recap it travels
+    /// as a block of its own, last. `instructed` says the instructions were included.
+    public nonisolated static func texts(
+        message: String, recap: String?, mode: InteractionMode, previousMode: InteractionMode?
+    ) -> (blocks: [String], instructed: Bool) {
+        if isSlashCommand(message) {
+            guard let recap, !recap.isEmpty else { return ([message], false) }
+            return ([recap, message], false)
+        }
+        let combined = Handoff.compose(message: message, recap: recap)
+        let wrapped = text(combined, mode: mode, previousMode: previousMode)
+        return ([wrapped], wrapped != combined)
+    }
+
     public nonisolated static func isSlashCommand(_ text: String) -> Bool {
         text.drop(while: \.isWhitespace).hasPrefix("/")
     }

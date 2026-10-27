@@ -82,6 +82,10 @@ struct GrokFlavor: ACPAgentFlavor {
                 .promptCompleted(
                     promptID: completion.promptID, stopReason: XAI.stopReason(completion.stopReason),
                     failure: XAI.failure(completion), usage: XAI.usage(completion.usage)))
+        } else if let completion = XAI.backgroundCompletion(method: method, params: params), let promptID = completion.promptID {
+            events.append(
+                .backgroundPromptCompleted(
+                    promptID: promptID, stopReason: XAI.stopReason(completion.stopReason), failure: XAI.failure(completion)))
         }
         switch XAI.method(method) {
         case "models/update":
@@ -240,6 +244,27 @@ enum XAI {
             guard let update = params["update"], update["sessionUpdate"]?.string == "turn_completed",
                 let promptID = (update["prompt_id"]?.string ?? update["promptId"]?.string).flatMap(ACPToolCallState.nonEmpty),
                 !promptID.hasPrefix(backgroundPromptPrefix)
+            else { return nil }
+            return PromptCompletion(
+                promptID: promptID, stopReason: update["stop_reason"]?.string ?? update["stopReason"]?.string,
+                agentResult: update["agent_result"]?.string, usage: update["usage"])
+        default:
+            return nil
+        }
+    }
+
+    /// The end of a background wake (`task-completed-…`), which `promptCompletion` leaves out.
+    nonisolated static func backgroundCompletion(method name: String, params: JSONValue) -> PromptCompletion? {
+        switch method(name) {
+        case "session/prompt_complete":
+            guard let promptID = params["promptId"]?.string, promptID.hasPrefix(backgroundPromptPrefix) else { return nil }
+            return PromptCompletion(
+                promptID: promptID, stopReason: params["stopReason"]?.string, agentResult: params["agentResult"]?.string,
+                usage: nil)
+        case "session_notification", "session/update":
+            guard let update = params["update"], update["sessionUpdate"]?.string == "turn_completed",
+                let promptID = update["prompt_id"]?.string ?? update["promptId"]?.string,
+                promptID.hasPrefix(backgroundPromptPrefix)
             else { return nil }
             return PromptCompletion(
                 promptID: promptID, stopReason: update["stop_reason"]?.string ?? update["stopReason"]?.string,

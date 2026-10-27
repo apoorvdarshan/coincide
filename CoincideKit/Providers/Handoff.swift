@@ -28,10 +28,16 @@ public enum Handoff {
     public nonisolated static func prompt(
         for message: String, thread: ChatThread, provider: ProviderKind, budget: Int = defaultBudget
     ) -> String {
+        compose(message: message, recap: recap(thread: thread, provider: provider, budget: budget))
+    }
+
+    /// What `provider` missed, as a `<conversation_handoff>` block followed by a line introducing the user's
+    /// message, or nil when its session is current. `thread` must not yet contain the new message.
+    public nonisolated static func recap(thread: ChatThread, provider: ProviderKind, budget: Int = defaultBudget) -> String? {
         let missed = missedItems(in: thread, for: provider)
-        guard !missed.isEmpty else { return message }
+        guard !missed.isEmpty else { return nil }
         let recap = transcript(Array(missed), budget: budget)
-        guard !recap.isEmpty else { return message }
+        guard !recap.isEmpty else { return nil }
         let firstTime = (thread.sessions[provider]?.seenItemCount ?? 0) == 0
         let intro =
             firstTime
@@ -45,9 +51,23 @@ public enum Handoff {
             </conversation_handoff>
 
             Continue from here. Files on disk already reflect the work above. The user's new message:
-
-            \(message)
             """
+    }
+
+    /// The recap for a native session that has seen nothing of the thread, such as one started because
+    /// resuming the earlier one failed.
+    public nonisolated static func newSessionRecap(
+        thread: ChatThread, provider: ProviderKind, budget: Int = defaultBudget
+    ) -> String? {
+        var unseen = thread
+        unseen.sessions[provider] = nil
+        return recap(thread: unseen, provider: provider, budget: budget)
+    }
+
+    /// The prompt for a message with an optional recap in front.
+    public nonisolated static func compose(message: String, recap: String?) -> String {
+        guard let recap, !recap.isEmpty else { return message }
+        return recap + "\n\n" + message
     }
 
     /// A compact, plain-text transcript. Keeps the most recent entries when over budget.

@@ -19,9 +19,8 @@ final class PiProcessTransport: PiTransport {
     var onLine: ((String) -> Void)?
     var onExit: ((Int32, String) -> Void)?
 
+    /// Prompts can carry megabytes of image data; `LineProcess` writes off the main thread, in order.
     private let process: LineProcess
-    /// Prompts can carry megabytes of image data, so writes leave the main thread; one serial queue keeps them in order.
-    private let writer = DispatchQueue(label: "com.apoorvdarshan.coincide.pi.stdin")
 
     init(executable: URL, arguments: [String], workingDirectory: URL, environment: [String: String]) {
         process = LineProcess(
@@ -37,13 +36,11 @@ final class PiProcessTransport: PiTransport {
     }
 
     func write(_ line: String) {
-        let process = process
-        writer.async { process.write(line) }
+        process.write(line)
     }
 
     func closeInput() {
-        let process = process
-        writer.async { process.closeInput() }
+        process.closeInput()
     }
 
     func terminate() {
@@ -204,8 +201,7 @@ final class PiRPCClient {
 
     nonisolated static func exitDescription(status: Int32, stderr: String) -> String {
         let summary = status == 0 ? String(localized: "Pi exited.") : String(localized: "Pi exited with code \(status).")
-        let detail = stderr.replacingOccurrences(of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = TerminalText.stripANSI(stderr).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !detail.isEmpty else { return summary }
         return summary + "\n" + (detail.count > 800 ? "…" + String(detail.suffix(800)) : detail)
     }

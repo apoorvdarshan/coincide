@@ -114,8 +114,5 @@ enum OpenCodeQuestions {
         return (Field.Option(label: label, value: value), detail)
     }
 
-    private nonisolated static func nonEmpty(_ text: String?) -> String? {
-        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
-        return trimmed
-    }
+    private nonisolated static func nonEmpty(_ text: String?) -> String? { TerminalText.nonEmpty(text) }
 }
