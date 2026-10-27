@@ -1,0 +1,83 @@
+import AppKit
+
+/// The composer's bottom row: agent and model, effort, access and Build/Plan on the leading side;
+/// attach, the context meter and send/stop on the trailing side. Labels collapse to symbols,
+/// least important first, when the composer is too narrow for them.
+final class ComposerFooterView: NSView {
+    let modelButton = ComposerControlButton()
+    let effortButton = ComposerControlButton()
+    let accessButton = ComposerControlButton()
+    let modeButton = ComposerControlButton()
+    let attachButton = ComposerControlButton()
+    let contextMeter = ComposerContextMeter()
+    let stopButton = ComposerSendButton()
+    let sendButton = ComposerSendButton()
+    let implementButton = NSButton(title: String(localized: "Implement"), target: nil, action: nil)
+
+    private let leadingControls = NSStackView()
+    private let trailingControls = NSStackView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        leadingControls.orientation = .horizontal
+        leadingControls.spacing = 2
+        trailingControls.orientation = .horizontal
+        trailingControls.spacing = 6
+        for view in [modelButton, effortButton, accessButton, modeButton] { leadingControls.addArrangedSubview(view) }
+        for view in [attachButton, contextMeter, stopButton, implementButton, sendButton] {
+            trailingControls.addArrangedSubview(view)
+        }
+        trailingControls.setCustomSpacing(2, after: attachButton)
+
+        modelButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        (modelButton.cell as? NSButtonCell)?.lineBreakMode = .byTruncatingTail
+        stopButton.mode = .stop
+        stopButton.isHidden = true
+        implementButton.bezelStyle = .push
+        implementButton.controlSize = .small
+        implementButton.borderShape = .capsule
+        implementButton.tintProminence = .primary
+        implementButton.isHidden = true
+        attachButton.configure(title: "", symbolName: "paperclip", chevron: false)
+        attachButton.toolTip = String(localized: "Attach images")
+        attachButton.setAccessibilityLabel(String(localized: "Attach images"))
+
+        for stack in [leadingControls, trailingControls] {
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(stack)
+        }
+        leadingControls.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        trailingControls.setContentCompressionResistancePriority(.required, for: .horizontal)
+        trailingControls.setContentHuggingPriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 30),
+            leadingControls.leadingAnchor.constraint(equalTo: leadingAnchor),
+            leadingControls.centerYAnchor.constraint(equalTo: centerYAnchor),
+            trailingControls.trailingAnchor.constraint(equalTo: trailingAnchor),
+            trailingControls.centerYAnchor.constraint(equalTo: centerYAnchor),
+            leadingControls.trailingAnchor.constraint(lessThanOrEqualTo: trailingControls.leadingAnchor, constant: -8),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layout() {
+        compactLabelsToFit()
+        super.layout()
+    }
+
+    /// Collapses Build/Plan, then access, then effort, then the model name to their symbols until the controls fit.
+    private func compactLabelsToFit() {
+        let available = bounds.width - trailingControls.fittingSize.width - 8
+        let buttons = [modelButton, effortButton, accessButton, modeButton].filter { !$0.isHidden }
+        var width = buttons.reduce(0) { $0 + $1.width(compact: false) } + CGFloat(max(buttons.count - 1, 0)) * leadingControls.spacing
+        var compacted = Set<ObjectIdentifier>()
+        for button in [modeButton, accessButton, effortButton, modelButton] where !button.isHidden {
+            if width <= available { break }
+            width -= button.width(compact: false) - button.width(compact: true)
+            compacted.insert(ObjectIdentifier(button))
+        }
+        for button in buttons { button.isCompact = compacted.contains(ObjectIdentifier(button)) }
+    }
+}
