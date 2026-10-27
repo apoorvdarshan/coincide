@@ -15,10 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppearanceController.shared.start()
+        SettingsWindowController.shared.startHandlingRequests()
         ThreadActivity.shared.start()
         NotificationController.shared.start()
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(showSettingsEvent(_:)), name: .coincideShowSettings, object: nil)
         mainWindow?.showWindow(nil)
         Task { await ProviderRegistry.shared.refresh() }
         #if DEBUG
@@ -26,15 +25,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
     }
 
+    /// Asks first while agents work or terminal commands run, as Terminal does for running processes.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let running = ThreadRunner.shared.runningThreadIDs.count
-        guard running > 0 else { return .terminateNow }
+        let agents = ThreadRunner.shared.runningThreadIDs.count
+        let jobs = TerminalSessionManager.shared.busySessionCount
+        guard agents > 0 || jobs > 0 else { return .terminateNow }
+        var reasons: [String] = []
+        if agents == 1 {
+            reasons.append(String(localized: "An agent is still working."))
+        } else if agents > 1 {
+            reasons.append(String(localized: "\(agents) agents are still working."))
+        }
+        if jobs == 1 {
+            reasons.append(String(localized: "A command is still running in a terminal."))
+        } else if jobs > 1 {
+            reasons.append(String(localized: "\(jobs) commands are still running in terminals."))
+        }
+        reasons.append(String(localized: "Quitting stops them."))
         let alert = NSAlert()
         alert.messageText = String(localized: "Quit Coincide?")
-        alert.informativeText =
-            running == 1
-            ? String(localized: "An agent is still working. Quitting stops it.")
-            : String(localized: "\(running) agents are still working. Quitting stops them.")
+        alert.informativeText = reasons.joined(separator: " ")
         alert.addButton(withTitle: String(localized: "Quit"))
         alert.addButton(withTitle: String(localized: "Cancel"))
         return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
@@ -81,10 +91,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showSettings(_ sender: Any?) {
         SettingsWindowController.shared.show()
-    }
-
-    @objc private func showSettingsEvent(_ note: Notification) {
-        let section = (note.userInfo?["section"] as? String).flatMap(SettingsSection.init(rawValue:))
-        SettingsWindowController.shared.show(section: section)
     }
 }

@@ -1013,7 +1013,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     @objc private func openProviderSettings() {
-        AppEvents.post(.coincideShowSettings, ["section": SettingsSection.providers.rawValue])
+        AppEvents.showSettings(section: .providers)
     }
 
     // MARK: Sending

@@ -56,11 +56,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             (.coincideOpenThread, #selector(openThreadEvent(_:))),
             (.coincideNewThread, #selector(newThreadEvent(_:))),
             (.coincideAddProject, #selector(addProject(_:))),
-            (.coincideToggleDiff, #selector(toggleDiffPanel(_:))),
             (.coincideShowTurnDiff, #selector(showTurnDiff(_:))),
             (.coincideToggleTerminal, #selector(toggleTerminalPanel(_:))),
-            (.coincideToggleSidebar, #selector(toggleSidebarPanel(_:))),
-            (.coincideShowCommandPalette, #selector(showCommandPalette(_:))),
             (.coincideThreadActivityChanged, #selector(activityChanged(_:))),
             (OpenTargets.preferredDidChange, #selector(updateOpenInItem)),
         ]
@@ -75,6 +72,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     // MARK: Selection
 
     /// Shows a thread in the chat, terminal and diff panes, and highlights it in the sidebar.
+    /// As in T3, the composer takes focus, unless the user is working in the sidebar, terminal or diff.
     func open(_ threadID: UUID?) {
         let threadID = threadID.flatMap { store.thread($0) != nil ? $0 : nil }
         guard threadID != selectedThreadID || !hasOpenedThread else { return }
@@ -87,6 +85,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         UIState.shared.update { $0.selectedThreadID = threadID }
         updateTitle()
         updateRunStatus()
+        if threadID != nil, !isFocusInSidePanel { splitController.content.chat.focusComposer() }
+    }
+
+    /// Whether keyboard focus is in the sidebar, the terminal or the diff, where it stays when the thread changes.
+    private var isFocusInSidePanel: Bool {
+        guard let responder = window?.firstResponder as? NSView else { return false }
+        return [sidebar.view, splitController.content.terminal.view, splitController.diff.view].contains {
+            responder.isDescendant(of: $0)
+        }
     }
 
     var selectedThread: ChatThread? { selectedThreadID.flatMap { store.thread($0) } }
@@ -101,7 +108,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case .runState(let id) where id == selectedThreadID:
             updateRunStatus()
         case .projects, .threadList:
+            // The open thread may be gone; the sidebar then opens its neighbour.
             updateTitle()
+            updateRunStatus()
         default:
             break
         }
@@ -198,9 +207,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         splitController.toggleDiffPanel()
     }
 
-    /// The diff inspector picks the turn up from the same notification; this only makes sure it's open.
+    /// Opens the diff inspector on one turn's changes.
     @objc private func showTurnDiff(_ notification: Notification) {
+        guard let threadID = notification.userInfo?["threadID"] as? UUID,
+            let turnID = notification.userInfo?["turnID"] as? UUID
+        else { return }
+        showWindow(nil)
         splitController.showDiffPanel()
+        splitController.diff.showTurn(turnID, in: threadID, path: notification.userInfo?["path"] as? String)
     }
 
     /// Command-K opens the palette, or closes it when it is showing.

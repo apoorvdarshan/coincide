@@ -165,7 +165,7 @@ final class ChatWelcomeView: NSView {
     }
 
     @objc private func openSettings() {
-        AppEvents.post(.coincideShowSettings, ["section": SettingsSection.providers.rawValue])
+        AppEvents.showSettings(section: .providers)
     }
 }
 

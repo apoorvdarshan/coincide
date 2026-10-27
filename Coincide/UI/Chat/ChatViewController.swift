@@ -129,6 +129,12 @@ final class ChatViewController: NSViewController {
         if displayedThreadID != nil { list.scrollToBottom() }
     }
 
+    /// Puts the caret in the composer, or does so once the view is in a window.
+    func focusComposer() {
+        guard displayedThreadID != nil else { return }
+        composer.focus()
+    }
+
     // MARK: Thread
 
     private func loadThread() {
@@ -544,9 +550,7 @@ extension ChatViewController: TranscriptHost {
 
     func showDiff(turnID: UUID, path: String?) {
         guard let threadID = displayedThreadID else { return }
-        var info: [String: Any] = ["threadID": threadID, "turnID": turnID]
-        if let path { info["path"] = path }
-        AppEvents.post(.coincideShowTurnDiff, info)
+        AppEvents.showTurnDiff(threadID: threadID, turnID: turnID, path: path)
     }
 
     func openLink(_ link: Any) -> Bool {
