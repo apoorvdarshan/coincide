@@ -12,6 +12,7 @@ public final class ProviderRegistry {
     public var isRefreshing: Bool { !running.isEmpty }
 
     private let store: AppStore
+    private let shell: ShellEnvironment
     /// Per provider: the latest check asked for, the latest one finished, and the one running.
     /// One check runs at a time; a request made while one runs gets a fresh check after it.
     private var requested: [ProviderKind: Int] = [:]
@@ -19,9 +20,14 @@ public final class ProviderRegistry {
     private var running: [ProviderKind: Task<Void, Never>] = [:]
     private var lastChecked: [ProviderKind: Date] = [:]
     private var activationObserver: NSObjectProtocol?
+    /// How old the login shell environment must be before `refreshUnavailable` reads it again for a CLI
+    /// that is not installed. Reading it costs a full interactive shell startup; Settings' Refresh still
+    /// reads it at once.
+    var environmentRereadAge: TimeInterval = 15 * 60
 
-    public init(store: AppStore, providers: [AgentProvider]? = nil) {
+    public init(store: AppStore, providers: [AgentProvider]? = nil, shell: ShellEnvironment = .shared) {
         self.store = store
+        self.shell = shell
         let all = providers ?? Self.builtInProviders()
         self.providers = Dictionary(all.map { ($0.kind, $0) }, uniquingKeysWith: { first, _ in first })
         // Coming back to Coincide after installing or signing in to an agent finds it without a manual refresh.
@@ -91,20 +97,30 @@ public final class ProviderRegistry {
 
     /// Resolves the executable for a provider, honoring the user's override.
     public func executable(for kind: ProviderKind) async -> URL? {
+        await executable(for: kind, fresh: false)
+    }
+
+    /// The environment for a provider's process: the login shell environment plus the user's extras.
+    public func environment(for kind: ProviderKind) async -> [String: String] {
+        await environment(for: kind, fresh: false)
+    }
+
+    /// With `fresh`, waits for a login shell environment that is being read again instead of using the
+    /// previous one, so a check sees a PATH the user just changed.
+    private func executable(for kind: ProviderKind, fresh: Bool) async -> URL? {
         if let override = store.settings.settings(for: kind).executablePath, !override.isEmpty {
             let url = URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
             return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
         }
         guard let provider = providers[kind] else { return nil }
         for name in provider.executableNames {
-            if let url = await ShellEnvironment.shared.which(name) { return url }
+            if let url = await shell.which(name, fresh: fresh) { return url }
         }
         return nil
     }
 
-    /// The environment for a provider's process: the login shell environment plus the user's extras.
-    public func environment(for kind: ProviderKind) async -> [String: String] {
-        var env = await ShellEnvironment.shared.environment()
+    private func environment(for kind: ProviderKind, fresh: Bool) async -> [String: String] {
+        var env = fresh ? await shell.freshEnvironment() : await shell.environment()
         for (key, value) in store.settings.settings(for: kind).environment { env[key] = value }
         return env
     }
@@ -128,8 +144,12 @@ public final class ProviderRegistry {
                 && now.timeIntervalSince(lastChecked[kind] ?? .distantPast) > age
         }
         guard !stale.isEmpty else { return }
-        // A newly installed CLI may live in a folder the login shell only now adds to PATH.
-        if stale.contains(where: { status($0).state == .notInstalled }) { ShellEnvironment.shared.invalidate() }
+        // A newly installed CLI may live in a folder the login shell only now adds to PATH. Folders the
+        // merged PATH already covers are searched afresh on every check, so the shell is only read again
+        // when what it gave is old.
+        if stale.contains(where: { status($0).state == .notInstalled }) {
+            shell.invalidate(olderThan: environmentRereadAge)
+        }
         await refresh(stale)
     }
 
@@ -172,8 +192,10 @@ public final class ProviderRegistry {
             discoveredModels[kind] = []
             return
         }
-        let environment = await environment(for: kind)
-        let executable = await executable(for: kind)
+        // A check waits for a login shell environment that is being read again (after Settings' Refresh,
+        // say); everything else keeps using the previous one meanwhile.
+        let environment = await environment(for: kind, fresh: true)
+        let executable = await executable(for: kind, fresh: true)
         let status = await provider.detect(executable: executable, environment: environment)
         statuses[kind] = status
         if status.state == .ready || status.state == .notAuthenticated {

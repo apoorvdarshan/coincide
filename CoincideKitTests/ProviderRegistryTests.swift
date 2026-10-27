@@ -114,7 +114,7 @@ struct ShellEnvironmentTests {
         _ = await shell.environment()
         #expect(calls.count == 1)
         shell.invalidate()
-        _ = await shell.environment()
+        _ = await shell.freshEnvironment()
         #expect(calls.count == 2)
     }
 
