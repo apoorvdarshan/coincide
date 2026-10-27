@@ -16,6 +16,8 @@ struct ClaudeEventMapper {
     var contextWindow: Int?
     /// Reads the file an edit targets so its diff gets real line numbers.
     var fileContents: (String) -> String? = ClaudeTools.readSmallFile
+    /// The model whose weekly limit `rate_limit_event` reports as overage-included, as the provider check read it.
+    var overageIncludedName: String?
 
     private(set) var sessionID: String?
     private(set) var model: String?
@@ -80,6 +82,8 @@ struct ClaudeEventMapper {
     }
 
     private var tools: [String: ToolCall] = [:]
+    /// The current turn's subagent calls the turn waits for: Agent (or Task) calls not sent to the background.
+    private var foregroundAgents: Set<String> = []
     private var compaction: Compaction?
     private var compactionCount = 0
     private var streamTextCounts: [String: Int] = [:]
@@ -103,8 +107,13 @@ struct ClaudeEventMapper {
     /// Clears per-turn state before a prompt is sent.
     mutating func beginTurn() {
         changedPlanMode = false
+        foregroundAgents.removeAll()
         turnStarted()
     }
+
+    /// The running subagents the turn waits for, by tool call id. A message steered in with priority `now` cancels
+    /// running tools, so the session moves these to the background first, as T3 Code does.
+    var foregroundAgentCalls: [String] { foregroundAgents.sorted() }
 
     /// Claude started running the prompt, possibly after finishing a turn it began itself.
     mutating func turnStarted() {
@@ -166,7 +175,7 @@ struct ClaudeEventMapper {
         case "system"?: events = system(frame)
         case "result"?: events = result(frame)
         case "rate_limit_event"?:
-            let windows = ClaudeUsageLimits.windows(fromEvent: frame)
+            let windows = ClaudeUsageLimits.windows(fromEvent: frame, overageIncludedName: overageIncludedName)
             events = windows.isEmpty ? [] : [.rateLimits(windows)]
         case "conversation_reset"?:
             // /clear: a new conversation whose running cost starts at zero.
@@ -384,6 +393,13 @@ struct ClaudeEventMapper {
         if final || tools[id] == nil { call.input = input }
         if final { call.hasFullInput = true }
         defer { tools[id] = call }
+        if ["agent", "task"].contains(ClaudeTools.normalizedName(name)), !call.completed {
+            if call.input["run_in_background"]?.bool == true {
+                foregroundAgents.remove(id)
+            } else {
+                foregroundAgents.insert(id)
+            }
+        }
         if ClaudeTools.isHidden(name) {
             guard final else { return [] }
             switch ClaudeTools.normalizedName(name) {
@@ -414,6 +430,7 @@ struct ClaudeEventMapper {
         guard var call = tools[id], !call.completed else { return [] }
         call.completed = true
         tools[id] = call
+        foregroundAgents.remove(id)
         let resultText = ClaudeTools.text(of: content)
         guard var info = call.info else {
             guard !isError, taskList.apply(tool: call.name, input: call.input, structured: structured, resultText: resultText),

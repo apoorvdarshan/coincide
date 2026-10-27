@@ -11,6 +11,8 @@ public final class ClaudeProvider: AgentProvider {
     private var probe: (executable: URL, date: Date, info: ClaudeInitializeInfo)?
     /// The CLI's model rows, so sessions can resolve `default` and aliases before their own handshake.
     private var knownModels: [JSONValue] = []
+    /// The model whose weekly limit sessions' `rate_limit_event`s report as overage-included, from the last check.
+    private var overageIncludedName: String?
 
     public init() {}
 
@@ -75,7 +77,7 @@ public final class ClaudeProvider: AgentProvider {
     }
 
     public func makeSession(_ launch: AgentLaunch) -> AgentSession {
-        ClaudeSession(launch: launch, knownModels: knownModels)
+        ClaudeSession(launch: launch, knownModels: knownModels, overageIncludedName: overageIncludedName)
     }
 
     /// The last lines a failed command printed (stderr, else stdout), without escape sequences, for a status message.
@@ -89,6 +91,7 @@ public final class ClaudeProvider: AgentProvider {
             return nil
         }
         probe = (executable, Date(), info)
+        if info.usageLimits != nil { overageIncludedName = info.overageIncludedName }
         return info
     }
 }
@@ -100,6 +103,8 @@ struct ClaudeInitializeInfo: Sendable {
     var permissionMode: String?
     /// The plan's usage windows, when the probe read them.
     var usageLimits: UsageLimits?
+    /// The model the overage-included bucket of `rate_limit_event` stands for, when the probe read the limits.
+    var overageIncludedName: String?
 
     init(response: JSONValue) {
         models = response["models"]?.array ?? []
@@ -181,6 +186,7 @@ enum ClaudeCapabilitiesProbe {
             let windows = ClaudeUsageLimits.windows(fromUsage: usage)
         {
             info.usageLimits = UsageLimits(windows: windows, checkedAt: Date())
+            info.overageIncludedName = ClaudeUsageLimits.overageIncludedName(fromUsage: usage)
         }
         return info
     }

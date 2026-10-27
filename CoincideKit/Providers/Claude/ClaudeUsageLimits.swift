@@ -30,20 +30,33 @@ enum ClaudeUsageLimits {
             resetsAt: resetsAt, durationMinutes: weekMinutes)
     }
 
+    /// The bucket Claude Code reports a model's own weekly limit under while turns run. It names no model: as in
+    /// T3 Code, it is the first per-model window `get_usage` listed, and is left out until a check named it.
+    nonisolated static let overageIncludedBucket = "seven_day_overage_included"
+
     /// The windows a `rate_limit_event` frame reports. Its utilization runs from 0 to 1. Newer Claude Code versions
-    /// list every unified window; older ones name the one window the event is about.
-    nonisolated static func windows(fromEvent frame: JSONValue) -> [UsageLimitWindow] {
+    /// list every unified window; older ones name the one window the event is about. `overageIncludedName` is the
+    /// model the overage-included bucket stands for (`overageIncludedName(fromUsage:)`).
+    nonisolated static func windows(fromEvent frame: JSONValue, overageIncludedName: String? = nil) -> [UsageLimitWindow] {
         guard let info = frame["rate_limit_info"] else { return [] }
+        func window(_ bucket: String, utilization: Double?, resetsAt: Double?) -> UsageLimitWindow? {
+            guard let utilization, utilization.isFinite else { return nil }
+            let reset = date(fromEpochSeconds: resetsAt)
+            if bucket == overageIncludedBucket {
+                return overageIncludedName.map { scopedWindow($0, usedPercent: utilization * 100, resetsAt: reset) }
+            }
+            return Self.window(bucket, usedPercent: utilization * 100, resetsAt: reset)
+        }
         var windows: [UsageLimitWindow] = []
+        var buckets: Set<String> = []
         for (bucket, value) in (info["unifiedWindows"]?.object ?? [:]).sorted(by: { $0.key < $1.key }) {
-            guard let utilization = value["utilization"]?.number, utilization.isFinite,
-                let window = window(bucket, usedPercent: utilization * 100, resetsAt: date(fromEpochSeconds: value["resetsAt"]?.number))
+            buckets.insert(bucket)
+            guard let window = window(bucket, utilization: value["utilization"]?.number, resetsAt: value["resetsAt"]?.number)
             else { continue }
             windows.append(window)
         }
-        if let bucket = info["rateLimitType"]?.string, !windows.contains(where: { $0.id == bucket }),
-            let utilization = info["utilization"]?.number, utilization.isFinite,
-            let window = window(bucket, usedPercent: utilization * 100, resetsAt: date(fromEpochSeconds: info["resetsAt"]?.number))
+        if let bucket = info["rateLimitType"]?.string, !buckets.contains(bucket),
+            let window = window(bucket, utilization: info["utilization"]?.number, resetsAt: info["resetsAt"]?.number)
         {
             windows.append(window)
         }
@@ -62,27 +75,31 @@ enum ClaudeUsageLimits {
             else { continue }
             windows.append(window)
         }
-        // Per-model weekly limits: `model_scoped`, or in newer versions the scoped rows of `limits`.
-        var scoped: [UsageLimitWindow] = []
-        for entry in limits["model_scoped"]?.array ?? [] {
-            guard let name = entry["display_name"]?.string, !name.isEmpty, let utilization = entry["utilization"]?.number,
-                utilization.isFinite
-            else { continue }
-            scoped.append(scopedWindow(name, usedPercent: utilization, resetsAt: date(fromISO: entry["resets_at"]?.string)))
+        // Per-model weekly limits, as T3 Code reads them: `model_scoped` lists the ones Claude Code shows (its
+        // `limits` rows include ones it hides).
+        for entry in modelScoped(limits) {
+            windows.append(scopedWindow(entry.name, usedPercent: entry.utilization, resetsAt: date(fromISO: entry.resetsAt)))
         }
-        if scoped.isEmpty {
-            for entry in limits["limits"]?.array ?? [] where entry["kind"]?.string == "weekly_scoped" {
-                guard let name = entry.at("scope.model.display_name")?.string, !name.isEmpty,
-                    let percent = entry["percent"]?.number, percent.isFinite
-                else { continue }
-                scoped.append(scopedWindow(name, usedPercent: percent, resetsAt: date(fromISO: entry["resets_at"]?.string)))
-            }
-        }
-        windows += scoped
         if let spend = spendPercent(limits) {
             windows.append(UsageLimitWindow(id: "monthly_spend", kind: .monthly, label: String(localized: "Monthly spend"), usedPercent: spend))
         }
         return windows
+    }
+
+    /// The model `rate_limit_event`'s overage-included bucket stands for: the first per-model window of a `get_usage`
+    /// answer (Claude Code allows overage for one model).
+    nonisolated static func overageIncludedName(fromUsage response: JSONValue) -> String? {
+        guard response["rate_limits_available"]?.bool == true, let limits = response["rate_limits"] else { return nil }
+        return modelScoped(limits).first?.name
+    }
+
+    private nonisolated static func modelScoped(_ limits: JSONValue) -> [(name: String, utilization: Double, resetsAt: String?)] {
+        (limits["model_scoped"]?.array ?? []).compactMap { entry in
+            guard let name = entry["display_name"]?.string, !name.isEmpty, let utilization = entry["utilization"]?.number,
+                utilization.isFinite
+            else { return nil }
+            return (name, utilization, entry["resets_at"]?.string)
+        }
     }
 
     /// How much of the monthly spend budget is used, when one is on: from the amounts when they are in the same

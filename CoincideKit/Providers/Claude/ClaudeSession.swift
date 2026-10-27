@@ -96,7 +96,10 @@ final class ClaudeSession: AgentSession {
     private var noticedFullAccessFallback = false
     private var isShutDown = false
 
-    init(launch: AgentLaunch, knownModels: [JSONValue] = [], makeTransport: TransportFactory? = nil) {
+    init(
+        launch: AgentLaunch, knownModels: [JSONValue] = [], overageIncludedName: String? = nil,
+        makeTransport: TransportFactory? = nil
+    ) {
         self.launch = launch
         self.knownModels = knownModels
         self.makeTransport =
@@ -111,6 +114,7 @@ final class ClaudeSession: AgentSession {
         mapper = ClaudeEventMapper(
             workingDirectory: launch.workingDirectory.path,
             contextWindow: ClaudeModelCatalog.contextWindow(modelID: launch.selection.modelID, resolvedModel: resolved))
+        mapper.overageIncludedName = overageIncludedName
     }
 
     // MARK: AgentSession
@@ -175,11 +179,23 @@ final class ClaudeSession: AgentSession {
     let supportsSteering = true
 
     /// Writes the message into the running turn with priority `now`, as the Agent SDK steers: Claude moves running
-    /// commands to the background or stops streaming, takes the message in and answers it in the same turn.
+    /// commands to the background or stops streaming, takes the message in and answers it in the same turn. Running
+    /// subagents would be cancelled, so they are moved to the background first (for at most five seconds), as T3 Code
+    /// does.
     func steer(_ input: AgentTurnInput) async throws {
-        guard !isShutDown, let transport, let current = turn, current.accepted, !current.interruptRequested else {
-            throw AgentError.providerError(String(localized: "Claude Code can't take a message for this turn now."))
+        let refusal = AgentError.providerError(String(localized: "Claude Code can't take a message for this turn now."))
+        guard !isShutDown, transport != nil, let current = turn, current.accepted, !current.interruptRequested else {
+            throw refusal
         }
+        // Requested together, so the steer waits at most one request's timeout.
+        let moves = mapper.foregroundAgentCalls.map { id in
+            Task { [weak self] in
+                _ = try? await self?.control(["subtype": "background_tasks", "tool_use_id": .string(id)], timeout: 5)
+            }
+        }
+        for move in moves { await move.value }
+        // The turn may have ended meanwhile; a message now would start a turn nobody asked for.
+        guard !isShutDown, let transport, turn?.id == current.id, turn?.interruptRequested == false else { throw refusal }
         let texts = Self.promptTexts(message: input.message, recap: nil, ultrathink: live?.effort.ultrathink ?? false)
         let (images, skipped) = ClaudeAttachments.imageBlocks(for: input.imagePaths)
         for path in skipped {
