@@ -780,6 +780,9 @@
     "Cancel" : {
 
     },
+    "Cannot create a merge request from a detached HEAD." : {
+
+    },
     "Cannot create a pull request from a detached HEAD." : {
 
     },
@@ -834,7 +837,13 @@
     "Check again" : {
 
     },
+    "Check out a branch before pushing or opening a merge request." : {
+
+    },
     "Check out a branch before pushing or opening a pull request." : {
+
+    },
+    "Check out a branch to push or open a merge request." : {
 
     },
     "Check out a branch to push or open a pull request." : {
@@ -1088,6 +1097,9 @@
     "Codex to answer %@" : {
 
     },
+    "Coincide can't find this repository’s page on %@." : {
+
+    },
     "Coincide could not prepare its Pi extension: %@" : {
 
     },
@@ -1163,7 +1175,13 @@
     "Commit on New Branch" : {
 
     },
+    "Commit, Push & Create MR" : {
+
+    },
     "Commit, Push & Create PR" : {
+
+    },
+    "Commit, push and open a merge request from the default branch?" : {
 
     },
     "Commit, push and open a pull request from the default branch?" : {
@@ -1315,6 +1333,9 @@
     "Could not commit." : {
 
     },
+    "Could not create the merge request." : {
+
+    },
     "Could not create the pull request." : {
 
     },
@@ -1437,6 +1458,12 @@
         }
       }
     },
+    "Create MR" : {
+
+    },
+    "Create Merge Request" : {
+
+    },
     "Create PR" : {
 
     },
@@ -1452,7 +1479,22 @@
     "Create checkpoints" : {
 
     },
+    "Create the merge request on %@" : {
+
+    },
+    "Create the pull request on %@" : {
+
+    },
+    "Create the pull request on %@ instead." : {
+
+    },
+    "Created MR !%lld" : {
+
+    },
     "Created PR #%lld" : {
+
+    },
+    "Creating merge request…" : {
 
     },
     "Creating pull request…" : {
@@ -2068,6 +2110,9 @@
     "Install Pi with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`, then run `pi` and sign in with /login." : {
 
     },
+    "Install the Azure CLI (az) with its azure-devops extension and run “az login” to create pull requests." : {
+
+    },
     "Install the Codex CLI and run `codex login`." : {
 
     },
@@ -2075,6 +2120,12 @@
 
     },
     "Install the GitHub CLI (gh) and run “gh auth login” to create pull requests." : {
+
+    },
+    "Install the GitLab CLI (glab) and run “glab auth login” to create merge requests." : {
+
+    },
+    "Install the Gitea CLI (tea) and run “tea login add” for this server to create pull requests." : {
 
     },
     "Install the Grok Build CLI and run `grok login`." : {
@@ -2208,6 +2259,9 @@
     "MCP tool" : {
 
     },
+    "MR" : {
+      "comment" : "Short for merge request"
+    },
     "Make Lower Case" : {
 
     },
@@ -2228,6 +2282,19 @@
     },
     "Memory" : {
 
+    },
+    "Merge Request" : {
+
+    },
+    "Merge request !%lld: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Merge request !%1$lld: %2$@"
+          }
+        }
+      }
     },
     "Message" : {
 
@@ -2634,6 +2701,9 @@
     "OpenCode started working on its own." : {
 
     },
+    "Opened MR !%lld" : {
+
+    },
     "Opened PR #%lld" : {
 
     },
@@ -2648,6 +2718,9 @@
     },
     "Overview" : {
 
+    },
+    "PR" : {
+      "comment" : "Short for pull request"
     },
     "Parts of a branch name can’t start with “.” or end with “.lock”." : {
 
@@ -2789,6 +2862,9 @@
     "Preparing feature branch…" : {
 
     },
+    "Preparing merge request…" : {
+
+    },
     "Preparing pull request…" : {
 
     },
@@ -2849,6 +2925,9 @@
     "Pull" : {
 
     },
+    "Pull Request" : {
+
+    },
     "Pull request #%lld: %@" : {
       "localizations" : {
         "en" : {
@@ -2868,7 +2947,13 @@
     "Push" : {
 
     },
+    "Push & Create MR" : {
+
+    },
     "Push & Create PR" : {
+
+    },
+    "Push and open a merge request from the default branch?" : {
 
     },
     "Push and open a pull request from the default branch?" : {
@@ -3630,6 +3715,9 @@
     "That custom model is already added." : {
 
     },
+    "The Azure CLI can't take a branch name containing “@”." : {
+
+    },
     "The Claude API is overloaded (529). Try again shortly." : {
 
     },
@@ -3753,6 +3841,9 @@
     "The project folder was moved or deleted: %@" : {
 
     },
+    "The server answered with HTTP status %lld." : {
+
+    },
     "The server is not an OpenCode 2 server." : {
 
     },
@@ -3793,6 +3884,9 @@
 
     },
     "This branch has no upstream yet. Push it first." : {
+
+    },
+    "This branch has not been pushed. Push it before creating a merge request." : {
 
     },
     "This branch has not been pushed. Push it before creating a pull request." : {
@@ -4064,6 +4158,12 @@
     "View Diff" : {
 
     },
+    "View MR" : {
+
+    },
+    "View Merge Request !%lld" : {
+
+    },
     "View PR" : {
 
     },
@@ -4137,6 +4237,9 @@
 
     },
     "Write file" : {
+
+    },
+    "Writing merge request…" : {
 
     },
     "Writing pull request…" : {

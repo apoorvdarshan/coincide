@@ -124,6 +124,17 @@ enum GitCLI {
         return await ProcessRunner.run(executable, arguments, cwd: cwd, environment: env, timeout: timeout, input: input)
     }
 
+    /// Runs another host tool (`glab`, `az`, `tea`) with git's environment plus `overrides`, or returns
+    /// nil when it is not installed.
+    nonisolated static func tool(
+        _ name: String, _ arguments: [String], in cwd: URL, environment overrides: [String: String] = [:],
+        input: String? = nil, timeout: TimeInterval = 60
+    ) async -> ProcessRunner.Result? {
+        guard let executable = await ShellEnvironment.shared.which(name) else { return nil }
+        let env = await environment(overrides)
+        return await ProcessRunner.run(executable, arguments, cwd: cwd, environment: env, timeout: timeout, input: input)
+    }
+
     /// `git` on stderr when the folder is not inside a work tree, or no git is installed.
     nonisolated static func isNotRepository(_ stderr: String) -> Bool {
         let lower = stderr.lowercased()
