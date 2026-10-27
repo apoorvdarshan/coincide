@@ -559,11 +559,11 @@ final class ClaudeSession: AgentSession {
     }
 
     /// What a completed turn showed nowhere else: an API error Claude reported as its reply, or output only the
-    /// result carries (a slash command's, for example).
+    /// result carries (a slash command's, for example). A compaction item already shows `/compact`'s outcome.
     private func showUnreportedOutput(of result: JSONValue, fallbackID: String) {
         if let error = mapper.assistantError, !error.text.isEmpty {
             emit(.notice(error.text))
-        } else if !mapper.emittedReply, let reply = ClaudeEventMapper.replyText(of: result) {
+        } else if !mapper.emittedReply, !mapper.compactedThisTurn, let reply = ClaudeEventMapper.replyText(of: result) {
             emit(.assistantText(itemID: (result["uuid"]?.string ?? fallbackID) + ":result", text: reply))
         }
     }

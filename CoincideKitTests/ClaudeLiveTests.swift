@@ -199,6 +199,41 @@ struct ClaudeLiveTests {
         let next = try await run(session, "Reply with exactly: pong", recorder: recorder)
         #expect(next.outcome == .completed)
     }
+
+    @Test func compactingShowsAToolItem() async throws {
+        let recorder = LiveRecorder()
+        let session = try makeSession(recorder: recorder)
+        defer { session.shutdown() }
+        try await session.start()
+        /// How the compaction items since `start` ended.
+        func compactions(after start: Int) -> [ItemStatus] {
+            let started = Set(
+                recorder.events[start...].compactMap { event -> String? in
+                    guard case .toolStarted(let info) = event, info.title == "Compact the conversation" else { return nil }
+                    return info.id
+                })
+            return recorder.events[start...].compactMap { event in
+                guard case .toolCompleted(let id, let status, _) = event, started.contains(id) else { return nil }
+                return status
+            }
+        }
+
+        // A conversation with nothing in it has nothing to compact; the item says so, and no reply repeats it.
+        var start = recorder.events.count
+        let refused = try await run(session, "/compact", recorder: recorder)
+        #expect(refused.outcome == .completed)
+        #expect(compactions(after: start) == [.failed])
+        #expect(refused.reply.isEmpty)
+
+        _ = try await run(session, "Reply with exactly: pong", recorder: recorder)
+        start = recorder.events.count
+        let compacted = try await run(session, "/compact", recorder: recorder)
+        #expect(compacted.outcome == .completed)
+        #expect(compactions(after: start) == [.completed])
+        #expect(compacted.reply.isEmpty)
+        // The context meter drops to what the summary takes.
+        #expect(recorder.events[start...].contains { if case .usage(let usage) = $0 { (usage.inputTokens ?? 0) > 0 } else { false } })
+    }
 }
 
 @MainActor
