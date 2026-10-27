@@ -101,9 +101,13 @@ final class TerminalViewController: NSViewController {
         case .tabs:
             let hadTabs = shownTabCount > 0
             reloadTabs()
-            // As in T3 Code, closing the last terminal closes the panel.
-            if hadTabs, terminals.tabs.isEmpty, isShown, canCreateTerminals {
-                AppEvents.post(.coincideToggleTerminal)
+            // As in T3 Code, closing the last terminal closes the panel. It collapses in place: the window's
+            // toggle action would also bring back a window that was closed or minimized, as when a shell
+            // exits by itself.
+            if hadTabs, terminals.tabs.isEmpty, isShown, canCreateTerminals,
+                let drawer = parent as? ChatTerminalSplitViewController, drawer.isTerminalOpen
+            {
+                drawer.toggleTerminal()
             }
         case .session(let session):
             if let tab = terminals.tab(containing: session) { header.updateTab(headerTab(for: tab)) }
