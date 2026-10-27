@@ -427,7 +427,8 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         updatedAt = container.lenient(Date.self, forKey: .updatedAt) ?? createdAt
         selection =
             container.lenient(ModelSelection.self, forKey: .selection) ?? ModelSelection(provider: .claude, modelID: "default")
-        accessMode = container.lenient(AccessMode.self, forKey: .accessMode) ?? .fullAccess
+        // An unreadable mode (for example one a newer build added) fails closed.
+        accessMode = container.lenient(AccessMode.self, forKey: .accessMode) ?? .approval
         interactionMode = container.lenient(InteractionMode.self, forKey: .interactionMode) ?? .build
         items = container.lenientArray(TranscriptItem.self, forKey: .items)
         sessions = container.lenientProviderMap(ProviderSessionRef.self, forKey: .sessions)

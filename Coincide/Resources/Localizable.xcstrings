@@ -20,6 +20,12 @@
         }
       }
     },
+    "%@ are still running in its terminals. Deleting the thread stops them." : {
+
+    },
+    "%@ are still running in terminals. Removing the project stops them." : {
+
+    },
     "%@ are still running. Closing the terminals stops them." : {
 
     },
@@ -1900,6 +1906,9 @@
     "Git can check a branch out in only one folder at a time: %@" : {
 
     },
+    "Git is not installed. Install Apple's command line developer tools to use Git in Coincide." : {
+
+    },
     "Git status is unavailable." : {
 
     },
@@ -2528,10 +2537,16 @@
     "Open Keyboard Settings…" : {
 
     },
+    "Open Link" : {
+
+    },
     "Open Settings" : {
 
     },
     "Open System Settings…" : {
+
+    },
+    "Open a file outside this thread’s folder?" : {
 
     },
     "Open a web page" : {
@@ -2547,6 +2562,9 @@
 
     },
     "Open this link and finish there, then continue:\n%@" : {
+
+    },
+    "Open this link in %@?" : {
 
     },
     "OpenAI API key" : {
@@ -4215,6 +4233,12 @@
 
     },
     "“%@” is set more than once." : {
+
+    },
+    "“%@” is still running in a terminal. Removing the project stops it." : {
+
+    },
+    "“%@” is still running in its terminal. Deleting the thread stops it." : {
 
     },
     "“%@” is still running. Closing the terminal stops it." : {

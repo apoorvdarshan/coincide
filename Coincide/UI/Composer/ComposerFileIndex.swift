@@ -91,7 +91,7 @@ final class ComposerFileIndex {
     }
 
     private nonisolated static func gitFiles(_ root: URL) async -> [String]? {
-        guard let git = await gitExecutable() else { return nil }
+        guard let git = await GitService.gitExecutable() else { return nil }
         let result = await ProcessRunner.run(
             git, ["-C", root.path, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], timeout: 10)
         guard result.succeeded else { return nil }
@@ -106,13 +106,6 @@ final class ComposerFileIndex {
     }
 
     /// `/usr/bin/git` is a shim that offers to install the developer tools when they are missing; skip it then.
-    private nonisolated static func gitExecutable() async -> URL? {
-        guard let git = await ShellEnvironment.shared.which("git") else { return nil }
-        guard git.path == "/usr/bin/git" else { return git }
-        let tools = await ProcessRunner.run(URL(fileURLWithPath: "/usr/bin/xcode-select"), ["-p"], timeout: 5)
-        return tools.succeeded ? git : nil
-    }
-
     private nonisolated static func walk(_ root: URL) -> [String] {
         let prefix = root.standardizedFileURL.path + "/"
         guard

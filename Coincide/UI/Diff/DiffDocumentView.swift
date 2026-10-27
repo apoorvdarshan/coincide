@@ -889,7 +889,8 @@ final class FileActionTarget: NSObject {
 
     @objc func open(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? URL else { return }
-        NSWorkspace.shared.open(url)
+        // Repository files may be scripts or apps; never hand them to their default handler.
+        SafeLinks.openFile(url, from: NSApp.keyWindow)
     }
 
     @objc func reveal(_ sender: NSMenuItem) {

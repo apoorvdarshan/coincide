@@ -94,7 +94,7 @@ final class DiffFileListView: NSView, NSTableViewDataSource, NSTableViewDelegate
         guard files.indices.contains(row), files[row].status != .deleted,
             let url = FileActions.url(files[row].path, root: rootURL)
         else { return }
-        NSWorkspace.shared.open(url)
+        SafeLinks.openFile(url, inside: rootURL, from: window)
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

@@ -377,6 +377,9 @@ public final class ThreadRunner {
 
     // MARK: Sessions
 
+    /// The access mode each thread's provider session was launched with.
+    private var launchedAccess: [UUID: [ProviderKind: AccessMode]] = [:]
+
     /// The live session, or the one still starting.
     private func currentSession(_ threadID: UUID, _ provider: ProviderKind) -> AgentSession? {
         sessions[threadID]?[provider] ?? launches[threadID]?[provider]?.session
@@ -389,6 +392,13 @@ public final class ThreadRunner {
     private func isActive(_ threadID: UUID, _ turnID: UUID) -> Bool { turns[threadID]?.userItemID == turnID }
 
     private func session(for threadID: UUID, provider: ProviderKind, cwd: URL) async throws -> AgentSession {
+        // A session launched with full access must not run a turn the user now wants to approve; providers
+        // that only read the mode at launch would otherwise keep running unprompted. Restart it instead.
+        if sessions[threadID]?[provider] != nil, launchedAccess[threadID]?[provider] == .fullAccess,
+            store.thread(threadID)?.accessMode == .approval
+        {
+            shutdown(threadID: threadID, provider: provider)
+        }
         if let existing = sessions[threadID]?[provider] {
             // The thread no longer knows this native session (it was rewound), so it must not continue it.
             if let live = liveSessionIDs[threadID]?[provider], store.thread(threadID)?.sessions[provider]?.sessionID != live {
@@ -410,6 +420,7 @@ public final class ThreadRunner {
             resumeSessionID: thread.sessions[provider]?.sessionID, selection: thread.selection,
             accessMode: thread.accessMode, interactionMode: thread.interactionMode)
         let session = factory.makeSession(launch)
+        launchedAccess[threadID, default: [:]][provider] = launch.accessMode
         session.onEvent = { [weak self, weak session] event in
             guard let self, let session, self.isCurrent(session, threadID, provider) else { return }
             self.handle(event, threadID: threadID, provider: provider, session: session)

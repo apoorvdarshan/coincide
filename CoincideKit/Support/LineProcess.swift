@@ -398,6 +398,9 @@ private final class CommandRun: @unchecked Sendable {
         if didTimeOut { errorText += "\nThe command timed out." }
         let result = ProcessRunner.Result(
             status: status, stdout: String(decoding: stdout, as: UTF8.self), stderr: errorText)
+        // The timeout closure keeps this object alive; don't keep the output with it.
+        stdout = Data()
+        stderr = Data()
         lock.unlock()
         continuation.resume(returning: result)
     }

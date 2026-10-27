@@ -500,3 +500,24 @@ struct ThreadRunnerTests {
         #expect(runner.liveProviders(threadID).isEmpty)
     }
 }
+
+@MainActor
+struct AccessDowngradeRunnerTests {
+    @Test func aFullAccessSessionIsRestartedWhenTheThreadAsksForApproval() async {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-tests-\(UUID().uuidString)")
+        let store = AppStore(directory: dir)
+        let provider = FakeProvider(kind: .codex)
+        provider.script = [.turnCompleted(.completed)]
+        let runner = ThreadRunner(store: store, registry: ProviderRegistry(store: store, providers: [provider]))
+        store.updateSettings { $0.checkpointsEnabled = false }
+        let project = store.addProject(at: FileManager.default.temporaryDirectory)
+        let thread = store.createThread(in: project.id, selection: ModelSelection(provider: .codex, modelID: "m"))
+        store.updateThread(thread.id) { $0.accessMode = .fullAccess }
+        await runner.send(threadID: thread.id, text: "one")
+        let first = provider.lastSession
+        store.updateThread(thread.id) { $0.accessMode = .approval }
+        await runner.send(threadID: thread.id, text: "two")
+        #expect(provider.lastSession !== first)
+        #expect(provider.lastSession?.sent.last?.accessMode == .approval)
+    }
+}
