@@ -236,6 +236,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebar.focusSearch()
     }
 
+    /// Find…, Find Next and Find Previous reach the window when focus is outside the chat, in the sidebar or
+    /// the diff; as in T3 Code they search the open thread. The chat handles them itself when it has focus,
+    /// and the terminal keeps them for its own search.
+    override func performTextFinderAction(_ sender: Any?) {
+        splitController.content.chat.performTextFinderAction(sender)
+    }
+
     @objc func stopTurn(_ sender: Any?) {
         guard let id = selectedThreadID else { return }
         ThreadRunner.shared.stop(threadID: id)
@@ -438,6 +445,8 @@ extension MainWindowController: NSMenuItemValidation {
             return store.settings.fontSize > 10
         case #selector(increaseFontSize(_:)):
             return store.settings.fontSize < 24
+        case #selector(performTextFinderAction(_:)):
+            return window?.isVisible == true && splitController.content.chat.validateUserInterfaceItem(menuItem)
         default:
             break
         }

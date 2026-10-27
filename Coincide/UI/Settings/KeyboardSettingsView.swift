@@ -97,6 +97,9 @@ struct KeyboardSettingsView: View {
                     Shortcut(String(localized: "Open or close the selected entry"), [String(localized: "Space")], or: ["↩"]),
                     Shortcut(String(localized: "Copy the selected entry"), ["⌘", "C"]),
                     Shortcut(String(localized: "Back to the composer"), ["⎋"]),
+                    Shortcut(String(localized: "Find in the thread"), ["⌘", "F"]),
+                    Shortcut(String(localized: "Next and previous match"), ["⌘", "G"], or: ["⇧", "⌘", "G"]),
+                    Shortcut(String(localized: "Close the find bar"), ["⎋"]),
                 ],
                 note: String(localized: "Typing while the conversation has focus goes to the composer.")),
             ShortcutGroup(

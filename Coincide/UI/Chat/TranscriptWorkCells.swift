@@ -141,8 +141,9 @@ final class TranscriptToolCell: TranscriptCell {
         guard let id = row.itemID, let item = host.item(id) else { return }
         self.item = item
         let category = item.category ?? .other
-        let title = TranscriptText.inlineLabel(
-            item.title ?? TranscriptLabels.categoryName(category), font: .systemFont(ofSize: Theme.fontSize - 1), color: .secondaryLabelColor)
+        let highlights = findHighlights
+        let title = TranscriptFindStyle.highlight(
+            Self.title(item), ranges: highlights.ranges(in: .title), current: highlights.currentRange(in: .title))
         let isExpandable = TranscriptToolDetail.hasDetail(item)
         let isExpanded = isExpandable && host.isExpanded(row.id)
         header.configure(
@@ -150,8 +151,27 @@ final class TranscriptToolCell: TranscriptCell {
             detail: TranscriptToolDetail.durationText(item), status: TranscriptToolDetail.status(item), isExpandable: isExpandable,
             isExpanded: isExpanded)
         panel.isHidden = !isExpanded
+        panel.textView.setFindHighlights(highlights.ranges(in: .detail), current: highlights.currentRange(in: .detail))
         if isExpanded { panel.setText(TranscriptToolDetail.text(for: item, cache: host.textCache).string, textHeight: 0) }
         needsDisplay = true
+    }
+
+    /// The call's one-line title, as its header shows it.
+    static func title(_ item: TranscriptItem) -> NSAttributedString {
+        TranscriptText.inlineLabel(
+            item.title ?? TranscriptLabels.categoryName(item.category ?? .other), font: .systemFont(ofSize: Theme.fontSize - 1),
+            color: .secondaryLabelColor)
+    }
+
+    override func findTarget(for match: TranscriptFindMatch) -> TranscriptFindTarget? {
+        switch match.field {
+        case .title:
+            TranscriptFindTarget(rect: convert(header.titleFrame, from: header), textView: nil, range: match.range)
+        case .detail where !panel.isHidden:
+            findTarget(match.range, in: panel.textView, panel: panel)
+        default:
+            nil
+        }
     }
 
     override class var measuresText: Bool { true }
@@ -443,7 +463,14 @@ final class TranscriptReasoningCell: TranscriptCell {
             symbol: "brain", title: title, status: isRunning ? .running : .none, isExpandable: true, isExpanded: isExpanded, shimmer: isRunning)
         panel.isHidden = !isExpanded
         if isExpanded { panel.textView.onOpenLink = { [weak host] link in host?.openLink(link) ?? false } }
+        let highlights = findHighlights
+        panel.textView.setFindHighlights(highlights.ranges(in: .body), current: highlights.currentRange(in: .body))
         needsDisplay = true
+    }
+
+    override func findTarget(for match: TranscriptFindMatch) -> TranscriptFindTarget? {
+        guard match.field == .body, !panel.isHidden else { return nil }
+        return findTarget(match.range, in: panel.textView, panel: panel)
     }
 
     private static func thoughtLabel(_ item: TranscriptItem) -> String {
@@ -559,7 +586,8 @@ final class TranscriptLiveCell: TranscriptCell {
 /// the top edge or the composer.
 final class TranscriptSpacerCell: TranscriptCell {
     override class func height(for row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> CGFloat {
-        TranscriptMetrics.edgePadding
+        if case .spacer(let height) = row.kind { return height }
+        return TranscriptMetrics.edgePadding
     }
 }
 

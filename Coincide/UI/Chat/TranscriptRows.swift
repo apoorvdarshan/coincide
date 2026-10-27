@@ -31,7 +31,7 @@ struct TranscriptRow: Equatable {
         case changedFiles(turnID: UUID)
         case live(LiveStatus)
         /// Breathing room above the first row and between the last row and the composer.
-        case spacer
+        case spacer(height: CGFloat)
     }
 
     var id: TranscriptRowID
@@ -95,6 +95,8 @@ struct TranscriptBuilder {
     var expanded: Set<TranscriptRowID> = []
     /// Notices that opened turns an agent started on its own (see `AgentTurns`).
     var agentTurnIDs: Set<UUID> = []
+    /// Room kept above the first row, so the find bar does not cover it, as T3 reserves for its find bar.
+    var topReserve: CGFloat = 0
     /// Bumped per item whenever the item changes.
     var revisions: [UUID: Int] = [:]
     /// Turns (by user item) that changed files, with a signature of the change set.
@@ -118,8 +120,8 @@ struct TranscriptBuilder {
             rows[index].continuesWork = true
         }
         if !rows.isEmpty {
-            rows.insert(row(.header, .spacer), at: 0)
-            rows.append(row(.footer, .spacer))
+            rows.insert(row(.header, .spacer(height: TranscriptMetrics.edgePadding + topReserve)), at: 0)
+            rows.append(row(.footer, .spacer(height: TranscriptMetrics.edgePadding)))
         }
         return rows
     }

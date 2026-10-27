@@ -27,7 +27,8 @@ final class TranscriptQuestionCell: TranscriptCell {
         guard let id = row.itemID, let item = host.item(id), let request = item.questions else { return }
         self.item = item
         let font = NSFont.systemFont(ofSize: Theme.fontSize - 1)
-        let title = request.title?.nonBlank ?? request.questions.first?.prompt ?? String(localized: "Question")
+        let title = Self.titleSource(request)
+        let highlights = findHighlights
         let (detail, status): (String?, TranscriptDisclosureHeader.Status) =
             switch (item.status, item.answers) {
             case (.waiting, _): (String(localized: "Answer below"), .waiting)
@@ -37,7 +38,8 @@ final class TranscriptQuestionCell: TranscriptCell {
             }
         summary.configure(
             symbol: "questionmark.bubble", symbolColor: item.status == .waiting ? Theme.warning : .secondaryLabelColor,
-            title: TranscriptText.inlineLabel(title, font: font, color: .secondaryLabelColor),
+            title: TranscriptFindStyle.highlight(
+                Self.title(request), ranges: highlights.ranges(in: .title), current: highlights.currentRange(in: .title)),
             detail: detail, status: status, isExpandable: false, isExpanded: false)
 
         let lines = Self.answerLines(request, answers: item.answers)
@@ -60,6 +62,21 @@ final class TranscriptQuestionCell: TranscriptCell {
         }
         setAccessibilityLabel(([title, detail].compactMap { $0 } + lines.map { "\($0.0): \($0.1)" }).joined(separator: ", "))
         needsLayout = true
+    }
+
+    /// What the line says: the request's title, else its first question.
+    static func titleSource(_ request: UserInputRequest) -> String {
+        request.title?.nonBlank ?? request.questions.first?.prompt ?? String(localized: "Question")
+    }
+
+    /// The line's title as drawn, with inline Markdown.
+    static func title(_ request: UserInputRequest) -> NSAttributedString {
+        TranscriptText.inlineLabel(titleSource(request), font: .systemFont(ofSize: Theme.fontSize - 1), color: .secondaryLabelColor)
+    }
+
+    override func findTarget(for match: TranscriptFindMatch) -> TranscriptFindTarget? {
+        guard match.field == .title else { return nil }
+        return TranscriptFindTarget(rect: convert(summary.titleFrame, from: summary), textView: nil, range: match.range)
     }
 
     /// Each answered question's header (or prompt) and its answer. Secret answers are not stored.
