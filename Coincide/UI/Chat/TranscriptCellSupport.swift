@@ -415,7 +415,8 @@ final class TranscriptDisclosureHeader: NSView {
         }
         let labelHeight = ceil(labelField.intrinsicContentSize.height)
         let labelX: CGFloat = 26
-        let labelWidth = min(max(0, trailing - labelX), ceil(labelField.intrinsicContentSize.width) + 2)
+        // The cell's size includes its text padding, which a short title like "Thought" needs to not truncate.
+        let labelWidth = min(max(0, trailing - labelX), ceil(labelField.cell?.cellSize.width ?? labelField.intrinsicContentSize.width))
         labelField.frame = NSRect(x: labelX, y: ((height - labelHeight) / 2).rounded(), width: max(0, labelWidth), height: labelHeight)
         if isShimmering { TranscriptShimmer.layout(labelField) }
     }
