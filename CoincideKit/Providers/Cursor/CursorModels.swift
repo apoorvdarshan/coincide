@@ -36,7 +36,8 @@ struct CursorConfigOption: Hashable, Sendable {
 }
 
 enum CursorModels {
-    /// Leaves the model the Cursor CLI is set to; Coincide never sends this id to Cursor.
+    /// The model of the user's own Cursor CLI settings. Coincide never sends this id to Cursor; a session
+    /// switches to that model when Cursor runs another, for example in a reopened chat that last used one.
     nonisolated static let defaultModelID = "default"
 
     /// Cursor's own default model, offered when the CLI cannot be asked for the account's models.

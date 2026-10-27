@@ -5,7 +5,9 @@ import UniformTypeIdentifiers
 ///
 /// The model, reasoning effort and plan mode change through the protocol before a turn. Access
 /// mode is a launch flag (`--force` runs everything without asking), so changing it restarts the
-/// process and reloads the same chat; so does picking a model the server does not list.
+/// process and reloads the same chat; so does picking a model the server does not list, which only
+/// works as `--model`. Cursor saves every model change as the user's CLI default, so the session
+/// puts the user's own model settings back after each one (see `CursorModelSettings`).
 @MainActor
 public final class CursorSession: AgentSession {
     public let provider: ProviderKind = .cursor
@@ -24,37 +26,51 @@ public final class CursorSession: AgentSession {
         var options: [ApprovalOption]
     }
 
+    private struct PendingQuestion {
+        var rpcID: JSONValue
+        var questions: [CursorEventMapper.Question]
+    }
+
     /// How long an interrupted turn may take to confirm before the session ends it itself.
     var interruptGrace: Duration = .seconds(5)
 
     private let launch: AgentLaunch
     private let makeTransport: @MainActor (_ arguments: [String]) -> CursorTransport
+    private let modelSettings: CursorModelSettings
     private var connection: CursorConnection?
     private var connectionCount = 0
     private var mapper: CursorEventMapper
     private var supportsImages = true
     private var runsEverything = false
+    /// The `--model` the running process was started with.
+    private var launchModel: String?
     private var currentMode: String?
     private var currentModel: String?
     private var advertisedModels: [String] = []
     private var configOptions: [CursorConfigOption] = []
-    /// The selected model id last applied, by config option or by `--model`.
-    private var appliedModel: String?
+    /// Whether Cursor has stored the chat, which it does with the first prompt. Until then there is
+    /// nothing to reopen, and a restart simply starts a new chat.
+    private var chatIsStored = false
     private var turn: Turn?
     private var turnCount = 0
     private var pendingApprovals: [String: PendingApproval] = [:]
+    private var pendingQuestions: [String: PendingQuestion] = [:]
     private var isShutDown = false
 
     public convenience init(launch: AgentLaunch) {
-        self.init(launch: launch) { arguments in
+        self.init(launch: launch, modelSettings: .shared(environment: launch.environment)) { arguments in
             CursorProcessTransport(
                 executable: launch.executable, arguments: arguments, workingDirectory: launch.workingDirectory,
                 environment: launch.environment)
         }
     }
 
-    init(launch: AgentLaunch, makeTransport: @escaping @MainActor (_ arguments: [String]) -> CursorTransport) {
+    init(
+        launch: AgentLaunch, modelSettings: CursorModelSettings,
+        makeTransport: @escaping @MainActor (_ arguments: [String]) -> CursorTransport
+    ) {
         self.launch = launch
+        self.modelSettings = modelSettings
         self.makeTransport = makeTransport
         mapper = CursorEventMapper(workingDirectory: launch.workingDirectory)
     }
@@ -85,10 +101,12 @@ public final class CursorSession: AgentSession {
 
     public func send(_ input: AgentTurnInput) async throws {
         guard !isShutDown else { throw AgentError.notRunning }
+        // Read attachments first, so a missing image fails the turn before any process work.
+        let prompt = try promptBlocks(for: input)
         if let stale = turn {
             // Coincide already gave up on the previous turn, for example after an unconfirmed interrupt.
             if stale.promptSent, let sessionID { connection?.notify("session/cancel", ["sessionId": .string(sessionID)]) }
-            resolvePendingApprovals(notify: false)
+            cancelPendingRequests()
             turn = nil
         }
         turnCount += 1
@@ -102,7 +120,7 @@ public final class CursorSession: AgentSession {
             if turn?.number == number { turn = nil }
             throw Self.agentError(error)
         }
-        guard let current = turn, current.number == number else { return }
+        guard let current = turn, current.number == number else { throw AgentError.notRunning }
         if current.interruptRequested {
             finishTurn(.interrupted)
             return
@@ -111,14 +129,8 @@ public final class CursorSession: AgentSession {
             turn = nil
             throw AgentError.notRunning
         }
-        let prompt: JSONValue
-        do {
-            prompt = try promptBlocks(for: input)
-        } catch {
-            turn = nil
-            throw error
-        }
         turn?.promptSent = true
+        chatIsStored = true
         connection.send("session/prompt", ["sessionId": .string(sessionID), "prompt": prompt]) { [weak self] result in
             self?.promptFinished(number, result)
         }
@@ -135,13 +147,18 @@ public final class CursorSession: AgentSession {
         connection?.respond(to: pending.rpcID, result: outcome)
     }
 
+    public func answer(userInput requestID: String, answers: [String: [String]]) {
+        guard let pending = pendingQuestions.removeValue(forKey: requestID) else { return }
+        connection?.respond(to: pending.rpcID, result: CursorEventMapper.questionReply(pending.questions, answers: answers))
+    }
+
     public func interrupt() {
         guard let current = turn, !current.interruptRequested else { return }
         turn?.interruptRequested = true
         // Before the prompt is out, `send` ends the turn once its preparation finishes.
         guard current.promptSent else { return }
         if let sessionID { connection?.notify("session/cancel", ["sessionId": .string(sessionID)]) }
-        resolvePendingApprovals(notify: false)
+        cancelPendingRequests()
         let number = current.number
         let grace = interruptGrace
         Task { [weak self] in
@@ -157,7 +174,7 @@ public final class CursorSession: AgentSession {
         if turn?.promptSent == true, let sessionID {
             connection?.notify("session/cancel", ["sessionId": .string(sessionID)])
         }
-        resolvePendingApprovals(notify: false)
+        cancelPendingRequests()
         turn = nil
         connection?.close()
         connection = nil
@@ -190,13 +207,27 @@ public final class CursorSession: AgentSession {
         }
         self.connection = connection
         runsEverything = runEverything
+        launchModel = model
+
+        // Starting with `--model` and reopening a chat both make Cursor save a model as the user's default.
+        modelSettings.begin()
+        defer { modelSettings.end(touching: [model, currentModel].compactMap { $0 }) }
+        do {
+            try await openChat(on: connection, resuming: resumeID)
+        } catch {
+            // A half-started process cannot run turns; the next turn starts a new one.
+            if self.connection === connection { self.connection = nil }
+            connection.close()
+            throw error
+        }
+    }
+
+    private func openChat(on connection: CursorConnection, resuming resumeID: String?) async throws {
         do {
             try connection.start()
         } catch {
-            self.connection = nil
             throw AgentError.providerError(String(localized: "Couldn't start Cursor: \(error.localizedDescription)"))
         }
-
         let initialized = try await connection.request("initialize", Self.initializeParams, timeout: .seconds(30))
         supportsImages = initialized["agentCapabilities"]?["promptCapabilities"]?["image"]?.bool ?? true
 
@@ -209,6 +240,7 @@ public final class CursorSession: AgentSession {
                     "session/load", ["sessionId": .string(resumeID), "cwd": cwd, "mcpServers": []],
                     timeout: .seconds(120))
                 adopt(sessionID: resumeID, result: result)
+                chatIsStored = true
                 return
             } catch let error as CursorRPCError where !error.isAuthRequired {
                 emit(.notice(String(localized: "Cursor couldn't reopen the earlier chat (\(error.detail)), so a new one was started.")))
@@ -219,6 +251,7 @@ public final class CursorSession: AgentSession {
         guard let id = result["sessionId"]?.string, !id.isEmpty else {
             throw AgentError.protocolError("session/new returned no sessionId")
         }
+        chatIsStored = false
         adopt(sessionID: id, result: result)
     }
 
@@ -235,15 +268,16 @@ public final class CursorSession: AgentSession {
     private func restart(runEverything: Bool, model: String?) async throws {
         connection?.close()
         connection = nil
-        resolvePendingApprovals(notify: false)
-        try await open(resuming: sessionID, runEverything: runEverything, model: model)
-        if let model { appliedModel = model }
+        pendingApprovals.removeAll()
+        pendingQuestions.removeAll()
+        try await open(resuming: chatIsStored ? sessionID : nil, runEverything: runEverything, model: model)
     }
 
     private func connectionClosed(_ message: String) {
         connection = nil
         guard !isShutDown else { return }
         pendingApprovals.removeAll()
+        pendingQuestions.removeAll()
         if turn?.promptSent == true { finishTurn(.failed(message)) }
         emit(.sessionExited(error: message))
     }
@@ -253,32 +287,38 @@ public final class CursorSession: AgentSession {
     private func prepare(for input: AgentTurnInput) async throws {
         let model = input.selection.modelID
         let runEverything = input.accessMode == .fullAccess
-        // Models the server does not list (custom ids, legacy variant slugs) only work as a launch flag.
-        let needsModelFlag =
-            model != CursorModels.defaultModelID && model != appliedModel && model != currentModel
-            && !advertisedModels.contains(model)
-        if connection == nil || runEverything != runsEverything || needsModelFlag {
-            try await restart(runEverything: runEverything, model: needsModelFlag ? model : nil)
+        let flagModel = launchFlag(for: model)
+        if connection == nil || runEverything != runsEverything || (flagModel != nil && flagModel != launchModel) {
+            try await restart(runEverything: runEverything, model: flagModel)
         }
         try await applyModel(model)
         try await applyEffort(input.selection.effort)
         try await applyMode(input.interactionMode == .plan ? "plan" : "agent")
     }
 
+    /// Models Cursor's ACP server does not list (custom ids, legacy variant slugs such as
+    /// `grok-4.7-high`) only work as `--model`.
+    private func launchFlag(for model: String) -> String? {
+        if isDefaultEntry(model) || advertisedModels.contains(model) || model == currentModel { return nil }
+        return model
+    }
+
+    /// Coincide's "Default" entry, unless Cursor lists a model with that id itself.
+    private func isDefaultEntry(_ model: String) -> Bool {
+        model == CursorModels.defaultModelID && !advertisedModels.contains(model)
+    }
+
     private func applyModel(_ model: String) async throws {
-        guard model != appliedModel else { return }
-        guard model != currentModel, advertisedModels.contains(model) else {
-            // The default entry keeps the CLI's model; anything else was applied by `--model`.
-            appliedModel = model
-            return
-        }
+        // "Default" is the model of the user's own Cursor settings, also in a reopened chat that last
+        // ran another one; a model Cursor does not list was given as `--model`.
+        let target = isDefaultEntry(model) ? modelSettings.userModelID() : model
+        guard let target, target != currentModel, advertisedModels.contains(target) else { return }
         do {
-            try await setConfigOption("model", value: model)
+            try await setConfigOption("model", value: target)
         } catch let error as CursorRPCError {
             throw AgentError.providerError(
-                String(localized: "Cursor can't run the model \(model): \(error.detail). Choose one of the models from your Cursor account."))
+                String(localized: "Cursor can't run the model \(target): \(error.detail). Choose one of the models from your Cursor account."))
         }
-        appliedModel = model
         if let currentModel { emit(.modelResolved(currentModel)) }
     }
 
@@ -298,6 +338,9 @@ public final class CursorSession: AgentSession {
 
     private func setConfigOption(_ id: String, value: String) async throws {
         guard let connection, let sessionID else { throw AgentError.notRunning }
+        // Cursor saves the model and its parameters as the user's default.
+        modelSettings.begin()
+        defer { modelSettings.end(touching: [currentModel, id == "model" ? value : nil].compactMap { $0 }) }
         let result = try await connection.request(
             "session/set_config_option",
             ["sessionId": .string(sessionID), "configId": .string(id), "value": .string(value)], timeout: .seconds(30))
@@ -350,7 +393,7 @@ public final class CursorSession: AgentSession {
             guard turn?.promptSent == true else { return }
             emit(mapper.handle(update: update))
         case "$/cancel_request":
-            withdrawApproval(rpcID: params["requestId"])
+            withdrawRequest(rpcID: params["requestId"])
         default:
             break
         }
@@ -362,23 +405,34 @@ public final class CursorSession: AgentSession {
         switch method {
         case "session/request_permission":
             requestPermission(id, params)
+        case "cursor/ask_question":
+            askQuestion(id, params)
         case "cursor/update_todos":
             connection.respond(to: id, result: [:])
             if inTurn { emit(mapper.handleTodos(params)) }
         case "cursor/create_plan":
-            if inTurn { emit(mapper.handleCreatePlan(params)) }
+            guard inTurn else {
+                connection.respond(to: id, result: ["outcome": ["outcome": "cancelled"]])
+                return
+            }
+            emit(mapper.handleCreatePlan(params))
             // Accepting without a URI lets Cursor save the plan file itself, as in its own apps.
             connection.respond(to: id, result: ["outcome": ["outcome": "accepted"]])
-        case "cursor/task", "cursor/generate_image":
+        case "cursor/generate_image":
+            connection.respond(to: id, result: [:])
+            if inTurn { emit(mapper.handleGeneratedImage(params)) }
+        case "cursor/task":
             connection.respond(to: id, result: [:])
         default:
-            // Includes cursor/ask_question: Cursor then asks through session/request_permission.
             connection.respond(to: id, errorCode: CursorRPCError.methodNotFound, message: "Method not found: \(method)")
         }
     }
 
+    /// Whether the agent may still ask for something: a prompt is out and not being interrupted.
+    private var acceptsRequests: Bool { turn?.promptSent == true && turn?.interruptRequested == false }
+
     private func requestPermission(_ rpcID: JSONValue, _ params: JSONValue) {
-        guard turn?.promptSent == true else {
+        guard acceptsRequests else {
             connection?.respond(to: rpcID, result: Self.cancelledOutcome)
             return
         }
@@ -389,20 +443,48 @@ public final class CursorSession: AgentSession {
         emit(.approvalRequested(request))
     }
 
-    private func withdrawApproval(rpcID: JSONValue?) {
-        guard let rpcID, let entry = pendingApprovals.first(where: { $0.value.rpcID == rpcID }) else { return }
-        pendingApprovals[entry.key] = nil
-        connection?.respond(to: rpcID, errorCode: CursorRPCError.requestCancelled, message: "Request cancelled")
-        emit(.approvalResolved(id: entry.key))
+    private func askQuestion(_ rpcID: JSONValue, _ params: JSONValue) {
+        guard acceptsRequests else {
+            connection?.respond(to: rpcID, result: CursorEventMapper.cancelledQuestionReply)
+            return
+        }
+        let key = "\(connectionCount):\(rpcID.displayText)"
+        let (events, request, questions) = mapper.questions(id: key, params: params)
+        emit(events)
+        guard !questions.isEmpty else {
+            connection?.respond(to: rpcID, result: CursorEventMapper.questionReply([], answers: [:]))
+            return
+        }
+        pendingQuestions[key] = PendingQuestion(rpcID: rpcID, questions: questions)
+        emit(.userInputRequested(request))
     }
 
-    /// Answers waiting approvals as cancelled; `notify` reports them as withdrawn by the agent.
-    private func resolvePendingApprovals(notify: Bool) {
-        let pending = pendingApprovals.sorted { $0.key < $1.key }
+    /// `$/cancel_request`: the agent no longer needs an answer.
+    private func withdrawRequest(rpcID: JSONValue?) {
+        guard let rpcID else { return }
+        if let entry = pendingApprovals.first(where: { $0.value.rpcID == rpcID }) {
+            pendingApprovals[entry.key] = nil
+            connection?.respond(to: rpcID, errorCode: CursorRPCError.requestCancelled, message: "Request cancelled")
+            emit(.approvalResolved(id: entry.key))
+        } else if let entry = pendingQuestions.first(where: { $0.value.rpcID == rpcID }) {
+            pendingQuestions[entry.key] = nil
+            connection?.respond(to: rpcID, errorCode: CursorRPCError.requestCancelled, message: "Request cancelled")
+            emit(.userInputResolved(id: entry.key))
+        }
+    }
+
+    /// Answers whatever the agent still waits for as cancelled. Coincide marks those items declined
+    /// when the turn ends.
+    private func cancelPendingRequests() {
+        let approvals = pendingApprovals.sorted { $0.key < $1.key }
+        let questions = pendingQuestions.sorted { $0.key < $1.key }
         pendingApprovals.removeAll()
-        for (key, approval) in pending {
+        pendingQuestions.removeAll()
+        for (_, approval) in approvals {
             connection?.respond(to: approval.rpcID, result: Self.cancelledOutcome)
-            if notify { emit(.approvalResolved(id: key)) }
+        }
+        for (_, question) in questions {
+            connection?.respond(to: question.rpcID, result: CursorEventMapper.cancelledQuestionReply)
         }
     }
 
@@ -416,7 +498,7 @@ public final class CursorSession: AgentSession {
             let stopReason = response["stopReason"]?.string
             if current.interruptRequested || stopReason == "cancelled" {
                 finishTurn(.interrupted)
-            } else if let failure = mapper.transportFailure {
+            } else if let failure = mapper.takeFailure() {
                 finishTurn(.failed(failure))
             } else {
                 if let note = Self.stopNote(stopReason) { emit(.notice(note)) }
@@ -431,7 +513,7 @@ public final class CursorSession: AgentSession {
         guard turn != nil else { return }
         turn = nil
         emit(mapper.endTurn())
-        resolvePendingApprovals(notify: true)
+        cancelPendingRequests()
         if let contextWindow { emit(.usage(TokenUsage(contextWindow: contextWindow))) }
         emit(.turnCompleted(outcome))
     }

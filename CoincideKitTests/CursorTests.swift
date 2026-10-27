@@ -165,6 +165,16 @@ enum CursorFixtures {
         #"{"models":[{"value":"grok-4.7","name":"Grok 4.7","configOptions":[]},{"value":"claude-opus-4-8","name":"Claude Opus 4.8","configOptions":[{"id":"context","name":"Context","category":"model_config","type":"select","currentValue":"200k","options":[{"value":"200k","name":"200K"},{"value":"1m","name":"1M"}]},{"id":"effort","name":"Effort","category":"thought_level","type":"select","currentValue":"high","options":[{"value":"low","name":"Low"},{"value":"medium","name":"Medium"},{"value":"high","name":"High"},{"value":"max","name":"Max"}]},{"id":"fast","name":"Fast","category":"model_config","type":"select","currentValue":"false","options":[{"value":"false","name":"Off"},{"value":"true","name":"On"}]}]}]}"#
     )
 
+    /// The `configOptions` of `newSessionResult` with `model` selected.
+    static func configOptions(model: String) -> JSONValue {
+        let options = (newSessionResult["configOptions"]?.array ?? []).map { option -> JSONValue in
+            guard option["id"] == "model", case .object(var object) = option else { return option }
+            object["currentValue"] = .string(model)
+            return .object(object)
+        }
+        return .array(options)
+    }
+
     static func json(_ text: String) -> JSONValue {
         JSONValue.parse(text) ?? .null
     }
@@ -265,7 +275,7 @@ struct CursorMapperTests {
                 .assistantTextDelta(itemID: "cursor-1-2", delta: "pong"),
                 .assistantText(itemID: "cursor-1-2", text: "pong"),
             ])
-        #expect(mapper.transportFailure == nil)
+        #expect(mapper.takeFailure() == nil)
     }
 
     @Test func shellCommandStartsUpdatesAndCompletes() {
@@ -514,7 +524,7 @@ struct CursorMapperTests {
 
         var mapper = mapper()
         _ = mapper.handle(update: ["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "\n\nError: ConnectError: [unavailable] transport closed"]])
-        #expect(mapper.transportFailure == "Error: ConnectError: [unavailable] transport closed")
+        #expect(mapper.takeFailure() == "Error: ConnectError: [unavailable] transport closed")
     }
 
     @Test func usageUpdatesAndPromptUsage() {
@@ -666,6 +676,13 @@ struct CursorProviderTests {
         #expect(models.map(\.modelID) == [CursorModels.defaultModelID, "composer-2.5"])
     }
 
+    /// The test process's environment with Cursor's settings in `directory`, away from the real ones.
+    private static func environment(configIn directory: URL) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        environment["CURSOR_CONFIG_DIR"] = directory.path
+        return environment
+    }
+
     /// A stand-in `cursor-agent`: answers the probe subcommands and, for `acp`, the model catalog.
     private func fakeCLI(acpAnswers: Bool) throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-cursor-\(UUID().uuidString)")
@@ -702,7 +719,7 @@ struct CursorProviderTests {
         let executable = try fakeCLI(acpAnswers: true)
         defer { try? FileManager.default.removeItem(at: executable.deletingLastPathComponent()) }
         let provider = CursorProvider()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = Self.environment(configIn: executable.deletingLastPathComponent())
         let status = await provider.detect(executable: executable, environment: environment)
         #expect(status.state == .ready)
         #expect(status.version == "2026.10.22-test")
@@ -720,7 +737,8 @@ struct CursorProviderTests {
         defer { try? FileManager.default.removeItem(at: executable.deletingLastPathComponent()) }
         let provider = CursorProvider()
         let status = ProviderStatus(state: .ready, executable: executable)
-        let models = await provider.models(status: status, environment: ProcessInfo.processInfo.environment)
+        let models = await provider.models(
+            status: status, environment: Self.environment(configIn: executable.deletingLastPathComponent()))
         #expect(models.map(\.modelID) == [CursorModels.defaultModelID, "composer-2.5", "grok-4.7-high"])
     }
 }
@@ -779,16 +797,25 @@ final class CursorSessionHarness {
     var loadReply: (JSONValue) -> [String] = { id in
         CursorFixtures.replay + [CursorRPCMessage.resultLine(id: id, CursorFixtures.loadResult)]
     }
+    /// Runs before the scripted answer to each request, for example to save a model the way Cursor does.
+    var beforeReply: ((_ method: String, _ params: JSONValue) -> Void)?
+    /// Stands in for `~/.cursor`, so the tests never touch the real Cursor settings.
+    let configDirectory: URL
     private(set) var session: CursorSession!
 
     init(
         accessMode: AccessMode = .fullAccess, resume: String? = nil, modelID: String = CursorModels.defaultModelID
     ) {
+        configDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("coincide-cursor-config-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
         let launch = AgentLaunch(
-            provider: .cursor, executable: URL(fileURLWithPath: "/usr/bin/false"), environment: [:],
+            provider: .cursor, executable: URL(fileURLWithPath: "/usr/bin/false"),
+            environment: ["CURSOR_CONFIG_DIR": configDirectory.path],
             workingDirectory: URL(fileURLWithPath: CursorFixtures.projectPath), resumeSessionID: resume,
             selection: ModelSelection(provider: .cursor, modelID: modelID), accessMode: accessMode, interactionMode: .build)
-        session = CursorSession(launch: launch) { [unowned self] arguments in
+        let settings = CursorModelSettings(fileURL: configDirectory.appendingPathComponent("cli-config.json"))
+        session = CursorSession(launch: launch, modelSettings: settings) { [unowned self] arguments in
             let transport = ScriptedCursorTransport(arguments: arguments) { [unowned self] id, method, params in
                 self.reply(id: id, method: method, params: params)
             }
@@ -798,7 +825,52 @@ final class CursorSessionHarness {
         session.onEvent = { [unowned self] event in self.events.append(event) }
     }
 
+    deinit {
+        try? FileManager.default.removeItem(at: configDirectory)
+    }
+
     var transport: ScriptedCursorTransport { transports[transports.count - 1] }
+
+    var configFile: URL { configDirectory.appendingPathComponent("cli-config.json") }
+
+    /// The Cursor settings file, as a JSON object.
+    var config: [String: Any] {
+        get {
+            guard let data = try? Data(contentsOf: configFile),
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return [:] }
+            return object
+        }
+        set {
+            let data = try? JSONSerialization.data(withJSONObject: newValue, options: [.prettyPrinted, .sortedKeys])
+            try? data?.write(to: configFile)
+        }
+    }
+
+    /// The model the Cursor settings select.
+    var configModel: String? { CursorModelSettings.modelID(in: config) }
+
+    /// Writes Cursor settings that select `model`, as `cursor-agent` keeps them.
+    func writeConfig(model: String) {
+        config = [
+            "version": 1, "approvalMode": "allowlist", "permissions": ["allow": ["Shell(ls)"], "deny": [String]()],
+            "hasChangedDefaultModel": true,
+            "model": ["modelId": model, "displayModelId": model, "displayName": model, "maxMode": false],
+            "selectedModel": ["modelId": model, "parameters": [["id": "fast", "value": "false"]]],
+            "modelSelectionHistory": [model],
+        ]
+    }
+
+    /// Saves `model` as the default, the way `cursor-agent` does on every model change.
+    func saveModelLikeCursor(_ model: String) {
+        var object = config
+        object["model"] = ["modelId": model, "displayModelId": model, "displayName": model, "maxMode": false]
+        object["selectedModel"] = ["modelId": model, "parameters": [[String: String]]()]
+        object["hasChangedDefaultModel"] = true
+        let history = (object["modelSelectionHistory"] as? [String] ?? []).filter { $0 != model }
+        object["modelSelectionHistory"] = [model] + history
+        config = object
+    }
 
     func input(
         _ text: String = "Reply with exactly: pong", modelID: String = CursorModels.defaultModelID, effort: String? = nil,
@@ -813,7 +885,16 @@ final class CursorSessionHarness {
         events.compactMap { if case .turnCompleted(let outcome) = $0 { outcome } else { nil } }
     }
 
+    /// The questions of the last `.userInputRequested` event.
+    var lastQuestion: UserInputRequest? {
+        events.lazy.compactMap { if case .userInputRequested(let request) = $0 { request } else { nil } }.last
+    }
+
+    /// Replies the session sent to the agent's own requests.
+    var replies: [JSONValue] { transport.sent.filter { $0["method"] == nil } }
+
     private func reply(id: JSONValue, method: String, params: JSONValue) -> [String] {
+        beforeReply?(method, params)
         switch method {
         case "initialize":
             return [CursorRPCMessage.resultLine(id: id, CursorFixtures.initializeResult)]
@@ -831,7 +912,10 @@ final class CursorSessionHarness {
             return [update, CursorRPCMessage.resultLine(id: id, [:])]
         case "session/set_config_option":
             let value = params["value"]?.string ?? ""
-            return [CursorRPCMessage.resultLine(id: id, ["configOptions": configOptionsAfterSet[value] ?? []])]
+            let options =
+                configOptionsAfterSet[value]
+                ?? (params["configId"] == "model" ? CursorFixtures.configOptions(model: value) : [])
+            return [CursorRPCMessage.resultLine(id: id, ["configOptions": options])]
         default:
             return []
         }
@@ -970,8 +1054,21 @@ struct CursorSessionTests {
         #expect(harness.transports.count == 2)
         #expect(harness.transports[0].isTerminated)
         #expect(harness.transport.arguments == ["--force", "--model", "grok-4.7-high", "acp"])
-        #expect(harness.transport.methods() == ["initialize", "session/load", "session/prompt"])
+        // Cursor stores a chat with its first prompt, so there was nothing to reopen yet.
+        #expect(harness.transport.methods() == ["initialize", "session/new", "session/prompt"])
         #expect(harness.transport.messages("session/set_config_option").isEmpty)
+        #expect(!harness.events.contains { if case .notice = $0 { true } else { false } })
+
+        // The next turn with the same model keeps the process.
+        harness.transport.answer("session/prompt", with: ["stopReason": "end_turn"])
+        try await harness.session.send(harness.input(modelID: "grok-4.7-high"))
+        #expect(harness.transports.count == 2)
+
+        // A listed model is set through the protocol, without another restart.
+        harness.transport.answer("session/prompt", with: ["stopReason": "end_turn"])
+        try await harness.session.send(harness.input(modelID: "composer-2.5"))
+        #expect(harness.transports.count == 2)
+        #expect(harness.transport.messages("session/set_config_option").first?["params"]?["value"] == "composer-2.5")
     }
 
     @Test func approvalsRoundTrip() async throws {
@@ -1072,11 +1169,12 @@ struct CursorSessionTests {
             #"{"jsonrpc":"2.0","id":2,"method":"cursor/ask_question","params":{"toolCallId":"q","questions":[]}}"#,
             #"{"jsonrpc":"2.0","id":3,"method":"cursor/task","params":{"toolCallId":"x","description":"Explore"}}"#,
         ])
-        let replies = harness.transport.sent.filter { $0["method"] == nil }
+        let replies = harness.replies
         #expect(replies.map { $0["id"] } == [.number(0), .number(1), .number(2), .number(3)])
         #expect(replies[0]["result"] == [:])
         #expect(replies[1]["result"] == ["outcome": ["outcome": "accepted"]])
-        #expect(replies[2]["error"]?["code"]?.int == CursorRPCError.methodNotFound)
+        // A question request without questions is skipped right away.
+        #expect(replies[2]["result"] == ["outcome": ["outcome": "skipped"]])
         #expect(replies[3]["result"] == [:])
         #expect(harness.events.contains(.plan(text: "- [ ] Read the code (in progress)")))
         #expect(harness.events.contains(.plan(text: "# Plan\n\n1. Do it")))
@@ -1134,5 +1232,630 @@ struct CursorSessionTests {
         #expect(harness.transport.messages("session/cancel").count == 1)
         harness.transport.deliver(CursorFixtures.pongTurn)
         #expect(harness.events.isEmpty)
+    }
+}
+
+// MARK: - Mapper: questions, error reports, long outputs
+
+struct CursorMapperEdgeTests {
+    private func mapper() -> CursorEventMapper {
+        var mapper = CursorEventMapper(workingDirectory: URL(fileURLWithPath: CursorFixtures.projectPath))
+        mapper.beginTurn()
+        return mapper
+    }
+
+    private func chunk(_ text: String) -> JSONValue {
+        ["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": .string(text)]]
+    }
+
+    @Test func questionsBecomeUserInputWithTheirOptions() {
+        var mapper = mapper()
+        _ = mapper.handle(update: chunk("Before I start:"))
+        let (events, request, questions) = mapper.questions(id: "1:5", params: CursorFixtures.askQuestionParams)
+        // The open text closes before the question.
+        #expect(events == [.assistantText(itemID: "cursor-1-1", text: "Before I start:")])
+        #expect(request.id == "1:5")
+        #expect(request.title == "Setup")
+        #expect(request.questions.map(\.id) == ["db", "extras", "name"])
+        #expect(request.questions[0].prompt == "Which database should the app use?")
+        #expect(request.questions[0].options.map(\.label) == ["Postgres", "SQLite", "SQLite (sqlite-wal)"])
+        #expect(request.questions[0].allowsMultipleSelection == false)
+        // Cursor's answers carry option ids only.
+        #expect(request.questions[0].allowsFreeText == false)
+        #expect(request.questions[1].allowsMultipleSelection)
+        // A question without a prompt borrows the title; one without options takes typed text.
+        #expect(request.questions[2].prompt == "Setup")
+        #expect(request.questions[2].allowsFreeText)
+        #expect(questions[0].options.map(\.id) == ["pg", "sqlite", "sqlite-wal"])
+    }
+
+    @Test func answersGoBackAsOptionIDs() {
+        let questions = CursorEventMapper().questionsOf(CursorFixtures.askQuestionParams)
+        let answered = CursorEventMapper.questionReply(
+            questions, answers: ["db": ["SQLite"], "extras": ["Auth", "Billing"], "name": []])
+        #expect(
+            answered
+                == [
+                    "outcome": [
+                        "outcome": "answered",
+                        "answers": [
+                            ["questionId": "db", "selectedOptionIds": ["sqlite"]],
+                            ["questionId": "extras", "selectedOptionIds": ["auth", "billing"]],
+                        ],
+                    ]
+                ])
+        // A single-choice question keeps one answer; option ids are accepted too.
+        let single = CursorEventMapper.questionReply(questions, answers: ["db": ["pg", "SQLite"]])
+        #expect(single["outcome"]?["answers"] == [["questionId": "db", "selectedOptionIds": ["pg"]]])
+        // Dismissed or unanswered questions are skipped.
+        #expect(CursorEventMapper.questionReply(questions, answers: [:]) == ["outcome": ["outcome": "skipped"]])
+        #expect(CursorEventMapper.questionReply(questions, answers: ["db": ["  "]]) == ["outcome": ["outcome": "skipped"]])
+    }
+
+    @Test func typedAnswersReachTheModelAsTheSkipReason() {
+        let questions = CursorEventMapper().questionsOf(CursorFixtures.askQuestionParams)
+        let reply = CursorEventMapper.questionReply(questions, answers: ["db": ["Postgres"], "name": ["notes-app"]])
+        #expect(reply["outcome"]?["outcome"] == "skipped")
+        #expect(
+            reply["outcome"]?["reason"]?.string
+                == "The user replied in their own words:\nWhich database should the app use?: Postgres\nSetup: notes-app")
+    }
+
+    @Test func theQuestionToolIsShownAsTheQuestionOnly() {
+        var mapper = mapper()
+        let events = mapper.handle(
+            update: CursorFixtures.json(
+                #"{"sessionUpdate":"tool_call","toolCallId":"ask-1","title":"Setup","kind":"think","status":"pending","rawInput":{"_toolName":"askQuestion","title":"Setup","questions":[]}}"#
+            ))
+        #expect(events.isEmpty)
+        let completed = mapper.handle(
+            update: CursorFixtures.json(#"{"sessionUpdate":"tool_call_update","toolCallId":"ask-1","status":"completed"}"#))
+        #expect(completed.isEmpty)
+    }
+
+    @Test func cursorsOwnErrorReportBecomesTheFailure() {
+        var mapper = mapper()
+        var events = mapper.handle(update: chunk("Let me look."))
+        let report = "\n\nError: ConnectError: [resource_exhausted] You've hit your usage limit"
+        events += mapper.handle(update: chunk(report))
+        // The report is held back instead of streaming into the reply.
+        #expect(events == [.assistantTextDelta(itemID: "cursor-1-1", delta: "Let me look.")])
+        #expect(mapper.takeFailure() == "Error: ConnectError: [resource_exhausted] You've hit your usage limit")
+        #expect(mapper.endTurn() == [.assistantText(itemID: "cursor-1-1", text: "Let me look.")])
+    }
+
+    @Test func aHeldReportFollowedByMoreOutputWasText() {
+        var mapper = mapper()
+        let report = "\n\nError: TypeError: x is undefined"
+        var events = mapper.handle(update: chunk(report))
+        #expect(events.isEmpty)
+        events += mapper.handle(update: chunk(" — that is what the log says."))
+        #expect(
+            events == [
+                .assistantTextDelta(itemID: "cursor-1-1", delta: report),
+                .assistantTextDelta(itemID: "cursor-1-1", delta: " — that is what the log says."),
+            ])
+        #expect(mapper.takeFailure() == nil)
+
+        // Unrelated updates such as the chat title do not release it.
+        var titled = self.mapper()
+        _ = titled.handle(update: chunk("\n\nUpgrade your plan to continue"))
+        #expect(titled.handle(update: ["sessionUpdate": "session_info_update", "title": "Pong"]).isEmpty)
+        #expect(titled.takeFailure() == "Upgrade your plan to continue")
+
+        // Without a failure the held text is reported when the turn ends.
+        var ending = self.mapper()
+        _ = ending.handle(update: chunk("\n\nError: RetriableError: [internal] step failed"))
+        #expect(
+            ending.endTurn() == [
+                .assistantTextDelta(itemID: "cursor-1-1", delta: "\n\nError: RetriableError: [internal] step failed"),
+                .assistantText(itemID: "cursor-1-1", text: "\n\nError: RetriableError: [internal] step failed"),
+            ])
+    }
+
+    @Test func errorReportShapes() {
+        #expect(CursorEventMapper.errorReport(in: "\n\nError: RetriableError: closed") == "Error: RetriableError: closed")
+        #expect(CursorEventMapper.errorReport(in: "\n\nError: Error: boom") == "Error: Error: boom")
+        #expect(
+            CursorEventMapper.errorReport(in: "\n\nError: [unauthenticated] Backend rejected authentication. Verify it.")
+                == "Error: [unauthenticated] Backend rejected authentication. Verify it.")
+        #expect(CursorEventMapper.errorReport(in: "\n\nAdd a payment method to continue") == "Add a payment method to continue")
+        // Prose about errors is not a report.
+        #expect(CursorEventMapper.errorReport(in: "\n\nError: the build failed because of a typo") == nil)
+        #expect(CursorEventMapper.errorReport(in: "Error: ConnectError: [unavailable] closed") == nil)
+        #expect(CursorEventMapper.errorReport(in: "\n\nThe error was Error: ConnectError: [unavailable]") == nil)
+    }
+
+    @Test func longOutputsAreClipped() {
+        var mapper = mapper()
+        let log = (1...30_000).map { "line \($0)" }.joined(separator: "\n")
+        let file = String(repeating: "x", count: CursorEventMapper.maxTextLength + 500)
+        let events = [
+            #"{"sessionUpdate":"tool_call","toolCallId":"s","title":"`make`","kind":"execute","status":"pending","rawInput":{"command":"make"}}"#,
+            #"{"sessionUpdate":"tool_call","toolCallId":"r","title":"Read big.txt","kind":"read","status":"pending","rawInput":{"path":"/Users/dev/notes/big.txt"}}"#,
+        ].flatMap { mapper.handle(update: CursorFixtures.json($0)) }
+        #expect(events.count == 2)
+        let shell = mapper.handle(
+            update: ["sessionUpdate": "tool_call_update", "toolCallId": "s", "status": "completed",
+                     "rawOutput": ["exitCode": 0, "stdout": .string(log), "stderr": ""]])
+        let read = mapper.handle(
+            update: ["sessionUpdate": "tool_call_update", "toolCallId": "r", "status": "completed",
+                     "rawOutput": ["content": .string(file)]])
+        guard case .toolCompleted(_, .completed, let shellOutput?) = shell.last,
+            case .toolCompleted(_, .completed, let readOutput?) = read.last
+        else {
+            Issue.record("Expected completed tools, got \(shell) \(read)")
+            return
+        }
+        // A log keeps its end, a file its start.
+        #expect(shellOutput.hasSuffix("line 30000"))
+        #expect(shellOutput.hasPrefix("…"))
+        #expect(shellOutput.count < CursorEventMapper.maxTextLength + 100)
+        #expect(readOutput.hasPrefix("xxxx"))
+        #expect(readOutput.hasSuffix("500 more characters not shown"))
+        #expect(CursorEventMapper.clipped("short") == "short")
+    }
+
+    @Test func aCommandCursorDidNotRunFails() {
+        var mapper = mapper()
+        let events = [
+            #"{"sessionUpdate":"tool_call","toolCallId":"s","title":"`rm -rf build`","kind":"execute","status":"pending","rawInput":{"command":"rm -rf build"}}"#,
+            #"{"sessionUpdate":"tool_call_update","toolCallId":"s","status":"completed"}"#,
+            #"{"sessionUpdate":"tool_call","toolCallId":"in","title":"Write to stdin (shell 3)","kind":"execute","status":"pending","rawInput":{"shellId":3,"chars":"y\n"}}"#,
+            #"{"sessionUpdate":"tool_call_update","toolCallId":"in","status":"completed","rawOutput":{"success":true}}"#,
+        ].flatMap { mapper.handle(update: CursorFixtures.json($0)) }
+        #expect(events.contains(.toolCompleted(id: "s", status: .failed, output: nil)))
+        #expect(events.contains(.toolCompleted(id: "in", status: .completed, output: "")))
+        #expect(events.contains(.toolStarted(ToolCallInfo(id: "in", category: .command, title: "Write to stdin (shell 3)", detail: "{\n  \"chars\" : \"y\\n\",\n  \"shellId\" : 3\n}"))))
+    }
+
+    @Test func generatedImagesReportTheirFile() {
+        var mapper = mapper()
+        _ = mapper.handle(
+            update: CursorFixtures.json(
+                #"{"sessionUpdate":"tool_call","toolCallId":"img","title":"Generate Image: a cat...","kind":"other","status":"pending","rawInput":{"_toolName":"generateImage","description":"a cat"}}"#
+            ))
+        let events = mapper.handleGeneratedImage(
+            ["toolCallId": "img", "description": "a cat", "filePath": "/Users/dev/notes/assets/cat.png"])
+        #expect(events == [.toolCompleted(id: "img", status: .completed, output: "assets/cat.png")])
+        #expect(mapper.handleGeneratedImage(["toolCallId": "unknown", "filePath": "/tmp/x.png"]).isEmpty)
+    }
+
+    @Test func permissionsForCallsWithoutAToolReadWell() {
+        var mapper = mapper()
+        func title(_ toolCall: JSONValue) -> String {
+            mapper.approval(id: "1:9", params: ["toolCall": toolCall, "options": []]).request.title
+        }
+        #expect(title(["toolCallId": "a", "title": "Edit `/Users/dev/notes/My Notes/a.txt`", "kind": "edit"]) == "Edit My Notes/a.txt")
+        #expect(title(["toolCallId": "b", "title": "Write /Users/dev/notes/new.txt", "kind": "edit"]) == "Create new.txt")
+        #expect(title(["toolCallId": "c", "title": "Delete `/Users/dev/notes/old.txt`", "kind": "edit"]) == "Delete old.txt")
+        #expect(title(["toolCallId": "d", "title": "`ls -la`", "kind": "execute"]) == "Run `ls -la`")
+        #expect(title(["toolCallId": "e", "title": "Web search: swift", "kind": "search"]) == "Web search: swift")
+        #expect(title(["toolCallId": "f", "kind": "other"]) == "Permission request")
+    }
+}
+
+extension CursorEventMapper {
+    /// Parses the `questions` of an `ask_question` request.
+    init() {
+        self.init(workingDirectory: URL(fileURLWithPath: CursorFixtures.projectPath))
+    }
+
+    func questionsOf(_ params: JSONValue) -> [Question] {
+        let title = params["title"]?.string ?? ""
+        return (params["questions"]?.array ?? []).compactMap { Self.question($0, title: title) }
+    }
+}
+
+extension CursorFixtures {
+    /// `cursor/ask_question` as Cursor 2026.10.22's ACP server sends it.
+    static let askQuestionParams = json(
+        #"{"toolCallId":"ask-1","title":"Setup","questions":[{"id":"db","prompt":"Which database should the app use?","options":[{"id":"pg","label":"Postgres"},{"id":"sqlite","label":"SQLite"},{"id":"sqlite-wal","label":"SQLite"}],"allowMultiple":false},{"id":"extras","prompt":"Which extras?","options":[{"id":"auth","label":"Auth"},{"id":"billing","label":"Billing"}],"allowMultiple":true},{"id":"name","prompt":"","options":[],"allowMultiple":false}]}"#
+    )
+}
+
+// MARK: - Model settings
+
+@MainActor
+struct CursorModelSettingsTests {
+    /// A Cursor settings file in a fresh folder.
+    private final class ConfigFolder {
+        let directory: URL
+        var file: URL { directory.appendingPathComponent("cli-config.json") }
+
+        init() {
+            directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("coincide-cursor-settings-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+
+        deinit { try? FileManager.default.removeItem(at: directory) }
+
+        var object: [String: Any] {
+            get {
+                guard let data = try? Data(contentsOf: file) else { return [:] }
+                return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            }
+            set {
+                let data = try? JSONSerialization.data(withJSONObject: newValue, options: [.prettyPrinted, .sortedKeys])
+                try? data?.write(to: file)
+            }
+        }
+
+        var model: String? { CursorModelSettings.modelID(in: object) }
+
+        func select(_ model: String, history: [String]? = nil) {
+            var config = object
+            config["model"] = ["modelId": model, "displayName": model]
+            config["selectedModel"] = ["modelId": model, "parameters": [["id": "effort", "value": "high"]]]
+            config["modelSelectionHistory"] = history ?? [model]
+            object = config
+        }
+
+        var leftovers: [String] {
+            ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []).filter { $0 != "cli-config.json" }
+        }
+    }
+
+    private func userConfig(_ folder: ConfigFolder) {
+        folder.object = [
+            "version": 1, "approvalMode": "allowlist", "permissions": ["allow": ["Shell(ls)"], "deny": [String]()],
+            "privacyCache": ["privacyMode": 2, "updatedAt": 1_793_082_283_651],
+            "model": ["modelId": "grok-4.7", "displayName": "Grok 4.7"],
+            "selectedModel": ["modelId": "grok-4.7", "parameters": [["id": "reasoning_effort", "value": "medium"]]],
+            "modelParameters": ["grok-4.7": [["id": "reasoning_effort", "value": "medium"]]],
+            "hasChangedDefaultModel": true, "maxMode": false, "modelSelectionHistory": ["grok-4.7", "composer-2.5"],
+        ]
+    }
+
+    @Test func theUsersModelComesBackWhileOtherChangesStay() {
+        let folder = ConfigFolder()
+        userConfig(folder)
+        let before = folder.object
+        let settings = CursorModelSettings(fileURL: folder.file)
+        settings.begin()
+        // What `cursor-agent` writes when a session picks another model…
+        var changed = folder.object
+        changed["selectedModel"] = ["modelId": "composer-2.5", "parameters": [["id": "fast", "value": "false"]]]
+        changed["model"] = ["modelId": "composer-2.5", "displayName": "Composer 2.5"]
+        changed["modelParameters"] = [
+            "grok-4.7": [["id": "reasoning_effort", "value": "medium"]], "composer-2.5": [["id": "fast", "value": "false"]],
+        ]
+        changed["modelSelectionHistory"] = ["composer-2.5", "grok-4.7"]
+        changed["maxModeAutoEnabled"] = false
+        // …while something else (an "Always allow") lands in the same file.
+        changed["permissions"] = ["allow": ["Shell(ls)", "Shell(echo)"], "deny": [String]()]
+        folder.object = changed
+        settings.end(touching: ["composer-2.5"])
+
+        let after = folder.object
+        for key in CursorModelSettings.keys {
+            #expect(NSDictionary(dictionary: [key: after[key] ?? NSNull()]) == NSDictionary(dictionary: [key: before[key] ?? NSNull()]))
+        }
+        #expect(after["maxModeAutoEnabled"] == nil)
+        #expect((after["permissions"] as? [String: Any])?["allow"] as? [String] == ["Shell(ls)", "Shell(echo)"])
+        #expect((after["privacyCache"] as? [String: Any])?["updatedAt"] as? Int == 1_793_082_283_651)
+        #expect(folder.leftovers.isEmpty)
+    }
+
+    @Test func aModelTheUserPickedMeanwhileStays() {
+        let folder = ConfigFolder()
+        userConfig(folder)
+        let settings = CursorModelSettings(fileURL: folder.file)
+        settings.begin()
+        folder.select("claude-opus-4-8")
+        settings.end(touching: ["composer-2.5"])
+        #expect(folder.model == "claude-opus-4-8")
+    }
+
+    @Test func overlappingOperationsRestoreOnceAtTheEnd() {
+        let folder = ConfigFolder()
+        userConfig(folder)
+        let settings = CursorModelSettings(fileURL: folder.file)
+        settings.begin()
+        settings.begin()
+        folder.select("composer-2.5")
+        #expect(settings.userModelID() == "grok-4.7")
+        settings.end(touching: ["composer-2.5"])
+        #expect(folder.model == "composer-2.5")
+        folder.select("grok-4.6")
+        settings.end(touching: ["grok-4.6"])
+        #expect(folder.model == "grok-4.7")
+        #expect(folder.object["modelSelectionHistory"] as? [String] == ["grok-4.7", "composer-2.5"])
+        #expect(settings.userModelID() == "grok-4.7")
+    }
+
+    @Test func anUntouchedFileIsNotRewritten() throws {
+        let folder = ConfigFolder()
+        userConfig(folder)
+        let before = try Data(contentsOf: folder.file)
+        let settings = CursorModelSettings(fileURL: folder.file)
+        settings.begin()
+        var object = folder.object
+        object["privacyCache"] = ["privacyMode": 2, "updatedAt": 1_793_082_299_999]
+        folder.object = object
+        let touched = try Data(contentsOf: folder.file)
+        settings.end(touching: ["grok-4.7"])
+        #expect(try Data(contentsOf: folder.file) == touched)
+        #expect(touched != before)
+    }
+
+    @Test func aFileCursorCreatedLosesOnlyTheModelKeys() {
+        let folder = ConfigFolder()
+        let settings = CursorModelSettings(fileURL: folder.file)
+        settings.begin()
+        folder.object = ["version": 1, "approvalMode": "allowlist"]
+        folder.select("composer-2.5")
+        settings.end(touching: ["composer-2.5"])
+        let after = folder.object
+        #expect(after["version"] as? Int == 1)
+        #expect(after["approvalMode"] as? String == "allowlist")
+        #expect(CursorModelSettings.keys.allSatisfy { after[$0] == nil })
+    }
+
+    @Test func anUnreadableFileIsLeftAlone() throws {
+        let folder = ConfigFolder()
+        try Data("{ not json".utf8).write(to: folder.file)
+        let settings = CursorModelSettings(fileURL: folder.file)
+        settings.begin()
+        settings.end(touching: ["composer-2.5"])
+        #expect(try String(contentsOf: folder.file, encoding: .utf8) == "{ not json")
+        #expect(settings.userModelID() == nil)
+    }
+
+    @Test func aSymlinkedFileKeepsItsLink() throws {
+        let folder = ConfigFolder()
+        let target = folder.directory.appendingPathComponent("dotfiles-cli-config.json")
+        userConfig(folder)
+        try FileManager.default.moveItem(at: folder.file, to: target)
+        try FileManager.default.createSymbolicLink(at: folder.file, withDestinationURL: target)
+        let settings = CursorModelSettings(fileURL: folder.file)
+        settings.begin()
+        folder.select("composer-2.5")
+        settings.end(touching: ["composer-2.5"])
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: folder.file.path) == target.path)
+        #expect(folder.model == "grok-4.7")
+    }
+
+    @Test func theFileIsWhereCursorKeepsIt() {
+        #expect(
+            CursorModelSettings.configFileURL(environment: ["CURSOR_CONFIG_DIR": "/opt/cursor", "HOME": "/Users/dev"]).path
+                == "/opt/cursor/cli-config.json")
+        #expect(
+            CursorModelSettings.configFileURL(environment: ["XDG_CONFIG_HOME": "/Users/dev/.config", "HOME": "/Users/dev"]).path
+                == "/Users/dev/.config/cursor/cli-config.json")
+        #expect(
+            CursorModelSettings.configFileURL(environment: ["CURSOR_CONFIG_DIR": " ", "HOME": "/Users/dev"]).path
+                == "/Users/dev/.cursor/cli-config.json")
+    }
+}
+
+// MARK: - Session: models, questions and failures
+
+@MainActor
+struct CursorSessionModelAndQuestionTests {
+    @Test func pickingAModelLeavesTheUsersCursorDefaultAlone() async throws {
+        let harness = CursorSessionHarness()
+        harness.writeConfig(model: "grok-4.7")
+        harness.beforeReply = { [unowned harness] method, params in
+            if method == "session/set_config_option", params["configId"] == "model", let model = params["value"]?.string {
+                harness.saveModelLikeCursor(model)
+            }
+        }
+        try await harness.session.start()
+        try await harness.session.send(harness.input(modelID: "composer-2.5"))
+        #expect(harness.transport.messages("session/set_config_option").first?["params"]?["value"] == "composer-2.5")
+        #expect(harness.events.contains(.modelResolved("composer-2.5")))
+        #expect(harness.configModel == "grok-4.7")
+        #expect(harness.config["modelSelectionHistory"] as? [String] == ["grok-4.7"])
+    }
+
+    @Test func aLaunchFlagModelIsNotKeptAsTheDefaultEither() async throws {
+        let harness = CursorSessionHarness()
+        harness.writeConfig(model: "grok-4.7")
+        harness.beforeReply = { [unowned harness] method, _ in
+            // `--model` takes effect when Cursor opens the chat.
+            if method == "session/new", harness.transport.arguments.contains("--model") {
+                harness.saveModelLikeCursor("grok-4.7-high")
+            }
+        }
+        try await harness.session.start()
+        try await harness.session.send(harness.input(modelID: "grok-4.7-high"))
+        #expect(harness.transport.arguments.contains("grok-4.7-high"))
+        #expect(harness.configModel == "grok-4.7")
+    }
+
+    @Test func defaultFollowsTheUsersModelInAReopenedChat() async throws {
+        let harness = CursorSessionHarness(resume: CursorFixtures.sessionID)
+        harness.writeConfig(model: "grok-4.7")
+        // Reopening a chat switches Cursor to the chat's last model and saves it.
+        harness.loadReply = { [unowned harness] id in
+            harness.saveModelLikeCursor("composer-2.5")
+            guard case .object(var result) = CursorFixtures.loadResult else { return [] }
+            result["models"] = [
+                "currentModelId": "composer-2.5",
+                "availableModels": [["modelId": "grok-4.7", "name": "Grok 4.7"], ["modelId": "composer-2.5", "name": "Composer 2.5"]],
+            ]
+            result["configOptions"] = CursorFixtures.configOptions(model: "composer-2.5")
+            return [CursorRPCMessage.resultLine(id: id, .object(result))]
+        }
+        harness.beforeReply = { [unowned harness] method, params in
+            if method == "session/set_config_option", let model = params["value"]?.string { harness.saveModelLikeCursor(model) }
+        }
+        try await harness.session.start()
+        #expect(harness.configModel == "grok-4.7")
+        try await harness.session.send(harness.input())
+        #expect(harness.transport.messages("session/set_config_option").first?["params"]?["value"] == "grok-4.7")
+        #expect(harness.configModel == "grok-4.7")
+    }
+
+    @Test func defaultKeepsTheModelWhenItAlreadyMatches() async throws {
+        let harness = CursorSessionHarness()
+        harness.writeConfig(model: "grok-4.7")
+        try await harness.session.start()
+        try await harness.session.send(harness.input())
+        #expect(harness.transport.messages("session/set_config_option").isEmpty)
+    }
+
+    @Test func aChatWithoutPromptsStartsOverInsteadOfReopening() async throws {
+        let harness = CursorSessionHarness()
+        try await harness.session.start()
+        try await harness.session.send(harness.input(accessMode: .approval))
+        #expect(harness.transports.count == 2)
+        #expect(harness.transport.methods() == ["initialize", "session/new", "session/prompt"])
+        #expect(!harness.events.contains { if case .notice = $0 { true } else { false } })
+    }
+
+    @Test func questionsRoundTrip() async throws {
+        let harness = CursorSessionHarness()
+        try await harness.session.start()
+        try await harness.session.send(harness.input("Set up the app", mode: .plan))
+        harness.transport.deliver([
+            CursorRPCMessage.requestLine(id: 7, method: "cursor/ask_question", params: CursorFixtures.askQuestionParams)
+        ])
+        let request = try #require(harness.lastQuestion)
+        #expect(request.questions.count == 3)
+        #expect(harness.replies.isEmpty)
+
+        harness.session.answer(userInput: request.id, answers: ["db": ["Postgres"], "extras": ["Billing"]])
+        #expect(harness.replies.count == 1)
+        #expect(harness.replies.first?["id"] == .number(7))
+        #expect(
+            harness.replies.first?["result"]?["outcome"]
+                == [
+                    "outcome": "answered",
+                    "answers": [
+                        ["questionId": "db", "selectedOptionIds": ["pg"]],
+                        ["questionId": "extras", "selectedOptionIds": ["billing"]],
+                    ],
+                ])
+        // Answering twice does nothing.
+        harness.session.answer(userInput: request.id, answers: [:])
+        #expect(harness.replies.count == 1)
+
+        harness.transport.answer("session/prompt", with: ["stopReason": "end_turn"])
+        #expect(harness.completions == [.completed])
+    }
+
+    @Test func dismissedQuestionsAreSkipped() async throws {
+        let harness = CursorSessionHarness()
+        try await harness.session.start()
+        try await harness.session.send(harness.input())
+        harness.transport.deliver([
+            CursorRPCMessage.requestLine(id: 3, method: "cursor/ask_question", params: CursorFixtures.askQuestionParams)
+        ])
+        let request = try #require(harness.lastQuestion)
+        harness.session.answer(userInput: request.id, answers: [:])
+        #expect(harness.replies.last?["result"] == ["outcome": ["outcome": "skipped"]])
+    }
+
+    @Test func interruptingCancelsWaitingQuestionsAndLateRequests() async throws {
+        let harness = CursorSessionHarness(accessMode: .approval)
+        try await harness.session.start()
+        try await harness.session.send(harness.input(accessMode: .approval))
+        harness.transport.deliver([
+            CursorRPCMessage.requestLine(id: 3, method: "cursor/ask_question", params: CursorFixtures.askQuestionParams)
+        ])
+        harness.session.interrupt()
+        #expect(harness.replies.last?["id"] == .number(3))
+        #expect(harness.replies.last?["result"] == ["outcome": ["outcome": "cancelled"]])
+
+        // A permission request racing the interrupt is cancelled without asking the user.
+        let before = harness.events.count
+        harness.transport.deliver(CursorFixtures.shellUntilPermission + [CursorFixtures.shellPermissionRequest])
+        #expect(!harness.events[before...].contains { if case .approvalRequested = $0 { true } else { false } })
+        #expect(harness.replies.last?["id"] == .number(0))
+        #expect(harness.replies.last?["result"] == ["outcome": ["outcome": "cancelled"]])
+
+        harness.transport.answer("session/prompt", with: ["stopReason": "cancelled"])
+        #expect(harness.completions == [.interrupted])
+    }
+
+    @Test func withdrawnRequestsAreResolved() async throws {
+        let harness = CursorSessionHarness(accessMode: .approval)
+        try await harness.session.start()
+        try await harness.session.send(harness.input(accessMode: .approval))
+        harness.transport.deliver([
+            CursorRPCMessage.requestLine(id: 3, method: "cursor/ask_question", params: CursorFixtures.askQuestionParams)
+        ])
+        let request = try #require(harness.lastQuestion)
+        harness.transport.deliver([CursorRPCMessage.notificationLine(method: "$/cancel_request", params: ["requestId": 3])])
+        #expect(harness.events.last == .userInputResolved(id: request.id))
+        #expect(harness.replies.last?["error"]?["code"]?.int == CursorRPCError.requestCancelled)
+    }
+
+    @Test func approvalsLeftAtTheEndOfATurnAreCancelled() async throws {
+        let harness = CursorSessionHarness(accessMode: .approval)
+        try await harness.session.start()
+        try await harness.session.send(harness.input(accessMode: .approval))
+        harness.transport.deliver(CursorFixtures.shellUntilPermission + [CursorFixtures.shellPermissionRequest])
+        harness.transport.answer("session/prompt", with: ["stopReason": "end_turn"])
+        #expect(harness.replies.last?["result"] == ["outcome": ["outcome": "cancelled"]])
+        // Coincide marks the waiting approval declined itself when the turn ends.
+        #expect(!harness.events.contains { if case .approvalResolved = $0 { true } else { false } })
+        #expect(harness.completions == [.completed])
+    }
+
+    @Test func cursorsErrorReportFailsTheTurnWithoutBecomingTheReply() async throws {
+        let harness = CursorSessionHarness()
+        try await harness.session.start()
+        try await harness.session.send(harness.input())
+        harness.transport.deliver([
+            #"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"68a6eb78-54c6-4227-9151-708908518b4f","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Checking."}}}}"#,
+            #"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"68a6eb78-54c6-4227-9151-708908518b4f","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"\n\nError: ConnectError: [resource_exhausted] Usage limit reached"}}}}"#,
+        ])
+        harness.transport.answer("session/prompt", with: ["stopReason": "end_turn"])
+        #expect(harness.completions == [.failed("Error: ConnectError: [resource_exhausted] Usage limit reached")])
+        #expect(harness.events.contains(.assistantText(itemID: "cursor-1-1", text: "Checking.")))
+        #expect(!harness.events.contains { event in
+            if case .assistantTextDelta(_, let delta) = event { return delta.contains("Usage limit") }
+            return false
+        })
+    }
+
+    @Test func aFailedRestartLeavesNoHalfOpenProcess() async throws {
+        let harness = CursorSessionHarness()
+        try await harness.session.start()
+        try await harness.session.send(harness.input())
+        harness.transport.answer("session/prompt", with: ["stopReason": "end_turn"])
+
+        // The next process cannot open any chat.
+        let load = harness.loadReply
+        harness.loadReply = { id in [CursorRPCMessage.errorLine(id: id, code: -32603, message: "Failed to load")] }
+        harness.newSessionReply = { id in
+            [CursorRPCMessage.errorLine(id: id, code: -32603, message: "Failed to initialize session services")]
+        }
+        await #expect(throws: AgentError.self) { try await harness.session.send(harness.input(accessMode: .approval)) }
+        #expect(harness.transports.count == 2)
+        #expect(harness.transport.isTerminated)
+
+        // The turn after that starts over with a new process and reopens the chat.
+        harness.loadReply = load
+        harness.newSessionReply = nil
+        try await harness.session.send(harness.input(accessMode: .approval))
+        #expect(harness.transports.count == 3)
+        #expect(harness.transport.methods() == ["initialize", "session/load", "session/prompt"])
+    }
+
+    @Test func aMissingImageFailsBeforeAnyProcessWork() async throws {
+        let harness = CursorSessionHarness()
+        try await harness.session.start()
+        await #expect(throws: AgentError.self) {
+            try await harness.session.send(harness.input("Look", accessMode: .approval, images: ["/nonexistent/shot.png"]))
+        }
+        #expect(harness.transports.count == 1)
+        #expect(harness.transport.messages("session/prompt").isEmpty)
+    }
+
+    @Test func generatedImagesAreReported() async throws {
+        let harness = CursorSessionHarness()
+        try await harness.session.start()
+        try await harness.session.send(harness.input("Draw a cat"))
+        harness.transport.deliver([
+            #"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"68a6eb78-54c6-4227-9151-708908518b4f","update":{"sessionUpdate":"tool_call","toolCallId":"img","title":"Generate Image: a cat...","kind":"other","status":"pending","rawInput":{"_toolName":"generateImage","description":"a cat"}}}}"#,
+            #"{"jsonrpc":"2.0","id":4,"method":"cursor/generate_image","params":{"toolCallId":"img","description":"a cat","filePath":"/Users/dev/notes/cat.png"}}"#,
+        ])
+        #expect(harness.events.contains(.toolCompleted(id: "img", status: .completed, output: "cat.png")))
+        #expect(harness.replies.last?["result"] == [:])
     }
 }

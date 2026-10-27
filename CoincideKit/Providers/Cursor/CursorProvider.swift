@@ -79,7 +79,13 @@ public final class CursorProvider: AgentProvider {
             executable: executable, arguments: ["acp"], workingDirectory: FileManager.default.temporaryDirectory,
             environment: environment)
         let connection = CursorConnection(transport: transport)
-        defer { connection.close() }
+        // Listing the models makes Cursor sync (and possibly save) its current model selection.
+        let settings = CursorModelSettings.shared(environment: environment)
+        settings.begin()
+        defer {
+            connection.close()
+            settings.end(touching: [])
+        }
         do {
             try connection.start()
             _ = try await connection.request("initialize", CursorSession.initializeParams, timeout: .seconds(30))

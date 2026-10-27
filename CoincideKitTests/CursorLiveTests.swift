@@ -5,7 +5,8 @@ import Testing
 
 /// Runs the real `cursor-agent` with the signed-in account. Opt in with `COINCIDE_LIVE_TESTS=1`
 /// (for xcodebuild, `TEST_RUNNER_COINCIDE_LIVE_TESTS=1`). Each test works in a fresh folder under
-/// `COINCIDE_LIVE_DIR` (or the temporary directory), keeps the CLI's own model and uses tiny prompts.
+/// `COINCIDE_LIVE_DIR` (or the temporary directory) and uses tiny prompts. Only the model test picks a
+/// model; it checks that the user's Cursor default stays as it was.
 @MainActor
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_TESTS"] == "1"))
 struct CursorLiveTests {
@@ -86,6 +87,37 @@ struct CursorLiveTests {
         live.session.shutdown()
     }
 
+    @Test func choosingAModelLeavesTheCursorDefaultAlone() async throws {
+        let environment = await ShellEnvironment.shared.environment()
+        let configFile = CursorModelSettings.configFileURL(environment: environment)
+        let before = try Self.modelSettings(in: configFile)
+        let userModel = CursorModelSettings.modelID(in: before)
+
+        // Any model of the account other than the one the user's Cursor CLI is set to.
+        let provider = CursorProvider()
+        let executable = try #require(await ShellEnvironment.shared.which("cursor-agent"))
+        let status = await provider.detect(executable: executable, environment: environment)
+        let models = await provider.models(status: status, environment: environment)
+        let other = try #require(
+            models.first { $0.modelID != CursorModels.defaultModelID && $0.modelID != userModel }?.modelID)
+
+        let live = try await LiveCursorSession(directory: try Self.directory("model"))
+        let result = try await live.turn("Reply with exactly: ok", modelID: other)
+        #expect(result.outcome == .completed)
+        #expect(result.events.contains(.modelResolved(other)))
+        live.session.shutdown()
+
+        let after = try Self.modelSettings(in: configFile)
+        #expect(NSDictionary(dictionary: after).isEqual(to: before))
+        #expect(CursorModelSettings.modelID(in: after) == userModel)
+    }
+
+    /// The model keys of Cursor's settings file.
+    private static func modelSettings(in file: URL) throws -> [String: Any] {
+        let object = try JSONSerialization.jsonObject(with: try Data(contentsOf: file)) as? [String: Any] ?? [:]
+        return object.filter { CursorModelSettings.keys.contains($0.key) }
+    }
+
     private static func directory(_ name: String) throws -> URL {
         let base = ProcessInfo.processInfo.environment["COINCIDE_LIVE_DIR"].map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.temporaryDirectory
@@ -134,16 +166,17 @@ final class LiveCursorSession {
 
     /// Sends one message and waits for its `.turnCompleted`, calling `observe` for each event on the way.
     func turn(
-        _ text: String, accessMode: AccessMode = .fullAccess, mode: InteractionMode = .build,
-        timeout: Duration = .seconds(180), observe: ((AgentEvent, CursorSession) -> Void)? = nil
+        _ text: String, modelID: String = CursorModels.defaultModelID, accessMode: AccessMode = .fullAccess,
+        mode: InteractionMode = .build, timeout: Duration = .seconds(180),
+        observe: ((AgentEvent, CursorSession) -> Void)? = nil
     ) async throws -> TurnResult {
         let start = events.count
         observer = observe
         defer { observer = nil }
         try await session.send(
             AgentTurnInput(
-                text: text, selection: ModelSelection(provider: .cursor, modelID: CursorModels.defaultModelID),
-                accessMode: accessMode, interactionMode: mode))
+                text: text, selection: ModelSelection(provider: .cursor, modelID: modelID), accessMode: accessMode,
+                interactionMode: mode))
         let deadline = ContinuousClock.now + timeout
         while ContinuousClock.now < deadline {
             let turnEvents = Array(events[start...])
