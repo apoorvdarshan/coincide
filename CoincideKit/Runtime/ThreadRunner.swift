@@ -356,7 +356,7 @@ public final class ThreadRunner {
             store.updateItem(existing, in: threadID) { item in
                 item.status = status
                 item.completedAt = Date()
-                if let output, !output.isEmpty { item.text = output }
+                if let output, !output.isEmpty { item.text = output.count > 200_000 ? String(output.suffix(150_000)) : output }
             }
 
         case .approvalRequested(let request):
