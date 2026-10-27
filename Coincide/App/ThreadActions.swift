@@ -11,7 +11,7 @@ enum ThreadActions {
     /// Opens a new thread in the project, reusing an untouched one there instead of piling up empty threads.
     /// With `source`, the new thread starts in the same worktree and branch.
     @discardableResult
-    static func newThread(in projectID: UUID, basedOn source: ChatThread? = nil) -> UUID? {
+    static func newThread(in projectID: UUID, basedOn source: ThreadSummary? = nil) -> UUID? {
         guard store.project(projectID) != nil else { return nil }
         let id: UUID
         if let empty = store.threads(in: projectID).first(where: { isUntouched($0, matching: source) }) {
@@ -20,7 +20,7 @@ enum ThreadActions {
             let selection = ProviderRegistry.shared.usableSelection(preferring: store.settings.defaultSelection)
             id = store.createThread(in: projectID, selection: selection).id
         }
-        if let source, let thread = store.thread(id),
+        if let source, let thread = store.summary(id),
             thread.worktreePath != source.worktreePath || thread.branch != source.branch
         {
             store.updateThread(id) { thread in
@@ -36,14 +36,13 @@ enum ThreadActions {
         return id
     }
 
-    private static func isUntouched(_ thread: ChatThread, matching source: ChatThread?) -> Bool {
-        thread.items.isEmpty && (thread.draft ?? "").isEmpty && !thread.isArchived
-            && thread.worktreePath == source?.worktreePath
+    private static func isUntouched(_ thread: ThreadSummary, matching source: ThreadSummary?) -> Bool {
+        thread.itemCount == 0 && !thread.hasDraft && !thread.isArchived && thread.worktreePath == source?.worktreePath
     }
 
     static func rename(_ threadID: UUID, to title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, store.thread(threadID)?.title != trimmed else { return }
+        guard !trimmed.isEmpty, store.summary(threadID)?.title != trimmed else { return }
         store.updateThread(threadID) { $0.title = trimmed }
     }
 
@@ -53,7 +52,7 @@ enum ThreadActions {
 
     /// Archiving a running thread is not allowed, as in T3; stop it first.
     static func canArchive(_ threadID: UUID) -> Bool {
-        store.thread(threadID)?.isArchived == true || !ThreadRunner.shared.isRunning(threadID)
+        store.summary(threadID)?.isArchived == true || !ThreadRunner.shared.isRunning(threadID)
     }
 
     static func toggleArchived(_ threadID: UUID) {
@@ -68,7 +67,7 @@ enum ThreadActions {
     /// Deletes the thread, asking first unless the user turned that off. A command still running in one of
     /// its terminals is stopped too, so that is always asked about.
     static func delete(_ threadID: UUID, in window: NSWindow?) {
-        guard let thread = store.thread(threadID) else { return }
+        guard let thread = store.summary(threadID) else { return }
         let perform = {
             ThreadRunner.shared.shutdown(threadID: threadID)
             store.deleteThread(threadID)

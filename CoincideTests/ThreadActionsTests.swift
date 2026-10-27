@@ -59,7 +59,7 @@ struct ThreadActionsTests {
     @Test func aThreadBasedOnAnotherStartsInItsWorktreeAndBranch() throws {
         try withProject { project, _ in
             let plain = try #require(ThreadActions.newThread(in: project.id))
-            var source = try #require(store.thread(plain))
+            var source = try #require(store.summary(plain))
             source.worktreePath = "/tmp/coincide-worktree"
             source.branch = "coincide/feature"
             store.append(TranscriptItem(kind: .user, text: "Work"), to: plain)

@@ -136,12 +136,12 @@ final class ThreadActivity {
     }
 
     private func pruneDeletedThreads() {
-        for id in pending.keys where store.thread(id) == nil {
+        for id in pending.keys where !store.hasThread(id) {
             pending[id] = nil
             changed(id)
         }
         let stale = UIState.shared.values.unseen.keys.filter { key in
-            UUID(uuidString: key).map { store.thread($0) == nil } ?? true
+            UUID(uuidString: key).map { !store.hasThread($0) } ?? true
         }
         if !stale.isEmpty {
             UIState.shared.update { values in

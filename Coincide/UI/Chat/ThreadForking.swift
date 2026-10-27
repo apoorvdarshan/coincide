@@ -8,7 +8,11 @@ enum ThreadForking {
     private static var runner: ThreadRunner { .shared }
 
     /// Whether the thread can be forked through the turn holding `itemID`, or through its latest settled turn.
+    /// Without a turn running, a whole thread can be forked when it has any items, which its summary tells
+    /// without reading the transcript (the sidebar asks this of every row).
     static func canFork(_ threadID: UUID, through itemID: UUID? = nil) -> Bool {
+        guard let summary = store.summary(threadID) else { return false }
+        if itemID == nil, !runner.isRunning(threadID) { return summary.itemCount > 0 }
         guard let thread = store.thread(threadID) else { return false }
         return ThreadFork.canFork(
             thread, through: itemID, runningTurnID: runner.turn(threadID)?.userItemID,
@@ -42,7 +46,7 @@ enum ThreadForking {
     /// once it is gone.
     static func forkedFromDescription(_ threadID: UUID) -> String? {
         guard let lineage = store.lineage(of: threadID) else { return nil }
-        let title = store.thread(lineage.parentThreadID)?.title ?? lineage.parentTitle
+        let title = store.summary(lineage.parentThreadID)?.title ?? lineage.parentTitle
         return String(localized: "Forked from “\(title)”")
     }
 }

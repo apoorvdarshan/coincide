@@ -58,7 +58,7 @@ final class SidebarViewController: NSViewController {
         let changed = threadID != selectedThreadID
         selectedThreadID = threadID
         guard hasLoaded else { return }
-        if let threadID, let thread = store.thread(threadID), !isSearching,
+        if let threadID, let thread = store.summary(threadID), !isSearching,
             store.project(thread.projectID)?.isExpanded == false
         {
             store.updateProject(thread.projectID) { $0.isExpanded = true }
@@ -83,7 +83,7 @@ final class SidebarViewController: NSViewController {
 
     /// Starts inline rename, first clearing a search or expanding a project that hides the row.
     func beginRename(threadID: UUID) {
-        guard let thread = store.thread(threadID) else { return }
+        guard let thread = store.summary(threadID) else { return }
         if isSearching {
             searchField.stringValue = ""
             searchChanged()
@@ -267,7 +267,7 @@ final class SidebarViewController: NSViewController {
         keptIDs = (projectIDs, allThreadIDs)
     }
 
-    private func children(for project: Project, threads: [ChatThread]) -> [SidebarNode] {
+    private func children(for project: Project, threads: [ThreadSummary]) -> [SidebarNode] {
         if threads.isEmpty { return [nodes.node(.empty(project.id))] }
         let limit = UIState.shared.values.sidebarThreadLimit
         if isSearching || limit <= 0 || threads.count <= limit {
@@ -322,7 +322,7 @@ final class SidebarViewController: NSViewController {
     /// When the open thread is deleted or archived away, opens its neighbour in the same project, as T3 does.
     private func handOffSelectionIfNeeded(oldChildren: [ObjectIdentifier: [SidebarNode]]) {
         guard let selected = selectedThreadID else { return }
-        if let thread = store.thread(selected), !thread.isArchived || showsArchived { return }
+        if let thread = store.summary(selected), !thread.isArchived || showsArchived { return }
         var fallback: UUID?
         for siblings in oldChildren.values {
             let ids = siblings.compactMap(\.threadID)
@@ -406,7 +406,7 @@ final class SidebarViewController: NSViewController {
         }
     }
 
-    private func rowModel(for thread: ChatThread, project: Project?) -> ThreadRowModel {
+    private func rowModel(for thread: ThreadSummary, project: Project?) -> ThreadRowModel {
         let status = status(of: thread.id)
         var lines = [thread.title]
         var place = project?.name ?? ""
@@ -414,7 +414,7 @@ final class SidebarViewController: NSViewController {
         if !place.isEmpty { lines.append(place) }
         if let forkedFrom = ThreadForking.forkedFromDescription(thread.id) { lines.append(forkedFrom) }
         lines.append("\(thread.selection.provider.displayName) · \(ProviderRegistry.shared.displayName(for: thread.selection))")
-        let others = thread.sessions.keys.filter { $0 != thread.selection.provider }.sorted { $0.rawValue < $1.rawValue }
+        let others = thread.sessionProviders.filter { $0 != thread.selection.provider }
         if !others.isEmpty {
             lines.append(String(localized: "Handed off from \(others.map(\.displayName).formatted(.list(type: .and)))"))
         }
@@ -441,7 +441,7 @@ final class SidebarViewController: NSViewController {
     }
 
     private func refreshThreadRow(_ id: UUID) {
-        guard let node = nodes.existing(.thread(id)), let thread = store.thread(id) else { return }
+        guard let node = nodes.existing(.thread(id)), let thread = store.summary(id) else { return }
         let row = outlineView.row(forItem: node)
         if row >= 0, let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ThreadCell {
             cell.configure(rowModel(for: thread, project: store.project(thread.projectID)))
@@ -489,7 +489,7 @@ final class SidebarViewController: NSViewController {
 
     private func refreshVisibleThreadRows() {
         outlineView.enumerateAvailableRowViews { rowView, row in
-            guard let id = self.sidebarNode(atRow: row)?.threadID, let thread = self.store.thread(id),
+            guard let id = self.sidebarNode(atRow: row)?.threadID, let thread = self.store.summary(id),
                 let cell = rowView.view(atColumn: 0) as? ThreadCell
             else { return }
             cell.configure(self.rowModel(for: thread, project: self.store.project(thread.projectID)))
@@ -676,7 +676,7 @@ final class SidebarViewController: NSViewController {
         switch editing.node.kind {
         case .thread(let id):
             ThreadActions.rename(id, to: title)
-            field.stringValue = store.thread(id)?.title ?? editing.original
+            field.stringValue = store.summary(id)?.title ?? editing.original
         case .project(let id):
             ThreadActions.rename(project: id, to: title)
             field.stringValue = store.project(id)?.name ?? editing.original
@@ -733,7 +733,7 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     }
 
     func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
-        (item as? SidebarNode)?.threadID.flatMap { store.thread($0)?.title }
+        (item as? SidebarNode)?.threadID.flatMap { store.summary($0)?.title }
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -752,7 +752,7 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
             return cell
         case .thread(let id):
             let cell = reuse("thread") { ThreadCell(frame: .zero) }
-            if let thread = store.thread(id) {
+            if let thread = store.summary(id) {
                 cell.configure(rowModel(for: thread, project: store.project(thread.projectID)))
             }
             cell.onCommand = { [weak self] command in self?.perform(command, onThread: id) }
@@ -894,7 +894,7 @@ extension SidebarViewController: NSMenuDelegate {
     }
 
     private func buildThreadMenu(_ menu: NSMenu, _ id: UUID) {
-        guard let thread = store.thread(id) else { return }
+        guard let thread = store.summary(id) else { return }
         menuFolder = ThreadActions.folder(for: id)
         menu.addItem(item(String(localized: "Rename…"), #selector(renameFromMenu(_:)), id))
         menu.addItem(item(thread.isPinned ? String(localized: "Unpin") : String(localized: "Pin"), #selector(pinFromMenu(_:)), id))
@@ -976,7 +976,7 @@ extension SidebarViewController: NSMenuDelegate {
     }
 
     @objc private func newThreadOnBranch(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID, let thread = store.thread(id) else { return }
+        guard let id = sender.representedObject as? UUID, let thread = store.summary(id) else { return }
         ThreadActions.newThread(in: thread.projectID, basedOn: thread)
     }
 

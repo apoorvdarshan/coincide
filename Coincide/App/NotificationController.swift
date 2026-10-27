@@ -68,7 +68,7 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
 
     private func post(_ kind: Kind, threadID: UUID, title: String, body: String?) {
         let store = AppStore.shared
-        guard store.settings.notifyWhenInBackground, !NSApp.isActive, let thread = store.thread(threadID),
+        guard store.settings.notifyWhenInBackground, !NSApp.isActive, let thread = store.summary(threadID),
             !thread.isArchived
         else { return }
         let content = UNMutableNotificationContent()

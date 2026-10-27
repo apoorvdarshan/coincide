@@ -189,7 +189,7 @@ final class TerminalSessionManager {
     }
 
     private func closeDeletedThreads() {
-        for (threadID, terminals) in terminalsByThread where AppStore.shared.thread(threadID) == nil {
+        for (threadID, terminals) in terminalsByThread where !AppStore.shared.hasThread(threadID) {
             terminalsByThread[threadID] = nil
             terminals.closeAll()
         }

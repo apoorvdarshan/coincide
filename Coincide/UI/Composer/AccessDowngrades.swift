@@ -29,14 +29,14 @@ final class AccessDowngrades {
     /// Starts watching threads; later calls do nothing.
     func start() {
         guard token == nil else { return }
-        for (id, thread) in store.threads { modes[id] = thread.accessMode }
+        for (id, thread) in store.threadSummaries { modes[id] = thread.accessMode }
         token = store.observe { [weak self] change in self?.handle(change) }
     }
 
     private func handle(_ change: StoreChange) {
         switch change {
         case .thread(let id):
-            guard let mode = store.thread(id)?.accessMode else { return }
+            guard let mode = store.summary(id)?.accessMode else { return }
             let previous = modes.updateValue(mode, forKey: id)
             if mode == .fullAccess {
                 pending[id] = nil
@@ -50,9 +50,9 @@ final class AccessDowngrades {
             guard pending[id] != nil else { return }
             DispatchQueue.main.async { [weak self] in self?.settle(id) }
         case .threadList, .projects:
-            for (id, thread) in store.threads where modes[id] == nil { modes[id] = thread.accessMode }
-            modes = modes.filter { store.thread($0.key) != nil }
-            pending = pending.filter { store.thread($0.key) != nil }
+            for (id, thread) in store.threadSummaries where modes[id] == nil { modes[id] = thread.accessMode }
+            modes = modes.filter { store.hasThread($0.key) }
+            pending = pending.filter { store.hasThread($0.key) }
         default:
             break
         }
@@ -60,7 +60,7 @@ final class AccessDowngrades {
 
     /// Ends the thread's idle sessions, and marks the one running a turn to end with it.
     private func downgrade(_ threadID: UUID, switchedAt: Date) {
-        guard store.thread(threadID)?.accessMode == .approval else { return }
+        guard store.summary(threadID)?.accessMode == .approval else { return }
         let running = runner.turn(threadID)
         for provider in runner.liveProviders(threadID) where provider != running?.provider {
             pending[threadID]?[provider] = nil
@@ -80,7 +80,7 @@ final class AccessDowngrades {
     /// Once a turn changed: ends the sessions whose turns are over.
     private func settle(_ threadID: UUID) {
         guard let providers = pending[threadID] else { return }
-        guard store.thread(threadID)?.accessMode == .approval else {
+        guard store.summary(threadID)?.accessMode == .approval else {
             pending[threadID] = nil
             return
         }

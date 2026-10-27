@@ -14,6 +14,7 @@ final class ChatViewController: NSViewController {
         didSet {
             guard threadID != oldValue else { return }
             if let oldValue, oldValue == displayedThreadID { scrollStates[oldValue] = list.scrollState() }
+            transcriptHold = threadID.map(store.holdTranscript)
             loadThread()
         }
     }
@@ -40,6 +41,8 @@ final class ChatViewController: NSViewController {
     }()
 
     private var observation: ObservationToken?
+    /// Keeps the open thread's transcript in memory.
+    private var transcriptHold: TranscriptHold?
     private var displayedThreadID: UUID?
     private var itemsByID: [UUID: TranscriptItem] = [:]
     private var revisions: [UUID: Int] = [:]
@@ -282,7 +285,7 @@ final class ChatViewController: NSViewController {
         if let threadID = displayedThreadID, let thread = store.thread(threadID) {
             var markers: [(anchor: UUID?, marker: TranscriptForkMarker)] = []
             if let lineage = store.lineage(of: threadID) {
-                let parent = store.thread(lineage.parentThreadID)
+                let parent = store.summary(lineage.parentThreadID)
                 let marker = TranscriptForkMarker(
                     direction: .forkedFrom, threadID: lineage.parentThreadID, title: parent?.title ?? lineage.parentTitle,
                     isAvailable: parent != nil)
@@ -337,7 +340,7 @@ final class ChatViewController: NSViewController {
             guard id == displayedThreadID else { return }
             updateChrome()
         case .threadList, .projects:
-            if let threadID, store.thread(threadID) == nil {
+            if let threadID, !store.hasThread(threadID) {
                 scrollStates[threadID] = nil
                 expanded[threadID] = nil
                 self.threadID = nil
@@ -897,7 +900,7 @@ extension ChatViewController: TranscriptHost {
     }
 
     func openThread(_ threadID: UUID) {
-        guard store.thread(threadID) != nil else {
+        guard store.hasThread(threadID) else {
             NSSound.beep()
             return
         }

@@ -151,15 +151,15 @@ extension AppStore {
         lineageStore.lineage(of: threadID)
     }
 
-    /// The thread a fork was made from, while it still exists.
-    public func parentThread(of threadID: UUID) -> ChatThread? {
-        lineage(of: threadID).flatMap { thread($0.parentThreadID) }
+    /// The thread a fork was made from, while it still exists. Its transcript is not read.
+    public func parentThread(of threadID: UUID) -> ThreadSummary? {
+        lineage(of: threadID).flatMap { summary($0.parentThreadID) }
     }
 
-    /// The existing forks of a thread, oldest first.
-    public func forks(of threadID: UUID) -> [(thread: ChatThread, lineage: ThreadLineage)] {
+    /// The existing forks of a thread, oldest first. Their transcripts are not read.
+    public func forks(of threadID: UUID) -> [(thread: ThreadSummary, lineage: ThreadLineage)] {
         lineageStore.children(of: threadID)
-            .compactMap { id, lineage in thread(id).map { (thread: $0, lineage: lineage) } }
+            .compactMap { id, lineage in summary(id).map { (thread: $0, lineage: lineage) } }
             .sorted { $0.lineage.forkedAt < $1.lineage.forkedAt }
     }
 
@@ -169,7 +169,7 @@ extension AppStore {
         let key = directory.standardizedFileURL.path
         if let existing = lineageStores[key] { return existing }
         let store = ThreadLineageStore(directory: directory)
-        store.prune(keeping: Set(threads.keys))
+        store.prune(keeping: Set(threadSummaries.keys))
         lineageStores[key] = store
         return store
     }

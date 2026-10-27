@@ -220,11 +220,11 @@ struct ThreadForkTests {
         let store = AppStore(directory: directory)
         let project = store.addProject(at: URL(fileURLWithPath: "/tmp"))
         let empty = store.createThread(in: project.id)
-        let count = store.threads.count
+        let count = store.threadSummaries.count
         #expect(store.forkThread(empty.id) == nil)
         #expect(store.forkThread(UUID()) == nil)
         #expect(store.forkThread(empty.id, through: UUID()) == nil)
-        #expect(store.threads.count == count)
+        #expect(store.threadSummaries.count == count)
         #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("thread-lineage.json").path))
     }
 
@@ -248,7 +248,7 @@ struct ThreadForkTests {
 
         let reloaded = AppStore(directory: directory)
         let lineages = ThreadLineageStore(directory: directory)
-        lineages.prune(keeping: Set(reloaded.threads.keys))
+        lineages.prune(keeping: Set(reloaded.threadSummaries.keys))
         #expect(lineages.lineage(of: dropped.id) == nil)
         #expect(lineages.lineage(of: kept.id)?.parentTitle == "Parent")
         #expect(ThreadLineageStore(directory: directory).records.keys.sorted { $0.uuidString < $1.uuidString } == [kept.id])
