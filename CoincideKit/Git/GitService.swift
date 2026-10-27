@@ -22,6 +22,12 @@ public final class GitService {
 
     // MARK: Repository
 
+    /// The git executable to run, or nil when no usable git is installed. Skips the `/usr/bin/git`
+    /// shim while the developer tools are missing, since running it brings up their install dialog.
+    public nonisolated static func gitExecutable() async -> URL? {
+        await GitCLI.gitExecutable()
+    }
+
     public func isRepository(_ url: URL) async -> Bool {
         await GitOps.repositoryRoot(url) != nil
     }

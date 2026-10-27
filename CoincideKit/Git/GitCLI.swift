@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// A failed git, gh or worktree operation. `message` is a short sentence for the user;
 /// `detail` carries git's own explanation when it gave one.
@@ -53,8 +54,29 @@ enum GitCLI {
         return env
     }
 
-    nonisolated static func gitExecutable() async -> URL {
-        await ShellEnvironment.shared.which("git") ?? URL(fileURLWithPath: "/usr/bin/git")
+    /// Set once the developer tools were found, after which `/usr/bin/git` is no longer checked.
+    private nonisolated static let developerToolsFound = Mutex(false)
+
+    /// The git to run, or nil when no usable git is installed. `/usr/bin/git` is a shim that brings
+    /// up the "install the command line developer tools" dialog when they are missing, so it only
+    /// counts once they are installed. A missing answer is not remembered, so installing the tools
+    /// takes effect without a restart.
+    nonisolated static func gitExecutable() async -> URL? {
+        guard let git = await ShellEnvironment.shared.which("git") else { return nil }
+        guard git.standardizedFileURL.path == "/usr/bin/git", !developerToolsFound.withLock({ $0 }) else { return git }
+        let tools = await ProcessRunner.run(URL(fileURLWithPath: "/usr/bin/xcode-select"), ["-p"], timeout: 5)
+        guard tools.succeeded else { return nil }
+        developerToolsFound.withLock { $0 = true }
+        return git
+    }
+
+    /// What a git call reports when no usable git is installed. `isNotRepository` matches it, so
+    /// status reads treat the folder as having no repository.
+    nonisolated static let gitMissingMessage = String(
+        localized: "Git is not installed. Install Apple's command line developer tools to use Git in Coincide.")
+
+    private nonisolated static var gitMissingResult: ProcessRunner.Result {
+        ProcessRunner.Result(status: 127, stdout: "", stderr: gitMissingMessage)
     }
 
     nonisolated static func ghExecutable() async -> URL? {
@@ -65,7 +87,7 @@ enum GitCLI {
         _ arguments: [String], in cwd: URL, environment overrides: [String: String] = [:], input: String? = nil,
         timeout: TimeInterval = 30
     ) async -> ProcessRunner.Result {
-        let executable = await gitExecutable()
+        guard let executable = await gitExecutable() else { return gitMissingResult }
         let env = await environment(overrides)
         return await ProcessRunner.run(executable, arguments, cwd: cwd, environment: env, timeout: timeout, input: input)
     }
@@ -89,10 +111,11 @@ enum GitCLI {
         return await ProcessRunner.run(executable, arguments, cwd: cwd, environment: env, timeout: timeout, input: input)
     }
 
-    /// `git` on stderr when the folder is not inside a work tree.
+    /// `git` on stderr when the folder is not inside a work tree, or no git is installed.
     nonisolated static func isNotRepository(_ stderr: String) -> Bool {
         let lower = stderr.lowercased()
         return lower.contains("not a git repository") || lower.contains("must be run in a work tree")
+            || stderr == gitMissingMessage
     }
 
     /// `git` on stderr when HEAD has no commit yet.
