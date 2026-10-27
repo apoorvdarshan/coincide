@@ -1,9 +1,8 @@
 name: CI
 
 on:
+  # Every pull request runs, because "Build and test" is a required check and a skipped one would block merging.
   pull_request:
-    paths-ignore:
-      - "**.md"
   push:
     branches: [main]
     paths-ignore:

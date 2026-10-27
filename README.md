@@ -1,5 +1,9 @@
 # Coincide
 
+[![CI](https://github.com/apoorvdarshan/coincide/actions/workflows/ci.yml/badge.svg)](https://github.com/apoorvdarshan/coincide/actions/workflows/ci.yml)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15854/badge)](https://www.bestpractices.dev/projects/15854)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/apoorvdarshan/coincide/badge)](https://scorecard.dev/viewer/?uri=github.com/apoorvdarshan/coincide)
+
 A native macOS app for the coding agents you already pay for — **Claude Code, Codex, Cursor, Grok Build, OpenCode, Pi and Antigravity** — in one window, with one model picker, and the ability to **switch agents in the middle of a thread**.
 
 Coincide is a native AppKit port of [T3 Code](https://github.com/pingdotgg/t3code). It drives each agent's own command-line tool with the login you already have, so your existing subscriptions keep working. Coincide never sells, proxies or meters tokens.
