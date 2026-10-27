@@ -409,6 +409,52 @@ struct ClaudeMapperTests {
         #expect(mapLines(frames, into: &mapper).isEmpty)
     }
 
+    @Test func longToolInputsAreNotCollected() {
+        var mapper = testMapper()
+        _ = mapLines([ClaudeFixture.messageStart, ClaudeFixture.writeStart], into: &mapper)
+        let opening = #"{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"content\": \""}},"parent_tool_use_id":null}"#
+        _ = mapLines([opening], into: &mapper)
+        let chunk = String(repeating: "x", count: 200)
+        let delta = JSONValue.parse(
+            #"{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\#(chunk)"}},"parent_tool_use_id":null}"#)!
+        // A 4 MB Write streams in thousands of deltas; collecting them all would take quadratic time.
+        let elapsed = ContinuousClock().measure {
+            for _ in 0..<20_000 { _ = mapper.map(delta) }
+        }
+        #expect(elapsed < .seconds(2))
+        let events = mapLines([ClaudeFixture.writeSnapshot], into: &mapper)
+        #expect(events.contains { if case .toolUpdated(let info) = $0 { info.title == "Write note.txt" } else { false } })
+    }
+
+    @Test func costKeepsCountingWhenClaudesTotalStartsOver() {
+        var mapper = testMapper()
+        func result(_ cost: String) -> String {
+            ClaudeFixture.pongResult.replacingOccurrences(of: #""total_cost_usd":0.00833972"#, with: #""total_cost_usd":"# + cost)
+        }
+        let first = 0.00833972
+        _ = mapLines([ClaudeFixture.pongResult], into: &mapper)
+        // A zeroed total (a crashed turn) is ignored; a smaller one started over; /clear starts over too.
+        #expect(mapLines([result("0")], into: &mapper).last == .usage(TokenUsage(contextWindow: 1_000_000, costUSD: first)))
+        #expect(mapLines([result("0.001")], into: &mapper).last == .usage(TokenUsage(contextWindow: 1_000_000, costUSD: first + 0.001)))
+        let reset = #"{"type":"conversation_reset","new_conversation_id":"7d3c2b1a-0000-4000-8000-000000000002","uuid":"u","session_id":"s"}"#
+        #expect(
+            mapLines([reset, result("0.002")], into: &mapper).last
+                == .usage(TokenUsage(contextWindow: 1_000_000, costUSD: first + 0.001 + 0.002)))
+    }
+
+    @Test func tracksPermissionModeAndBackgroundWork() {
+        var mapper = testMapper()
+        _ = mapLines(
+            [
+                ClaudeFixture.initFrame, #"{"type":"system","subtype":"status","status":null,"permissionMode":"acceptEdits"}"#,
+                #"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash","description":"npm run dev"},{"task_id":"m1","task_type":"monitor","description":"watch","ambient":true}]}"#,
+            ], into: &mapper)
+        #expect(mapper.permissionMode == "acceptEdits")
+        #expect(mapper.backgroundTasks == ["b1": "npm run dev"])
+        mapper.processRestarted()
+        #expect(mapper.permissionMode == nil && mapper.backgroundTasks.isEmpty)
+    }
+
     @Test func partialInputTitlesAToolEarly() {
         #expect(
             ClaudeTools.partialStringField("file_path", in: #"{"file_path": "/tmp/a \"b\".txt", "conte"#) == "/tmp/a \"b\".txt")
@@ -458,6 +504,35 @@ struct ClaudeOutcomeTests {
 
     @Test func errorResultsUseTheirListedError() {
         #expect(outcome(ClaudeFixture.missingConversationResult) == .failed("No conversation found with session ID: 23ace05f-68cb-41ed-96e9-fc4b637bc343"))
+    }
+
+    @Test func usageLimitsKeepClaudesOwnExplanation() {
+        let limit = ClaudeEventMapper.AssistantError(kind: "rate_limit", text: "You've hit your limit · resets 5pm (Asia/Kolkata)")
+        #expect(
+            outcome(
+                #"{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","result":"You've hit your limit · resets 5pm (Asia/Kolkata)"}"#,
+                error: limit) == .failed("You've hit your limit · resets 5pm (Asia/Kolkata)"))
+        #expect(
+            outcome(#"{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"x"}"#, error: limit)
+                == .failed("You've hit your limit · resets 5pm (Asia/Kolkata)"))
+        // A 403 is labelled authentication_failed, but signing in again would not help.
+        let forbidden = ClaudeEventMapper.AssistantError(kind: "authentication_failed", text: "API Error: 403 Claude Code is disabled for this organization")
+        #expect(
+            outcome(
+                #"{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"result":"API Error: 403 Claude Code is disabled for this organization"}"#,
+                error: forbidden) == .failed("API Error: 403 Claude Code is disabled for this organization"))
+    }
+
+    @Test func onlyCleanSuccessesCarryAReply() {
+        #expect(ClaudeEventMapper.replyText(of: JSONValue.parse(ClaudeFixture.pongResult)!) == "pong")
+        #expect(ClaudeEventMapper.replyText(of: JSONValue.parse(ClaudeFixture.interruptedResult)!) == nil)
+        #expect(
+            ClaudeEventMapper.replyText(
+                of: JSONValue.parse(#"{"type":"result","subtype":"success","is_error":true,"result":"API Error: 500"}"#)!) == nil)
+        #expect(
+            ClaudeEventMapper.replyText(
+                of: JSONValue.parse(#"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"prompt_too_long","result":"x"}"#)!)
+                == nil)
     }
 }
 
@@ -595,6 +670,14 @@ struct ClaudePermissionTests {
         let restricted = ClaudePermissions.approval(requestID: "r", request: narrow, workingDirectory: ClaudeFixture.cwd, fileContents: { _ in nil })
         #expect(!restricted.options.contains { $0.kind == .allowAlways })
         #expect(restricted.detail?.hasPrefix("This command writes outside the project\n\n") == true)
+
+        var blocked = request
+        if case .object(var object) = blocked {
+            object["blocked_path"] = .string(ClaudeFixture.cwd + "/note.txt")
+            blocked = .object(object)
+        }
+        let pathAsk = ClaudePermissions.approval(requestID: "b", request: blocked, workingDirectory: ClaudeFixture.cwd, fileContents: { _ in nil })
+        #expect(pathAsk.detail?.hasPrefix("Needs access to note.txt\n\n") == true)
     }
 
     @Test func answersFollowT3() {
@@ -621,7 +704,9 @@ struct ClaudePermissionTests {
 
     @Test func feedbackIsWhatClaudeReadsWhenDenied() {
         let deny = ClaudePermissions.response(optionID: ClaudePermissions.denyID, request: request, feedback: "  Put it in docs/ instead \n")
-        #expect(deny["message"] == "Put it in docs/ instead")
+        // Framed as Claude Code frames a rejection note, so Claude reads it as the user's words, not tool output.
+        #expect(deny["message"]?.string == ClaudePermissions.rejectionNotePrefix + "Put it in docs/ instead")
+        #expect(ClaudePermissions.rejectionNotePrefix.hasSuffix("To tell you how to proceed, the user said:\n"))
         let blank = ClaudePermissions.response(optionID: ClaudePermissions.stopID, request: request, feedback: "  ")
         #expect(blank["message"] == "User cancelled tool execution.")
         let allow = ClaudePermissions.response(optionID: ClaudePermissions.allowID, request: request, feedback: "ignored")
@@ -629,7 +714,9 @@ struct ClaudePermissionTests {
 
         let plan = JSONValue.parse(ClaudeFixture.exitPlanPermission)!["request"]!
         #expect(ClaudePermissions.planResponse(optionID: ClaudePermissions.allowID, request: plan, feedback: nil)["behavior"] == "allow")
-        #expect(ClaudePermissions.planResponse(optionID: ClaudePermissions.denyID, request: plan, feedback: "Add tests")["message"] == "Add tests")
+        #expect(
+            ClaudePermissions.planResponse(optionID: ClaudePermissions.denyID, request: plan, feedback: "Add tests")["message"]?.string
+                == ClaudePermissions.rejectionNotePrefix + "Add tests")
         #expect(ClaudePermissions.planApproval(requestID: "p", request: plan).textInput?.isMultiline == true)
     }
 
@@ -666,6 +753,74 @@ struct ClaudePermissionTests {
         #expect(dismissed["behavior"] == "deny")
         #expect(dismissed["message"] == "The user dismissed the questions without answering.")
         #expect(ClaudePermissions.answersResponse(request, answers: ["Which checks should run?": [" "]])["behavior"] == "deny")
+    }
+
+    @Test func alwaysAllowNeverSkipsMoreThanEdits() {
+        let request: JSONValue = [
+            "tool_name": "Bash", "input": ["command": "make"], "tool_use_id": "toolu_b",
+            "permission_suggestions": [
+                ["type": "setMode", "mode": "bypassPermissions", "destination": "session"],
+                ["type": "addRules", "rules": [["toolName": "Bash", "ruleContent": "make:*"]], "behavior": "allow", "destination": "localSettings"],
+            ],
+        ]
+        #expect(
+            ClaudePermissions.response(optionID: ClaudePermissions.allowForSessionID, request: request)["updatedPermissions"]
+                == [["type": "addRules", "rules": [["toolName": "Bash", "ruleContent": "make:*"]], "behavior": "allow", "destination": "session"]])
+        let autoOnly: JSONValue = [
+            "tool_name": "Bash", "input": [:], "tool_use_id": "toolu_b",
+            "permission_suggestions": [["type": "setMode", "mode": "auto", "destination": "session"]],
+        ]
+        #expect(
+            ClaudePermissions.response(optionID: ClaudePermissions.allowForSessionID, request: autoOnly)["updatedPermissions"]
+                == [["type": "addRules", "rules": [["toolName": "Bash"]], "behavior": "allow", "destination": "session"]])
+    }
+
+    @Test func elicitationFormsBecomeQuestions() throws {
+        let request = try #require(
+            JSONValue.parse(
+                #"""
+                {"subtype":"elicitation","mcp_server_name":"github","message":"Create the issue?","requested_schema":{"type":"object","properties":{"title":{"type":"string","title":"Title","description":"Issue title"},"priority":{"type":"string","enum":["p1","p2"],"enumNames":["Urgent","Normal"]},"count":{"type":"integer","title":"Count"},"notify":{"type":"boolean","title":"Notify"},"labels":{"type":"array","items":{"anyOf":[{"const":"bug","title":"Bug"},{"const":"ui","title":"UI"}]}}},"required":["title","priority"]}}
+                """#))
+        let input = try #require(ClaudePermissions.elicitation(requestID: "e1", request: request))
+        #expect(input.id == "e1" && input.title == "Create the issue?")
+        #expect(input.questions.map(\.id) == ["title", "priority", "count", "labels", "notify"])
+        #expect(input.questions[0] == UserQuestion(id: "title", header: "Title", prompt: "Issue title"))
+        #expect(input.questions[1].options.map(\.label) == ["Urgent", "Normal"] && !input.questions[1].allowsFreeText)
+        #expect(input.questions[3].allowsMultipleSelection && input.questions[3].options.map(\.label) == ["Bug", "UI"])
+        #expect(input.questions[4].options.map(\.label) == ["Yes", "No"])
+
+        let answers = ["title": [" Crash on launch "], "priority": ["Urgent"], "count": ["3"], "notify": ["No"], "labels": ["Bug", "UI"]]
+        #expect(
+            ClaudePermissions.elicitationResponse(request, answers: answers)
+                == ["action": "accept", "content": ["title": "Crash on launch", "priority": "p1", "count": 3, "notify": false, "labels": ["bug", "ui"]]])
+        #expect(ClaudePermissions.elicitationResponse(request, answers: [:]) == ["action": "cancel"])
+        // A number that is not one is left out, so the server asks again.
+        #expect(ClaudePermissions.elicitationResponse(request, answers: ["title": ["x"], "count": ["2.5"]]).at("content.count") == nil)
+    }
+
+    @Test func elicitationLinksAndConfirmations() throws {
+        let link: JSONValue = [
+            "subtype": "elicitation", "mcp_server_name": "linear", "mode": "url", "url": "https://linear.app/oauth",
+            "message": "Sign in to Linear.",
+        ]
+        let input = try #require(ClaudePermissions.elicitation(requestID: "e2", request: link))
+        #expect(input.questions.first?.prompt == "Sign in to Linear.\n\nOpen this link and finish there, then continue:\nhttps://linear.app/oauth")
+        #expect(ClaudePermissions.elicitationResponse(link, answers: ["confirm": ["Continue"]]) == ["action": "accept"])
+        #expect(ClaudePermissions.elicitationResponse(link, answers: ["confirm": ["Decline"]]) == ["action": "decline"])
+
+        let confirm: JSONValue = [
+            "subtype": "elicitation", "mcp_server_name": "db", "message": "Drop the table?",
+            "requested_schema": ["type": "object", "properties": [:]],
+        ]
+        #expect(try #require(ClaudePermissions.elicitation(requestID: "e3", request: confirm)).questions.first?.prompt == "Drop the table?")
+        #expect(ClaudePermissions.elicitationResponse(confirm, answers: ["confirm": ["Continue"]]) == ["action": "accept", "content": [:]])
+
+        let nested: JSONValue = [
+            "subtype": "elicitation", "mcp_server_name": "x", "message": "Address?",
+            "requested_schema": ["type": "object", "properties": ["address": ["type": "object"]]],
+        ]
+        #expect(ClaudePermissions.elicitation(requestID: "e4", request: nested) == nil)
+        #expect(ClaudePermissions.elicitation(requestID: "e5", request: ["subtype": "elicitation", "message": "Token?"]) == nil)
     }
 }
 
@@ -734,6 +889,20 @@ struct ClaudeToolPresentationTests {
         #expect(ClaudeAttachments.mediaType(of: tiff as Data) == nil)
         #expect(ClaudeAttachments.encodable(tiff as Data)?.mediaType == "image/png")
         #expect(ClaudeAttachments.encodable(Data("not an image".utf8)) == nil)
+
+        // Wider than Claude takes once a conversation holds many images: scaled down, even though it is a small PNG.
+        let wideContext = try #require(
+            CGContext(
+                data: nil, width: 2_600, height: 20, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let wide = NSMutableData()
+        let wideDestination = try #require(CGImageDestinationCreateWithData(wide, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(wideDestination, try #require(wideContext.makeImage()), nil)
+        #expect(CGImageDestinationFinalize(wideDestination))
+        let scaled = try #require(ClaudeAttachments.encodable(wide as Data))
+        let scaledSource = try #require(CGImageSourceCreateWithData(scaled.data as CFData, nil))
+        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(scaledSource, 0, nil) as? [CFString: Any])
+        #expect((properties[kCGImagePropertyPixelWidth] as? Int) == ClaudeAttachments.maxPixelSize)
     }
 }
 
@@ -800,6 +969,8 @@ private final class FakeClaudeTransport: ClaudeTransport {
     private(set) var written: [JSONValue] = []
     private(set) var inputClosed = false
     private(set) var terminated = false
+    /// Whether `terminate()` ends the process on its own; when false a test calls `exit` itself.
+    var exitsWhenTerminated = true
 
     init(config: ClaudeLaunchConfig, replies: Replies? = nil) {
         self.config = config
@@ -869,7 +1040,7 @@ private final class FakeClaudeTransport: ClaudeTransport {
     func terminate() {
         guard !terminated else { return }
         terminated = true
-        later { $0.onExit?(143, "") }
+        if exitsWhenTerminated { later { $0.onExit?(143, "") } }
     }
 }
 
@@ -944,6 +1115,8 @@ struct ClaudeSessionTests {
         for pair in [["--permission-mode", "default"], ["--model", "haiku"], ["--effort", "low"], ["--permission-prompt-tool", "stdio"]] {
             #expect(arguments.indices.contains { arguments[$0...].starts(with: pair) }, "missing \(pair)")
         }
+        // Approval mode never gets a process that could switch into bypassing prompts.
+        #expect(!arguments.contains("--allow-dangerously-skip-permissions"))
         let initialize = try #require(transport.controlRequests.first)
         #expect(initialize["subtype"] == "initialize")
         #expect(initialize["appendSystemPrompt"]?.string?.contains("Coincide") == true)
@@ -1027,6 +1200,55 @@ struct ClaudeSessionTests {
         #expect(completions.isEmpty)
         transport.emit([ClaudeFixture.lifecycle(uuid, "started")] + ClaudeFixture.pongTurn + [ClaudeFixture.pongResult])
         #expect(completions == [.completed])
+    }
+
+    @Test func resultsNameTheMessagesTheyAnswer() async throws {
+        let session = makeSession()
+        try await session.start()
+        try await session.send(input())
+        let uuid = try #require(transport.userMessages.last?["uuid"]?.string)
+        let other = "8e9021e7-0000-4000-8000-000000000001"
+        func result(_ fields: String) -> String {
+            #"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","result":"done","total_cost_usd":0.01"#
+                + fields + "}"
+        }
+        // Claude answered finished background work while our message waited.
+        transport.emit([
+            ClaudeFixture.lifecycle(uuid, "queued"), result(#","origin":{"kind":"task-notification"}"#),
+            result(#","user_message_uuid":"\#(other)","user_message_uuids":["\#(other)"]"#),
+        ])
+        #expect(completions.isEmpty)
+        // Then it folded our message into a turn of its own, whose result names both.
+        transport.emit([
+            ClaudeFixture.lifecycle(uuid, "started"),
+            result(#","user_message_uuid":"\#(uuid)","user_message_uuids":["\#(other)","\#(uuid)"]"#),
+            ClaudeFixture.lifecycle(uuid, "completed"),
+        ])
+        #expect(completions == [.completed])
+    }
+
+    @Test func aMessageClaudeNeverStartsFailsTheTurn() async throws {
+        let session = makeSession()
+        try await session.start()
+        try await session.send(input())
+        let uuid = try #require(transport.userMessages.last?["uuid"]?.string)
+        transport.emit([ClaudeFixture.lifecycle(uuid, "queued"), ClaudeFixture.lifecycle(uuid, "completed")])
+        #expect(completions == [.failed("Claude Code accepted the message but never started working on it.")])
+    }
+
+    @Test func aResultCarryingTheOnlyOutputBecomesTheReply() async throws {
+        let session = makeSession()
+        try await session.start()
+        _ = try await startTurn(session, input("/compact"))
+        transport.emit([
+            #"{"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed","result":"Not enough messages to compact.","uuid":"r1","total_cost_usd":0}"#
+        ])
+        #expect(events.value.suffix(2) == [.assistantText(itemID: "r1:result", text: "Not enough messages to compact."), .turnCompleted(.completed)])
+        // A turn that showed its reply does not repeat the result's copy of it.
+        _ = try await startTurn(session)
+        let start = events.value.count
+        transport.emit(ClaudeFixture.pongTurn + [ClaudeFixture.pongResult])
+        #expect(events.value[start...].filter { if case .assistantText = $0 { true } else { false } }.count == 1)
     }
 
     @Test func approvalRoundTrip() async throws {
@@ -1125,8 +1347,9 @@ struct ClaudeSessionTests {
     }
 
     @Test func perTurnChangesUseControlRequests() async throws {
-        let session = makeSession()
+        let session = makeSession(access: .fullAccess, interaction: .plan)
         try await session.start()
+        #expect(transport.config.arguments.contains("--allow-dangerously-skip-permissions"))
         try await session.send(input(model: "opus", effort: "ultracode", access: .fullAccess))
         let requests = transport.controlRequests.dropFirst().map { $0 }
         #expect(
@@ -1139,9 +1362,37 @@ struct ClaudeSessionTests {
         let uuid = try #require(transport.userMessages.last?["uuid"]?.string)
         transport.emit([ClaudeFixture.lifecycle(uuid, "started"), ClaudeFixture.pongResult])
 
-        try await session.send(input(model: "opus", effort: "ultracode", access: .fullAccess, interaction: .plan))
-        #expect(transport.controlRequests.last == ["subtype": "set_permission_mode", "mode": "plan"])
+        try await session.send(input(model: "default", effort: "ultracode", access: .fullAccess, interaction: .plan))
+        #expect(transport.controlRequests.suffix(2) == [["subtype": "set_model", "model": "default"], ["subtype": "set_permission_mode", "mode": "plan"]])
         #expect(transports.value.count == 1)
+    }
+
+    @Test func fullAccessComesOnlyWithAProcessStartedForIt() async throws {
+        let session = makeSession()
+        try await session.start()
+        let asking = transport
+        // Approval mode cannot switch to bypassing prompts, so full access starts a process allowed to.
+        try await session.send(input(access: .fullAccess))
+        #expect(transports.value.count == 2 && asking.terminated)
+        #expect(transport.config.permissionMode == "bypassPermissions")
+        #expect(transport.config.arguments.contains("--allow-dangerously-skip-permissions"))
+        #expect(!asking.controlRequests.contains { $0["subtype"] == "set_permission_mode" })
+        let uuid = try #require(transport.userMessages.last?["uuid"]?.string)
+        transport.emit([ClaudeFixture.lifecycle(uuid, "started"), ClaudeFixture.pongResult])
+
+        // Leaving full access leaves that process too; its background work is reported as stopped.
+        transport.emit([
+            #"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash","description":"npm run dev"},{"task_id":"w1","task_type":"monitor","description":"watch","ambient":true}]}"#
+        ])
+        let id = try #require(session.sessionID)
+        try await session.send(input(access: .approval))
+        #expect(transports.value.count == 3)
+        #expect(transport.config.identity == .resume(id))
+        #expect(transport.config.permissionMode == "default")
+        #expect(!transport.config.arguments.contains("--allow-dangerously-skip-permissions"))
+        #expect(
+            events.value.contains(.notice("Claude Code restarted to apply the new settings, which stopped its background work: npm run dev.")))
+        #expect(!events.value.contains { if case .sessionExited = $0 { return true } else { return false } })
     }
 
     @Test func ultrathinkAsksInThePrompt() async throws {
@@ -1183,7 +1434,7 @@ struct ClaudeSessionTests {
     }
 
     @Test func refusedPermissionSwitchRelaunchesInThatMode() async throws {
-        let session = makeSession { index, _, request in
+        let session = makeSession(access: .fullAccess, interaction: .plan) { index, _, request in
             index == 0 && request["subtype"] == "set_permission_mode" ? .error("Cannot switch to bypassPermissions") : nil
         }
         try await session.start()
@@ -1192,6 +1443,28 @@ struct ClaudeSessionTests {
         #expect(transport.config.permissionMode == "bypassPermissions")
         #expect(transport.config.identity == transports.value[0].config.identity)
         #expect(!events.value.contains { if case .notice = $0 { return true } else { return false } })
+    }
+
+    @Test func planModeClaudeReportsIsLeftForBuildTurns() async throws {
+        let session = makeSession()
+        try await session.start()
+        let uuid = try await startTurn(session)
+        // Claude entered plan mode through a settings change the tools did not show; its status says so.
+        transport.emit([
+            #"{"type":"system","subtype":"status","status":null,"permissionMode":"plan"}"#, ClaudeFixture.pongResult,
+            ClaudeFixture.lifecycle(uuid, "completed"),
+        ])
+        try await session.send(input())
+        #expect(transport.controlRequests.last == ["subtype": "set_permission_mode", "mode": "default"])
+        // Accepting edits after "Always allow" is the user's choice and stays.
+        let next = try #require(transport.userMessages.last?["uuid"]?.string)
+        transport.emit([
+            ClaudeFixture.lifecycle(next, "started"), #"{"type":"system","subtype":"status","status":null,"permissionMode":"acceptEdits"}"#,
+            ClaudeFixture.pongResult,
+        ])
+        let count = transport.controlRequests.count
+        try await session.send(input())
+        #expect(transport.controlRequests.count == count)
     }
 
     @Test func freshSessionAfterALostConversationKeepsItsID() async throws {
@@ -1213,6 +1486,10 @@ struct ClaudeSessionTests {
         #expect(fresh != lost)
         #expect(transport.config.identity == .fresh(fresh))
         #expect(events.value.contains(.sessionStarted(id: fresh)))
+        // This turn's recap was built for the lost conversation, so the user hears that context is missing.
+        #expect(
+            events.value.contains(
+                .notice("Claude Code could not find this thread's saved conversation, so it started a new one without the earlier messages.")))
         #expect(!events.value.contains { if case .usage(let usage) = $0 { return usage.costUSD == 0 } else { return false } })
 
         // Frames sent before the new process reports its id must not switch back to the lost one.
@@ -1271,7 +1548,7 @@ struct ClaudeSessionTests {
         session.respond(to: "8c01462d-ad80-4555-a9e4-1b50e7524438", optionID: ClaudePermissions.denyID, text: "Write it to notes/ instead")
         let response = try #require(transport.controlResponses.last)
         #expect(response.at("response.behavior") == "deny")
-        #expect(response.at("response.message") == "Write it to notes/ instead")
+        #expect(response.at("response.message")?.string == ClaudePermissions.rejectionNotePrefix + "Write it to notes/ instead")
     }
 
     @Test func questionsAreAnsweredTogether() async throws {
@@ -1340,12 +1617,49 @@ struct ClaudeSessionTests {
         defer { try? FileManager.default.removeItem(at: path) }
         let session = makeSession()
         try await session.start()
-        try await session.send(input("What color?", images: [path.path, "/nonexistent/missing.heic"]))
+        try await session.send(input("/review What color?", images: [path.path, "/nonexistent/missing.heic"]))
         let content = try #require(transport.userMessages.last?.at("message.content")?.array)
-        #expect(content.first == ["type": "text", "text": "What color?"])
-        #expect(content.last?.at("source.media_type") == "image/png")
+        // A slash command or skill runs only when it starts the last text block, so the text goes last.
+        #expect(content.first?.at("source.media_type") == "image/png")
+        #expect(content.last == ["type": "text", "text": "/review What color?"])
         #expect(content.count == 2)
         #expect(events.value.contains(.notice("Couldn't attach missing.heic.")))
+
+        let uuid = try #require(transport.userMessages.last?["uuid"]?.string)
+        transport.emit([ClaudeFixture.lifecycle(uuid, "started"), ClaudeFixture.pongResult])
+        try await session.send(input("", images: [path.path]))
+        #expect(transport.userMessages.last?.at("message.content")?.array?.map { $0["type"] } == ["image"])
+    }
+
+    @Test func aCommandAfterARecapStartsTheLastTextBlock() async throws {
+        let thread = ChatThread(
+            projectID: UUID(), selection: ModelSelection(provider: .claude, modelID: "sonnet"),
+            items: [
+                TranscriptItem(kind: .user, text: "Fix the build"),
+                TranscriptItem(kind: .assistant, text: "Fixed it.", provider: .codex),
+            ])
+        let prompt = Handoff.prompt(for: "/review the diff", thread: thread, provider: .claude)
+        let split = try #require(ClaudeSession.splitTrailingCommand(prompt))
+        #expect(split.leading.hasPrefix("<conversation_handoff>") && split.leading.hasSuffix(":"))
+        #expect(split.command == "/review the diff")
+        #expect(ClaudeSession.splitTrailingCommand(Handoff.prompt(for: "review the diff", thread: thread, provider: .claude)) == nil)
+        #expect(ClaudeSession.splitTrailingCommand("/review the diff") == nil)
+
+        let session = makeSession(model: "sonnet", effort: "ultrathink")
+        try await session.start()
+        try await session.send(input(prompt, model: "sonnet", effort: "ultrathink"))
+        let content = try #require(transport.userMessages.last?.at("message.content")?.array)
+        // Ultrathink is a request to the model, not to a command.
+        #expect(content == [["type": "text", "text": .string(split.leading)], ["type": "text", "text": "/review the diff"]])
+    }
+
+    @Test func userMessagesAreMarkedAsTypedByAPerson() async throws {
+        let session = makeSession()
+        try await session.start()
+        try await session.send(input())
+        let message = try #require(transport.userMessages.last)
+        #expect(message["origin"] == ["kind": "human"])
+        #expect(message["message"] == ["role": "user", "content": "Reply with exactly: pong"])
     }
 
     @Test func refusedFullAccessFallsBackToAutoMode() async throws {
@@ -1356,6 +1670,81 @@ struct ClaudeSessionTests {
         try await session.start()
         #expect(transport.controlRequests.last == ["subtype": "set_permission_mode", "mode": "auto"])
         #expect(events.value.contains(.notice("Claude Code's settings don't allow full access, so it decides approvals itself (auto mode).")))
+    }
+
+    @Test func aTakenFreshIDIsResumed() async throws {
+        let session = makeSession { index, transport, request in
+            guard index == 1, request["subtype"] == "initialize" else { return nil }
+            transport.later { $0.exit(status: 1, stderr: "Error: Session ID \($0.config.sessionID) is already in use.\n") }
+            return .ignore
+        }
+        try await session.start()
+        let id = try #require(session.sessionID)
+        // Full access before the first message restarts on the same fresh id, which Claude had saved after all.
+        try await session.send(input(access: .fullAccess))
+        #expect(transports.value.count == 3)
+        #expect(transport.config.identity == .resume(id))
+        #expect(session.sessionID == id)
+        #expect(transport.userMessages.count == 1)
+    }
+
+    @Test func shutdownDuringARestartStartsNothing() async throws {
+        let session = makeSession()
+        try await session.start()
+        let first = transport
+        first.exitsWhenTerminated = false
+        let sending = Task { try await session.send(input(access: .fullAccess)) }
+        try await waitUntil { first.terminated }
+        session.shutdown()
+        first.exit(status: 143, stderr: "")
+        await #expect(throws: (any Error).self) { try await sending.value }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(transports.value.count == 1)
+        #expect(events.value.allSatisfy { if case .turnCompleted = $0 { false } else { true } })
+    }
+
+    @Test func subagentApprovalsDescribeTheCallWithoutAToolItem() async throws {
+        let session = makeSession()
+        try await session.start()
+        _ = try await startTurn(session)
+        transport.emit([
+            ClaudeFixture.controlRequest(
+                "p1",
+                [
+                    "subtype": "can_use_tool", "tool_name": "Bash", "input": ["command": "rm -rf build"], "tool_use_id": "toolu_sub",
+                    "agent_id": "a1",
+                ])
+        ])
+        #expect(!events.value.contains { if case .toolStarted = $0 { true } else { false } })
+        guard case .approvalRequested(let approval)? = events.value.last else {
+            Issue.record("expected an approval")
+            return
+        }
+        #expect(approval.title == "Run `rm -rf build`")
+    }
+
+    @Test func elicitationsAreAskedAndAnswered() async throws {
+        let session = makeSession()
+        try await session.start()
+        let form: JSONValue = [
+            "subtype": "elicitation", "mcp_server_name": "github", "message": "Your GitHub handle?",
+            "requested_schema": ["type": "object", "properties": ["handle": ["type": "string"]], "required": ["handle"]],
+        ]
+        transport.emit([ClaudeFixture.controlRequest("e1", form)])
+        guard case .userInputRequested(let request)? = events.value.last else {
+            Issue.record("expected questions")
+            return
+        }
+        #expect(request.questions.map(\.prompt) == ["Your GitHub handle?"])
+        session.answer(userInput: "e1", answers: ["handle": ["octocat"]])
+        #expect(
+            transport.controlResponses.last
+                == ["subtype": "success", "request_id": "e1", "response": ["action": "accept", "content": ["handle": "octocat"]]])
+
+        transport.emit([ClaudeFixture.controlRequest("e2", form), #"{"type":"control_cancel_request","request_id":"e2"}"#])
+        #expect(events.value.last == .userInputResolved(id: "e2"))
+        session.answer(userInput: "e2", answers: ["handle": ["late"]])
+        #expect(transport.controlResponses.count == 1)
     }
 
     @Test func otherControlRequestsAreAnswered() async throws {

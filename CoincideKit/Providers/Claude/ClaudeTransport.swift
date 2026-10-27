@@ -43,6 +43,9 @@ struct ClaudeLaunchConfig: Sendable, Hashable {
     var model: String?
     var effort: ClaudeModelCatalog.EffortPlan
     var permissionMode: String
+    /// Whether the process may switch into full access (bypassPermissions) later. Only processes started
+    /// while the user picked full access get it, so a session in approval mode can never skip prompts.
+    var allowsBypass: Bool
 
     var sessionID: String {
         switch identity {
@@ -56,11 +59,11 @@ struct ClaudeLaunchConfig: Sendable, Hashable {
         var arguments = [
             "--output-format", "stream-json", "--verbose", "--input-format", "stream-json", "--include-partial-messages",
             // Permission prompts come back over stdio as `can_use_tool` control requests.
-            "--permission-prompt-tool", "stdio", "--setting-sources=user,project,local",
-            // Lets a later turn switch into full access without a restart.
-            "--permission-mode", permissionMode, "--allow-dangerously-skip-permissions",
+            "--permission-prompt-tool", "stdio", "--setting-sources=user,project,local", "--permission-mode", permissionMode,
             "--thinking", "adaptive", "--thinking-display", "summarized", "--settings", JSONValue.object(settings).compactJSON,
         ]
+        // Lets a plan turn under full access go back to bypassing prompts without a restart.
+        if allowsBypass { arguments.append("--allow-dangerously-skip-permissions") }
         if let model { arguments += ["--model", model] }
         if let effort = effort.cliEffort { arguments += ["--effort", effort] }
         switch identity {
@@ -75,6 +78,10 @@ struct ClaudeLaunchConfig: Sendable, Hashable {
         if interaction == .plan { return "plan" }
         return access == .fullAccess ? "bypassPermissions" : "default"
     }
+
+    /// Claude Code takes `bypassPermissions` mid-session only from a process started with
+    /// `--allow-dangerously-skip-permissions`, which only full access gets.
+    static func allowsBypass(access: AccessMode) -> Bool { access == .fullAccess }
 
     /// Variables a running Claude Code session sets for the commands it starts. When Coincide itself was
     /// started from such a session, the processes it starts must not look like that session's children.

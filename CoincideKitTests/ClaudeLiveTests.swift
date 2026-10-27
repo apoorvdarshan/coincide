@@ -44,16 +44,17 @@ struct ClaudeLiveTests {
         return session
     }
 
-    private func input(_ text: String, interaction: InteractionMode = .build) -> AgentTurnInput {
-        AgentTurnInput(text: text, selection: Self.selection, accessMode: .approval, interactionMode: interaction)
+    private func input(_ text: String, access: AccessMode = .approval, interaction: InteractionMode = .build) -> AgentTurnInput {
+        AgentTurnInput(text: text, selection: Self.selection, accessMode: access, interactionMode: interaction)
     }
 
     /// Sends a message and waits for its turn to end.
     private func run(
-        _ session: ClaudeSession, _ text: String, interaction: InteractionMode = .build, recorder: LiveRecorder
+        _ session: ClaudeSession, _ text: String, access: AccessMode = .approval, interaction: InteractionMode = .build,
+        recorder: LiveRecorder
     ) async throws -> (outcome: TurnOutcome, reply: String) {
         let start = recorder.events.count
-        try await session.send(input(text, interaction: interaction))
+        try await session.send(input(text, access: access, interaction: interaction))
         let outcome = try await recorder.completion(after: start)
         return (outcome, recorder.reply(after: start))
     }
@@ -119,6 +120,45 @@ struct ClaudeLiveTests {
         let written = try String(contentsOf: target, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(written == "coincide-ok")
         #expect(recorder.events[start...].contains { if case .toolCompleted(_, .completed, _) = $0 { true } else { false } })
+    }
+
+    @Test func fullAccessRunsWithoutAskingAndApprovalAsksAgain() async throws {
+        let recorder = LiveRecorder()
+        let session = try makeSession(recorder: recorder)
+        defer { session.shutdown() }
+        try await session.start()
+        let allowed = Self.directory.appendingPathComponent("full.txt")
+        let denied = Self.directory.appendingPathComponent("denied.txt")
+        try? FileManager.default.removeItem(at: allowed)
+        try? FileManager.default.removeItem(at: denied)
+
+        let start = recorder.events.count
+        let full = try await run(
+            session, "Use the Bash tool to run exactly this command, then reply with: done\necho coincide-full > full.txt",
+            access: .fullAccess, recorder: recorder)
+        #expect(full.outcome == .completed)
+        #expect(!recorder.events[start...].contains { if case .approvalRequested = $0 { true } else { false } })
+        #expect((try? String(contentsOf: allowed, encoding: .utf8))?.contains("coincide-full") == true)
+
+        // Back in approval mode the restarted process asks again; denying leaves the file unwritten.
+        let next = recorder.events.count
+        try await session.send(
+            input("Use the Bash tool to run exactly this command, then reply with: done\necho coincide-denied > denied.txt"))
+        let approval = try await recorder.approval(after: next)
+        #expect(approval.detail?.contains("coincide-denied") == true)
+        session.respond(to: approval.id, optionID: ClaudePermissions.denyID, text: "Don't run it. Just reply with: skipped")
+        // Should Claude try again anyway, every later ask is denied too.
+        var answered: Set<String> = [approval.id]
+        try await recorder.wait { events in
+            for case .approvalRequested(let request) in events[next...] where !answered.contains(request.id) {
+                answered.insert(request.id)
+                session.respond(to: request.id, optionID: ClaudePermissions.denyID)
+            }
+            return !recorder.completions(after: next).isEmpty
+        }
+        #expect(recorder.completions(after: next) == [.completed])
+        #expect(answered.count == 1, "Claude asked again after the user's note")
+        #expect(!FileManager.default.fileExists(atPath: denied.path))
     }
 
     @Test func planModePlansWithoutActing() async throws {
@@ -187,7 +227,11 @@ private final class LiveRecorder {
     func wait(timeout: Duration = .seconds(180), until condition: ([AgentEvent]) -> Bool) async throws {
         let deadline = ContinuousClock.now + timeout
         while !condition(events) {
-            guard ContinuousClock.now < deadline else { throw AgentError.timeout("Claude Code") }
+            guard ContinuousClock.now < deadline else {
+                // The tail of what happened, to see where the turn stalled.
+                for event in events.suffix(40) { print("live event:", String(describing: event).prefix(300)) }
+                throw AgentError.timeout("Claude Code")
+            }
             try await Task.sleep(for: .milliseconds(50))
         }
     }

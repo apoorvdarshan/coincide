@@ -24,6 +24,12 @@ struct ClaudeEventMapper {
     private(set) var assistantError: AssistantError?
     /// Claude entered or left plan mode itself during the current turn.
     private(set) var changedPlanMode = false
+    /// The permission mode Claude last reported in an `init` or `status` frame.
+    private(set) var permissionMode: String?
+    /// Claude's live background work (commands, agents, monitors), by task id, as `background_tasks_changed` lists it.
+    private(set) var backgroundTasks: [String: String] = [:]
+    /// The current turn showed reply text; otherwise its result text is the reply.
+    private(set) var emittedReply = false
 
     private struct ToolCall {
         var name: String
@@ -84,17 +90,47 @@ struct ClaudeEventMapper {
 
     /// Clears per-turn state before a prompt is sent.
     mutating func beginTurn() {
-        assistantError = nil
         changedPlanMode = false
+        turnStarted()
+    }
+
+    /// Claude started running the prompt, possibly after finishing a turn it began itself.
+    mutating func turnStarted() {
+        assistantError = nil
         retryNoticed = false
+        emittedReply = false
     }
 
     /// A new process started for the same session: stream state resets and cost keeps counting up.
     mutating func processRestarted() {
-        costOffset += processCost ?? 0
-        processCost = nil
+        keepCost()
         openBlocks = [:]
         messageUsage = nil
+        permissionMode = nil
+        backgroundTasks = [:]
+    }
+
+    /// Claude's running cost total starts over (a new process, or /clear); the thread's total keeps counting.
+    private mutating func keepCost() {
+        costOffset += processCost ?? 0
+        processCost = nil
+    }
+
+    /// Marks whether the events show reply text, so a result's text is not shown twice.
+    private mutating func noteReplies(_ events: [AgentEvent]) {
+        guard !emittedReply else { return }
+        emittedReply = events.contains { event in
+            switch event {
+            case .assistantText(_, let text): !text.isEmpty
+            case .assistantTextDelta(_, let delta): !delta.isEmpty
+            default: false
+            }
+        }
+    }
+
+    /// Records a permission mode Claude confirmed in a control response.
+    mutating func notePermissionMode(_ mode: String?) {
+        if let mode { permissionMode = mode }
     }
 
     func toolName(for id: String) -> String? { tools[id]?.name }
@@ -107,17 +143,31 @@ struct ClaudeEventMapper {
     }
 
     mutating func map(_ frame: JSONValue) -> [AgentEvent] {
+        let events: [AgentEvent]
         switch frame["type"]?.string {
-        case "stream_event"?: return streamEvent(frame)
-        case "assistant"?: return assistant(frame)
-        case "user"?: return user(frame)
-        case "system"?: return system(frame)
-        case "result"?: return result(frame)
+        case "stream_event"?: events = streamEvent(frame)
+        case "assistant"?: events = assistant(frame)
+        case "user"?: events = user(frame)
+        case "system"?: events = system(frame)
+        case "result"?: events = result(frame)
         case "conversation_reset"?:
+            // /clear: a new conversation whose running cost starts at zero.
             sessionID = frame["new_conversation_id"]?.string ?? sessionID
-            return []
-        default: return []
+            keepCost()
+            events = []
+        default: events = []
         }
+        noteReplies(events)
+        return events
+    }
+
+    /// The reply text of a successful result, for turns whose output only the result carries
+    /// (for example a slash command such as `/compact` that had nothing to do).
+    static func replyText(of result: JSONValue) -> String? {
+        guard result["subtype"]?.string == "success", result["is_error"]?.bool != true,
+            result["terminal_reason"].map({ $0.string == "completed" || $0.isNull }) ?? true
+        else { return nil }
+        return cleaned(result["result"]?.string)
     }
 
     // MARK: Streaming
@@ -169,6 +219,8 @@ struct ClaudeEventMapper {
             case (.thinking(let id), "thinking_delta"?):
                 return nonEmpty(delta["thinking"]?.string).map { [.reasoningDelta(itemID: id, delta: $0)] } ?? []
             case (.tool(let id, let partial), "input_json_delta"?):
+                // Only the start of the input can refine the title; long inputs (a big Write) are not collected.
+                guard tools[id]?.refinedFromStream == false, partial.utf8.count < Self.partialInputLimit else { return [] }
                 let input = partial + (delta["partial_json"]?.string ?? "")
                 openBlocks[index] = .tool(id: id, partialInput: input)
                 return refineFromPartialInput(id: id, partial: input)
@@ -183,9 +235,13 @@ struct ClaudeEventMapper {
         }
     }
 
+    /// Bytes of streamed tool input read for an early title.
+    static let partialInputLimit = 4_096
+
     /// Shows a tool's path or command while its input is still streaming in.
     private mutating func refineFromPartialInput(id: String, partial: String) -> [AgentEvent] {
-        guard let call = tools[id], call.info != nil, !call.refinedFromStream, partial.count < 4_096 else { return [] }
+        guard let call = tools[id], call.info != nil, !call.refinedFromStream, partial.utf8.count < Self.partialInputLimit
+        else { return [] }
         var fields: [String: JSONValue] = [:]
         for key in ["file_path", "notebook_path", "path", "command", "pattern", "url", "query", "description", "skill"] {
             if let value = ClaudeTools.partialStringField(key, in: partial) { fields[key] = .string(value) }
@@ -373,8 +429,21 @@ struct ClaudeEventMapper {
         case "init"?:
             sessionID = frame["session_id"]?.string ?? sessionID
             capabilities.formUnion(frame["capabilities"]?.array?.compactMap(\.string) ?? [])
+            permissionMode = frame["permissionMode"]?.string ?? permissionMode
             guard let model = frame["model"]?.string else { return [] }
             return resolveModel(model)
+        case "status"?:
+            permissionMode = frame["permissionMode"]?.string ?? permissionMode
+            return []
+        case "background_tasks_changed"?:
+            // Replaces the whole set; ambient tasks (watchers) are not work anyone waits for.
+            var tasks: [String: String] = [:]
+            for task in frame["tasks"]?.array ?? [] where task["ambient"]?.bool != true {
+                guard let id = task["task_id"]?.string else { continue }
+                tasks[id] = Self.cleaned(task["description"]?.string) ?? task["task_type"]?.string ?? id
+            }
+            backgroundTasks = tasks
+            return []
         case "compact_boundary"?:
             return [.notice(String(localized: "Context compacted"))]
         case "api_retry"?:
@@ -408,7 +477,12 @@ struct ClaudeEventMapper {
             contextWindow = window
             usage.contextWindow = window
         }
-        if let cost = frame["total_cost_usd"]?.number {
+        if var cost = frame["total_cost_usd"]?.number {
+            // The total runs per process and conversation. A smaller one means it started over;
+            // a zeroed one (a turn that crashed) says nothing.
+            if let previous = processCost, cost < previous {
+                if cost == 0 { cost = previous } else { keepCost() }
+            }
             processCost = cost
             usage.costUSD = costOffset + cost
         }
@@ -437,25 +511,29 @@ struct ClaudeEventMapper {
         let allErrors = (result["errors"]?.array ?? []).compactMap(\.string)
         let listed = allErrors.first { !$0.hasPrefix("[ede_diagnostic]") }
         let resultText = (result["result"]?.string).flatMap { cleaned($0) }
-        let signedOut =
-            assistantError?.kind == "authentication_failed"
-            ? String(localized: "Claude Code is not signed in. Run `claude auth login` in Terminal, then try again.") : nil
+        let status = result["api_error_status"]?.int
+        // What Claude told the user about a failed API call, such as a usage limit and when it resets.
+        // A 403 is also labelled authentication_failed, but signing in again cannot grant that access.
+        let apiMessage: String? =
+            assistantError?.kind == "authentication_failed" && status != 403
+            ? String(localized: "Claude Code is not signed in. Run `claude auth login` in Terminal, then try again.")
+            : assistantError.flatMap { cleaned($0.text) }.map { String($0.prefix(500)) }
 
         guard result["subtype"]?.string == "success" else {
             let lowered = allErrors.joined(separator: "\n").lowercased()
             if lowered.contains("interrupt") || lowered.contains("cancel") { return .interrupted }
             return .failed(
-                listed ?? signedOut ?? terminalMessage(terminal, hint: nil) ?? subtypeMessage(result["subtype"]?.string))
+                listed ?? apiMessage ?? terminalMessage(terminal, hint: nil) ?? subtypeMessage(result["subtype"]?.string))
         }
-        switch result["api_error_status"]?.int {
+        switch status {
         case 529?: return .failed(String(localized: "The Claude API is overloaded (529). Try again shortly."))
-        case 429?: return .failed(String(localized: "Claude API rate limit reached. Try again later."))
+        case 429?: return .failed(apiMessage ?? String(localized: "Claude API rate limit reached. Try again later."))
         default: break
         }
         let apiError = terminal == "api_error" && resultText?.hasPrefix("API Error:") == true ? resultText.map { String($0.prefix(500)) } : nil
-        if let message = terminalMessage(terminal, hint: apiError) { return .failed(listed ?? message) }
+        if let message = terminalMessage(terminal, hint: apiError ?? apiMessage) { return .failed(listed ?? message) }
         if result["is_error"]?.bool == true {
-            return .failed(listed ?? signedOut ?? resultText ?? assistantError?.text ?? String(localized: "Claude Code reported an error."))
+            return .failed(listed ?? apiMessage ?? resultText ?? String(localized: "Claude Code reported an error."))
         }
         return .completed
     }
