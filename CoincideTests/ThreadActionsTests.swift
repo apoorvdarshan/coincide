@@ -1,8 +1,8 @@
 import AppKit
-import CoincideKit
 import Testing
 
 @testable import Coincide
+@testable import CoincideKit
 
 /// Thread and project commands of the sidebar, menu bar and palette, run against the shared store, which
 /// the test environment points at a scratch folder. Each test removes the projects it added.
@@ -43,6 +43,48 @@ struct ThreadActionsTests {
             #expect(third != id)
             #expect(store.threads(in: project.id).count == 2)
         }
+    }
+
+    @Test func listingAndThreadCommandsReadNoTranscript() async throws {
+        let folder = TemporaryDirectory("project")
+        let project = store.addProject(at: folder.url)
+        let limit = store.transcriptCacheLimit
+        defer {
+            store.transcriptCacheLimit = limit
+            store.removeProject(project.id)
+        }
+        let ids = (0..<4).map { number in
+            let id = store.createThread(in: project.id).id
+            store.append(TranscriptItem(kind: .user, text: "Message \(number)"), to: id)
+            store.updateThread(id) { $0.title = "Listed \(number)" }
+            return id
+        }
+        store.flush()
+        // Once saved, no transcript needs to stay in memory.
+        store.transcriptCacheLimit = 0
+        let deadline = Date().addingTimeInterval(10)
+        while ids.contains(where: store.isTranscriptLoaded), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(!ids.contains(where: store.isTranscriptLoaded))
+        let reads = store.transcriptReads
+
+        // The palette lists and searches threads by their summaries.
+        let catalog = PaletteCatalog(windowController: nil)
+        #expect(Set(ids.map { "thread:\($0)" }).isSubset(of: catalog.allThreads().map(\.id)))
+        #expect(catalog.recentThreads().contains { $0.title == "Listed 3" })
+        // So do the sidebar row's commands and the thread actions.
+        #expect(ThreadForking.canFork(ids[0]))
+        #expect(ThreadActions.canArchive(ids[0]))
+        #expect(ThreadForking.forkedFromDescription(ids[0]) == nil)
+        ThreadActions.rename(ids[1], to: " Listed 1 ")
+        let fresh = try #require(ThreadActions.newThread(in: project.id))
+        #expect(!ids.contains(fresh))
+        #expect(ThreadActions.newThread(in: project.id) == fresh)
+        #expect(store.transcriptReads == reads)
+        // Opening a thread reads just that one.
+        #expect(store.thread(ids[2])?.items.map(\.text) == ["Message 2"])
+        #expect(store.transcriptReads == reads + 1)
     }
 
     @Test func aDraftOrArchivingMakesAThreadTouched() throws {
