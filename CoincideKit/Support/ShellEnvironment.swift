@@ -5,6 +5,8 @@ import Foundation
 ///
 /// Concurrent callers share one resolution. When the login shell cannot be read (it timed out, or
 /// its startup files fail), a fallback environment is used and the shell is asked again a minute later.
+/// While the shell is asked again, `environment()` keeps returning the previous environment, so git,
+/// terminals and agent launches never wait for a slow shell startup; `freshEnvironment()` waits for it.
 public final class ShellEnvironment: @unchecked Sendable {
     public static let shared = ShellEnvironment()
 
@@ -19,6 +21,8 @@ public final class ShellEnvironment: @unchecked Sendable {
 
     private let lock = NSLock()
     private var cached: Resolved?
+    /// Set by `invalidate()`: `cached` is still handed out, but the login shell is asked again.
+    private var cachedIsStale = false
     private var resolving: Task<Resolved, Never>?
     private let resolve: @Sendable () async -> [String: String]?
 
@@ -27,37 +31,63 @@ public final class ShellEnvironment: @unchecked Sendable {
         self.resolve = resolve
     }
 
+    /// The environment for child processes. While it is being read again (after `invalidate()`, or to retry
+    /// a shell that could not be read), this returns the previous one at once, and the new one replaces it
+    /// when it arrives. Only a call before the first read finishes waits for the login shell.
     public nonisolated func environment() async -> [String: String] {
-        let task: Task<Resolved, Never> = lock.withLock {
-            if let cached, cached.fromShell || Date().timeIntervalSince(cached.at) < Self.retryAfterFailure {
-                return Task { cached }
-            }
-            if let resolving { return resolving }
-            let resolve = resolve
-            let task = Task.detached { () -> Resolved in
-                let shell = await resolve()
-                return Resolved(environment: Self.merged(shell: shell), fromShell: shell != nil, at: Date())
-            }
-            resolving = task
-            return task
-        }
-        let resolved = await task.value
-        lock.withLock {
-            if resolving == task {
-                resolving = nil
-                cached = resolved
-            }
-        }
-        return resolved.environment
+        await environment(waitingForRefresh: false)
     }
 
-    /// Finds an executable on the resolved PATH.
-    public nonisolated func which(_ name: String) async -> URL? {
+    /// Like `environment()`, but when the environment is due to be read again, waits for the new one.
+    /// For checks that must see a PATH the user may just have changed, such as finding a newly installed CLI.
+    public nonisolated func freshEnvironment() async -> [String: String] {
+        await environment(waitingForRefresh: true)
+    }
+
+    private nonisolated func environment(waitingForRefresh: Bool) async -> [String: String] {
+        let (current, pending) = lock.withLock { () -> ([String: String]?, Task<Resolved, Never>?) in
+            if let cached, isCurrent(cached) { return (cached.environment, nil) }
+            let task = resolving ?? startResolving()
+            if let cached, !waitingForRefresh { return (cached.environment, nil) }
+            return (nil, task)
+        }
+        if let current { return current }
+        guard let pending else { return Self.merged(shell: nil) }
+        return await pending.value.environment
+    }
+
+    /// Whether `resolved` can be handed out without asking the shell again. Called with the lock held.
+    private nonisolated func isCurrent(_ resolved: Resolved) -> Bool {
+        !cachedIsStale && (resolved.fromShell || Date().timeIntervalSince(resolved.at) < Self.retryAfterFailure)
+    }
+
+    /// Starts reading the login shell. The result replaces the cached environment when it arrives, even if
+    /// no caller waits for it. Called with the lock held.
+    private nonisolated func startResolving() -> Task<Resolved, Never> {
+        let resolve = resolve
+        let task = Task.detached { [self] () -> Resolved in
+            let shell = await resolve()
+            let resolved = Resolved(environment: Self.merged(shell: shell), fromShell: shell != nil, at: Date())
+            lock.withLock {
+                cached = resolved
+                cachedIsStale = false
+                resolving = nil
+            }
+            return resolved
+        }
+        resolving = task
+        return task
+    }
+
+    /// Finds an executable on the resolved PATH. With `fresh`, waits for an environment that is being read
+    /// again (see `freshEnvironment()`).
+    public nonisolated func which(_ name: String, fresh: Bool = false) async -> URL? {
         if name.hasPrefix("/") || name.hasPrefix("~") {
             let path = (name as NSString).expandingTildeInPath
             return FileManager.default.isExecutableFile(atPath: path) ? URL(fileURLWithPath: path) : nil
         }
-        let path = await environment()["PATH"] ?? ""
+        let environment = fresh ? await freshEnvironment() : await environment()
+        let path = environment["PATH"] ?? ""
         for dir in path.split(separator: ":") {
             let candidate = (String(dir) as NSString).appendingPathComponent(name)
             if FileManager.default.isExecutableFile(atPath: candidate) {
@@ -67,9 +97,17 @@ public final class ShellEnvironment: @unchecked Sendable {
         return nil
     }
 
-    /// Forgets the resolved environment, so the next call asks the login shell again.
+    /// Asks the login shell again on the next call. Until it answers, `environment()` keeps returning the
+    /// previous environment and `freshEnvironment()` waits for the new one.
     public nonisolated func invalidate() {
-        lock.withLock { cached = nil }
+        lock.withLock { cachedIsStale = true }
+    }
+
+    /// Like `invalidate()`, but only when the environment was read more than `age` seconds ago.
+    public nonisolated func invalidate(olderThan age: TimeInterval) {
+        lock.withLock {
+            if let cached, Date().timeIntervalSince(cached.at) > age { cachedIsStale = true }
+        }
     }
 
     private static let ignoredKeys: Set<String> = ["PWD", "OLDPWD", "SHLVL", "_", "TERM_PROGRAM", "TERM_SESSION_ID"]
