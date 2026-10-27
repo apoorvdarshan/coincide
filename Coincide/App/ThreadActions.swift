@@ -166,11 +166,6 @@ enum ThreadActions {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
-    static func copyToPasteboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
     /// The folder a thread works in: its worktree, else its project folder.
     static func folder(for threadID: UUID) -> URL? { store.workingDirectory(for: threadID) }
 

@@ -1168,7 +1168,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     private func setDropHighlight(_ highlighted: Bool) {
-        surface.tintColor = highlighted ? NSColor.controlAccentColor.withAlphaComponent(0.12) : nil
+        surface.tintColor = highlighted ? Theme.dropTint : nil
     }
 
     private func preview(_ attachment: ComposerAttachment) {

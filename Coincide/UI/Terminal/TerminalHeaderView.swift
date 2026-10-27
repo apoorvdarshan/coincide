@@ -178,8 +178,7 @@ final class TerminalHeaderView: NSView {
 
     @objc private func copyDirectory() {
         guard let directory else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(directory.path, forType: .string)
+        NSPasteboard.general.setText(directory.path)
     }
 
     @objc private func revealDirectory() {

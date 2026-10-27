@@ -308,7 +308,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func copyThreadPath(_ sender: Any?) {
         guard let id = selectedThreadID, let folder = ThreadActions.folder(for: id) else { return }
-        ThreadActions.copyToPasteboard(folder.path)
+        NSPasteboard.general.setText(folder.path)
     }
 
     @objc func revealInFinder(_ sender: Any?) {

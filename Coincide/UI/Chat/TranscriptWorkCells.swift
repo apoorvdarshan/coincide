@@ -339,10 +339,6 @@ enum TranscriptToolDetail {
     }
 }
 
-private extension String {
-    var nonEmpty: String? { isEmpty ? nil : self }
-}
-
 // MARK: - Group of tool calls
 
 /// Consecutive tool calls folded into one line, "Ran 3 commands and read 2 files". While one of

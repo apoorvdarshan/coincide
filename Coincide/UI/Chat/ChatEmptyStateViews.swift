@@ -202,7 +202,7 @@ private final class ProviderChip: NSView {
             case .error: String(localized: "unavailable")
             case .unknown: status.message ?? String(localized: "checking")
             }
-        toolTip = [status.version, status.account, status.message].compactMap { $0 }.joined(separator: "\n").nilIfEmpty
+        toolTip = [status.version, status.account, status.message].compactMap { $0 }.joined(separator: "\n").nonEmpty
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
         setAccessibilityLabel("\(kind.displayName), \(state)")
@@ -256,8 +256,4 @@ private final class SetupHintRow: NSView {
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
-}
-
-private extension String {
-    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

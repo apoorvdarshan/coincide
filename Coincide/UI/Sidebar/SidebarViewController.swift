@@ -964,7 +964,7 @@ extension SidebarViewController: NSMenuDelegate {
 
     @objc private func copyThreadID(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID else { return }
-        ThreadActions.copyToPasteboard(id.uuidString)
+        NSPasteboard.general.setText(id.uuidString)
     }
 
     @objc private func archiveFromMenu(_ sender: NSMenuItem) {
@@ -1005,7 +1005,7 @@ extension SidebarViewController: NSMenuDelegate {
 
     @objc private func copyPathFromMenu() {
         guard let menuFolder else { return }
-        ThreadActions.copyToPasteboard(menuFolder.path)
+        NSPasteboard.general.setText(menuFolder.path)
     }
 }
 

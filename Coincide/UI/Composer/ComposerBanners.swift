@@ -80,7 +80,7 @@ final class ComposerApprovalBanner: ComposerBanner {
     private var textInput: TextInputSpec?
 
     init() {
-        super.init(tint: NSColor.systemOrange.withAlphaComponent(0.1))
+        super.init(tint: Theme.approvalTint)
         counter.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         counter.setContentCompressionResistancePriority(.required, for: .horizontal)
         summary.maximumNumberOfLines = 2
@@ -242,7 +242,7 @@ final class ComposerQuestionBanner: ComposerBanner, NSTextFieldDelegate {
     private var pendingAdvance: DispatchWorkItem?
 
     init() {
-        super.init(tint: NSColor.controlAccentColor.withAlphaComponent(0.08))
+        super.init(tint: Theme.questionTint)
         counter.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         counter.setContentCompressionResistancePriority(.required, for: .horizontal)
         let dismiss = NSButton(

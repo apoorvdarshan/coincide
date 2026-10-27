@@ -251,8 +251,7 @@ final class BranchToolbarView: NSView {
 
     @objc private func copyFolderPath(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(path, forType: .string)
+        NSPasteboard.general.setText(path)
     }
 
     // MARK: Branches
