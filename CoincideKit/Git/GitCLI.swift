@@ -107,11 +107,11 @@ enum GitCLI {
     nonisolated static let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 }
 
-/// Runs a command to completion and collects its output.
+/// Runs a command to completion and collects its output, for git and gh.
 ///
-/// Learns about the exit from the termination handler rather than `waitUntilExit()` on another
-/// thread, which can miss the wakeup and then sit until the timeout even though the command
-/// finished long before.
+/// Unlike `ProcessRunner`, input is written off the caller's thread (checkpoint and diff steps pipe
+/// thousands of paths), a helper that keeps the pipes open after the command exits is not waited
+/// on, and a command that ignores the timeout is killed.
 enum CommandRunner {
     nonisolated static func run(
         _ executable: URL, _ arguments: [String], cwd: URL?, environment: [String: String]?, timeout: TimeInterval,
@@ -151,6 +151,8 @@ enum CommandRunner {
                     run.closed(stdout: false)
                 }
             }
+            // Writing to a command that already exited should fail with EPIPE, not kill Coincide.
+            _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
             do {
                 try process.run()
             } catch {

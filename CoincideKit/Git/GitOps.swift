@@ -91,17 +91,27 @@ enum GitOps {
                 path: first.path, oldPath: first.oldPath ?? second.oldPath, additions: first.additions + second.additions,
                 deletions: first.deletions + second.deletions, isBinary: first.isBinary || second.isBinary)
         })
+        let rootURL = await root
+        var untrackedCounted = 0
         let files = parsed.entries.map { entry in
-            ChangedFile(
-                path: entry.path, oldPath: entry.originalPath, status: entry.status,
-                additions: stats[entry.path]?.additions ?? 0, deletions: stats[entry.path]?.deletions ?? 0)
+            var additions = stats[entry.path]?.additions ?? 0
+            // Untracked files have no numstat; count their lines like the diff would, within reason.
+            if entry.status == .untracked, untrackedCounted < 500, let rootURL,
+                let lines = lineCount(rootURL.appendingPathComponent(entry.path))
+            {
+                untrackedCounted += 1
+                additions = lines
+            }
+            return ChangedFile(
+                path: entry.path, oldPath: entry.originalPath, status: entry.status, additions: additions,
+                deletions: stats[entry.path]?.deletions ?? 0)
         }
         .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
 
         let remoteList = await remotes
         let defaultName = await defaultBranch
         var status = GitStatus(
-            isRepository: true, rootPath: await root?.path, branch: parsed.head, headOID: parsed.oid,
+            isRepository: true, rootPath: rootURL?.path, branch: parsed.head, headOID: parsed.oid,
             upstream: parsed.upstream, ahead: parsed.ahead, behind: parsed.behind, defaultBranch: defaultName,
             hasRemote: !remoteList.isEmpty, files: files,
             conflictedPaths: parsed.entries.filter(\.isConflicted).map(\.path))
@@ -119,6 +129,19 @@ enum GitOps {
             }
         }
         return status
+    }
+
+    /// Lines in a text file, counted as `git diff` counts an added file; nil for folders, binary
+    /// files and files over a megabyte.
+    static func lineCount(_ url: URL) -> Int? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+            attributes[.type] as? FileAttributeType == .typeRegular,
+            let size = attributes[.size] as? Int, size <= 1_000_000,
+            let data = try? Data(contentsOf: url), !data.contains(0)
+        else { return nil }
+        guard let last = data.last else { return 0 }
+        let newlines = data.reduce(0) { $0 + ($1 == 0x0A ? 1 : 0) }
+        return last == 0x0A ? newlines : newlines + 1
     }
 
     /// Line counts for tracked changes, staged or not, without touching the index.

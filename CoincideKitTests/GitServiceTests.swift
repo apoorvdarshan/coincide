@@ -34,6 +34,7 @@ struct GitServiceTests {
         #expect(files["README.md"]?.status == .modified)
         #expect(files["README.md"]?.additions == 2)
         #expect(files["notes.txt"]?.status == .untracked)
+        #expect(files["notes.txt"]?.additions == 1)
         #expect(files["staged.txt"]?.status == .added)
         #expect(files["staged.txt"]?.additions == 2)
     }
