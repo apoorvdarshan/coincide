@@ -319,12 +319,12 @@ struct RunnerEventTests {
     }
 
     @Test func continuedSessionKeepsWhatItHasSeen() async {
-        let provider = FakeProvider(kind: .pi)
+        let provider = FakeProvider(kind: .opencode)
         provider.script = [.turnCompleted(.completed)]
         let (store, runner, thread) = setUp(provider)
         await runner.send(threadID: thread.id, text: "one")
-        let seen = store.thread(thread.id)!.sessions[.pi]!.seenItemCount
+        let seen = store.thread(thread.id)!.sessions[.opencode]!.seenItemCount
         provider.lastSession?.onEvent?(.sessionContinued(id: "forked"))
-        #expect(store.thread(thread.id)!.sessions[.pi] == ProviderSessionRef(sessionID: "forked", seenItemCount: seen))
+        #expect(store.thread(thread.id)!.sessions[.opencode] == ProviderSessionRef(sessionID: "forked", seenItemCount: seen))
     }
 }

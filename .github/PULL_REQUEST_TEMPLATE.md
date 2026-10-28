@@ -23,7 +23,6 @@
 - [ ] Cursor
 - [ ] Grok Build
 - [ ] OpenCode
-- [ ] Pi
 - [ ] Antigravity
 
 ## Test plan

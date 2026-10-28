@@ -260,7 +260,7 @@ struct PaletteCatalog {
                 trailing: keys(.accessMode),
                 keywords: ["access", "permissions", "approval", "approve", "full access", "ask", "mode"],
                 behavior: .submenu(accessMenu(thread))))
-        // fx has no plan mode (T3 Code hides its toggle).
+        // An agent without a plan mode gets no toggle (T3 Code hides it).
         if provider.supportsPlanMode {
             let planning = thread.interactionMode == .plan
             let mode: InteractionMode = planning ? .build : .plan

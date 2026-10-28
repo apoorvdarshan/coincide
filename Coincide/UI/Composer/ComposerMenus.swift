@@ -84,7 +84,7 @@ enum ComposerMenus {
         return menu
     }
 
-    /// The access modes `provider` offers (fx has no full access), with the one the thread runs in checked.
+    /// The access modes `provider` offers, with the one the thread runs in checked.
     static func accessMenu(current: AccessMode, provider: ProviderKind, target: AnyObject, action: Selector) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false

@@ -527,13 +527,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             footer.effortButton.isHidden = true
         }
 
-        // The mode the agent runs the thread in: an fx thread set to full access runs Ask for approval.
+        // The mode the agent runs the thread in: one set to an access mode the agent does not offer runs Ask for
+        // approval.
         let access = provider.accessMode(for: thread.accessMode)
         footer.accessButton.configure(title: access.displayName, symbolName: ComposerMenus.symbolName(for: access), chevron: true)
         footer.accessButton.toolTip = keyBindings.toolTip(ComposerMenus.summary(for: access), for: .accessMode)
         footer.accessButton.setAccessibilityLabel(String(localized: "Access: \(access.displayName)"))
 
-        // fx has no plan mode, so T3 Code hides the toggle and its threads build.
+        // Without a plan mode, T3 Code hides the toggle and the agent's threads build.
         footer.modeButton.isHidden = !provider.supportsPlanMode
         let planning = provider.interactionMode(for: thread.interactionMode) == .plan
         footer.modeButton.configure(
@@ -1030,38 +1031,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
                     entries.map { .file($0) }, emptyText: String(localized: "No matching files or folders."),
                     listLabel: label, above: surface)
             }
-        case .skill:
-            // Only agents that list skills (fx) offer any; for the others `$` stays plain text.
-            guard let thread, let root = store.workingDirectory(for: thread.id) else {
-                suggestions.hide()
-                return
-            }
-            let provider = thread.selection.provider
-            let query = trigger.query
-            suggestionSearch = Task { [weak self] in
-                guard let skills = await self?.skills(for: provider, in: root) else { return }
-                guard let self, !Task.isCancelled, self.trigger?.kind == .skill, self.trigger?.query == query else { return }
-                let matches = ProviderSkill.matching(query, in: skills)
-                if matches.isEmpty {
-                    suggestions.hide()
-                } else {
-                    suggestions.show(
-                        matches.map { .skill($0) }, emptyText: nil, listLabel: String(localized: "Skills"), above: surface)
-                }
-            }
         }
-    }
-
-    /// The `$` menu's skills, kept while the user types instead of scanning the skill folders on every key.
-    private var skillCache: (provider: ProviderKind, root: URL, readAt: Date, skills: [ProviderSkill])?
-
-    private func skills(for provider: ProviderKind, in root: URL) async -> [ProviderSkill] {
-        if let cache = skillCache, cache.provider == provider, cache.root == root, Date().timeIntervalSince(cache.readAt) < 10 {
-            return cache.skills
-        }
-        let skills = await registry.skills(for: provider, workingDirectory: root)
-        skillCache = (provider, root, Date(), skills)
-        return skills
     }
 
     private func choose(_ suggestion: ComposerSuggestion) {
@@ -1079,8 +1049,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             self.trigger = nil
             suggestions.hide()
             perform(command)
-        case .skill(let skill):
-            replace(trigger.range, with: skill.mention + " ")
         }
     }
 
@@ -1214,7 +1182,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         setInteractionMode(thread.interactionMode == .plan ? .build : .plan)
     }
 
-    /// An agent without a plan mode (fx) only builds.
+    /// An agent without a plan mode only builds.
     func setInteractionMode(_ mode: InteractionMode) {
         guard let threadID, let thread, thread.interactionMode != mode,
             mode == .build || thread.selection.provider.supportsPlanMode

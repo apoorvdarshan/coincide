@@ -114,9 +114,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         acpAgents = []
     }
 
-    /// A provider's settings; one the user never changed is on unless the provider starts off (Muse Code).
     public nonisolated func settings(for provider: ProviderKind) -> ProviderSettings {
-        providers[provider] ?? ProviderSettings(isEnabled: provider.isEnabledByDefault)
+        providers[provider] ?? ProviderSettings()
     }
 
     /// The custom ACP agent with instance ID `id`.

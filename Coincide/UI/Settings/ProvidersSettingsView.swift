@@ -446,10 +446,7 @@ private struct ProviderModelsSection: View {
         case .cursor: "claude-sonnet-4-6"
         case .grok: "grok-4.7"
         case .opencode: "openai/gpt-5"
-        case .pi: "anthropic/claude-sonnet-5"
         case .antigravity: "gemini-3-pro"
-        case .fx: "anthropic/claude-sonnet-5.5"
-        case .muse: "muse-spark-1.3-contributor"
         case .acp: "model-id"
         }
     }

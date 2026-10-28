@@ -54,12 +54,7 @@ enum Theme {
         case .cursor: NSColor.systemIndigo
         case .grok: NSColor.systemGray
         case .opencode: NSColor.systemTeal
-        case .pi: NSColor.systemPurple
         case .antigravity: NSColor.systemBlue
-        // fx's glyph is near-black in light mode and near-white in dark.
-        case .fx: NSColor.labelColor
-        // The deep blue of the Meta logo T3 Code shows for Muse Code.
-        case .muse: NSColor(srgbRed: 0, green: 0.39, blue: 0.88, alpha: 1)
         // Each added agent keeps one color of its own, picked from its instance ID.
         case .acp(let id): acpColors[Int(id.utf8.reduce(UInt32(2_166_136_261)) { ($0 ^ UInt32($1)) &* 16_777_619 } % UInt32(acpColors.count))]
         }

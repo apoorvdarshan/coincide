@@ -548,7 +548,7 @@ public final class ThreadRunner {
         if let launch = launches[threadID]?[provider] { return try await join(launch, threadID, provider) }
         guard let thread = store.thread(threadID) else { throw AgentError.notRunning }
         // An access or interaction mode the agent does not offer runs as the one it falls back to (T3 Code's runtime
-        // policy): an fx thread set to full access runs Ask for approval, and one in plan mode builds.
+        // policy; see `ProviderKind.accessModes` and `supportsPlanMode`).
         let launch = AgentLaunch(
             provider: provider, executable: executable, environment: environment, workingDirectory: cwd,
             resumeSessionID: thread.sessions[provider]?.sessionID, selection: thread.selection,

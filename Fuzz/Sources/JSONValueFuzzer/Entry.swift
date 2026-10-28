@@ -1,7 +1,7 @@
 import FuzzSupport
 
 // Fuzzes CoincideKit/Support/JSONValue.swift, which decodes every agent wire protocol (Claude
-// stream-json, Codex and ACP JSON-RPC, OpenCode, Pi).
+// stream-json, Codex and ACP JSON-RPC, OpenCode).
 
 @_cdecl("LLVMFuzzerTestOneInput")
 public func fuzzJSONValue(_ start: UnsafeRawPointer, _ count: Int) -> CInt {

@@ -440,7 +440,7 @@ extension MainWindowController: NSMenuItemValidation {
         case #selector(showAccessPicker(_:)):
             return window?.isVisible == true && splitController.content.chat.canShowComposerPicker(.access)
         case #selector(togglePlanMode(_:)):
-            // fx has no plan mode, so its threads build (T3 Code hides the toggle).
+            // An agent without a plan mode only builds (T3 Code hides the toggle).
             let supportsPlanMode = thread?.selection.provider.supportsPlanMode == true
             menuItem.state = supportsPlanMode && thread?.interactionMode == .plan ? .on : .off
             return supportsPlanMode

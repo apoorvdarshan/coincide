@@ -306,8 +306,8 @@ public struct ACPSessionSetup: Sendable, Hashable {
         configOptions[index].value = .select(current: value, choices: choices)
     }
 
-    /// The option of `category`, preferring the one whose id is `fallbackID`: fx lists its backend (`provider`) in
-    /// the `model` category ahead of the `model` option itself.
+    /// The option of `category`, preferring the one whose id is `fallbackID`: an agent may list another option (its
+    /// backend, say) in the `model` category ahead of the `model` option itself.
     private nonisolated func option(category: String, fallbackID: String) -> ACPConfigOption? {
         configOptions.first { $0.category == category && $0.id == fallbackID && $0.currentValue != nil }
             ?? configOptions.first { $0.category == category && $0.currentValue != nil }
@@ -424,7 +424,7 @@ public enum ACPToolCallContent: Sendable, Hashable {
 /// The fields of a `tool_call` or `tool_call_update`. Only fields present on the wire are set.
 public struct ACPToolCallUpdate: Sendable, Hashable {
     public var id: String
-    /// The agent's name for the tool, which fx sends beside the title (`subagent`, `write_file`).
+    /// The agent's name for the tool, which some agents send beside the title (`write_file`).
     public var name: String?
     public var title: String?
     public var kind: String?

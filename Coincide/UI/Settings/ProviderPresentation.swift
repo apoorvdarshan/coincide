@@ -146,19 +146,9 @@ struct ProviderSetupGuide {
             (nil, "grok login", URL(string: "https://x.ai/cli"), nil)
         case .opencode:
             ("curl -fsSL https://opencode.ai/install | bash", "opencode auth login", URL(string: "https://opencode.ai"), nil)
-        case .pi:
-            ("npm install -g --ignore-scripts @earendil-works/pi-coding-agent", nil,
-             URL(string: "https://www.npmjs.com/package/@earendil-works/pi-coding-agent"),
-             String(localized: "To sign in, run `pi` in Terminal and type `/login`."))
         case .antigravity:
             (nil, nil, URL(string: "https://antigravity.google"),
              String(localized: "Install Antigravity, open it once and sign in with your Google account."))
-        case .fx:
-            ("curl -fsSL https://fx.sh/setup.sh | bash", "fx login", URL(string: "https://fx.sh"), nil)
-        case .muse:
-            (nil, "muse login", URL(string: "https://dev.meta.ai/docs/muse-code"),
-             String(
-                 localized: "Muse Code uses the sign-in `muse login` saves. To use an API key instead, add META_API_KEY under Environment Variables; one set in your login shell is ignored."))
         // An added agent's page has its own install and sign-in sections.
         case .acp:
             (nil, nil, nil, nil)
