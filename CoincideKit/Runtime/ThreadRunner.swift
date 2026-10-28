@@ -172,12 +172,6 @@ public final class ThreadRunner {
         sessionCommands[threadID]?[provider] ?? registry.commands(for: provider)
     }
 
-    /// The transcript item of a provider's tool call, such as the one that started a background task.
-    public func itemID(forToolCall id: String, in threadID: UUID) -> UUID? {
-        guard let item = itemMaps[threadID]?[key(.tool, id)], store.item(item, in: threadID) != nil else { return nil }
-        return item
-    }
-
     private func setBackgroundWork(_ tasks: [BackgroundTask], threadID: UUID, provider: ProviderKind) {
         guard (backgroundWork[threadID]?[provider] ?? []) != tasks else { return }
         backgroundWork[threadID, default: [:]][provider] = tasks.isEmpty ? nil : tasks

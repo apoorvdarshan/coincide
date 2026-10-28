@@ -412,6 +412,17 @@ struct TranscriptBuilderTests {
         #expect(rows[1].kind == .turnHeader(.working(startedAt: Transcript.start)))
     }
 
+    @Test func backgroundWorkShowsOnTheLiveLineOnlyBetweenTurns() {
+        var transcript = Transcript()
+        let user = transcript.add(.user)
+        transcript.add(.assistant)
+        var builder = TranscriptBuilder(items: transcript.items)
+        builder.backgroundWork = (.claude, ["Audit the port"])
+        #expect(layout(builder.build()).last?.kind == .live(.background(.claude, titles: ["Audit the port"])))
+        builder.runningTurnID = user
+        #expect(!layout(builder.build()).contains { $0.kind == .live(.background(.claude, titles: ["Audit the port"])) })
+    }
+
     @Test func aTurnRunningBeforeAQueuedMessageStillShowsLive() {
         var transcript = Transcript()
         let first = transcript.add(.user)
