@@ -55,6 +55,10 @@ import WebKit
         #expect(png.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]))
         #expect((800...1600).contains(NSBitmapImageRep(data: png)?.pixelsWide ?? 0))
 
+        _ = try await session.webView.callAsyncJavaScript("document.title = 'x'.repeat(10000); return true", arguments: [:], in: nil, contentWorld: .page)
+        let bounded = try await command(["action": "read"])
+        #expect(bounded["title"]?.string?.count == 1000)
+
         // A second session has separate storage and page state, even for the same local origin.
         _ = try await session.webView.callAsyncJavaScript("localStorage.setItem('thread', 'first'); return true", arguments: [:], in: nil, contentWorld: .page)
         let second = PreviewSession()

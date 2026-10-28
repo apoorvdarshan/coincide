@@ -106,7 +106,8 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
-        decisionHandler(navigationResponse.canShowMIMEType ? .allow : .cancel)
+        let addressAllowed = navigationResponse.response.url.flatMap { PreviewCommand.url($0.absoluteString) } != nil
+        decisionHandler(navigationResponse.canShowMIMEType && addressAllowed ? .allow : .cancel)
     }
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
@@ -135,16 +136,16 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
         const elements = [...document.querySelectorAll('a,button,input,textarea,select,[role="button"],[contenteditable="true"]')]
             .filter(el => el.getClientRects().length).slice(0, 200).map(el => ({
-                selector: selectorFor(el), tag: el.tagName.toLowerCase(), type: el.type || '',
+                selector: selectorFor(el).slice(0, 4096), tag: el.tagName.toLowerCase(), type: el.type || '',
                 label: (el.getAttribute('aria-label') || el.innerText || el.getAttribute('placeholder') || '').slice(0, 300),
                 value: el.type === 'password' || el.type === 'file' ? '' : String(el.value || '').slice(0, 1000),
                 disabled: !!el.disabled
             }));
-        return {url: location.href, title: document.title, text: (document.body?.innerText || '').slice(0, 30000), elements};
+        return {url: location.href.slice(0, 8192), title: document.title.slice(0, 1000), text: (document.body?.innerText || '').slice(0, 30000), elements};
         """#
     private static let clickScript = #"""
         const el = document.querySelector(selector);
-        if (!el || !el.getClientRects().length || el.disabled) throw new Error('No visible enabled element matches the selector.');
+        if (!el || !el.getClientRects().length || el.disabled || el.type === 'file') throw new Error('No visible enabled element matches the selector.');
         el.scrollIntoView({block: 'center'});
         el.click();
         return {clicked: true};

@@ -38,6 +38,10 @@ import Testing
             #expect(folder.deletingLastPathComponent().path == directory.path)
             return ["title": "Local fixture"]
         }
+        let curl = await ProcessRunner.run(URL(fileURLWithPath: "/usr/bin/curl"),
+            ["--config", access.configuration.path, "--data-binary", #"{"action":"read"}"#], timeout: 5)
+        #expect(curl.succeeded)
+        #expect(JSONValue.parse(Data(curl.stdout.utf8))?["title"]?.string == "Local fixture")
         let config = try String(contentsOf: access.configuration, encoding: .utf8)
         let target = try #require(config.split(separator: "\n").first(where: { $0.hasPrefix("url = ") })?.split(separator: "\"")[1])
         let header = try #require(config.split(separator: "\n").first(where: { $0.contains("Authorization:") })?.split(separator: "\"")[1])
@@ -54,7 +58,7 @@ import Testing
         defer { session.invalidateAndCancel() }
         func status(_ request: URLRequest) async throws -> Int { try await (session.data(for: request).1 as? HTTPURLResponse)?.statusCode ?? 0 }
         #expect(try await status(request) == 200)
-        #expect(commands == [.read])
+        #expect(commands == [.read, .read])
         var altered = request
         altered.setValue("Bearer invalid", forHTTPHeaderField: "Authorization")
         #expect(try await status(altered) == 403)
@@ -67,7 +71,7 @@ import Testing
         altered = request
         altered.url = request.url?.appendingPathComponent("../preview.curl")
         #expect(try await status(altered) == 403)
-        #expect(commands == [.read])
+        #expect(commands == [.read, .read])
         bridge.disable(threadID: id)
         #expect(!FileManager.default.fileExists(atPath: access.configuration.path))
         #expect(try await status(request) == 403)

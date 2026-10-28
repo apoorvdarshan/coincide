@@ -5,7 +5,7 @@ final class PreviewViewController: NSViewController {
     var threadID: UUID? { didSet { if oldValue != threadID, isViewLoaded { showThread() } } }
     private var session: PreviewSession?
     private let content = NSView()
-    private let address = ThemedTextField(placeholder: String(localized: "http://localhost:3000"))
+    private let address = ThemedTextField(placeholder: "http://localhost:3000")
     private let status = NSTextField(wrappingLabelWithString: "")
     private let spinner = NSProgressIndicator()
     private let empty = NSTextField(wrappingLabelWithString: String(localized: "Open a page to preview it beside your conversation."))
