@@ -12,6 +12,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Hashable {
     case antigravity
     /// Vercel's fx (`fx acp`).
     case fx
+    /// Meta's Muse Code (`muse serve`).
+    case muse
 
     public nonisolated var displayName: String {
         switch self {
@@ -23,8 +25,12 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Hashable {
         case .pi: "Pi"
         case .antigravity: "Antigravity"
         case .fx: "fx"
+        case .muse: "Muse Code"
         }
     }
+
+    /// Whether the provider is on before the user changes its setting. Muse Code starts off, as in T3 Code.
+    public nonisolated var isEnabledByDefault: Bool { self != .muse }
 
     /// SF Symbol used in menus and the sidebar.
     public nonisolated var symbolName: String {
@@ -37,6 +43,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Hashable {
         case .pi: "p.circle"
         case .antigravity: "arrow.up.and.down.and.sparkles"
         case .fx: "fx"
+        case .muse: "infinity"
         }
     }
 
@@ -52,8 +59,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Hashable {
         accessModes.contains(mode) ? mode : .approval
     }
 
-    /// Whether the agent has a plan mode (T3 Code's `showInteractionModeToggle`). fx has none.
-    public nonisolated var supportsPlanMode: Bool { self != .fx }
+    /// Whether the agent has a plan mode (T3 Code's `showInteractionModeToggle`). fx and Muse Code have none.
+    public nonisolated var supportsPlanMode: Bool { self != .fx && self != .muse }
 
     /// The interaction mode a thread set to `mode` runs in: without a plan mode, the agent builds.
     public nonisolated func interactionMode(for mode: InteractionMode) -> InteractionMode {

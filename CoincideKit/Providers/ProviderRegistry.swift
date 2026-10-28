@@ -59,6 +59,7 @@ public final class ProviderRegistry {
             PiProvider(),
             ACPProvider(profile: .antigravity),
             ACPProvider(profile: .fx),
+            MuseProvider(),
         ]
     }
 
@@ -130,6 +131,9 @@ public final class ProviderRegistry {
 
     private func environment(for kind: ProviderKind, fresh: Bool) async -> [String: String] {
         var env = fresh ? await shell.freshEnvironment() : await shell.environment()
+        // The provider may leave out what it must not inherit (Muse Code drops a shell's `META_API_KEY`); variables the
+        // user set for it apply afterwards, so theirs always win.
+        if let provider = providers[kind] { env = provider.inheritedEnvironment(env) }
         for (key, value) in store.settings.settings(for: kind).environment { env[key] = value }
         return env
     }

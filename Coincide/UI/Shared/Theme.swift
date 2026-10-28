@@ -58,6 +58,8 @@ enum Theme {
         case .antigravity: NSColor.systemBlue
         // fx's glyph is near-black in light mode and near-white in dark.
         case .fx: NSColor.labelColor
+        // The deep blue of the Meta logo T3 Code shows for Muse Code.
+        case .muse: NSColor(srgbRed: 0, green: 0.39, blue: 0.88, alpha: 1)
         }
     }
 

@@ -18589,6 +18589,118 @@
         }
       }
     },
+    "Agent %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent %lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agente %lld"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agente %lld"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent %lld"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एजेंट %lld"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agen %lld"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agente %lld"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェント %lld"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트 %lld"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent %lld"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent %lld"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agente %lld"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Агент %lld"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajan %lld"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Агент %lld"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "智能体 %lld"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理程式 %lld"
+          }
+        }
+      }
+    },
     "Agent Settings" : {
       "localizations" : {
         "de" : {
@@ -54811,6 +54923,118 @@
         }
       }
     },
+    "Could not start Muse Code: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code konnte nicht gestartet werden: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se ha podido iniciar Muse Code: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo iniciar Muse Code: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de démarrer Muse Code : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code शुरू नहीं हो सका: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidak dapat memulai Muse Code: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossibile avviare Muse Code: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeを起動できませんでした：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code를 시작할 수 없습니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kan Muse Code niet starten: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie udało się uruchomić Muse Code: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível iniciar o Muse Code: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не удалось запустить Muse Code: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code başlatılamadı: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не вдалося запустити Muse Code: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không thể khởi động Muse Code: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法启动 Muse Code：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法啟動 Muse Code：%@"
+          }
+        }
+      }
+    },
     "Could not start OpenCode: %@" : {
       "localizations" : {
         "de" : {
@@ -83587,6 +83811,118 @@
         }
       }
     },
+    "Install Muse Code and run `muse login`." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installiere Muse Code und führe `muse login` aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instala Muse Code y ejecuta `muse login`."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instala Muse Code y ejecuta `muse login`."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installez Muse Code et exécutez `muse login`."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code इंस्टॉल करें और `muse login` चलाएँ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instal Muse Code dan jalankan `muse login`."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installa Muse Code ed esegui `muse login`."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeをインストールし、`muse login`を実行してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code를 설치하고 `muse login`을 실행하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installeer Muse Code en voer `muse login` uit."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zainstaluj Muse Code i uruchom `muse login`."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instale o Muse Code e execute `muse login`."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Установите Muse Code и выполните `muse login`."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code'u yükleyin ve `muse login` komutunu çalıştırın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Установіть Muse Code і виконайте `muse login`."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy cài đặt Muse Code và chạy `muse login`."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "安装 Muse Code 并运行 `muse login`。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "請安裝 Muse Code 並執行 `muse login`。"
+          }
+        }
+      }
+    },
     "Install OpenCode and run `opencode auth login`." : {
       "localizations" : {
         "de" : {
@@ -95766,6 +96102,3148 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "移到行首或行尾"
+          }
+        }
+      }
+    },
+    "Muse Code answered %@ for another command." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat %@ für einen anderen Befehl beantwortet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La respuesta de Muse Code a %@ corresponde a otro comando."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La respuesta de Muse Code a %@ corresponde a otro comando."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La réponse de Muse Code à %@ concerne une autre commande."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ने %@ का जवाब किसी दूसरी कमांड के लिए दिया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code menjawab %@ untuk perintah lain."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La risposta di Muse Code a %@ riguarda un altro comando."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeが別のコマンドに対する%@の応答を返しました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 다른 명령에 대한 %@ 응답을 보냈습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code beantwoordde %@ voor een andere opdracht."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code odpowiedział na %@ dla innego polecenia."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A resposta do Muse Code a %@ pertence a outro comando."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ответ Muse Code на %@ относится к другой команде."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code'un %@ isteğine verdiği yanıt başka bir komuta ait."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Відповідь Muse Code на %@ стосується іншої команди."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code đã trả lời %@ cho một lệnh khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 为另一个命令返回了 %@ 响应。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 針對另一個指令傳回了 %@ 回應。"
+          }
+        }
+      }
+    },
+    "Muse Code answered the compaction with an unexpected status: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat auf das Komprimieren mit einem unerwarteten Status geantwortet: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha respondido a la compactación con un estado inesperado: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code respondió a la compactación con un estado inesperado: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code a répondu au compactage avec un statut inattendu : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ने कॉम्पैक्शन का जवाब अनपेक्षित स्टेटस के साथ दिया: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code merespons pemadatan dengan status tak terduga: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha risposto alla compattazione con uno stato imprevisto: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeが圧縮に対して予期しないステータスを返しました：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 압축 요청에 예기치 않은 상태로 응답했습니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code antwoordde op het comprimeren met een onverwachte status: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code odpowiedział na kompresję nieoczekiwanym statusem: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code respondeu à compactação com um status inesperado: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ответил на сжатие неожиданным статусом: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code sıkıştırmaya beklenmeyen bir durumla yanıt verdi: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code відповів на стискання неочікуваним статусом: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code đã phản hồi việc nén với trạng thái không mong đợi: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 对压缩请求返回了意外的状态：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 對壓縮要求傳回非預期的狀態：%@"
+          }
+        }
+      }
+    },
+    "Muse Code can't take a message for this turn now." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code kann gerade keine Nachricht für diesen Durchgang annehmen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no puede recibir un mensaje para este turno ahora."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no puede recibir un mensaje para este turno ahora."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ne peut pas recevoir de message pour ce tour pour le moment."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code अभी इस टर्न के लिए संदेश नहीं ले सकता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code tidak dapat menerima pesan untuk giliran ini sekarang."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code non può ricevere un messaggio per questo turno in questo momento."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeは現在、このターンでメッセージを受け付けられません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 지금은 이 턴에 메시지를 받을 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code kan nu geen bericht aannemen voor deze beurt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code nie może teraz przyjąć wiadomości w tej turze."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code não pode receber uma mensagem neste turno agora."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code сейчас не может принять сообщение в этот ход."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code şu anda bu tur için mesaj alamıyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code зараз не може прийняти повідомлення для цього ходу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hiện không thể nhận tin nhắn cho lượt này."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 现在无法为本轮接收消息。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 目前無法接收此回合的訊息。"
+          }
+        }
+      }
+    },
+    "Muse Code could not compact the conversation (%@)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code konnte das Gespräch nicht komprimieren (%@)."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no ha podido compactar la conversación (%@)."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no pudo compactar la conversación (%@)."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code n'a pas pu compacter la conversation (%@)."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code बातचीत कॉम्पैक्ट नहीं कर सका (%@)।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code tidak dapat memadatkan percakapan (%@)."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code non è riuscito a compattare la conversazione (%@)."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeは会話を圧縮できませんでした（%@）。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 대화를 압축할 수 없습니다(%@)."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code kan het gesprek niet comprimeren (%@)."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code nie mógł skompresować rozmowy (%@)."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code não conseguiu compactar a conversa (%@)."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не удалось сжать беседу (%@)."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code konuşmayı sıkıştıramadı (%@)."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не вдалося стиснути розмову (%@)."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code không thể nén cuộc hội thoại (%@)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 无法压缩对话（%@）。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 無法壓縮對話內容（%@）。"
+          }
+        }
+      }
+    },
+    "Muse Code could not compact the conversation." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code konnte das Gespräch nicht komprimieren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no ha podido compactar la conversación."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no pudo compactar la conversación."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code n'a pas pu compacter la conversation."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code बातचीत कॉम्पैक्ट नहीं कर सका।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code tidak dapat memadatkan percakapan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code non è riuscito a compattare la conversazione."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeは会話を圧縮できませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 대화를 압축할 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code kan het gesprek niet comprimeren."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code nie mógł skompresować rozmowy."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code não conseguiu compactar a conversa."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не удалось сжать беседу."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code konuşmayı sıkıştıramadı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не вдалося стиснути розмову."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code không thể nén cuộc hội thoại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 无法压缩对话。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 無法壓縮對話內容。"
+          }
+        }
+      }
+    },
+    "Muse Code could not finish the turn." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code konnte den Durchgang nicht abschließen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no ha podido terminar el turno."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no pudo terminar el turno."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code n'a pas pu terminer le tour."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code टर्न पूरा नहीं कर सका।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code tidak dapat menyelesaikan giliran."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code non è riuscito a completare il turno."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeはターンを完了できませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 턴을 마칠 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code kan de beurt niet voltooien."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code nie mógł ukończyć tury."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code não conseguiu concluir o turno."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не удалось завершить ход."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code turu bitiremedi."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не вдалося завершити хід."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code không thể hoàn tất lượt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 无法完成本轮。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 無法完成回合。"
+          }
+        }
+      }
+    },
+    "Muse Code could not read its model catalog. Check your Muse Code installation and run `muse login`." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code konnte seinen Modellkatalog nicht lesen. Prüfe deine Installation von Muse Code und führe `muse login` aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no ha podido leer su catálogo de modelos. Revisa tu instalación de Muse Code y ejecuta `muse login`."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no pudo leer su catálogo de modelos. Revisa tu instalación de Muse Code y ejecuta `muse login`."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code n'a pas pu lire son catalogue de modèles. Vérifiez votre installation de Muse Code et exécutez `muse login`."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code अपना मॉडल कैटलॉग नहीं पढ़ सका। अपना Muse Code इंस्टॉलेशन जाँचें और `muse login` चलाएँ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code tidak dapat membaca katalog modelnya. Periksa instalasi Muse Code Anda dan jalankan `muse login`."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code non è riuscito a leggere il catalogo dei modelli. Controlla l'installazione di Muse Code ed esegui `muse login`."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeがモデルカタログを読み込めませんでした。Muse Codeのインストールを確認し、`muse login`を実行してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 모델 카탈로그를 읽을 수 없습니다. Muse Code 설치를 확인하고 `muse login`을 실행하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code kan zijn modelcatalogus niet lezen. Controleer je installatie van Muse Code en voer `muse login` uit."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code nie mógł odczytać swojego katalogu modeli. Sprawdź instalację Muse Code i uruchom `muse login`."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code não conseguiu ler seu catálogo de modelos. Verifique sua instalação do Muse Code e execute `muse login`."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не удалось прочитать свой каталог моделей. Проверьте установку Muse Code и выполните `muse login`."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code model kataloğunu okuyamadı. Muse Code kurulumunuzu denetleyin ve `muse login` komutunu çalıştırın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не вдалося прочитати свій каталог моделей. Перевірте встановлення Muse Code і виконайте `muse login`."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code không thể đọc danh mục mô hình của mình. Hãy kiểm tra bản cài đặt Muse Code và chạy `muse login`."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 无法读取其模型目录。请检查 Muse Code 的安装并运行 `muse login`。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 無法讀取其模型目錄。請檢查 Muse Code 的安裝狀態並執行 `muse login`。"
+          }
+        }
+      }
+    },
+    "Muse Code did not answer `muse --version` in time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat `muse --version` nicht rechtzeitig beantwortet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no ha respondido a `muse --version` a tiempo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no respondió a `muse --version` a tiempo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code n'a pas répondu à `muse --version` à temps."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ने समय पर `muse --version` का जवाब नहीं दिया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code tidak menjawab `muse --version` tepat waktu."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code non ha risposto a `muse --version` in tempo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeは時間内に`muse --version`に応答しませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 시간 내에 `muse --version`에 응답하지 않았습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code heeft niet op tijd geantwoord op `muse --version`."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code nie odpowiedział na czas na `muse --version`."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code não respondeu a `muse --version` a tempo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не ответил вовремя на `muse --version`."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code `muse --version` komutuna zamanında yanıt vermedi."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не відповів на `muse --version` вчасно."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code không trả lời `muse --version` kịp thời."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 未及时响应 `muse --version`。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 未及時回應 `muse --version`。"
+          }
+        }
+      }
+    },
+    "Muse Code did not take that answer: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat diese Antwort nicht angenommen: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no ha aceptado esa respuesta: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no aceptó esa respuesta: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code n'a pas accepté cette réponse : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ने वह जवाब स्वीकार नहीं किया: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code tidak menerima jawaban tersebut: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code non ha accettato questa risposta: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeはその回答を受け付けませんでした：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 해당 답변을 받아들이지 않았습니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code heeft dat antwoord niet aangenomen: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code nie przyjął tej odpowiedzi: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code não aceitou essa resposta: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не принял этот ответ: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code bu yanıtı kabul etmedi: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не прийняв цю відповідь: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code không chấp nhận câu trả lời đó: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 未接受该回答：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 未接受該回答：%@"
+          }
+        }
+      }
+    },
+    "Muse Code exited unexpectedly (status %lld)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code wurde unerwartet beendet (Status %lld)."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code se ha cerrado inesperadamente (estado %lld)."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code se cerró inesperadamente (estado %lld)."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code s'est arrêté de façon inattendue (statut %lld)."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code अचानक बंद हो गया (स्टेटस %lld)।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code keluar secara tidak terduga (status %lld)."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code è terminato in modo imprevisto (stato %lld)."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeが予期せず終了しました（ステータス %lld）。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 예기치 않게 종료되었습니다(상태 %lld)."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code is onverwacht gestopt (status %lld)."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code: nieoczekiwane zakończenie działania (status %lld)."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code foi encerrado inesperadamente (status %lld)."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code неожиданно завершил работу (статус %lld)."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code beklenmedik şekilde sonlandı (durum %lld)."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code неочікувано завершив роботу (статус %lld)."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code đã thoát bất ngờ (trạng thái %lld)."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 意外退出（状态 %lld）。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 意外結束（狀態 %lld）。"
+          }
+        }
+      }
+    },
+    "Muse Code has no conversation to compact yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat noch kein Gespräch zum Komprimieren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code aún no tiene ninguna conversación que compactar."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code aún no tiene una conversación que compactar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code n'a pas encore de conversation à compacter."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code के पास अभी कॉम्पैक्ट करने के लिए कोई बातचीत नहीं है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code belum memiliki percakapan untuk dipadatkan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code non ha ancora una conversazione da compattare."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeにはまだ圧縮する会話がありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code에 아직 압축할 대화가 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code heeft nog geen gesprek om te comprimeren."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code nie ma jeszcze rozmowy do skompresowania."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code ainda não tem uma conversa para compactar."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "У Muse Code пока нет беседы для сжатия."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code'un henüz sıkıştırılacak bir konuşması yok."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ще не має розмови для стискання."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code chưa có cuộc hội thoại nào để nén."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 还没有可压缩的对话。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 尚無可壓縮的對話內容。"
+          }
+        }
+      }
+    },
+    "Muse Code is installed but failed to run. Check its executable path." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ist installiert, konnte aber nicht ausgeführt werden. Prüfe den Pfad der ausführbaren Datei."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code está instalado, pero no se ha podido ejecutar. Revisa la ruta del ejecutable."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code está instalado, pero no se pudo ejecutar. Revisa la ruta del ejecutable."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code est installé mais n'a pas pu s'exécuter. Vérifiez le chemin de son exécutable."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code इंस्टॉल है, लेकिन चल नहीं सका। उसका एक्ज़ीक्यूटेबल पाथ जाँचें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code terinstal tetapi gagal dijalankan. Periksa jalur file eksekusinya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code è installato ma non è stato possibile eseguirlo. Controlla il percorso dell'eseguibile."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeはインストールされていますが、実行に失敗しました。実行ファイルのパスを確認してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 설치되어 있지만 실행하지 못했습니다. 실행 파일 경로를 확인하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code is geïnstalleerd, maar kan niet worden uitgevoerd. Controleer het pad van het uitvoerbare bestand."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code jest zainstalowany, ale nie udało się go uruchomić. Sprawdź ścieżkę pliku wykonywalnego."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code está instalado, mas falhou ao ser executado. Verifique o caminho do executável."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code установлен, но не запускается. Проверьте путь к исполняемому файлу."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code yüklü ama çalıştırılamadı. Yürütülebilir dosya yolunu denetleyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code встановлено, але не вдалося запустити. Перевірте шлях до виконуваного файлу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code đã được cài đặt nhưng không chạy được. Hãy kiểm tra đường dẫn tệp thực thi của Muse Code."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 已安装，但无法运行。请检查其可执行文件路径。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 已安裝，但無法執行。請檢查其執行檔路徑。"
+          }
+        }
+      }
+    },
+    "Muse Code is retrying this turn (attempt %lld of %lld): %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code wiederholt diesen Durchgang (Versuch %1$lld von %2$lld): %3$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Muse Code is retrying this turn (attempt %1$lld of %2$lld): %3$@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code está reintentando este turno (intento %1$lld de %2$lld): %3$@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code está reintentando este turno (intento %1$lld de %2$lld): %3$@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code relance ce tour (tentative %1$lld sur %2$lld) : %3$@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code इस टर्न को दोबारा आज़मा रहा है (%2$lld में से प्रयास %1$lld): %3$@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code mencoba lagi giliran ini (percobaan %1$lld dari %2$lld): %3$@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code sta riprovando questo turno (tentativo %1$lld di %2$lld): %3$@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeがこのターンを再試行しています（%2$lld 回中 %1$lld 回目）：%3$@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 이 턴을 재시도하는 중입니다(%2$lld회 중 %1$lld번째 시도): %3$@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code probeert deze beurt opnieuw (poging %1$lld van %2$lld): %3$@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ponawia tę turę (próba %1$lld z %2$lld): %3$@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code está tentando este turno novamente (tentativa %1$lld de %2$lld): %3$@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code повторяет этот ход (попытка %1$lld из %2$lld): %3$@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code bu turu yeniden deniyor (deneme %1$lld/%2$lld): %3$@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code повторює цей хід (спроба %1$lld з %2$lld): %3$@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code đang thử lại lượt này (lần %1$lld trên %2$lld): %3$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 正在重试本轮（第 %1$lld 次，共 %2$lld 次）：%3$@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 正在重試此回合（第 %1$lld 次，共 %2$lld 次）：%3$@"
+          }
+        }
+      }
+    },
+    "Muse Code is still working on the previous message." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code arbeitet noch an der vorherigen Nachricht."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code sigue trabajando en el mensaje anterior."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code sigue trabajando en el mensaje anterior."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code travaille encore sur le message précédent."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code अभी भी पिछले संदेश पर काम कर रहा है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code masih mengerjakan pesan sebelumnya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code sta ancora lavorando al messaggio precedente."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeはまだ前のメッセージを処理中です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 아직 이전 메시지를 처리하는 중입니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code is nog bezig met het vorige bericht."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code nadal pracuje nad poprzednią wiadomością."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code ainda está trabalhando na mensagem anterior."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code всё ещё работает над предыдущим сообщением."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hâlâ önceki mesaj üzerinde çalışıyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code досі працює над попереднім повідомленням."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code vẫn đang xử lý tin nhắn trước."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 仍在处理上一条消息。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 仍在處理上一則訊息。"
+          }
+        }
+      }
+    },
+    "Muse Code lost part of this turn’s events. Send your message again to continue." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat einen Teil der Ereignisse dieses Durchgangs verloren. Sende deine Nachricht erneut, um fortzufahren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha perdido parte de los eventos de este turno. Vuelve a enviar tu mensaje para continuar."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code perdió parte de los eventos de este turno. Vuelve a enviar tu mensaje para continuar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code a perdu une partie des événements de ce tour. Renvoyez votre message pour continuer."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code के इस टर्न के कुछ इवेंट खो गए। जारी रखने के लिए अपना संदेश फिर से भेजें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code kehilangan sebagian peristiwa giliran ini. Kirim pesan Anda lagi untuk melanjutkan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha perso parte degli eventi di questo turno. Invia di nuovo il messaggio per continuare."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeはこのターンのイベントの一部を失いました。続けるには、もう一度メッセージを送信してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 이 턴의 이벤트 일부를 놓쳤습니다. 계속하려면 메시지를 다시 보내십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code is een deel van de gebeurtenissen van deze beurt kwijtgeraakt. Stuur je bericht opnieuw om verder te gaan."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code utracił część zdarzeń tej tury. Wyślij wiadomość ponownie, aby kontynuować."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code perdeu parte dos eventos deste turno. Envie sua mensagem novamente para continuar."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code потерял часть событий этого хода. Чтобы продолжить, отправьте сообщение ещё раз."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code bu turun olaylarının bir kısmını kaybetti. Devam etmek için mesajınızı yeniden gönderin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code втратив частину подій цього ходу. Щоб продовжити, надішліть повідомлення ще раз."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code đã mất một phần sự kiện của lượt này. Hãy gửi lại tin nhắn để tiếp tục."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 丢失了本轮的部分事件。请重新发送消息以继续。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 遺失了此回合的部分事件。請重新傳送訊息以繼續。"
+          }
+        }
+      }
+    },
+    "Muse Code needs text or an image." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code braucht Text oder ein Bild."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code necesita texto o una imagen."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code necesita texto o una imagen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code a besoin d'un texte ou d'une image."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code को टेक्स्ट या इमेज चाहिए।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code memerlukan teks atau gambar."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code richiede un testo o un'immagine."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeにはテキストまたは画像が必要です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code에는 텍스트나 이미지가 필요합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code heeft tekst of een afbeelding nodig."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code potrzebuje tekstu lub obrazu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code precisa de texto ou de uma imagem."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code требуется текст или изображение."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code metin veya bir görüntü gerektiriyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code потрібен текст або зображення."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code cần văn bản hoặc hình ảnh."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 需要文本或图像。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 需要文字或影像。"
+          }
+        }
+      }
+    },
+    "Muse Code resumed a different session." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat eine andere Sitzung fortgesetzt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha reanudado otra sesión."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code reanudó una sesión diferente."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code a repris une autre session."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ने कोई दूसरा सेशन फिर से शुरू किया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code melanjutkan sesi yang berbeda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha ripreso una sessione diversa."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeが別のセッションを再開しました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 다른 세션을 재개했습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code heeft een andere sessie hervat."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code wznowił inną sesję."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code retomou uma sessão diferente."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code возобновил другую сессию."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code farklı bir oturumu sürdürdü."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code відновив іншу сесію."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code đã tiếp tục một phiên khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 恢复了另一个会话。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 恢復了另一個工作階段。"
+          }
+        }
+      }
+    },
+    "Muse Code returned a model catalog of another provider." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat den Modellkatalog eines anderen Anbieters zurückgegeben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha devuelto el catálogo de modelos de otro proveedor."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code devolvió un catálogo de modelos de otro proveedor."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code a renvoyé le catalogue de modèles d'un autre fournisseur."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ने किसी दूसरे प्रोवाइडर का मॉडल कैटलॉग लौटाया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code mengembalikan katalog model dari penyedia lain."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha restituito il catalogo dei modelli di un altro provider."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeが別のプロバイダのモデルカタログを返しました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 다른 제공자의 모델 카탈로그를 반환했습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code gaf een modelcatalogus van een andere aanbieder terug."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code zwrócił katalog modeli innego dostawcy."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code retornou um catálogo de modelos de outro provedor."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code вернул каталог моделей другого провайдера."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code başka bir sağlayıcının model kataloğunu döndürdü."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code повернув каталог моделей іншого провайдера."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code đã trả về danh mục mô hình của một nhà cung cấp khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 返回了另一个提供商的模型目录。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 傳回了另一個供應商的模型目錄。"
+          }
+        }
+      }
+    },
+    "Muse Code returned an error." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat einen Fehler zurückgegeben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha devuelto un error."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code devolvió un error."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code a renvoyé une erreur."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ने त्रुटि लौटाई।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code mengembalikan kesalahan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha restituito un errore."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeがエラーを返しました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 오류를 반환했습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code gaf een fout."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code zwrócił błąd."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code retornou um erro."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code вернул ошибку."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code bir hata döndürdü."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code повернув помилку."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code đã trả về lỗi."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 返回了错误。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 傳回錯誤。"
+          }
+        }
+      }
+    },
+    "Muse Code returned no models. Run `muse login`, then check again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat keine Modelle zurückgegeben. Führe `muse login` aus und prüfe dann erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no ha devuelto ningún modelo. Ejecuta `muse login` y comprueba de nuevo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no devolvió ningún modelo. Ejecuta `muse login` y vuelve a verificar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code n'a renvoyé aucun modèle. Exécutez `muse login`, puis vérifiez à nouveau."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ने कोई मॉडल नहीं लौटाया। `muse login` चलाएँ, फिर दोबारा जाँचें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code tidak mengembalikan model apa pun. Jalankan `muse login`, lalu periksa lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code non ha restituito alcun modello. Esegui `muse login`, quindi controlla di nuovo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeがモデルを返しませんでした。`muse login`を実行してから、もう一度確認してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 모델을 반환하지 않았습니다. `muse login`을 실행한 다음 다시 확인하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code gaf geen modellen terug. Voer `muse login` uit en controleer het dan opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code nie zwrócił żadnych modeli. Uruchom `muse login`, a następnie sprawdź ponownie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code não retornou nenhum modelo. Execute `muse login` e verifique novamente."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не вернул ни одной модели. Выполните `muse login` и проверьте снова."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hiç model döndürmedi. `muse login` komutunu çalıştırın, sonra yeniden denetleyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не повернув жодної моделі. Виконайте `muse login` і перевірте знову."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code không trả về mô hình nào. Hãy chạy `muse login`, rồi kiểm tra lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 未返回任何模型。请运行 `muse login`，然后再次检查。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 未傳回任何模型。請執行 `muse login`，然後再次檢查。"
+          }
+        }
+      }
+    },
+    "Muse Code returned no turn id." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat keine Turn-ID zurückgegeben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no ha devuelto ningún ID de turno."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code no devolvió ningún ID de turno."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code n'a renvoyé aucun ID de tour."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ने कोई टर्न ID नहीं लौटाई।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code tidak mengembalikan ID giliran."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code non ha restituito alcun ID turno."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse CodeがターンIDを返しませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 턴 ID를 반환하지 않았습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code gaf geen turn-ID terug."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code nie zwrócił identyfikatora tury."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code não retornou um ID de turno."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не вернул ID хода."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code tur kimliği döndürmedi."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code не повернув ID ходу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code không trả về ID lượt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 未返回轮次 ID。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 未傳回回合 ID。"
+          }
+        }
+      }
+    },
+    "Muse Code started a different session than the one asked for." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code hat eine andere Sitzung als die angeforderte gestartet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha iniciado una sesión distinta de la solicitada."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code inició una sesión distinta de la solicitada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code a démarré une autre session que celle demandée."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ने माँगे गए सेशन के बजाय कोई दूसरा सेशन शुरू किया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code memulai sesi yang berbeda dari yang diminta."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code ha avviato una sessione diversa da quella richiesta."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeが要求されたものとは別のセッションを開始しました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 요청한 세션과 다른 세션을 시작했습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code heeft een andere sessie gestart dan gevraagd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code rozpoczął inną sesję niż żądana."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code iniciou uma sessão diferente da solicitada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code начал сессию, отличную от запрошенной."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code istenenden farklı bir oturum başlattı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code розпочав іншу сесію, ніж було запитано."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code đã bắt đầu một phiên khác với phiên được yêu cầu."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 开始的会话与请求的会话不同。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 開始的工作階段與所要求的不同。"
+          }
+        }
+      }
+    },
+    "Muse Code stopped." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code wurde gestoppt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code se ha detenido."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code se detuvo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code s'est arrêté."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code रुक गया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code berhenti."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code si è arrestato."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeが停止しました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code가 중지되었습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code is gestopt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code został zatrzymany."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code parou."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code остановился."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code durdu."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code зупинився."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code đã dừng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 已停止。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 已停止。"
+          }
+        }
+      }
+    },
+    "Muse Code to answer %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "die Antwort von Muse Code auf %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "que Muse Code responda a %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "que Muse Code responda a %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "que Muse Code réponde à %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code के %@ का जवाब देने"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code menjawab %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "una risposta di Muse Code a %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeの%@への応答"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code의 %@ 응답"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "het antwoord van Muse Code op %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "odpowiedź Muse Code na %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "o Muse Code responder a %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ответа Muse Code на %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code'un %@ isteğini yanıtlaması"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "відповіді Muse Code на %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code trả lời %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 响应 %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 回應 %@"
+          }
+        }
+      }
+    },
+    "Muse Code usage limit reached. It resets %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nutzungslimit von Muse Code erreicht. Es wird am %@ zurückgesetzt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se ha alcanzado el límite de uso de Muse Code. Se restablece el %@."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se alcanzó el límite de uso de Muse Code. Se restablece el %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Limite d'utilisation de Muse Code atteinte. Elle sera réinitialisée le %@."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code की उपयोग सीमा पूरी हो गई। रीसेट: %@।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batas penggunaan Muse Code tercapai. Batas direset pada %@."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Limite di utilizzo di Muse Code raggiunto. Si ripristina il %@."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeの使用量の上限に達しました。%@にリセットされます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 사용량 한도에 도달했습니다. %@에 초기화됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gebruikslimiet van Muse Code bereikt. De limiet wordt gereset op %@."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osiągnięto limit użycia Muse Code. Limit zostanie zresetowany %@."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Limite de uso do Muse Code atingido. Ele será redefinido em %@."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Достигнут лимит использования Muse Code. Сброс: %@."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code kullanım limitine ulaşıldı. Limit %@ tarihinde sıfırlanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Досягнуто ліміту використання Muse Code. Скидання: %@."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã đạt giới hạn sử dụng của Muse Code. Giới hạn sẽ đặt lại vào %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已达到 Muse Code 用量上限。将于 %@ 重置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已達到 Muse Code 用量上限。將於 %@ 重設。"
+          }
+        }
+      }
+    },
+    "Muse Code usage limit reached. Try again later." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nutzungslimit von Muse Code erreicht. Versuche es später erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se ha alcanzado el límite de uso de Muse Code. Vuelve a intentarlo más tarde."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se alcanzó el límite de uso de Muse Code. Inténtalo más tarde."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Limite d'utilisation de Muse Code atteinte. Réessayez plus tard."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code की उपयोग सीमा पूरी हो गई। बाद में दोबारा कोशिश करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batas penggunaan Muse Code tercapai. Coba lagi nanti."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Limite di utilizzo di Muse Code raggiunto. Riprova più tardi."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeの使用量の上限に達しました。しばらくしてからもう一度お試しください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 사용량 한도에 도달했습니다. 나중에 다시 시도하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gebruikslimiet van Muse Code bereikt. Probeer het later opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Osiągnięto limit użycia Muse Code. Spróbuj ponownie później."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Limite de uso do Muse Code atingido. Tente novamente mais tarde."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Достигнут лимит использования Muse Code. Повторите попытку позже."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code kullanım limitine ulaşıldı. Daha sonra yeniden deneyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Досягнуто ліміту використання Muse Code. Спробуйте пізніше."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã đạt giới hạn sử dụng của Muse Code. Hãy thử lại sau."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已达到 Muse Code 用量上限。请稍后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已達到 Muse Code 用量上限。請稍後再試。"
+          }
+        }
+      }
+    },
+    "Muse Code uses the sign-in `muse login` saves. To use an API key instead, add META_API_KEY under Environment Variables; one set in your login shell is ignored." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code verwendet die Anmeldung, die `muse login` speichert. Um stattdessen einen API-Schlüssel zu verwenden, füge META_API_KEY unter „Umgebungsvariablen“ hinzu; ein in deiner Login-Shell gesetzter Schlüssel wird ignoriert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code usa el inicio de sesión que guarda `muse login`. Para usar una clave de API en su lugar, añade META_API_KEY en Variables de entorno; la que se defina en tu shell de inicio de sesión se ignora."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code usa el inicio de sesión que guarda `muse login`. Para usar una clave de API en su lugar, agrega META_API_KEY en Variables de entorno; se ignora la que esté definida en tu shell de inicio de sesión."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code utilise la connexion enregistrée par `muse login`. Pour utiliser plutôt une clé API, ajoutez META_API_KEY dans Variables d'environnement ; une clé définie dans votre shell de connexion est ignorée."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code वही साइन इन इस्तेमाल करता है जो `muse login` सेव करता है। इसके बजाय API की इस्तेमाल करने के लिए, एनवायरनमेंट वेरिएबल में META_API_KEY जोड़ें; आपके लॉगिन शेल में सेट की गई की को अनदेखा किया जाता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code menggunakan info masuk yang disimpan oleh `muse login`. Untuk menggunakan kunci API sebagai gantinya, tambahkan META_API_KEY di Variabel Lingkungan; yang diatur di shell login Anda akan diabaikan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code usa l'accesso salvato da `muse login`. Per usare invece una chiave API, aggiungi META_API_KEY in Variabili d'ambiente; quella impostata nella shell di login viene ignorata."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Codeは`muse login`で保存されたサインイン情報を使用します。代わりにAPIキーを使用するには、“環境変数”にMETA_API_KEYを追加してください。ログインシェルで設定したものは無視されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code는 `muse login`이 저장한 로그인 정보를 사용합니다. 대신 API 키를 사용하려면 “환경 변수”에 META_API_KEY를 추가하십시오. 로그인 셸에 설정된 값은 무시됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code gebruikt de login die `muse login` opslaat. Wil je in plaats daarvan een API-sleutel gebruiken, voeg dan META_API_KEY toe bij Omgevingsvariabelen; een sleutel die in je inlogshell is ingesteld, wordt genegeerd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code korzysta z logowania zapisanego przez `muse login`. Aby zamiast tego użyć klucza API, dodaj META_API_KEY w sekcji Zmienne środowiskowe; klucz ustawiony w Twojej powłoce logowania jest ignorowany."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse Code usa o login salvo pelo `muse login`. Para usar uma chave de API em vez disso, adicione META_API_KEY em Variáveis de Ambiente; uma definida no seu shell de login é ignorada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code использует вход, сохранённый командой `muse login`. Чтобы вместо этого использовать ключ API, добавьте META_API_KEY в разделе «Переменные окружения»; ключ, заданный в оболочке входа, игнорируется."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code, `muse login` komutunun kaydettiği girişi kullanır. Bunun yerine API anahtarı kullanmak için Ortam Değişkenleri bölümüne META_API_KEY ekleyin; giriş kabuğunuzda ayarlanan anahtar yok sayılır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code використовує вхід, збережений командою `muse login`. Щоб натомість використовувати ключ API, додайте META_API_KEY у розділі «Змінні середовища»; ключ, заданий в оболонці входу, ігнорується."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code sử dụng thông tin đăng nhập mà `muse login` lưu lại. Để dùng khóa API thay thế, hãy thêm META_API_KEY trong Biến môi trường; biến được đặt trong shell đăng nhập của bạn sẽ bị bỏ qua."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 使用 `muse login` 保存的登录信息。若要改用 API 密钥，请在“环境变量”中添加 META_API_KEY；在登录 Shell 中设置的值会被忽略。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code 會使用 `muse login` 儲存的登入資訊。若要改用 API 金鑰，請在「環境變數」中加入 META_API_KEY；在登入 shell 中設定的值會被忽略。"
+          }
+        }
+      }
+    },
+    "Muse reported %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse hat %@ gemeldet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse ha informado del estado %@."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse informó el estado %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse a signalé le statut %@."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse ने स्टेटस %@ बताया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse melaporkan %@."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse ha segnalato lo stato %@."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Museが%@を報告しました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse가 %@ 상태를 보고했습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse meldde %@."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse zgłosił: %@."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Muse relatou o status %@."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse сообщил статус %@."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse şu durumu bildirdi: %@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse повідомив статус %@."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse đã báo %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse 报告了 %@ 状态。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse 回報 %@ 狀態。"
           }
         }
       }
@@ -113431,6 +116909,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "選擇要繼續的對話"
+          }
+        }
+      }
+    },
+    "Pick another model, or add one your account can use under Models in Muse Code’s settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wähle ein anderes Modell oder füge unter „Modelle“ in den Einstellungen von Muse Code eines hinzu, das dein Account nutzen kann."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige otro modelo o añade uno que tu cuenta pueda usar en la sección Modelos de los ajustes de Muse Code."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige otro modelo o agrega uno que tu cuenta pueda usar en Modelos, en la configuración de Muse Code."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Choisissez un autre modèle ou ajoutez-en un que votre compte peut utiliser dans la section Modèles des réglages de Muse Code."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कोई दूसरा मॉडल चुनें, या Muse Code की सेटिंग्ज़ के मॉडल सेक्शन में ऐसा मॉडल जोड़ें जिसे आपका खाता इस्तेमाल कर सके।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pilih model lain, atau tambahkan model yang dapat digunakan akun Anda di Model dalam pengaturan Muse Code."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Scegli un altro modello oppure aggiungine uno che il tuo account può usare in Modelli, nelle impostazioni di Muse Code."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "別のモデルを選択するか、Muse Codeの設定の“モデル”で、お使いのアカウントで使用できるモデルを追加してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "다른 모델을 선택하거나 Muse Code 설정의 “모델”에서 계정으로 사용할 수 있는 모델을 추가하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kies een ander model, of voeg bij Modellen in de instellingen van Muse Code een model toe dat je account kan gebruiken."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wybierz inny model lub dodaj w sekcji Modele w ustawieniach Muse Code taki, z którego może korzystać Twoje konto."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escolha outro modelo ou adicione um que sua conta possa usar em Modelos, nos ajustes do Muse Code."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выберите другую модель или добавьте модель, доступную вашей учётной записи, в разделе «Модели» в настройках Muse Code."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Başka bir model seçin veya hesabınızın kullanabileceği bir modeli Muse Code ayarlarındaki Modeller bölümünden ekleyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Виберіть іншу модель або додайте модель, доступну вашому обліковому запису, у розділі «Моделі» в параметрах Muse Code."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy chọn mô hình khác, hoặc thêm một mô hình mà tài khoản của bạn có thể dùng trong mục Mô hình ở cài đặt Muse Code."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请选择其他模型，或在 Muse Code 设置的“模型”中添加你的账户可以使用的模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "請選擇其他模型，或在 Muse Code 設定的「模型」中加入你的帳號可使用的模型。"
           }
         }
       }
@@ -158557,6 +162147,118 @@
         }
       }
     },
+    "The previous Muse Code session could not be resumed, so a new one was started. (%@)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die vorherige Sitzung von Muse Code konnte nicht fortgesetzt werden, daher wurde eine neue gestartet. (%@)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se ha podido reanudar la sesión anterior de Muse Code, así que se ha iniciado una nueva. (%@)"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo reanudar la sesión anterior de Muse Code, así que se inició una nueva. (%@)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La session Muse Code précédente n'a pas pu être reprise : une nouvelle a donc été démarrée. (%@)"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पिछला Muse Code सेशन फिर से शुरू नहीं हो सका, इसलिए नया सेशन शुरू किया गया। (%@)"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sesi Muse Code sebelumnya tidak dapat dilanjutkan, jadi sesi baru dimulai. (%@)"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossibile riprendere la sessione precedente di Muse Code, quindi ne è stata avviata una nuova. (%@)"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "以前のMuse Codeセッションを再開できなかったため、新しいセッションを開始しました。（%@）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이전 Muse Code 세션을 재개할 수 없어 새 세션을 시작했습니다. (%@)"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De vorige sessie van Muse Code kan niet worden hervat, dus er is een nieuwe gestart. (%@)"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie można wznowić poprzedniej sesji Muse Code, więc rozpoczęto nową. (%@)"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível retomar a sessão anterior do Muse Code, então uma nova foi iniciada. (%@)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не удалось возобновить предыдущую сессию Muse Code, поэтому начата новая. (%@)"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Önceki Muse Code oturumu sürdürülemedi, bu yüzden yeni bir oturum başlatıldı. (%@)"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не вдалося відновити попередню сесію Muse Code, тому розпочато нову. (%@)"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không thể tiếp tục phiên Muse Code trước đó, nên đã bắt đầu phiên mới. (%@)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法恢复之前的 Muse Code 会话，因此已开始新会话。（%@）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法恢復先前的 Muse Code 工作階段，因此已開始新的工作階段。（%@）"
+          }
+        }
+      }
+    },
     "The project folder is missing." : {
       "localizations" : {
         "de" : {
@@ -162255,6 +165957,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "此回合的變更已無法取得。"
+          }
+        }
+      }
+    },
+    "This version of Muse Code speaks a protocol Coincide does not support. Update Muse Code." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Version von Muse Code verwendet ein Protokoll, das Coincide nicht unterstützt. Aktualisiere Muse Code."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta versión de Muse Code usa un protocolo que Coincide no admite. Actualiza Muse Code."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta versión de Muse Code usa un protocolo que Coincide no admite. Actualiza Muse Code."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette version de Muse Code utilise un protocole que Coincide ne prend pas en charge. Mettez à jour Muse Code."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code का यह वर्शन ऐसा प्रोटोकॉल इस्तेमाल करता है जिसे Coincide सपोर्ट नहीं करता। Muse Code अपडेट करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Versi Muse Code ini menggunakan protokol yang tidak didukung Coincide. Perbarui Muse Code."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questa versione di Muse Code usa un protocollo che Coincide non supporta. Aggiorna Muse Code."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このバージョンのMuse Codeは、Coincideが対応していないプロトコルを使用しています。Muse Codeをアップデートしてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 버전의 Muse Code는 Coincide에서 지원하지 않는 프로토콜을 사용합니다. Muse Code를 업데이트하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze versie van Muse Code gebruikt een protocol dat Coincide niet ondersteunt. Werk Muse Code bij."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ta wersja Muse Code używa protokołu, którego Coincide nie obsługuje. Zaktualizuj Muse Code."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta versão do Muse Code usa um protocolo que o Coincide não suporta. Atualize o Muse Code."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Эта версия Muse Code использует протокол, который Coincide не поддерживает. Обновите Muse Code."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muse Code'un bu sürümü, Coincide'ın desteklemediği bir protokol kullanıyor. Muse Code'u güncelleyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ця версія Muse Code використовує протокол, який Coincide не підтримує. Оновіть Muse Code."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Phiên bản Muse Code này dùng giao thức mà Coincide không hỗ trợ. Hãy cập nhật Muse Code."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此版本的 Muse Code 使用的协议不受 Coincide 支持。请更新 Muse Code。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此版本的 Muse Code 使用 Coincide 不支援的通訊協定。請更新 Muse Code。"
           }
         }
       }
@@ -174259,6 +178073,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "工作了 %@"
+          }
+        }
+      }
+    },
+    "Workflow" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Workflow"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Flujo de trabajo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Flujo de trabajo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Flux de travail"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "वर्कफ़्लो"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alur kerja"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Workflow"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ワークフロー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "워크플로"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Workflow"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Workflow"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fluxo de trabalho"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Рабочий процесс"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İş akışı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Робочий процес"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quy trình làm việc"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "工作流"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "工作流程"
+          }
+        }
+      }
+    },
+    "Workflow: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Workflow: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Flujo de trabajo: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Flujo de trabajo: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Flux de travail : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "वर्कफ़्लो: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alur kerja: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Workflow: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ワークフロー：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "워크플로: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Workflow: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Workflow: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fluxo de trabalho: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Рабочий процесс: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İş akışı: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Робочий процес: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quy trình làm việc: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "工作流：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "工作流程：%@"
           }
         }
       }
