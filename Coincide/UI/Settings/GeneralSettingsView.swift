@@ -74,6 +74,11 @@ struct GeneralSettingsView: View {
                         Text("Ask before a thread and its history are deleted.")
                     }
                     .settingsRevealable(.confirmDelete, highlighted: highlighted)
+                    Toggle(isOn: model.binding(\.resumesAfterUsageLimit)) {
+                        Text("Resume after usage limits")
+                        Text("When an agent stops at its plan's limit, the thread continues on its own once the limit resets.")
+                    }
+                    .settingsRevealable(.resumeAfterLimit, highlighted: highlighted)
                 }
 
                 Section("New Threads") {
@@ -180,6 +185,7 @@ struct GeneralSettingsView: View {
             settings.sendOnReturn = defaults.sendOnReturn
             settings.followUpBehavior = defaults.followUpBehavior
             settings.generatesThreadTitles = defaults.generatesThreadTitles
+            settings.resumesAfterUsageLimit = defaults.resumesAfterUsageLimit
             settings.showReasoning = defaults.showReasoning
             settings.confirmBeforeDeletingThreads = defaults.confirmBeforeDeletingThreads
             settings.defaultAccessMode = defaults.defaultAccessMode
