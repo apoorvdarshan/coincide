@@ -28,6 +28,7 @@ T3 Code is an Electron app with a Node server behind a web UI. Coincide is built
 - **Fork and rewind.** Fork a thread from any turn, or edit an earlier message and continue from there.
 - **Pull and merge requests** on GitHub, GitLab, Bitbucket, Azure DevOps and Forgejo/Codeberg, through each host's CLI or its web page.
 - **Integrated terminal** per thread, with tabs and splits.
+- **Native browser preview** per thread, with a WebKit page beside the conversation. Enable Agent Control to let an agent with local shell tools navigate, read, click, fill inputs and take screenshots through a private local connection. Browser storage is isolated from your usual browser; control turns off when Coincide quits.
 - **Custom keyboard shortcuts** for every menu command, with conflict warnings.
 - Fast with long histories: thread lists load from a small index and transcripts load only when opened.
 - Notifications when a turn finishes or needs you while Coincide is in the background.

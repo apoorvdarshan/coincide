@@ -18,6 +18,7 @@ final class UIState {
     enum InspectorPanel: String, Codable {
         case diff
         case pullRequests
+        case preview
     }
 
     struct Values: Codable {
@@ -31,6 +32,8 @@ final class UIState {
         var isInspectorOpen = false
         var inspectorPanel = InspectorPanel.diff
         var diffLayout: DiffLayout = .unified
+        /// Last page for each thread; browser storage and agent capabilities are never persisted.
+        var previewAddresses: [String: String] = [:]
         var terminalHeight: Double?
         var isTerminalOpen = false
         /// Bundle identifier of the app the toolbar's "Open in" button uses.
@@ -66,6 +69,7 @@ final class UIState {
             isInspectorOpen = value(.isInspectorOpen, defaults.isInspectorOpen)
             inspectorPanel = value(.inspectorPanel, defaults.inspectorPanel)
             diffLayout = value(.diffLayout, defaults.diffLayout)
+            previewAddresses = value(.previewAddresses, defaults.previewAddresses)
             terminalHeight = value(.terminalHeight, defaults.terminalHeight)
             isTerminalOpen = value(.isTerminalOpen, defaults.isTerminalOpen)
             preferredOpenTarget = value(.preferredOpenTarget, defaults.preferredOpenTarget)

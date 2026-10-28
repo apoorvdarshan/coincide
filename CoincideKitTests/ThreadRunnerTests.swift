@@ -147,6 +147,29 @@ struct ThreadRunnerTests {
         await runner.send(threadID: threadID, text: text)
     }
 
+    @Test func runtimeCapabilitiesReachSendAndSteerWithoutBeingSaved() async throws {
+        runner.ephemeralRuntimeContext = { id in id == threadID ? "<ephemeral>preview capability</ephemeral>" : nil }
+        claude.configure = { $0.supportsSteering = true }
+        let context = [MessageContext(.quote(.init(text: "Keep the form label", provider: .codex))),
+            MessageContext(.file(.init(path: "/tmp/preview-spec.pdf")))]
+        await runner.send(threadID: threadID, text: "Inspect the page", context: context)
+        let session = try #require(claude.last)
+        #expect(session.sent.last?.message.contains("preview capability") == true)
+        #expect(session.sent.last?.message.contains("Keep the form label") == true)
+        #expect(session.sent.last?.filePaths == ["/tmp/preview-spec.pdf"])
+        #expect(items.last(where: { $0.kind == .user })?.context == context)
+        #expect(items.last(where: { $0.kind == .user })?.text == "Inspect the page")
+        _ = await runner.steer(threadID: threadID, text: "Click the button", context: context)
+        #expect(session.steered.last?.message.contains("preview capability") == true)
+        #expect(session.steered.last?.message.contains("Keep the form label") == true)
+        #expect(session.steered.last?.filePaths == ["/tmp/preview-spec.pdf"])
+        #expect(items.last(where: { $0.kind == .user })?.context == context)
+        #expect(items.last(where: { $0.kind == .user })?.text == "Click the button")
+        runner.ephemeralRuntimeContext = nil
+        _ = await runner.steer(threadID: threadID, text: "Access is now off")
+        #expect(session.steered.last?.message == "Access is now off")
+    }
+
     // MARK: Usage limits
 
     private func exhaustLimit(resettingIn seconds: TimeInterval) {

@@ -134,6 +134,10 @@ struct PaletteCatalog {
                     icon: symbol("arrow.triangle.pull"),
                     keywords: ["pull request", "pr", "github", "review", "checks", "merge", "toggle"],
                     behavior: .run { window?.togglePullRequestsPanel(nil) }))
+            items.append(PaletteItem(
+                id: "action:preview", title: split.isPreviewOpen ? String(localized: "Hide Browser Preview") : String(localized: "Show Browser Preview"),
+                icon: symbol("globe"), keywords: ["preview", "browser", "web", "localhost"],
+                behavior: .run { window?.togglePreviewPanel(nil) }))
         }
         if let thread, ThreadRunner.shared.isRunning(thread.id) {
             items.append(

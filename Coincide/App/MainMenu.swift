@@ -161,6 +161,7 @@ final class MainMenu: NSObject, NSMenuDelegate {
         menu.addItem(item(String(localized: "Hide Sidebar"), #selector(MainWindowController.toggleSidebarPanel(_:)), .toggleSidebar))
         menu.addItem(item(String(localized: "Show Terminal"), #selector(MainWindowController.toggleTerminalPanel(_:)), .toggleTerminal))
         menu.addItem(item(String(localized: "Show Diff"), #selector(MainWindowController.toggleDiffPanel(_:)), .toggleDiff))
+        menu.addItem(item(String(localized: "Show Browser Preview"), #selector(MainWindowController.togglePreviewPanel(_:))))
         menu.addItem(item(String(localized: "Show Pull Requests"), #selector(MainWindowController.togglePullRequestsPanel(_:))))
         menu.addItem(.separator())
         menu.addItem(

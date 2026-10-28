@@ -8,7 +8,8 @@ final class MainSplitViewController: NSSplitViewController {
     let content = ChatTerminalSplitViewController()
     let diff = DiffViewController()
     let pullRequests = PullRequestsViewController()
-    private(set) lazy var inspector = InspectorViewController(diff: diff, pullRequests: pullRequests)
+    let preview = PreviewViewController()
+    private(set) lazy var inspector = InspectorViewController(diff: diff, pullRequests: pullRequests, preview: preview)
 
     private var sidebarItem: NSSplitViewItem!
     private var inspectorItem: NSSplitViewItem!
@@ -20,6 +21,7 @@ final class MainSplitViewController: NSSplitViewController {
     var isSidebarOpen: Bool { !sidebarItem.isCollapsed }
     var isDiffOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .diff }
     var isPullRequestsOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .pullRequests }
+    var isPreviewOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .preview }
     /// Called after the sidebar, terminal or diff opens or closes, so the toolbar and menus can follow.
     var onPanelsChanged: (() -> Void)?
 
@@ -94,6 +96,8 @@ final class MainSplitViewController: NSSplitViewController {
         toggleInspector(.diff)
     }
 
+    func togglePreviewPanel() { toggleInspector(.preview) }
+
     func togglePullRequestsPanel() {
         toggleInspector(.pullRequests)
     }
@@ -145,6 +149,7 @@ final class MainSplitViewController: NSSplitViewController {
         content.setThreadID(threadID)
         diff.threadID = threadID
         pullRequests.threadID = threadID
+        preview.threadID = threadID
     }
 }
 
@@ -152,23 +157,25 @@ final class MainSplitViewController: NSSplitViewController {
 /// them. It has no tabs of its own; the rail's buttons choose. A panel not showing is out of the window, so it loads
 /// nothing until it shows again.
 final class InspectorViewController: NSTabViewController {
-    init(diff: DiffViewController, pullRequests: PullRequestsViewController) {
+    init(diff: DiffViewController, pullRequests: PullRequestsViewController, preview: PreviewViewController = PreviewViewController()) {
         super.init(nibName: nil, bundle: nil)
         tabStyle = .unspecified
         transitionOptions = []
         canPropagateSelectedChildViewControllerTitle = false
         addTabViewItem(NSTabViewItem(viewController: diff))
         addTabViewItem(NSTabViewItem(viewController: pullRequests))
-        selectedTabViewItemIndex = UIState.shared.values.inspectorPanel == .pullRequests ? 1 : 0
+        addTabViewItem(NSTabViewItem(viewController: preview))
+        selectedTabViewItemIndex = Self.panels.firstIndex(of: UIState.shared.values.inspectorPanel) ?? 0
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    var panel: UIState.InspectorPanel { selectedTabViewItemIndex == 1 ? .pullRequests : .diff }
+    private static let panels: [UIState.InspectorPanel] = [.diff, .pullRequests, .preview]
+    var panel: UIState.InspectorPanel { Self.panels[selectedTabViewItemIndex] }
 
     func show(_ panel: UIState.InspectorPanel) {
-        selectedTabViewItemIndex = panel == .pullRequests ? 1 : 0
+        selectedTabViewItemIndex = Self.panels.firstIndex(of: panel) ?? 0
         UIState.shared.update { $0.inspectorPanel = panel }
     }
 }

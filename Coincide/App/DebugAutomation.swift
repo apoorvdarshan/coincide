@@ -110,6 +110,7 @@ enum DebugAutomation {
                 case "terminal": window?.toggleTerminalPanel(nil)
                 case "diff": window?.toggleDiffPanel(nil)
                 case "pullRequests": window?.togglePullRequestsPanel(nil)
+                case "preview": window?.togglePreviewPanel(nil)
                 default: log("unknown panel \(value.displayText)")
                 }
             case "settings":
@@ -179,6 +180,10 @@ enum DebugAutomation {
                     continue
                 }
                 if let control = view as? NSControl { control.performClick(nil) } else { _ = view.accessibilityPerformPress() }
+            case "preview":
+                if let id = mainWindow?.selectedThreadID, let address = value.string {
+                    try? PreviewSessions.shared.session(for: id).navigate(address)
+                }
             case "scripts":
                 guard let id = mainWindow?.selectedThreadID, let project = ProjectScripts.shared.project(ofThread: id) else {
                     continue

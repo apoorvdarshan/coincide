@@ -250,6 +250,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         splitController.toggleDiffPanel()
     }
 
+    @objc func togglePreviewPanel(_ sender: Any?) {
+        showWindow(nil)
+        splitController.togglePreviewPanel()
+    }
+
     @objc func togglePullRequestsPanel(_ sender: Any?) {
         showWindow(nil)
         splitController.togglePullRequestsPanel()
@@ -479,6 +484,8 @@ extension MainWindowController: NSMenuItemValidation {
                 splitController.content.isTerminalOpen ? String(localized: "Hide Terminal") : String(localized: "Show Terminal")
         case #selector(toggleDiffPanel(_:)):
             menuItem.title = splitController.isDiffOpen ? String(localized: "Hide Diff") : String(localized: "Show Diff")
+        case #selector(togglePreviewPanel(_:)):
+            menuItem.title = splitController.isPreviewOpen ? String(localized: "Hide Browser Preview") : String(localized: "Show Browser Preview")
         case #selector(addSelectionToComposer(_:)):
             let source = window?.firstResponder as? ComposerSelectionSource
             // Named for what it does to the focused view's selection: quote, add output or comment.
