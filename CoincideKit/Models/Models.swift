@@ -459,6 +459,8 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     public var sessions: [ProviderKind: ProviderSessionRef]
     public var isPinned: Bool
     public var isArchived: Bool
+    /// Hidden from the thread list until then (T3 Code's snooze), unless the agent needs the user first.
+    public var snoozedUntil: Date?
     /// Working directory when the thread runs in its own git worktree.
     public var worktreePath: String?
     public var branch: String?
@@ -509,6 +511,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         sessions = container.lenientProviderMap(ProviderSessionRef.self, forKey: .sessions)
         isPinned = container.lenient(Bool.self, forKey: .isPinned) ?? false
         isArchived = container.lenient(Bool.self, forKey: .isArchived) ?? false
+        snoozedUntil = container.lenient(Date.self, forKey: .snoozedUntil)
         worktreePath = container.lenient(String.self, forKey: .worktreePath)
         branch = container.lenient(String.self, forKey: .branch)
         draft = container.lenient(String.self, forKey: .draft)

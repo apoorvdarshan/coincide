@@ -266,14 +266,14 @@ public final class AppStore {
     /// Changes thread metadata. Use `append` / `updateItem` for transcript changes.
     public func updateThread(_ id: UUID, touch: Bool = false, _ mutate: (inout ChatThread) -> Void) {
         guard var thread = thread(id) else { return }
-        let before = (thread.title, thread.isPinned, thread.isArchived, thread.branch, thread.worktreePath)
+        let before = (thread.title, thread.isPinned, thread.isArchived, thread.branch, thread.worktreePath, thread.snoozedUntil)
         mutate(&thread)
         if touch { thread.updatedAt = Date() }
         loadedThreads[id] = thread
         threadSummaries[id] = ThreadSummary(thread)
         scheduleSave(id)
         notify(.thread(id))
-        let after = (thread.title, thread.isPinned, thread.isArchived, thread.branch, thread.worktreePath)
+        let after = (thread.title, thread.isPinned, thread.isArchived, thread.branch, thread.worktreePath, thread.snoozedUntil)
         if touch || before != after { notify(.threadList) }
     }
 

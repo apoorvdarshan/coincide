@@ -19,6 +19,7 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
     public var interactionMode: InteractionMode
     public var isPinned: Bool
     public var isArchived: Bool
+    public var snoozedUntil: Date?
     public var worktreePath: String?
     public var branch: String?
     /// Unsent composer text is waiting in the thread.
@@ -40,6 +41,7 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
         interactionMode = thread.interactionMode
         isPinned = thread.isPinned
         isArchived = thread.isArchived
+        snoozedUntil = thread.snoozedUntil
         worktreePath = thread.worktreePath
         branch = thread.branch
         hasDraft = !(thread.draft ?? "").isEmpty
@@ -90,6 +92,7 @@ struct ThreadSummaryFile: Decodable {
             branch: container.lenient(String.self, forKey: key("branch")),
             draft: container.lenient(String.self, forKey: key("draft")), createdAt: createdAt)
         thread.updatedAt = container.lenient(Date.self, forKey: key("updatedAt")) ?? createdAt
+        thread.snoozedUntil = container.lenient(Date.self, forKey: key("snoozedUntil"))
         summary = ThreadSummary(thread)
         summary.itemCount = items.count
         summary.hasUserMessages = items.contains { $0.kind == .user }

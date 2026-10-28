@@ -205,7 +205,7 @@ final class SidebarViewController: NSViewController {
         case .thread(let id):
             refreshThreadRow(id)
         case .runState(let id):
-            refreshThreadRow(id)
+            refreshSnoozedThread(id)
             updateRunningTimer()
         case .items, .settings, .providers:
             break
@@ -218,12 +218,18 @@ final class SidebarViewController: NSViewController {
 
     @objc private func activityChanged(_ note: Notification) {
         guard let id = note.userInfo?["threadID"] as? UUID else { return }
+        refreshSnoozedThread(id)
+    }
+
+    private func refreshSnoozedThread(_ id: UUID) {
+        if store.summary(id)?.snoozedUntil != nil { rebuild() }
         refreshThreadRow(id)
     }
 
     // MARK: Tree
 
     private var showsArchived: Bool { UIState.shared.values.showsArchivedThreads }
+    private var showsSnoozed: Bool { UIState.shared.values.showsSnoozedThreads }
 
     /// Recomputes the tree from the store and applies the difference to the outline.
     private func rebuild() {
@@ -233,8 +239,11 @@ final class SidebarViewController: NSViewController {
         openThreadPastCut = nil
         var projectNodes: [SidebarNode] = []
         var allThreadIDs = Set<UUID>()
+        let now = Date()
         for project in store.projects {
-            let all = store.threads(in: project.id, includeArchived: showsArchived)
+            let all = store.threads(in: project.id, includeArchived: showsArchived).filter { thread in
+                showsSnoozed || isSearching || !ThreadSnooze.isHidden(thread, now: now)
+            }
             allThreadIDs.formUnion(all.map(\.id))
             var threads = all
             if isSearching {
@@ -329,10 +338,12 @@ final class SidebarViewController: NSViewController {
         }
     }
 
-    /// When the open thread is deleted or archived away, opens its neighbour in the same project, as T3 does.
+    /// When the open thread is deleted, archived or snoozed away, opens its neighbour in the same project.
     private func handOffSelectionIfNeeded(oldChildren: [ObjectIdentifier: [SidebarNode]]) {
         guard let selected = selectedThreadID else { return }
-        if let thread = store.summary(selected), !thread.isArchived || showsArchived { return }
+        if let thread = store.summary(selected), !thread.isArchived || showsArchived,
+            showsSnoozed || isSearching || !ThreadSnooze.isHidden(thread)
+        { return }
         var fallback: UUID?
         for siblings in oldChildren.values {
             let ids = siblings.compactMap(\.threadID)
@@ -431,6 +442,9 @@ final class SidebarViewController: NSViewController {
             lines.append(String(localized: "Handed off from \(others.map(\.displayName).formatted(.list(type: .and)))"))
         }
         if let label = status.label { lines.append(label) }
+        if let until = thread.snoozedUntil, until > Date() {
+            lines.append(String(localized: "Snoozed until \(until.formatted(date: .abbreviated, time: .shortened))"))
+        }
         if isSearching, let match = messageMatches[thread.id] { lines.append("“\(match)”") }
         let background = ThreadRunner.shared.backgroundTasks(thread.id)
         if !status.isRunning, !background.isEmpty {
@@ -634,6 +648,11 @@ final class SidebarViewController: NSViewController {
         archived.target = self
         archived.state = showsArchived ? .on : .off
         menu.addItem(archived)
+        let snoozed = NSMenuItem(
+            title: String(localized: "Show Snoozed Threads"), action: #selector(toggleShowSnoozed), keyEquivalent: "")
+        snoozed.target = self
+        snoozed.state = showsSnoozed ? .on : .off
+        menu.addItem(snoozed)
         let limitItem = NSMenuItem(title: String(localized: "Threads per Project"), action: nil, keyEquivalent: "")
         let limits = NSMenu()
         for limit in [3, 6, 10, 20, 0] {
@@ -942,6 +961,9 @@ extension SidebarViewController: NSMenuDelegate {
             let archived = item(String(localized: "Show Archived Threads"), #selector(toggleShowArchived))
             archived.state = showsArchived ? .on : .off
             menu.addItem(archived)
+            let snoozed = item(String(localized: "Show Snoozed Threads"), #selector(toggleShowSnoozed))
+            snoozed.state = showsSnoozed ? .on : .off
+            menu.addItem(snoozed)
             menu.addItem(item(String(localized: "Expand All Projects"), #selector(expandAll)))
             menu.addItem(item(String(localized: "Collapse All Projects"), #selector(collapseAll)))
         }
@@ -965,6 +987,20 @@ extension SidebarViewController: NSMenuDelegate {
         addOpenItems(to: menu)
         menu.addItem(item(String(localized: "Copy Thread ID"), #selector(copyThreadID(_:)), id))
         menu.addItem(.separator())
+        if let until = thread.snoozedUntil, until > Date() {
+            menu.addItem(item(String(localized: "Unsnooze"), #selector(unsnoozeFromMenu(_:)), id))
+        } else {
+            let snooze = NSMenuItem(title: String(localized: "Snooze"), action: nil, keyEquivalent: "")
+            let presets = NSMenu(title: snooze.title)
+            for preset in ThreadSnooze.presets() {
+                let entry = item(preset.title, #selector(snoozeFromMenu(_:)))
+                entry.representedObject = (id, preset.date) as (UUID, Date)
+                entry.subtitle = preset.detail
+                presets.addItem(entry)
+            }
+            snooze.submenu = presets
+            menu.addItem(snooze)
+        }
         let archive = item(
             thread.isArchived ? String(localized: "Unarchive") : String(localized: "Archive"), #selector(archiveFromMenu(_:)), id)
         archive.isEnabled = ThreadActions.canArchive(id)
@@ -1048,6 +1084,21 @@ extension SidebarViewController: NSMenuDelegate {
     @objc private func copyThreadID(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID else { return }
         NSPasteboard.general.setText(id.uuidString)
+    }
+
+    @objc private func snoozeFromMenu(_ sender: NSMenuItem) {
+        guard let (id, date) = sender.representedObject as? (UUID, Date) else { return }
+        ThreadSnooze.shared.snooze(id, until: date)
+    }
+
+    @objc private func unsnoozeFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        ThreadSnooze.shared.unsnooze(id)
+    }
+
+    @objc private func toggleShowSnoozed() {
+        UIState.shared.update { $0.showsSnoozedThreads.toggle() }
+        rebuild()
     }
 
     @objc private func archiveFromMenu(_ sender: NSMenuItem) {
