@@ -604,6 +604,37 @@ struct ClaudeMapperTests {
             ])
     }
 
+    @Test func initializeCommandsAreDedupedAndSplitIntoBuiltInsAndSkills() {
+        let commands = ClaudeInitializeInfo.commands(from: [
+            ["name": "compact", "description": "Free up context", "argumentHint": "<instructions>", "builtin": true],
+            ["name": "frontend-design", "description": "Distinctive UI", "argumentHint": ""],
+            ["name": "Compact", "description": "duplicate"],
+            ["name": " ", "description": "nameless"],
+        ])
+        #expect(
+            commands == [
+                ProviderCommand(
+                    name: "compact", description: "Free up context", argumentHint: "<instructions>", kind: .command,
+                    isBuiltIn: true),
+                ProviderCommand(name: "frontend-design", description: "Distinctive UI", kind: .skill),
+            ])
+    }
+
+    @MainActor @Test func aDollarSkillRunsAsASlashCommandInTheLastBlock() {
+        let known: Set = ["review", "commit-commands:commit"]
+        #expect(ClaudeSession.skillDispatch("$review the diff", known: known)! == (nil, "/review the diff"))
+        let dispatch = ClaudeSession.skillDispatch("please $review the diff", known: known)!
+        #expect(dispatch == ("please /review the diff", "/review the diff"))
+        #expect(
+            ClaudeSession.skillDispatch("$review then $commit-commands:commit it", known: known)!
+                == ("/review then /commit-commands:commit it", "/commit-commands:commit it"))
+        #expect(ClaudeSession.skillDispatch("$unknown thing", known: known) == nil)
+        #expect(ClaudeSession.skillDispatch("pay $20 now", known: ["20"]) == nil)
+        #expect(
+            ClaudeSession.promptTexts(message: "please $review it", recap: "recap", ultrathink: true, skills: known)
+                == ["recap", "please /review it", "/review it"])
+    }
+
     @Test func partialInputTitlesAToolEarly() {
         #expect(
             ClaudeTools.partialStringField("file_path", in: #"{"file_path": "/tmp/a \"b\".txt", "conte"#) == "/tmp/a \"b\".txt")

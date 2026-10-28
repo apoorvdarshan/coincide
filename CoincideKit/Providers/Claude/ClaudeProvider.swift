@@ -54,13 +54,13 @@ public final class ClaudeProvider: AgentProvider {
                 message: String(localized: "Claude Code is not signed in. Run `claude auth login` in Terminal, then refresh."))
         }
         // The plan's usage windows come from the same probe that lists the models, which `models` then reuses.
-        let usageLimits =
-            auth.loggedIn && !customEndpoint
-            ? await initializeInfo(executable: executable, environment: environment)?.usageLimits : nil
-        return ProviderStatus(
+        let info = auth.loggedIn ? await initializeInfo(executable: executable, environment: environment) : nil
+        var status = ProviderStatus(
             state: .ready, version: version, executable: executable,
             account: auth.account ?? (customEndpoint ? String(localized: "Custom API endpoint") : nil), message: upgrade,
-            usageLimits: usageLimits)
+            usageLimits: customEndpoint ? nil : info?.usageLimits)
+        status.commands = info?.commands ?? []
+        return status
     }
 
     public func models(status: ProviderStatus, environment: [String: String]) async -> [ModelOption] {
@@ -101,6 +101,8 @@ struct ClaudeInitializeInfo: Sendable {
     var models: [JSONValue]
     var account: JSONValue?
     var permissionMode: String?
+    /// Slash commands, skills and plugin commands, as `/` lists them in Claude Code.
+    var commands: [ProviderCommand]
     /// The plan's usage windows, when the probe read them.
     var usageLimits: UsageLimits?
     /// The model the overage-included bucket of `rate_limit_event` stands for, when the probe read the limits.
@@ -110,6 +112,26 @@ struct ClaudeInitializeInfo: Sendable {
         models = response["models"]?.array ?? []
         account = response["account"]
         permissionMode = response["current_permission_mode"]?.string
+        commands = Self.commands(from: response["commands"]?.array ?? [])
+    }
+
+    /// The `initialize` command list, deduplicated by name. Claude's own commands are built in; the rest (skills,
+    /// custom and plugin commands) are offered as skills too.
+    static func commands(from entries: [JSONValue]) -> [ProviderCommand] {
+        var seen: Set<String> = []
+        return entries.compactMap { entry in
+            guard let name = entry["name"]?.string?.trimmingCharacters(in: .whitespaces), !name.isEmpty,
+                seen.insert(name.lowercased()).inserted
+            else { return nil }
+            let builtIn = entry["builtin"]?.bool == true
+            func text(_ key: String) -> String? {
+                let value = entry[key]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return value?.isEmpty == false ? value : nil
+            }
+            return ProviderCommand(
+                name: name, description: text("description"), argumentHint: text("argumentHint"),
+                kind: builtIn ? .command : .skill, isBuiltIn: builtIn)
+        }
     }
 
     /// The concrete model behind a model value such as `default` or `opus`.

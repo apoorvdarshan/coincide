@@ -73,6 +73,8 @@ final class ClaudeSession: AgentSession {
     private let launch: AgentLaunch
     private let makeTransport: TransportFactory
     private var knownModels: [JSONValue]
+    /// Commands and skills Claude Code offers here, so `$name` in a message can run one.
+    private var commandNames: Set<String> = []
     private var transport: ClaudeTransport?
     private var mapper: ClaudeEventMapper
     private var live: LiveSettings?
@@ -154,7 +156,7 @@ final class ClaudeSession: AgentSession {
             let isNewConversation = sessionID != conversationBefore
             let texts = Self.promptTexts(
                 message: input.message, recap: input.recap(forNewSession: isNewConversation),
-                ultrathink: settings.effort.ultrathink)
+                ultrathink: settings.effort.ultrathink, skills: commandNames)
             let (images, skipped) = ClaudeAttachments.imageBlocks(for: input.imagePaths)
             guard turn?.id == turnID else { return }
             if turn?.interruptRequested == true {
@@ -196,7 +198,8 @@ final class ClaudeSession: AgentSession {
         for move in moves { await move.value }
         // The turn may have ended meanwhile; a message now would start a turn nobody asked for.
         guard !isShutDown, let transport, turn?.id == current.id, turn?.interruptRequested == false else { throw refusal }
-        let texts = Self.promptTexts(message: input.message, recap: nil, ultrathink: live?.effort.ultrathink ?? false)
+        let texts = Self.promptTexts(
+            message: input.message, recap: nil, ultrathink: live?.effort.ultrathink ?? false, skills: commandNames)
         let (images, skipped) = ClaudeAttachments.imageBlocks(for: input.imagePaths)
         for path in skipped {
             emit(.notice(String(localized: "Couldn't attach \((path as NSString).lastPathComponent).")))
@@ -359,6 +362,8 @@ final class ClaudeSession: AgentSession {
             knownModels = info.models
             emit(.modelsDiscovered(ClaudeModelCatalog.models(fromInitialize: info.models)))
         }
+        commandNames = Set(info.commands.map(\.name))
+        if !info.commands.isEmpty { emit(.commandsDiscovered(info.commands)) }
         live = LiveSettings(
             model: config.model, effort: config.effort, requestedMode: config.permissionMode, allowsBypass: config.allowsBypass)
         mapper.notePermissionMode(info.permissionMode)
@@ -887,13 +892,44 @@ final class ClaudeSession: AgentSession {
     /// The text blocks of a user message. A slash command or skill (`/name …`) only runs when it starts the last
     /// text block, so after a recap it travels in a block of its own. Ultrathink is a request to the model, so it
     /// is not added to a command.
-    static func promptTexts(message: String, recap: String?, ultrathink: Bool) -> [String] {
+    static func promptTexts(message: String, recap: String?, ultrathink: Bool, skills: Set<String> = []) -> [String] {
+        if let dispatch = skillDispatch(message, known: skills) {
+            return [recap, dispatch.leading].compactMap { $0?.isEmpty == false ? $0 : nil } + [dispatch.command]
+        }
         if let recap, !recap.isEmpty, message.range(of: #"^/[^\s/]+(\s|$)"#, options: .regularExpression) != nil {
             return [recap, message]
         }
         let prompt = Handoff.compose(message: message, recap: recap)
         return [ultrathink ? ClaudeModelCatalog.applyUltrathink(to: prompt) : prompt]
     }
+
+    /// A message that names skills as `$name` (the composer's skill picker) runs the last one, as T3 Code does:
+    /// Claude expands a skill only when `/name` starts the last text block, and takes everything after the name as its
+    /// arguments. With text before it, the whole message goes first, with each skill written `/name`.
+    static func skillDispatch(_ message: String, known: Set<String>) -> (leading: String?, command: String)? {
+        guard !known.isEmpty, message.contains("$") else { return nil }
+        let text = message as NSString
+        let mentions = skillMention.matches(in: message, range: NSRange(location: 0, length: text.length)).filter {
+            known.contains(text.substring(with: $0.range(at: 2)))
+        }
+        guard let last = mentions.last else { return nil }
+        var converted = message
+        for mention in mentions.reversed() {
+            let range = mention.range(at: 2)
+            converted = (converted as NSString).replacingCharacters(
+                in: NSRange(location: range.location - 1, length: range.length + 1), with: "/" + text.substring(with: range))
+        }
+        let nameRange = last.range(at: 2)
+        let before = text.substring(to: nameRange.location - 1).trimmingCharacters(in: .whitespacesAndNewlines)
+        let after = text.substring(from: NSMaxRange(nameRange))
+        let command = ("/" + text.substring(with: nameRange) + after).trimmingCharacters(in: .whitespacesAndNewlines)
+        let leading = converted.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (before.isEmpty ? nil : leading, command)
+    }
+
+    /// `$name` after a space or at the start, with at least one letter so prices such as `$20` are left alone.
+    private static let skillMention = try! NSRegularExpression(
+        pattern: #"(^|\s)\$(?=[A-Za-z0-9:_-]*[A-Za-z])([A-Za-z0-9][A-Za-z0-9:_-]*)(?=\s|$)"#)
 
     /// Why Claude Code ended on its own, with the last lines it printed to stderr. Nil for a clean exit: status 0
     /// with nothing on stderr.

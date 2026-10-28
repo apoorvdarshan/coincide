@@ -88,6 +88,8 @@ public final class ThreadRunner {
     /// The model of the latest turn, so another model's context window is not kept.
     private var usageModels: [UUID: String] = [:]
     public private(set) var queues: [UUID: [QueuedMessage]] = [:]
+    /// The commands and skills each thread's sessions reported for its folder, by provider.
+    private var sessionCommands: [UUID: [ProviderKind: [ProviderCommand]]] = [:]
     /// What each thread's agents run in the background, by provider (`AgentEvent.backgroundWork`).
     private var backgroundWork: [UUID: [ProviderKind: [BackgroundTask]]] = [:]
     /// Subscription usage each provider's sessions reported, merged over what an earlier check or report read.
@@ -162,6 +164,12 @@ public final class ThreadRunner {
     public func backgroundTasks(_ threadID: UUID) -> [(provider: ProviderKind, task: BackgroundTask)] {
         (backgroundWork[threadID] ?? [:]).sorted { $0.key.rawValue < $1.key.rawValue }
             .flatMap { provider, tasks in tasks.map { (provider, $0) } }
+    }
+
+    /// The commands and skills an agent offers in the thread: what its session there reported, else what it offered
+    /// elsewhere.
+    public func commands(_ threadID: UUID, provider: ProviderKind) -> [ProviderCommand] {
+        sessionCommands[threadID]?[provider] ?? registry.commands(for: provider)
     }
 
     /// The transcript item of a provider's tool call, such as the one that started a background task.
@@ -793,6 +801,9 @@ public final class ThreadRunner {
             store.append(TranscriptItem(kind: .notice, text: text, provider: provider), to: threadID)
         case .backgroundWork(let tasks):
             setBackgroundWork(tasks, threadID: threadID, provider: provider)
+        case .commandsDiscovered(let commands):
+            sessionCommands[threadID, default: [:]][provider] = commands
+            registry.updateCommands(commands, for: provider)
 
         case .agentTurnStarted(let note):
             startAgentTurn(threadID, provider: provider, note: note)

@@ -8,6 +8,7 @@ public final class ProviderRegistry {
     public let providers: [ProviderKind: AgentProvider]
     public private(set) var statuses: [ProviderKind: ProviderStatus] = [:]
     public private(set) var discoveredModels: [ProviderKind: [ModelOption]] = [:]
+    private var discoveredCommands: [ProviderKind: [ProviderCommand]] = [:]
     /// True while any provider is being checked.
     public var isRefreshing: Bool { !running.isEmpty }
 
@@ -89,6 +90,17 @@ public final class ProviderRegistry {
     }
 
     /// Lets a running session update the model list it discovered.
+    /// The commands and skills a provider offers: what its latest session reported, else what its check found.
+    public func commands(for kind: ProviderKind) -> [ProviderCommand] {
+        discoveredCommands[kind] ?? status(kind).commands
+    }
+
+    public func updateCommands(_ commands: [ProviderCommand], for kind: ProviderKind) {
+        guard discoveredCommands[kind] != commands else { return }
+        discoveredCommands[kind] = commands
+        store.notify(.providers)
+    }
+
     public func updateModels(_ models: [ModelOption], for kind: ProviderKind) {
         guard !models.isEmpty else { return }
         discoveredModels[kind] = models
