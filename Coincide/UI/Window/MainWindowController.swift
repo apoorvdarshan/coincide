@@ -5,8 +5,11 @@ import CoincideKit
 /// open thread. Cross-controller requests arrive through `AppEvents`.
 final class MainWindowController: NSWindowController, NSWindowDelegate {
     let splitController = MainSplitViewController()
+    private(set) lazy var root = MainRootViewController(split: splitController)
+    var rail: NavigationRailViewController { root.rail }
     let runStatus = RunStatusView()
     var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
+    let threadTitle = ThreadTitleView()
 
     private let store = AppStore.shared
     private var token: ObservationToken?
@@ -25,11 +28,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.isRestorable = false
         window.tabbingMode = .disallowed
         window.toolbarStyle = .unified
+        // The toolbar shows the title after the thread list (`ThreadTitleView`); the window's would sit over the list.
+        window.titleVisibility = .hidden
         window.minSize = NSSize(width: 820, height: 520)
         let savedFrame = UIState.shared.values.windowFrame
         self.init(window: window)
         shouldCascadeWindows = false
-        window.contentViewController = splitController
+        window.contentViewController = root
         window.toolbar = makeToolbar()
         if let savedFrame {
             window.setFrame(from: savedFrame)
@@ -86,6 +91,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         UIState.shared.update { $0.selectedThreadID = threadID }
         updateTitle()
         updateRunStatus()
+        updateRail()
         if threadID != nil, !isFocusInSidePanel { splitController.content.chat.focusComposer() }
     }
 
@@ -137,6 +143,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         if window.title != title { window.title = title }
         if window.subtitle != subtitle { window.subtitle = subtitle }
+        threadTitle.set(title: title, subtitle: subtitle)
         if window.representedURL != folder { window.representedURL = folder }
     }
 
