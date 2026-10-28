@@ -53,9 +53,15 @@ public protocol ACPAgentFlavor {
 
     /// The session mode that grants `accessMode`, for agents whose permission level is a mode.
     func sessionMode(for accessMode: AccessMode) -> String?
+    /// The agent's reported mode cannot be trusted until a client sets it (fx): the first turn after the session
+    /// opens sets `sessionMode(for:)` even when the agent already reports it, and a session that does not offer that
+    /// mode fails the turn instead of running in another.
+    var enforcesSessionMode: Bool { get }
     /// The model id that keeps the session's current model. It is never sent to the agent.
     var defaultModelID: String { get }
     var defaultModelName: String { get }
+    /// The reasoning effort a turn without one runs at, set through the session's reasoning option.
+    var defaultEffort: String? { get }
     /// Reject models the session does not list instead of letting the agent decide.
     var requiresListedModel: Bool { get }
     /// Switch models (and effort, as `_meta.reasoningEffort`) with the legacy `session/set_model`
@@ -111,6 +117,9 @@ public protocol ACPAgentFlavor {
     /// Reads the plan's usage windows without starting the agent (T3 Code's usage limits), for a probe that found it
     /// ready and while sessions run. Nil when the agent has no plan limits Coincide can read.
     func usageLimits(environment: [String: String]) async -> UsageLimitsOutcome?
+    /// The skills the composer's `$` menu offers for a thread working in `workingDirectory`, found without starting
+    /// the agent.
+    func skills(workingDirectory: URL, environment: [String: String]) async -> [ProviderSkill]
 }
 
 /// Held by a launch that runs from files that must not be removed meanwhile (see
@@ -147,10 +156,14 @@ public enum ACPInterruptStyle: Sendable, Hashable {
 public struct ACPProbe: Sendable {
     public var status: ProviderStatus
     public var models: [ModelOption]
+    /// The model the flavor's default model id stands for (the one `fx status` reports). A turn on the default model
+    /// selects it when the session lists it; nil keeps the session's current model.
+    public var defaultModel: String?
 
-    public nonisolated init(status: ProviderStatus, models: [ModelOption]) {
+    public nonisolated init(status: ProviderStatus, models: [ModelOption], defaultModel: String? = nil) {
         self.status = status
         self.models = models
+        self.defaultModel = defaultModel
     }
 }
 
@@ -209,8 +222,10 @@ extension ACPAgentFlavor {
     public var prefersResume: Bool { false }
 
     public func sessionMode(for accessMode: AccessMode) -> String? { nil }
+    public var enforcesSessionMode: Bool { false }
     public var defaultModelID: String { "default" }
     public var defaultModelName: String { String(localized: "Default") }
+    public var defaultEffort: String? { nil }
     public var requiresListedModel: Bool { false }
     public var selectsModelsWithSetModel: Bool { false }
     public var supportsImagePrompts: Bool { false }
@@ -264,6 +279,7 @@ extension ACPAgentFlavor {
     }
 
     public func usageLimits(environment: [String: String]) async -> UsageLimitsOutcome? { nil }
+    public func skills(workingDirectory: URL, environment: [String: String]) async -> [ProviderSkill] { [] }
 }
 
 /// Shared mapping between ACP permission options and Coincide approval choices.

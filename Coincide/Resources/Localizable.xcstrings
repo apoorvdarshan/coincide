@@ -1833,6 +1833,124 @@
         }
       }
     },
+    "%@ does not offer the “%@” mode this thread’s access needs, so the message was not sent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ bietet den Modus „%2$@“ nicht an, den der Zugriff dieses Threads braucht, daher wurde die Nachricht nicht gesendet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ does not offer the “%2$@” mode this thread’s access needs, so the message was not sent."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ no ofrece el modo “%2$@” que necesita el acceso de esta conversación, así que no se ha enviado el mensaje."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ no ofrece el modo “%2$@” que necesita el acceso de esta conversación, así que no se envió el mensaje."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ ne propose pas le mode « %2$@ » dont l'accès de cette discussion a besoin ; le message n'a donc pas été envoyé."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ वह “%2$@” मोड नहीं देता जिसकी इस थ्रेड के ऐक्सेस को ज़रूरत है, इसलिए संदेश नहीं भेजा गया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ tidak menawarkan mode “%2$@” yang diperlukan akses utas ini, jadi pesan tidak dikirim."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ non offre la modalità “%2$@” richiesta dall'accesso di questo thread, quindi il messaggio non è stato inviato."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@はこのスレッドのアクセスに必要な“%2$@”モードを提供していないため、メッセージは送信されませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@에서 이 스레드의 접근 권한에 필요한 “%2$@” 모드를 제공하지 않아 메시지를 보내지 않았습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ biedt de modus “%2$@” niet aan die de toegang van deze thread nodig heeft, dus het bericht is niet verstuurd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ nie oferuje trybu „%2$@”, którego wymaga dostęp tego wątku, więc wiadomość nie została wysłana."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ não oferece o modo “%2$@” de que o acesso desta conversa precisa, então a mensagem não foi enviada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ не предлагает режим «%2$@», который нужен для доступа этого чата, поэтому сообщение не отправлено."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@, bu sohbetin erişiminin gerektirdiği “%2$@” modunu sunmuyor, bu yüzden mesaj gönderilmedi."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ не пропонує режим «%2$@», потрібний для доступу цього чату, тому повідомлення не надіслано."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ không cung cấp chế độ “%2$@” mà quyền truy cập của luồng này cần, nên tin nhắn chưa được gửi."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ 未提供此对话的访问权限所需的“%2$@”模式，因此未发送消息。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ 未提供此對話的取用權限所需的「%2$@」模式，因此未傳送訊息。"
+          }
+        }
+      }
+    },
     "%@ exited unexpectedly (status %d)." : {
       "localizations" : {
         "de" : {
@@ -27051,6 +27169,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "附加影像"
+          }
+        }
+      }
+    },
+    "Auto" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automatisch"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automático"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automático"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auto"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्वचालित"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otomatis"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automatico"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自動"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "자동"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automatisch"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automatyczny"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automático"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Автоматический"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otomatik"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Автоматичний"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tự động"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自動"
           }
         }
       }
@@ -83581,6 +83811,118 @@
         }
       }
     },
+    "Install fx and run `fx login`." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installiere fx und führe `fx login` aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instala fx y ejecuta `fx login`."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instala fx y ejecuta `fx login`."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installez fx et exécutez `fx login`."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx इंस्टॉल करें और `fx login` चलाएँ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instal fx dan jalankan `fx login`."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installa fx ed esegui `fx login`."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fxをインストールし、`fx login`を実行してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx를 설치하고 `fx login`을 실행하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installeer fx en voer `fx login` uit."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zainstaluj fx i uruchom `fx login`."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instale o fx e execute `fx login`."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Установите fx и выполните `fx login`."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx'i yükleyin ve `fx login` komutunu çalıştırın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Установіть fx і виконайте `fx login`."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy cài đặt fx và chạy `fx login`."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "安装 fx 并运行 `fx login`。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "請安裝 fx 並執行 `fx login`。"
+          }
+        }
+      }
+    },
     "Install the Azure CLI (az) with its azure-devops extension and run “az login” to create pull requests." : {
       "localizations" : {
         "de" : {
@@ -116005,6 +116347,118 @@
         }
       }
     },
+    "Project skill" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Projekt-Skill"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill del proyecto"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill del proyecto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill du projet"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "प्रोजेक्ट स्किल"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill proyek"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill del progetto"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プロジェクトのスキル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "프로젝트 스킬"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Projectskill"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Umiejętność projektu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill do projeto"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Навык проекта"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Proje becerisi"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Навичка проєкту"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kỹ năng của dự án"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "项目技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "專案技能"
+          }
+        }
+      }
+    },
     "Projects" : {
       "localizations" : {
         "de" : {
@@ -144297,6 +144751,118 @@
         }
       }
     },
+    "Skills" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skills"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skills"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skills"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skills"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्किल"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スキル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "스킬"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skills"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Umiejętności"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skills"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Навыки"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beceriler"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Навички"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kỹ năng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能"
+          }
+        }
+      }
+    },
     "Smart Copy/Paste" : {
       "localizations" : {
         "de" : {
@@ -169983,6 +170549,118 @@
         }
       }
     },
+    "User skill" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Benutzer-Skill"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill del usuario"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill del usuario"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill de l'utilisateur"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "उपयोगकर्ता स्किल"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill pengguna"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill dell'utente"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ユーザーのスキル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사용자 스킬"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gebruikersskill"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Umiejętność użytkownika"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill do usuário"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Навык пользователя"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kullanıcı becerisi"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Навичка користувача"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kỹ năng của người dùng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "用户技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用者技能"
+          }
+        }
+      }
+    },
     "Using %@" : {
       "localizations" : {
         "de" : {
@@ -177621,6 +178299,678 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "檔案編輯"
+          }
+        }
+      }
+    },
+    "fx is installed but failed to run." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx ist installiert, konnte aber nicht ausgeführt werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx está instalado, pero no se ha podido ejecutar."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx está instalado, pero no se pudo ejecutar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx est installé mais n'a pas pu s'exécuter."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx इंस्टॉल है, लेकिन चल नहीं सका।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx terinstal tetapi gagal dijalankan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx è installato ma non è stato possibile eseguirlo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fxはインストールされていますが、実行に失敗しました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx가 설치되어 있지만 실행하지 못했습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx is geïnstalleerd, maar kan niet worden uitgevoerd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx jest zainstalowany, ale nie udało się go uruchomić."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O fx está instalado, mas falhou ao ser executado."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx установлен, но не запускается."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx yüklü ama çalıştırılamadı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx встановлено, але не вдалося запустити."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx đã được cài đặt nhưng không chạy được."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 已安装，但无法运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 已安裝，但無法執行。"
+          }
+        }
+      }
+    },
+    "fx is installed but not signed in. Run `fx login`." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx ist installiert, aber nicht angemeldet. Führe `fx login` aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx está instalado, pero no ha iniciado sesión. Ejecuta `fx login`."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx está instalado, pero no tiene una sesión iniciada. Ejecuta `fx login`."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx est installé mais pas connecté. Exécutez `fx login`."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx इंस्टॉल है, लेकिन साइन इन नहीं है। `fx login` चलाएँ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx terinstal tetapi belum masuk. Jalankan `fx login`."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx è installato ma non ha effettuato l'accesso. Esegui `fx login`."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fxはインストールされていますが、サインインしていません。`fx login`を実行してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx가 설치되어 있지만 로그인되어 있지 않습니다. `fx login`을 실행하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx is geïnstalleerd, maar niet ingelogd. Voer `fx login` uit."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx jest zainstalowany, ale niezalogowany. Uruchom `fx login`."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O fx está instalado, mas sem login. Execute `fx login`."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx установлен, но вход не выполнен. Выполните `fx login`."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx yüklü ama giriş yapılmamış. `fx login` komutunu çalıştırın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx встановлено, але вхід не виконано. Виконайте `fx login`."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx đã được cài đặt nhưng chưa đăng nhập. Hãy chạy `fx login`."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 已安装，但未登录。请运行 `fx login`。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 已安裝，但尚未登入。請執行 `fx login`。"
+          }
+        }
+      }
+    },
+    "fx is installed but timed out while running `fx --version`." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx ist installiert, aber bei der Ausführung von `fx --version` ist eine Zeitüberschreitung aufgetreten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx está instalado, pero se ha agotado el tiempo de espera al ejecutar `fx --version`."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx está instalado, pero se agotó el tiempo de espera al ejecutar `fx --version`."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx est installé mais a expiré lors de l'exécution de `fx --version`."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx इंस्टॉल है, लेकिन `fx --version` चलाने पर समय खत्म हो गया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx terinstal tetapi waktu habis saat menjalankan `fx --version`."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx è installato, ma `fx --version` non ha risposto in tempo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fxはインストールされていますが、`fx --version`の実行中にタイムアウトしました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx가 설치되어 있지만 `fx --version` 실행 중에 시간이 초과되었습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx is geïnstalleerd, maar kreeg een time-out bij het uitvoeren van `fx --version`."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx jest zainstalowany, ale przekroczono limit czasu podczas uruchamiania `fx --version`."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O fx está instalado, mas excedeu o tempo limite ao executar `fx --version`."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx установлен, но истекло время ожидания при выполнении `fx --version`."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx yüklü ama `fx --version` çalıştırılırken zaman aşımına uğradı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx встановлено, але під час виконання `fx --version` минув час очікування."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx đã được cài đặt nhưng hết thời gian chờ khi chạy `fx --version`."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 已安装，但运行 `fx --version` 时超时。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 已安裝，但執行 `fx --version` 時逾時。"
+          }
+        }
+      }
+    },
+    "fx is installed, but its models could not be listed, so the list may be incomplete." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx ist installiert, aber seine Modelle konnten nicht aufgelistet werden, daher ist die Liste möglicherweise unvollständig."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx está instalado, pero no se han podido listar sus modelos, así que la lista puede estar incompleta."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx está instalado, pero no se pudieron listar sus modelos, así que la lista puede estar incompleta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx est installé, mais ses modèles n'ont pas pu être listés ; la liste est donc peut-être incomplète."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx इंस्टॉल है, लेकिन उसके मॉडल की सूची नहीं मिल सकी, इसलिए सूची अधूरी हो सकती है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx terinstal, tetapi modelnya tidak dapat dicantumkan, jadi daftarnya mungkin tidak lengkap."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx è installato, ma non è stato possibile elencarne i modelli, quindi l'elenco potrebbe essere incompleto."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fxはインストールされていますが、モデルの一覧を取得できなかったため、一覧が不完全な可能性があります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx가 설치되어 있지만 모델 목록을 가져올 수 없어 목록이 불완전할 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx is geïnstalleerd, maar de modellen konden niet worden opgesomd, dus de lijst is mogelijk onvolledig."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx jest zainstalowany, ale nie udało się pobrać listy jego modeli, więc lista może być niekompletna."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O fx está instalado, mas não foi possível listar os modelos dele, então a lista pode estar incompleta."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx установлен, но не удалось получить список его моделей, поэтому список может быть неполным."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx yüklü ama modelleri listelenemedi, bu yüzden liste eksik olabilir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx встановлено, але не вдалося отримати список його моделей, тому список може бути неповним."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx đã được cài đặt, nhưng không thể liệt kê các mô hình của nó, nên danh sách có thể chưa đầy đủ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 已安装，但无法列出其模型，因此列表可能不完整。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 已安裝，但無法列出其模型，因此清單可能不完整。"
+          }
+        }
+      }
+    },
+    "fx is installed, but its sign-in state could not be read." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx ist installiert, aber sein Anmeldestatus konnte nicht gelesen werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx está instalado, pero no se ha podido leer su estado de inicio de sesión."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx está instalado, pero no se pudo leer su estado de inicio de sesión."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx est installé, mais son état de connexion n'a pas pu être lu."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx इंस्टॉल है, लेकिन उसकी साइन इन स्थिति पढ़ी नहीं जा सकी।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx terinstal, tetapi status masuknya tidak dapat dibaca."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx è installato, ma non è stato possibile leggerne lo stato di accesso."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fxはインストールされていますが、サインイン状態を読み取れませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx가 설치되어 있지만 로그인 상태를 읽을 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx is geïnstalleerd, maar de inlogstatus kon niet worden gelezen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx jest zainstalowany, ale nie udało się odczytać jego stanu logowania."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O fx está instalado, mas não foi possível ler o estado de login dele."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx установлен, но не удалось прочитать состояние входа."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx yüklü ama giriş durumu okunamadı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx встановлено, але не вдалося прочитати стан входу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx đã được cài đặt, nhưng không thể đọc trạng thái đăng nhập của nó."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 已安装，但无法读取其登录状态。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 已安裝，但無法讀取其登入狀態。"
+          }
+        }
+      }
+    },
+    "fx is not signed in. Run `fx login` in a terminal, then try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx ist nicht angemeldet. Führe `fx login` in einem Terminal aus und versuche es dann erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx no ha iniciado sesión. Ejecuta `fx login` en una terminal y vuelve a intentarlo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx no tiene una sesión iniciada. Ejecuta `fx login` en una terminal e inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx n'est pas connecté. Exécutez `fx login` dans un terminal, puis réessayez."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx में साइन इन नहीं है। टर्मिनल में `fx login` चलाएँ, फिर दोबारा कोशिश करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx belum masuk. Jalankan `fx login` di terminal, lalu coba lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx non ha effettuato l'accesso. Esegui `fx login` in un terminale, quindi riprova."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fxにサインインしていません。ターミナルで`fx login`を実行してから、もう一度お試しください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx에 로그인되어 있지 않습니다. 터미널에서 `fx login`을 실행한 후 다시 시도하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx is niet ingelogd. Voer `fx login` uit in een terminal en probeer het opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx nie jest zalogowany. Uruchom `fx login` w terminalu, a następnie spróbuj ponownie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Você não fez login no fx. Execute `fx login` em um terminal e tente novamente."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вход в fx не выполнен. Выполните `fx login` в терминале и повторите попытку."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx'e giriş yapılmamış. Bir terminalde `fx login` komutunu çalıştırın, sonra yeniden deneyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вхід у fx не виконано. Виконайте `fx login` у терміналі й спробуйте ще раз."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx chưa đăng nhập. Hãy chạy `fx login` trong terminal, rồi thử lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 未登录。请在终端中运行 `fx login`，然后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fx 尚未登入。請在終端機中執行 `fx login`，然後再試一次。"
           }
         }
       }

@@ -1,10 +1,11 @@
+import AppKit
 import CoincideKit
 import Foundation
 import Testing
 
 @testable import Coincide
 
-/// `@` file mentions and `/` commands as the composer detects them, with cases from T3 Code's
+/// `@` file mentions, `/` commands and `$` skills as the composer detects them, with cases from T3 Code's
 /// `composerTrigger.test.ts` that apply to Coincide's commands.
 struct ComposerTriggerTests {
     private func detect(_ text: String, cursor: Int? = nil) -> ComposerTrigger? {
@@ -57,6 +58,26 @@ struct ComposerTriggerTests {
         #expect(ComposerTrigger.mention("docs/My File.md") == "@\"docs/My File.md\"")
         #expect(ComposerTrigger.mention("@scope/package.json") == "@@scope/package.json")
     }
+
+    /// `$` names a skill of the thread's agent (fx's `$` menu).
+    @Test func aDollarWordNamesASkill() {
+        #expect(detect("$") == ComposerTrigger(kind: .skill, query: "", range: NSRange(location: 0, length: 1)))
+        #expect(detect("use $rev") == ComposerTrigger(kind: .skill, query: "rev", range: NSRange(location: 4, length: 4)))
+        #expect(detect("$3d-model")?.kind == .skill)
+    }
+
+    /// Amounts are no skills (T3 Code's `isCurrencyAmountQuery`).
+    @Test(arguments: ["$5", "costs $1,200.50", "$3k", "$1e6", "$.5", "$20!"])
+    func amountsAreNoSkill(text: String) {
+        #expect(detect(text) == nil)
+    }
+
+    @Test func skillRowsShowTheDescriptionOrWhereTheSkillComesFrom() {
+        let described = ProviderSkill(name: "review", description: "Reviews a diff\nin depth", path: "/r", scope: .user)
+        #expect(ComposerSuggestionPanel.detail(for: described) == "Reviews a diff")
+        #expect(ComposerSuggestionPanel.detail(for: ProviderSkill(name: "ship", path: "/s", scope: .project)) == "Project skill")
+        #expect(ComposerSuggestionPanel.detail(for: ProviderSkill(name: "ship", path: "/s", scope: .user)) == "User skill")
+    }
 }
 
 struct ComposerCommandTests {
@@ -82,6 +103,13 @@ struct ComposerCommandTests {
     @Test func defaultIsT3CodesNameForBuildMode() {
         #expect(ComposerCommand.matching("default", in: commands) == [.build])
         #expect(ComposerCommand.standalone("/default", in: commands) == .build)
+    }
+
+    /// fx has no plan mode, so its threads get no `/plan` or `/build`.
+    @Test func anAgentWithoutPlanModeOffersNoPlanCommands() {
+        let commands = ComposerCommand.available(agents: [.codex], planMode: false)
+        #expect(commands == [.model, .agent(.codex)])
+        #expect(ComposerCommand.standalone("/plan", in: commands) == nil)
     }
 
     @Test func aMessageThatIsOnlyACommandRunsIt() {
@@ -235,6 +263,7 @@ struct ComposerLabelTests {
         #expect(ComposerMenus.effortTitle("xhigh") == "Extra High")
         #expect(ComposerMenus.effortTitle("extra_high") == "Extra High")
         #expect(ComposerMenus.effortTitle("maximum") == "Max")
+        #expect(ComposerMenus.effortTitle("auto") == "Auto")
         #expect(ComposerMenus.effortTitle("turbo") == "Turbo")
         #expect(ComposerMenus.effortTitle("") == "")
     }
@@ -243,6 +272,17 @@ struct ComposerLabelTests {
         #expect(ComposerMenus.symbolName(for: .fullAccess) == "lock.open")
         #expect(ComposerMenus.symbolName(for: .approval) == "lock")
         #expect(ComposerMenus.summary(for: .fullAccess) != ComposerMenus.summary(for: .approval))
+    }
+
+    /// fx has no full access, so its menu offers Ask for approval alone, checked for a thread set to full access.
+    @Test func theAccessMenuOffersTheAgentsOwnModes() {
+        let action = Selector(("chooseAccess:"))
+        let fx = ComposerMenus.accessMenu(current: .fullAccess, provider: .fx, target: NSObject(), action: action)
+        #expect(fx.items.map { $0.representedObject as? AccessMode } == [.approval])
+        #expect(fx.items.first?.state == .on)
+        let codex = ComposerMenus.accessMenu(current: .fullAccess, provider: .codex, target: NSObject(), action: action)
+        #expect(codex.items.map { $0.representedObject as? AccessMode } == [.fullAccess, .approval])
+        #expect(codex.items.map(\.state) == [.on, .off])
     }
 }
 

@@ -4,7 +4,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15854/badge)](https://www.bestpractices.dev/projects/15854)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/apoorvdarshan/coincide/badge)](https://scorecard.dev/viewer/?uri=github.com/apoorvdarshan/coincide)
 
-A native macOS app for the coding agents you already pay for — **Claude Code, Codex, Cursor, Grok Build, OpenCode, Pi and Antigravity** — in one window, with one model picker, and the ability to **switch agents in the middle of a thread**.
+A native macOS app for the coding agents you already pay for — **Claude Code, Codex, Cursor, Grok Build, OpenCode, Pi, Antigravity and fx** — in one window, with one model picker, and the ability to **switch agents in the middle of a thread**.
 
 Coincide is a native AppKit port of [T3 Code](https://github.com/pingdotgg/t3code). It drives each agent's own command-line tool with the login you already have, so your existing subscriptions keep working. Coincide never sells, proxies or meters tokens.
 
@@ -20,7 +20,7 @@ T3 Code is an Electron app with a Node server behind a web UI. Coincide is built
 - **Switch mid-thread.** Each agent keeps its own native session for the thread. When you switch, the next agent gets a recap of the turns it missed and continues in the same working directory. Switch back and the earlier agent resumes its own session.
 - **Projects and threads** in a sidebar with search, pinning and archiving, plus a ⌘K command palette.
 - **Full access or approvals.** Let agents run freely, or approve each command and file edit. Agents can also ask you questions, which you answer inline.
-- **Plan mode**, image attachments, `@` file mentions, `/` commands (including `/claude`, `/codex`, … to switch agents), queued follow-up messages and per-thread drafts.
+- **Plan mode**, image attachments, `@` file mentions, `/` commands (including `/claude`, `/codex`, … to switch agents), `$` skills for fx, queued follow-up messages and per-thread drafts.
 - **A native transcript** with Markdown, syntax-highlighted code, collapsible work logs per turn, and each reply labelled with the agent and model that wrote it.
 - **Git built in:** a diff inspector for uncommitted changes, the branch and each turn; checkpoints to revert a turn; per-thread worktrees; commit, push and pull requests with agent-written messages.
 - **Steer or queue.** While an agent works, steer the running turn (Claude Code, Codex, OpenCode, Pi) or queue a follow-up; Settings picks which one sending does. The composer shows your plan's usage limits for Claude Code, Codex, Cursor, OpenCode Go, Grok Build and Antigravity.
@@ -45,8 +45,11 @@ Install and sign in to at least one:
 | OpenCode | `opencode serve` HTTP API | [Install](https://opencode.ai), then `opencode auth login` |
 | Pi | `pi --mode rpc` | Install Pi and sign in |
 | Antigravity | Antigravity's ACP runtime | Install Antigravity and sign in with Google |
+| fx | `fx acp` (Agent Client Protocol) | [Install](https://fx.sh) with `curl -fsSL https://fx.sh/setup.sh \| bash`, then `fx login` |
 
 **Full access** runs agents without asking first (for Claude Code that is `--permission-mode bypassPermissions`, the same as T3 Code's full-access mode). Choose **Ask for approval** in the composer to approve each command and file change.
+
+fx offers neither full access nor plan mode, so as in T3 Code its threads always run in fx's Supervised mode: fx asks before it changes files or runs commands. Its model picker starts with **Default**, the model `fx status` reports, and every fx model has an effort setting that starts at Medium. Type `$` in the composer to pick one of the skills fx finds in its skill folders. Another ready agent writes the commit messages and pull request text of an fx thread, since fx keeps every session it opens (with no other agent ready, Coincide falls back to its plain summary).
 
 ## Requirements
 

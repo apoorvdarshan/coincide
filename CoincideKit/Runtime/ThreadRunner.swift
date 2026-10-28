@@ -256,8 +256,8 @@ public final class ThreadRunner {
             let input = AgentTurnInput(
                 message: trimmed, handoffRecap: Handoff.recap(thread: snapshot, provider: provider),
                 newSessionRecap: Handoff.newSessionRecap(thread: snapshot, provider: provider), threadTitle: snapshot.title,
-                imagePaths: imagePaths, selection: selection, accessMode: snapshot.accessMode,
-                interactionMode: snapshot.interactionMode)
+                imagePaths: imagePaths, selection: selection, accessMode: provider.accessMode(for: snapshot.accessMode),
+                interactionMode: provider.interactionMode(for: snapshot.interactionMode))
             turns[threadID]?.isStarting = false
             turns[threadID]?.promptSent = true
             store.notify(.runState(threadID))
@@ -322,8 +322,9 @@ public final class ThreadRunner {
         }
         // The session has seen the whole thread up to this turn, and nothing else can run meanwhile: no recap.
         let input = AgentTurnInput(
-            text: message.text, imagePaths: message.imagePaths, selection: thread.selection, accessMode: thread.accessMode,
-            interactionMode: thread.interactionMode)
+            text: message.text, imagePaths: message.imagePaths, selection: thread.selection,
+            accessMode: turn.provider.accessMode(for: thread.accessMode),
+            interactionMode: turn.provider.interactionMode(for: thread.interactionMode))
         do {
             try await session.steer(input)
         } catch {
@@ -546,10 +547,13 @@ public final class ThreadRunner {
         if let existing = sessions[threadID]?[provider] { return existing }
         if let launch = launches[threadID]?[provider] { return try await join(launch, threadID, provider) }
         guard let thread = store.thread(threadID) else { throw AgentError.notRunning }
+        // An access or interaction mode the agent does not offer runs as the one it falls back to (T3 Code's runtime
+        // policy): an fx thread set to full access runs Ask for approval, and one in plan mode builds.
         let launch = AgentLaunch(
             provider: provider, executable: executable, environment: environment, workingDirectory: cwd,
             resumeSessionID: thread.sessions[provider]?.sessionID, selection: thread.selection,
-            accessMode: thread.accessMode, interactionMode: thread.interactionMode)
+            accessMode: provider.accessMode(for: thread.accessMode),
+            interactionMode: provider.interactionMode(for: thread.interactionMode))
         let session = factory.makeSession(launch)
         launchedAccess[threadID, default: [:]][provider] = launch.accessMode
         session.onEvent = { [weak self, weak session] event in

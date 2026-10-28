@@ -58,6 +58,7 @@ public final class ProviderRegistry {
             OpenCodeProvider(),
             PiProvider(),
             ACPProvider(profile: .antigravity),
+            ACPProvider(profile: .fx),
         ]
     }
 
@@ -87,6 +88,13 @@ public final class ProviderRegistry {
     /// Display name for a selection, falling back to the raw id.
     public func displayName(for selection: ModelSelection) -> String {
         model(for: selection)?.displayName ?? selection.modelID
+    }
+
+    /// The skills the composer's `$` menu offers on `kind` for a thread working in `workingDirectory`; none while the
+    /// provider is not ready.
+    public func skills(for kind: ProviderKind, workingDirectory: URL) async -> [ProviderSkill] {
+        guard status(kind).state == .ready, let provider = providers[kind] else { return [] }
+        return await provider.skills(workingDirectory: workingDirectory, environment: environment(for: kind))
     }
 
     /// Lets a running session update the model list it discovered.
@@ -207,10 +215,13 @@ public final class ProviderRegistry {
         store.notify(.providers)
     }
 
-    /// Picks a usable selection: the requested one if its provider is ready, otherwise the first ready model.
-    public func usableSelection(preferring selection: ModelSelection) -> ModelSelection {
-        if status(selection.provider).state == .ready { return selection }
-        for kind in readyKinds {
+    /// Picks a usable selection: the requested one if its provider is ready, otherwise the first ready model. With
+    /// `writingText`, only providers that support text generation count (fx does not; see
+    /// `ProviderKind.supportsTextGeneration`).
+    public func usableSelection(preferring selection: ModelSelection, writingText: Bool = false) -> ModelSelection {
+        let usable = { (kind: ProviderKind) in !writingText || kind.supportsTextGeneration }
+        if status(selection.provider).state == .ready, usable(selection.provider) { return selection }
+        for kind in readyKinds where usable(kind) {
             if let first = models(for: kind).first {
                 return ModelSelection(provider: kind, modelID: first.modelID, effort: first.defaultEffort)
             }

@@ -80,6 +80,8 @@ public final class ACPSession: AgentSession {
     private let launch: AgentLaunch
     private let flavor: ACPAgentFlavor
     private let makeTransport: ACPTransportFactory
+    /// The model the flavor's default model id stands for (see `ACPProbe.defaultModel`), read for each turn.
+    private let defaultModel: @MainActor () -> String?
 
     private var transport: ACPTransport?
     private var client: ACPClient?
@@ -90,6 +92,8 @@ public final class ACPSession: AgentSession {
     private var launchedAccessMode: AccessMode
     private var accessMode: AccessMode
     private var savedBuild: BuildConfiguration?
+    /// The agent took the session mode Coincide set since the session opened (see `ACPAgentFlavor.enforcesSessionMode`).
+    private var sessionModeSet = false
     /// The reasoning effort last chosen or reported outside the config options (Grok).
     private var legacyEffort: String?
     /// The interaction mode each native session was last told about.
@@ -128,9 +132,18 @@ public final class ACPSession: AgentSession {
     /// When this session last read the plan's usage windows (see `reportUsageLimits`).
     private var usageLimitsRead: Date?
 
-    public init(launch: AgentLaunch, flavor: ACPAgentFlavor, transport: ACPTransportFactory? = nil) {
+    public init(
+        launch: AgentLaunch, flavor: ACPAgentFlavor, transport: ACPTransportFactory? = nil,
+        defaultModel: @escaping @MainActor () -> String? = { nil }
+    ) {
+        // An access or interaction mode the agent does not offer runs as the one it falls back to (fx has no full
+        // access and no plan mode).
+        var launch = launch
+        launch.accessMode = launch.provider.accessMode(for: launch.accessMode)
+        launch.interactionMode = launch.provider.interactionMode(for: launch.interactionMode)
         self.launch = launch
         self.flavor = flavor
+        self.defaultModel = defaultModel
         provider = launch.provider
         makeTransport = transport ?? { executable, arguments, directory, environment in
             ACPProcessTransport(executable: executable, arguments: arguments, workingDirectory: directory, environment: environment)
@@ -148,6 +161,9 @@ public final class ACPSession: AgentSession {
     }
 
     public func send(_ input: AgentTurnInput) async throws {
+        var input = input
+        input.accessMode = provider.accessMode(for: input.accessMode)
+        input.interactionMode = provider.interactionMode(for: input.interactionMode)
         guard !isShutDown else { throw AgentError.notRunning }
         sendGeneration += 1
         let generation = sendGeneration
@@ -442,6 +458,8 @@ public final class ACPSession: AgentSession {
             savedBuild = nil
             legacyEffort = nil
         }
+        // A session opened again (in a new process, too) runs its saved mode until it is told otherwise.
+        sessionModeSet = false
         sessionID = id
         setup = opened
         setup.sessionID = id
@@ -654,7 +672,7 @@ public final class ACPSession: AgentSession {
     private func applySelection(_ selection: ModelSelection, client: ACPClient, sessionID: String) async throws {
         let model = selection.modelID.trimmingCharacters(in: .whitespaces)
         let requested = model.isEmpty || model == flavor.defaultModelID || model == "default" ? nil : model
-        let effort = selection.effort.flatMap { ACPModels.isEffortToken($0) ? $0 : nil }
+        let effort = (selection.effort ?? flavor.defaultEffort).flatMap { ACPModels.isEffortToken($0) ? $0 : nil }
         let legacyState = setup.models ?? initialized?.modelState
 
         if flavor.selectsModelsWithSetModel, let state = legacyState {
@@ -667,12 +685,15 @@ public final class ACPSession: AgentSession {
         }
 
         if let option = setup.modelOption {
-            if let requested, option.currentValue != requested {
-                if flavor.requiresListedModel, !option.offers(requested) {
-                    throw AgentError.providerError(unavailableModelMessage(requested))
+            // The default model is the one the agent's settings name (fx's `fx status` model) when the session lists
+            // it. That model can belong to another of the agent's backends, and then the session keeps its own.
+            let target = requested ?? defaultModel().flatMap { option.offers($0) ? $0 : nil }
+            if let target, option.currentValue != target {
+                if flavor.requiresListedModel, !option.offers(target) {
+                    throw AgentError.providerError(unavailableModelMessage(target))
                 }
-                try await setConfigOption(option.id, requested, client: client, sessionID: sessionID, rejecting: requested)
-                emit(.modelResolved(requested))
+                try await setConfigOption(option.id, target, client: client, sessionID: sessionID, rejecting: target)
+                emit(.modelResolved(target))
             }
         } else if let requested, let state = legacyState, state.currentModelID != requested {
             if flavor.requiresListedModel, !state.availableModels.contains(where: { $0.modelID == requested }) {
@@ -714,15 +735,28 @@ public final class ACPSession: AgentSession {
     /// mode the thread no longer has.
     private func applyAccessMode(_ mode: AccessMode, client: ACPClient, sessionID: String) async throws {
         accessMode = mode
-        guard let target = flavor.sessionMode(for: mode), let modes = setup.effectiveModes, modes.currentModeID != target,
-            modes.availableModes.contains(where: { $0.id == target })
-        else { return }
+        guard let target = flavor.sessionMode(for: mode) else { return }
+        guard let modes = setup.effectiveModes, modes.availableModes.contains(where: { $0.id == target }) else {
+            // Any other mode would not be the access the thread asks for (T3 Code's fx fails before sending).
+            if flavor.enforcesSessionMode {
+                throw AgentError.providerError(
+                    String(
+                        localized:
+                            "\(provider.displayName) does not offer the “\(target)” mode this thread’s access needs, so the message was not sent."
+                    ))
+            }
+            return
+        }
+        // fx reports `ask` on a session it opens but runs its saved default until a client sets the mode.
+        guard modes.currentModeID != target || (flavor.enforcesSessionMode && !sessionModeSet) else { return }
         if savedBuild != nil, Self.isPlanMode(modes.currentModeID) {
             // Plan mode holds the session mode; build mode restores this one.
             savedBuild?.modeID = target
             return
         }
         try await setSessionMode(target, client: client, sessionID: sessionID)
+        // Only a mode the agent took counts, so a failed write goes out again with the next turn.
+        sessionModeSet = true
     }
 
     /// Plan mode switches to the agent's own plan (or architect) mode and mode-like options when

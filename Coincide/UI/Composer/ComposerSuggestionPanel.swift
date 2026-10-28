@@ -1,7 +1,8 @@
 import AppKit
+import CoincideKit
 import UniformTypeIdentifiers
 
-/// The completion list for `@` mentions and `/` commands. It floats above the composer in a borderless
+/// The completion list for `@` mentions, `/` commands and `$` skills. It floats above the composer in a borderless
 /// child window, so the text view keeps keyboard focus while the composer moves the selection.
 final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     var onChoose: ((ComposerSuggestion) -> Void)?
@@ -160,8 +161,23 @@ final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableVie
             cell.show(
                 icon: NSImage(systemSymbolName: command.symbolName, accessibilityDescription: nil), title: command.title,
                 detail: command.summary, tint: tint)
+        case .skill(let skill):
+            cell.show(
+                icon: NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: nil), title: skill.mention,
+                detail: Self.detail(for: skill), tint: .secondaryLabelColor)
         }
         return cell
+    }
+
+    /// The skill's description, or where it comes from (T3 Code's "{scope} skill").
+    static func detail(for skill: ProviderSkill) -> String {
+        if let description = skill.description.flatMap({ $0.split(whereSeparator: \.isNewline).first }) {
+            return String(description)
+        }
+        switch skill.scope {
+        case .project: return String(localized: "Project skill")
+        case .user: return String(localized: "User skill")
+        }
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -175,6 +191,7 @@ final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableVie
             switch item {
             case .file(let entry): entry.path
             case .command(let command): "\(command.title), \(command.summary)"
+            case .skill(let skill): "\(skill.mention), \(Self.detail(for: skill))"
             }
         NSAccessibility.post(
             element: tableView, notification: .announcementRequested,

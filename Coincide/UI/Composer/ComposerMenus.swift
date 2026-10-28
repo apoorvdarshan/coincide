@@ -84,10 +84,12 @@ enum ComposerMenus {
         return menu
     }
 
-    static func accessMenu(current: AccessMode, target: AnyObject, action: Selector) -> NSMenu {
+    /// The access modes `provider` offers (fx has no full access), with the one the thread runs in checked.
+    static func accessMenu(current: AccessMode, provider: ProviderKind, target: AnyObject, action: Selector) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        for mode in AccessMode.allCases {
+        let current = provider.accessMode(for: current)
+        for mode in provider.accessModes {
             let item = NSMenuItem(title: mode.displayName, action: action, keyEquivalent: "")
             item.target = target
             item.representedObject = mode
@@ -118,6 +120,7 @@ enum ComposerMenus {
     static func effortTitle(_ effort: String) -> String {
         switch effort.lowercased() {
         case "none", "off": String(localized: "Off")
+        case "auto": String(localized: "Auto")
         case "minimal": String(localized: "Minimal")
         case "low": String(localized: "Low")
         case "medium": String(localized: "Medium")
