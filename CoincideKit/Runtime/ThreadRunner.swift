@@ -124,6 +124,14 @@ public final class ThreadRunner {
     public var onApprovalRequested: ((UUID, ApprovalRequest) -> Void)?
     /// Called when an agent asks the user questions.
     public var onUserInputRequested: ((UUID, UserInputRequest) -> Void)?
+    /// Per-thread capabilities valid only for this running app. Never saved as user text or queue metadata.
+    public var ephemeralRuntimeContext: ((UUID) -> String?)?
+
+    private func runtimeMessage(_ message: String, threadID: UUID) -> String {
+        guard let context = ephemeralRuntimeContext?(threadID), !context.isEmpty else { return message }
+        return message + "\n\n" + context
+    }
+
     /// Called when an agent is slow to start, which usually means macOS is waiting on a permission prompt.
     public var onSlowStart: ((UUID, ProviderKind) -> Void)?
 
@@ -327,7 +335,7 @@ public final class ThreadRunner {
             var snapshot = current
             snapshot.items = Array(current.items.prefix(userIndex))
             let input = AgentTurnInput(
-                message: trimmed, handoffRecap: Handoff.recap(thread: snapshot, provider: provider),
+                message: runtimeMessage(trimmed, threadID: threadID), handoffRecap: Handoff.recap(thread: snapshot, provider: provider),
                 newSessionRecap: Handoff.newSessionRecap(thread: snapshot, provider: provider), threadTitle: snapshot.title,
                 imagePaths: imagePaths, selection: selection, accessMode: snapshot.accessMode,
                 interactionMode: snapshot.interactionMode)
@@ -395,7 +403,7 @@ public final class ThreadRunner {
         }
         // The session has seen the whole thread up to this turn, and nothing else can run meanwhile: no recap.
         let input = AgentTurnInput(
-            text: message.text, imagePaths: message.imagePaths, selection: thread.selection, accessMode: thread.accessMode,
+            text: runtimeMessage(message.text, threadID: threadID), imagePaths: message.imagePaths, selection: thread.selection, accessMode: thread.accessMode,
             interactionMode: thread.interactionMode)
         do {
             try await session.steer(input)

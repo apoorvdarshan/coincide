@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationController.shared.start()
         ProjectScripts.shared.start()
         ThreadSnooze.shared.start()
+        PreviewSessions.shared.start()
         // Chats are always listed, so the first one can be started from the sidebar.
         AppStore.shared.ensureChatsProject()
         mainWindow?.showWindow(nil)
@@ -76,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         guard !Self.isHostingTests else { return }
+        PreviewSessions.shared.stop()
         ThreadRunner.shared.shutdownAll()
         AppStore.shared.flush()
         if mainWindow?.window?.isVisible == true { mainWindow?.saveLayout() }

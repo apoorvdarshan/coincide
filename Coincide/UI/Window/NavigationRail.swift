@@ -63,6 +63,9 @@ final class NavigationRailViewController: NSViewController {
     private lazy var pullRequestsButton = RailButton(
         symbol: "arrow.triangle.pull", label: String(localized: "Pull Requests"), command: nil,
         action: #selector(MainWindowController.togglePullRequestsPanel(_:)))
+    private lazy var previewButton = RailButton(
+        symbol: "globe", label: String(localized: "Browser Preview"), command: nil,
+        action: #selector(MainWindowController.togglePreviewPanel(_:)))
     private lazy var openInButton = RailButton(
         symbol: "arrow.up.forward.app", label: String(localized: "Open In"), command: .openInEditor,
         action: #selector(MainWindowController.openInPreferred(_:)))
@@ -75,7 +78,7 @@ final class NavigationRailViewController: NSViewController {
     override func loadView() {
         let root = RailBackgroundView()
         let top = stack([threadsButton, newThreadButton, searchButton])
-        let panels = stack([terminalButton, diffButton, pullRequestsButton, openInButton])
+        let panels = stack([terminalButton, diffButton, pullRequestsButton, previewButton, openInButton])
         let bottom = stack([agentsButton, settingsButton])
         let divider = RailDivider()
         for view in [top, divider, panels, bottom] as [NSView] {
@@ -121,17 +124,18 @@ final class NavigationRailViewController: NSViewController {
     }
 
     /// Lights the buttons of the panels that are open, and enables Open In only when there is a folder to open.
-    func update(threadsOpen: Bool, terminalOpen: Bool, diffOpen: Bool, pullRequestsOpen: Bool, canOpenFolder: Bool) {
+    func update(threadsOpen: Bool, terminalOpen: Bool, diffOpen: Bool, pullRequestsOpen: Bool, previewOpen: Bool = false, canOpenFolder: Bool) {
         threadsButton.isActive = threadsOpen
         terminalButton.isActive = terminalOpen
         diffButton.isActive = diffOpen
         pullRequestsButton.isActive = pullRequestsOpen
+        previewButton.isActive = previewOpen
         openInButton.isEnabled = canOpenFolder
     }
 
     @objc private func updateShortcuts() {
         let buttons = [
-            threadsButton, newThreadButton, searchButton, terminalButton, diffButton, pullRequestsButton, openInButton,
+            threadsButton, newThreadButton, searchButton, terminalButton, diffButton, pullRequestsButton, previewButton, openInButton,
         ]
         for button in buttons {
             button.updateToolTip()

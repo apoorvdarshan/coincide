@@ -174,7 +174,7 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
     func updateRail() {
         rail.update(
             threadsOpen: splitController.isSidebarOpen, terminalOpen: splitController.content.isTerminalOpen,
-            diffOpen: splitController.isDiffOpen, pullRequestsOpen: splitController.isPullRequestsOpen,
+            diffOpen: splitController.isDiffOpen, pullRequestsOpen: splitController.isPullRequestsOpen, previewOpen: splitController.isPreviewOpen,
             canOpenFolder: openFolder != nil)
     }
 

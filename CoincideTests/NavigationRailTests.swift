@@ -17,7 +17,7 @@ struct NavigationRailTests {
             view.subviews.forEach(collect)
         }
         collect(rail.view)
-        #expect(buttons.count == 9)
+        #expect(buttons.count == 10)
         let frames = buttons.map { $0.convert($0.bounds, to: rail.view) }.sorted { $0.minY < $1.minY }
         for frame in frames {
             #expect(frame.width == RailButton.side)
@@ -53,6 +53,10 @@ struct InspectorPanelTests {
         split.toggleDiffPanel()
         #expect(split.isDiffOpen && !split.isPullRequestsOpen)
         #expect(UIState.shared.values.inspectorPanel == .diff)
+
+        split.togglePreviewPanel()
+        #expect(split.isPreviewOpen && !split.isDiffOpen && !split.isPullRequestsOpen)
+        #expect(UIState.shared.values.inspectorPanel == .preview)
 
         // Turn diffs always show the diff.
         split.togglePullRequestsPanel()

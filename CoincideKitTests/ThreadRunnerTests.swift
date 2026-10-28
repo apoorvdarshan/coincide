@@ -147,6 +147,21 @@ struct ThreadRunnerTests {
         await runner.send(threadID: threadID, text: text)
     }
 
+    @Test func runtimeCapabilitiesReachSendAndSteerWithoutBeingSaved() async throws {
+        runner.ephemeralRuntimeContext = { id in id == threadID ? "<ephemeral>preview capability</ephemeral>" : nil }
+        claude.configure = { $0.supportsSteering = true }
+        await runner.send(threadID: threadID, text: "Inspect the page")
+        let session = try #require(claude.last)
+        #expect(session.sent.last?.message.contains("preview capability") == true)
+        #expect(items.last(where: { $0.kind == .user })?.text == "Inspect the page")
+        _ = await runner.steer(threadID: threadID, text: "Click the button")
+        #expect(session.steered.last?.message.contains("preview capability") == true)
+        #expect(items.last(where: { $0.kind == .user })?.text == "Click the button")
+        runner.ephemeralRuntimeContext = nil
+        _ = await runner.steer(threadID: threadID, text: "Access is now off")
+        #expect(session.steered.last?.message == "Access is now off")
+    }
+
     // MARK: Usage limits
 
     private func exhaustLimit(resettingIn seconds: TimeInterval) {
