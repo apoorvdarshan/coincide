@@ -4,7 +4,9 @@ import CoincideKit
 // MARK: - Panel
 
 /// A popup in the app's theme: a borderless child panel on a flat surface, in place of the system's menus. It opens
-/// next to a control, takes the keyboard while it is up, and closes when it loses focus or Escape is pressed.
+/// next to a control, takes the keyboard while it is up, and closes when it loses focus or Escape is pressed. One opened
+/// from inside another, such as a context menu over the model picker's list, rides above it and hands the keyboard
+/// back when it closes.
 final class ThemedPopup: NSObject {
     private static var current: ThemedPopup?
 
@@ -13,6 +15,10 @@ final class ThemedPopup: NSObject {
     private weak var parent: NSWindow?
     private var onClose: (() -> Void)?
     private var isClosing = false
+    /// The popup opened from inside this one, which stays open under it.
+    private var child: ThemedPopup?
+    /// The popup this one was opened from.
+    private weak var host: ThemedPopup?
 
     private init(content: NSViewController & ThemedPopupContent) {
         self.content = content
@@ -43,11 +49,19 @@ final class ThemedPopup: NSObject {
         _ content: NSViewController & ThemedPopupContent, anchorRect: NSRect, in window: NSWindow, preferAbove: Bool,
         onClose: (() -> Void)?
     ) -> ThemedPopup? {
-        current?.close()
         let popup = ThemedPopup(content: content)
         popup.parent = window
         popup.onClose = onClose
-        current = popup
+        var host = current
+        while let candidate = host, candidate.panel !== window { host = candidate.child }
+        if let host {
+            host.child?.close(refocus: false)
+            host.child = popup
+            popup.host = host
+        } else {
+            current?.close()
+            current = popup
+        }
         popup.open(anchorRect: anchorRect, screen: window.screen?.visibleFrame, preferAbove: preferAbove)
         return popup
     }
@@ -59,7 +73,7 @@ final class ThemedPopup: NSObject {
         panel.contentView = surface
         panel.appearance = parent?.effectiveAppearance
         panel.onCancel = { [weak self] in self?.close() }
-        panel.onResignKey = { [weak self] in self?.close() }
+        panel.onResignKey = { [weak self] in self?.resignedKey() }
         content.close = { [weak self] in self?.close() }
         content.onSizeChange = { [weak self] in self?.resize() }
         let size = content.preferredContentSize
@@ -106,13 +120,32 @@ final class ThemedPopup: NSObject {
     }
 
     func close() {
+        close(refocus: true)
+    }
+
+    /// With `refocus`, gives the keyboard back to the window (or popup) this one opened over.
+    private func close(refocus: Bool) {
         guard !isClosing else { return }
         isClosing = true
+        child?.close(refocus: false)
         if Self.current === self { Self.current = nil }
+        if host?.child === self { host?.child = nil }
         parent?.removeChildWindow(panel)
         panel.orderOut(nil)
-        if NSApp.isActive { parent?.makeKey() }
+        if refocus, NSApp.isActive { parent?.makeKey() }
         onClose?()
+    }
+
+    /// Losing the keyboard closes the popup, unless it went to one opened from inside it. A popup opened from another
+    /// takes that one along too, unless the keyboard went back to it.
+    private func resignedKey() {
+        guard !isClosing, child == nil else { return }
+        guard let host else { return close() }
+        close(refocus: false)
+        DispatchQueue.main.async { [weak host] in
+            guard let host, !host.isClosing, !host.panel.isKeyWindow else { return }
+            host.close()
+        }
     }
 }
 
@@ -440,6 +473,14 @@ final class ThemedMenuViewController: NSViewController, ThemedPopupContent, NSTa
 final class ThemedPopupTableView: NSTableView {
     var onActivate: (() -> Void)?
     var onMove: ((Int) -> Void)?
+    /// The context menu for a row, which opens as a themed popup over this one.
+    var rowMenu: ((Int) -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let row = row(at: convert(event.locationInWindow, from: nil))
+        guard row >= 0 else { return nil }
+        return ThemedContextMenu.show(rowMenu?(row), for: event, in: window)
+    }
 
     override func keyDown(with event: NSEvent) {
         switch event.specialKey {
