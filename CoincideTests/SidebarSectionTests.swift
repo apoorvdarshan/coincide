@@ -11,13 +11,18 @@ struct SidebarSectionTests {
         let folder = TemporaryDirectory("sidebar-sections")
         let store = AppStore.shared
         let project = store.addProject(at: folder.url)
+        let hadChats = store.chatsProject != nil
         let chats = store.ensureChatsProject()
         let wasExpanded = chats.isExpanded
         let chatID = store.createThread(in: chats.id).id
         defer {
             store.deleteThread(chatID)
             store.removeProject(project.id)
-            store.updateProject(chats.id) { $0.isExpanded = wasExpanded }
+            if hadChats {
+                store.updateProject(chats.id) { $0.isExpanded = wasExpanded }
+            } else {
+                store.removeProject(chats.id)
+            }
         }
         store.updateProject(chats.id) { $0.isExpanded = false }
 
@@ -51,6 +56,7 @@ struct SidebarSectionTests {
         let folder = TemporaryDirectory("sidebar-chat-search")
         let store = AppStore.shared
         let project = store.addProject(at: folder.url)
+        let hadChats = store.chatsProject != nil
         let chats = store.ensureChatsProject()
         let projectThreadID = store.createThread(in: project.id).id
         let chatID = store.createThread(in: chats.id).id
@@ -59,6 +65,7 @@ struct SidebarSectionTests {
         defer {
             store.deleteThread(chatID)
             store.removeProject(project.id)
+            if !hadChats { store.removeProject(chats.id) }
         }
 
         let sidebar = SidebarViewController()
