@@ -117,9 +117,15 @@ public protocol ACPAgentFlavor {
 /// `ACPAgentFlavor.prepareLaunch`). `release()`, or letting go of the lease, ends it.
 @MainActor
 public final class ACPLaunchLease {
+    /// Immutable launch inputs selected with the lease. A mutable `current` symlink must not be
+    /// resolved again after acquiring protection for the release it selected.
+    public let executable: URL?
+    public let environmentOverrides: [String: String]
     private var onRelease: (() -> Void)?
 
-    public init(onRelease: @escaping () -> Void) {
+    public init(executable: URL? = nil, environmentOverrides: [String: String] = [:], onRelease: @escaping () -> Void) {
+        self.executable = executable
+        self.environmentOverrides = environmentOverrides
         self.onRelease = onRelease
     }
 
