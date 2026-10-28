@@ -14,7 +14,7 @@ import CoincideKit
 /// - `{"approve": "allow"}`: answers the latest pending approval with the option of that kind or id
 /// - `{"openThread": "title"}`: opens an existing thread
 /// - `{"request": "approval" | "question"}`: adds a sample request waiting for an answer, to check how it looks
-/// - `{"toggle": "sidebar" | "terminal" | "diff"}`, `{"appearance": "light" | "dark" | "system"}`
+/// - `{"toggle": "sidebar" | "terminal" | "diff" | "pullRequests"}`, `{"appearance": "light" | "dark" | "system"}`
 /// - `{"settings": "general" | "providers" | "models" | "keyboard" | "about"}`: opens the settings window
 /// - `{"find": "text"}`: opens the find bar searching for the text; `{"findNext": 2}`, `{"findPrevious": 1}`,
 ///   `{"closeFind": true}`
@@ -99,6 +99,7 @@ enum DebugAutomation {
                 case "sidebar": window?.toggleSidebarPanel(nil)
                 case "terminal": window?.toggleTerminalPanel(nil)
                 case "diff": window?.toggleDiffPanel(nil)
+                case "pullRequests": window?.togglePullRequestsPanel(nil)
                 default: log("unknown panel \(value.displayText)")
                 }
             case "settings":

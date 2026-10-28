@@ -18,24 +18,34 @@ enum ThreadActions {
     /// With `source`, the new thread starts in the same worktree and branch.
     @discardableResult
     static func newThread(in projectID: UUID, basedOn source: ThreadSummary? = nil) -> UUID? {
+        newThread(in: projectID, worktreePath: source?.worktreePath, branch: source?.branch, setsFolder: source != nil)
+    }
+
+    /// Opens a new thread in the worktree at `worktreePath` on `branch`, such as one checked out for a pull request.
+    @discardableResult
+    static func newThread(in projectID: UUID, worktreePath: String, branch: String?) -> UUID? {
+        newThread(in: projectID, worktreePath: worktreePath, branch: branch, setsFolder: true)
+    }
+
+    /// An empty thread in the same folder is reused rather than adding another. With `setsFolder` the thread runs in
+    /// `worktreePath` (the project folder when nil) on `branch`.
+    private static func newThread(in projectID: UUID, worktreePath: String?, branch: String?, setsFolder: Bool) -> UUID? {
         guard store.project(projectID) != nil else { return nil }
         let defaults = store.newThreadDefaults(in: projectID)
         let selection = ProviderRegistry.shared.usableSelection(preferring: defaults.selection)
         let id: UUID
         if let empty = store.threads(in: projectID).first(where: {
-            isUntouched($0, matching: source) && $0.selection == selection
+            isUntouched($0, in: worktreePath) && $0.selection == selection
                 && $0.accessMode == defaults.accessMode && $0.interactionMode == defaults.interactionMode
         }) {
             id = empty.id
         } else {
             id = store.createThread(in: projectID, selection: selection).id
         }
-        if let source, let thread = store.summary(id),
-            thread.worktreePath != source.worktreePath || thread.branch != source.branch
-        {
+        if setsFolder, let thread = store.summary(id), thread.worktreePath != worktreePath || thread.branch != branch {
             store.updateThread(id) { thread in
-                thread.worktreePath = source.worktreePath
-                thread.branch = source.branch
+                thread.worktreePath = worktreePath
+                thread.branch = branch
             }
         }
         if store.project(projectID)?.isExpanded == false {
@@ -46,9 +56,9 @@ enum ThreadActions {
         return id
     }
 
-    private static func isUntouched(_ thread: ThreadSummary, matching source: ThreadSummary?) -> Bool {
+    private static func isUntouched(_ thread: ThreadSummary, in worktreePath: String?) -> Bool {
         thread.itemCount == 0 && !thread.hasDraft && !thread.isArchived
-            && (thread.snoozedUntil ?? .distantPast) <= Date() && thread.worktreePath == source?.worktreePath
+            && (thread.snoozedUntil ?? .distantPast) <= Date() && thread.worktreePath == worktreePath
     }
 
     static func rename(_ threadID: UUID, to title: String) {

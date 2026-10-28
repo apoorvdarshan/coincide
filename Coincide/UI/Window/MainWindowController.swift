@@ -115,10 +115,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if threadID != nil, !isFocusInSidePanel { splitController.content.chat.focusComposer() }
     }
 
-    /// Whether keyboard focus is in the sidebar, the terminal or the diff, where it stays when the thread changes.
+    /// Whether keyboard focus is in the sidebar, the terminal or the inspector, where it stays when the thread changes.
     private var isFocusInSidePanel: Bool {
         guard let responder = window?.firstResponder as? NSView else { return false }
-        return [sidebar.view, splitController.content.terminal.view, splitController.diff.view].contains {
+        return [sidebar.view, splitController.content.terminal.view, splitController.inspector.view].contains {
             responder.isDescendant(of: $0)
         }
     }
@@ -248,6 +248,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     @objc func toggleDiffPanel(_ sender: Any?) {
         showWindow(nil)
         splitController.toggleDiffPanel()
+    }
+
+    @objc func togglePullRequestsPanel(_ sender: Any?) {
+        showWindow(nil)
+        splitController.togglePullRequestsPanel()
     }
 
     /// Opens the diff inspector on one turn's changes.
@@ -465,6 +470,10 @@ extension MainWindowController: NSMenuItemValidation {
                 splitController.content.isTerminalOpen ? String(localized: "Hide Terminal") : String(localized: "Show Terminal")
         case #selector(toggleDiffPanel(_:)):
             menuItem.title = splitController.isDiffOpen ? String(localized: "Hide Diff") : String(localized: "Show Diff")
+        case #selector(togglePullRequestsPanel(_:)):
+            menuItem.title =
+                splitController.isPullRequestsOpen
+                ? String(localized: "Hide Pull Requests") : String(localized: "Show Pull Requests")
         case #selector(stopTurn(_:)):
             return thread.map { ThreadRunner.shared.isRunning($0.id) } ?? false
         case #selector(previousThread(_:)), #selector(nextThread(_:)):

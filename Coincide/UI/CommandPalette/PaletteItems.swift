@@ -126,6 +126,14 @@ struct PaletteCatalog {
                     id: "action:diff", title: split.isDiffOpen ? String(localized: "Hide Diff") : String(localized: "Show Diff"),
                     icon: symbol("plus.forwardslash.minus"), trailing: keys(.toggleDiff),
                     keywords: ["diff", "changes", "review", "git", "toggle"], behavior: .run { window?.toggleDiffPanel(nil) }))
+            items.append(
+                PaletteItem(
+                    id: "action:pull-requests",
+                    title: split.isPullRequestsOpen
+                        ? String(localized: "Hide Pull Requests") : String(localized: "Show Pull Requests"),
+                    icon: symbol("arrow.triangle.pull"),
+                    keywords: ["pull request", "pr", "github", "review", "checks", "merge", "toggle"],
+                    behavior: .run { window?.togglePullRequestsPanel(nil) }))
         }
         if let thread, ThreadRunner.shared.isRunning(thread.id) {
             items.append(

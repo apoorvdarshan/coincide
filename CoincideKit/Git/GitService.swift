@@ -191,6 +191,12 @@ public final class GitService {
         try? FileManager.default.setAttributes(ownerOnly, ofItemAtPath: url.path)
     }
 
+    /// A free folder for a new worktree of `repositoryName` on `branch`, in the (owner-only) worktrees folder.
+    func newWorktreePath(repositoryName: String, branch: String) throws -> URL {
+        try Self.prepareWorktreesRoot(worktreesRoot)
+        return uniqueWorktreePath(repositoryName: repositoryName, branch: branch)
+    }
+
     private func uniqueWorktreePath(repositoryName: String, branch: String) -> URL {
         let folder = worktreesRoot.appendingPathComponent(repositoryName, isDirectory: true)
         let name = branch.replacingOccurrences(of: "/", with: "-")

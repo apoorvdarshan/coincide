@@ -5,8 +5,8 @@ import Testing
 
 @testable import Coincide
 
-/// `@` file mentions and `/` commands as the composer detects them, with cases from T3 Code's
-/// `composerTrigger.test.ts` that apply to Coincide's commands.
+/// `@` file mentions, `/` commands, `$` skills and `#` pull requests as the composer detects them, with cases from
+/// T3 Code's `composerTrigger.test.ts` that apply to Coincide's commands.
 struct ComposerTriggerTests {
     private func detect(_ text: String, cursor: Int? = nil) -> ComposerTrigger? {
         ComposerTrigger.detect(in: text, cursor: cursor ?? (text as NSString).length)
@@ -57,6 +57,20 @@ struct ComposerTriggerTests {
         // Any whitespace, a tab or a non-breaking space too, ends a word.
         #expect(detect("a\t@b")?.range == NSRange(location: 2, length: 2))
         #expect(detect("a\u{00A0}/b")?.range == NSRange(location: 2, length: 2))
+    }
+
+    /// T3 Code's `#` trigger: `#` alone or followed by a word of letters, digits, `_` and `-`.
+    @Test func aHashWordAsksForPullRequests() {
+        #expect(detect("#") == ComposerTrigger(kind: .pullRequest, query: "", range: NSRange(location: 0, length: 1)))
+        #expect(detect("fix #12") == ComposerTrigger(kind: .pullRequest, query: "12", range: NSRange(location: 4, length: 3)))
+        #expect(detect("see #fix-the_parser")?.query == "fix-the_parser")
+        #expect(detect("#données")?.kind == .pullRequest)
+        #expect(detect("a #12 b", cursor: 5) == ComposerTrigger(kind: .pullRequest, query: "12", range: NSRange(location: 2, length: 3)))
+    }
+
+    @Test(arguments: ["##", "## Heading", "#!", "#-x", "#1.5", "issue#12", "# "])
+    func otherHashWordsAreNoTrigger(text: String) {
+        #expect(detect(text) == nil)
     }
 
     @Test func mentionsQuotePathsWithSpaces() {
