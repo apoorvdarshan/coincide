@@ -4,7 +4,8 @@ import CoincideKit
 // MARK: - Turn header
 
 /// Opens a turn's response: "Working for 12s" while it runs, then a "Worked for 2m 13s" toggle
-/// that folds the turn's tool calls, reasoning and interim replies.
+/// that folds the turn's tool calls, reasoning and interim replies. Below a message steered into the
+/// turn, "Continued for 20s" folds the work after it.
 final class TranscriptTurnHeaderCell: TranscriptCell {
     private static let contentHeight: CGFloat = 28
 
@@ -39,18 +40,24 @@ final class TranscriptTurnHeaderCell: TranscriptCell {
             setAccessibilityRole(.staticText)
             refreshLiveState()
         case .worked(let duration, let isExpanded):
-            startedAt = nil
-            isToggle = true
-            chevron.isHidden = false
-            chevron.image = Theme.symbol(isExpanded ? "chevron.down" : "chevron.right", size: 9, weight: .semibold)
-            chevron.contentTintColor = .tertiaryLabelColor
-            label.stringValue = String(localized: "Worked for \(TranscriptLabels.duration(duration))")
-            setAccessibilityRole(.disclosureTriangle)
-            setAccessibilityValue(isExpanded ? 1 : 0)
-            setAccessibilityLabel(label.stringValue)
+            showToggle(String(localized: "Worked for \(TranscriptLabels.duration(duration))"), isExpanded: isExpanded)
+        case .continued(let duration, let isExpanded):
+            showToggle(String(localized: "Continued for \(TranscriptLabels.duration(duration))"), isExpanded: isExpanded)
         }
         label.textColor = isHovered && isToggle ? .labelColor : .secondaryLabelColor
         window?.invalidateCursorRects(for: self)
+    }
+
+    private func showToggle(_ title: String, isExpanded: Bool) {
+        startedAt = nil
+        isToggle = true
+        chevron.isHidden = false
+        chevron.image = Theme.symbol(isExpanded ? "chevron.down" : "chevron.right", size: 9, weight: .semibold)
+        chevron.contentTintColor = .tertiaryLabelColor
+        label.stringValue = title
+        setAccessibilityRole(.disclosureTriangle)
+        setAccessibilityValue(isExpanded ? 1 : 0)
+        setAccessibilityLabel(title)
     }
 
     override func refreshLiveState() {

@@ -47,7 +47,8 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         case .newThread:
             item = button(
                 itemIdentifier, label: String(localized: "New Thread"), symbol: "square.and.pencil",
-                toolTip: String(localized: "New Thread (⌘N)"), action: #selector(newThread(_:)))
+                toolTip: KeyBindingsController.shared.toolTip(String(localized: "New Thread"), for: .newThread),
+                action: #selector(newThread(_:)))
         case .toggleTerminal:
             item = button(
                 itemIdentifier, label: String(localized: "Terminal"), symbol: "terminal", toolTip: "",
@@ -116,15 +117,24 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
 
     /// Keeps toggle labels, tooltips and symbols in step with the panels.
     func updatePanelItems() {
+        let keyBindings = KeyBindingsController.shared
         if let item = toolbarItems[.toggleTerminal] {
             let open = splitController.content.isTerminalOpen
-            item.toolTip = open ? String(localized: "Hide Terminal (⌘J)") : String(localized: "Show Terminal (⌘J)")
+            item.toolTip = keyBindings.toolTip(
+                open ? String(localized: "Hide Terminal") : String(localized: "Show Terminal"), for: .toggleTerminal)
             item.image = NSImage(systemSymbolName: open ? "terminal.fill" : "terminal", accessibilityDescription: item.label)
         }
         if let item = toolbarItems[.toggleDiff] {
             let open = splitController.isDiffOpen
-            item.toolTip = open ? String(localized: "Hide Diff (⌘D)") : String(localized: "Show Diff (⌘D)")
+            item.toolTip = keyBindings.toolTip(open ? String(localized: "Hide Diff") : String(localized: "Show Diff"), for: .toggleDiff)
         }
+    }
+
+    /// The tooltips name the menu commands' shortcuts, which the user can change.
+    @objc func updateToolbarShortcuts() {
+        toolbarItems[.newThread]?.toolTip = KeyBindingsController.shared.toolTip(String(localized: "New Thread"), for: .newThread)
+        updatePanelItems()
+        updateOpenInItem()
     }
 
     /// Shows the preferred app's icon and name on the "Open in" button.
@@ -139,7 +149,7 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         item.image = image
         item.label = String(localized: "Open In")
         item.paletteLabel = String(localized: "Open In")
-        item.toolTip = title + " (⌘O)"
+        item.toolTip = KeyBindingsController.shared.toolTip(title, for: .openInEditor)
     }
 
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {

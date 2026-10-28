@@ -4,9 +4,13 @@ import QuickLookUI
 
 /// The message composer under the transcript, ported from T3 Code's ChatComposer: an auto-growing editor
 /// with `@` file mentions, `/` commands and image attachments; the unified agent and model picker,
-/// reasoning effort, access mode and Build/Plan controls; the context meter, send (which queues while a
-/// turn runs) and stop; and banners for pending approvals and questions, plan follow-ups, agent switches
-/// and queued messages. Drafts persist per thread.
+/// reasoning effort, access mode and Build/Plan controls; the usage and context meters, send and stop; and
+/// banners for pending approvals and questions, plan follow-ups, agent switches, usage limits and queued
+/// messages. Drafts persist per thread.
+///
+/// While a turn runs, send steers it (the agent takes the message in as it works) when the agent can, and
+/// otherwise queues the message for after the turn; the alternate send (⌘↩, or ⇧⌘↩ when ⌘↩ sends, or
+/// ⌘-click) does the other, as T3 Code's follow-up behavior.
 ///
 /// The view fills the width it is given and centers the composer in the transcript's column; clicks
 /// outside the composer's controls pass through to whatever is behind it.
@@ -26,6 +30,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private let rootView = ComposerRootView()
     private let column = NSStackView()
     private let queueBanner = ComposerQueueBanner()
+    private let usageBanner = ComposerUsageBanner()
     private let handoffBanner = ComposerHandoffBanner()
     private let planBanner = ComposerPlanBanner()
     private let questionBanner = ComposerQuestionBanner()
@@ -65,6 +70,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private var measuredWidth: CGFloat = 0
     private var focusWhenShown = false
     private weak var observedWindow: NSWindow?
+    /// Usage warnings the user dismissed; one comes back when its window resets or reaches its limit.
+    private var dismissedUsageWarnings: Set<String> = []
+    /// Keeps reset countdowns current while the usage meter shows.
+    private var usageClock: Timer?
+    /// Watches the modifier keys while the composer shows, so send can show what the alternate send does.
+    private var flagsMonitor: Any?
+    /// The alternate send's modifiers are held: send queues instead of steering.
+    private var alternateHeld = false
 
     init(store: AppStore = .shared, registry: ProviderRegistry = .shared, runner: ThreadRunner = .shared) {
         self.store = store
@@ -95,6 +108,10 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         // Folders are moved and deleted in other apps.
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(usageLimitsChanged), name: ThreadRunner.usageLimitsChangedNotification, object: runner)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyBindingsChanged), name: KeyBindingsController.didChangeNotification, object: nil)
         applySettings()
         bindThread()
     }
@@ -158,7 +175,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         column.spacing = 6
         column.detachesHiddenViews = true
         // What needs an answer sits closest to the input.
-        let banners: [NSView] = [handoffBanner, planBanner, queueBanner, questionBanner, approvalBanner]
+        let banners: [NSView] = [handoffBanner, planBanner, usageBanner, queueBanner, questionBanner, approvalBanner]
         for view in banners + [surface, branchToolbar] {
             column.addArrangedSubview(view)
         }
@@ -200,10 +217,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         footer.attachButton.target = self
         footer.attachButton.action = #selector(chooseImages)
         footer.sendButton.target = self
-        footer.sendButton.action = #selector(primaryAction)
+        footer.sendButton.action = #selector(sendClicked)
         footer.stopButton.target = self
         footer.stopButton.action = #selector(stop)
-        footer.stopButton.toolTip = String(localized: "Stop (⌘.)")
         footer.stopButton.setAccessibilityLabel(String(localized: "Stop"))
         footer.implementButton.target = self
         footer.implementButton.action = #selector(implementPlan)
@@ -228,6 +244,15 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             guard let self, let threadID else { return }
             runner.removeQueued(threadID: threadID, id: id)
         }
+        queueBanner.onSteer = { [weak self] id in self?.steerQueued(id) }
+        usageBanner.onShowDetails = { [weak self] in self?.footer.usageMeter.showDetails() }
+        usageBanner.onDismiss = { [weak self] in
+            guard let self, let thread, let warning = runner.usageLimits(for: thread.selection.provider)?.current(at: Date()).warning
+            else { return }
+            dismissedUsageWarnings.insert(UsageLimits.warningKey(for: warning, provider: thread.selection.provider))
+            refreshUsageLimits()
+            focus()
+        }
         suggestions.onChoose = { [weak self] suggestion in self?.choose(suggestion) }
     }
 
@@ -242,12 +267,23 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             focusWhenShown = false
             focus()
         }
+        if flagsMonitor == nil {
+            flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+                self?.modifiersChanged(event.modifierFlags)
+                return event
+            }
+        }
+        refreshUsageLimits()
     }
 
     override func viewDidDisappear() {
         super.viewDidDisappear()
         suggestions.hide()
         if let threadID { saveDraft(to: threadID) }
+        if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
+        flagsMonitor = nil
+        usageClock?.invalidate()
+        usageClock = nil
     }
 
     override func viewDidLayout() {
@@ -307,6 +343,24 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     @objc private func applicationDidBecomeActive() {
         refreshThread()
+    }
+
+    @objc private func usageLimitsChanged() {
+        refreshUsageLimits()
+    }
+
+    /// Send shows what it will do: holding the alternate send's modifiers while a turn runs turns steer into queue.
+    private func modifiersChanged(_ flags: NSEvent.ModifierFlags) {
+        let held = isAlternate(flags)
+        guard held != alternateHeld else { return }
+        alternateHeld = held
+        if let threadID, runner.isRunning(threadID) { updateSendState() }
+    }
+
+    /// The modifiers of the alternate send: ⌘ when Return sends, else ⇧⌘.
+    private func isAlternate(_ flags: NSEvent.ModifierFlags) -> Bool {
+        let flags = flags.intersection(.deviceIndependentFlagsMask)
+        return store.settings.sendOnReturn ? flags.contains(.command) : flags.isSuperset(of: [.command, .shift])
     }
 
     @objc private func applicationWillTerminate() {
@@ -393,7 +447,18 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         textView.font = Theme.bodyFont
         footer.sendButton.toolTip =
             store.settings.sendOnReturn ? String(localized: "Send (↩)") : String(localized: "Send (⌘↩)")
+        refreshStopToolTip()
         updateTextHeight()
+    }
+
+    /// The footer's tooltips name the menu commands' shortcuts, which the user can change.
+    @objc private func keyBindingsChanged() {
+        refreshStopToolTip()
+        refreshControls(thread)
+    }
+
+    private func refreshStopToolTip() {
+        footer.stopButton.toolTip = KeyBindingsController.shared.toolTip(String(localized: "Stop"), for: .stopTurn)
     }
 
     // MARK: Refresh
@@ -408,6 +473,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         refreshControls(thread)
         refreshHandoff()
         refreshPlan()
+        refreshUsageLimits()
         updatePlaceholder()
         updateSendState()
     }
@@ -431,7 +497,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             footer.modelButton.configure(
                 title: title, symbolName: provider.symbolName, symbolTint: Theme.color(for: provider), chevron: true)
         }
-        footer.modelButton.toolTip = String(localized: "\(provider.displayName) · \(modelName). Choose the agent and model (⇧⌘M)")
+        let keyBindings = KeyBindingsController.shared
+        footer.modelButton.toolTip = keyBindings.toolTip(
+            String(localized: "\(provider.displayName) · \(modelName). Choose the agent and model"), for: .chooseModel)
         footer.modelButton.setAccessibilityLabel(String(localized: "Agent and model: \(provider.displayName), \(modelName)"))
 
         if let model, !model.efforts.isEmpty {
@@ -440,7 +508,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             footer.effortButton.configure(
                 title: effort.map(ComposerMenus.effortTitle) ?? String(localized: "Default"), symbolName: "brain",
                 chevron: true)
-            footer.effortButton.toolTip = String(localized: "Reasoning effort (⇧⌘E)")
+            footer.effortButton.toolTip = keyBindings.toolTip(String(localized: "Reasoning effort"), for: .reasoningEffort)
             footer.effortButton.setAccessibilityLabel(
                 String(localized: "Reasoning effort: \(effort.map(ComposerMenus.effortTitle) ?? String(localized: "Default"))"))
         } else {
@@ -450,7 +518,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         footer.accessButton.configure(
             title: thread.accessMode.displayName, symbolName: ComposerMenus.symbolName(for: thread.accessMode),
             chevron: true)
-        footer.accessButton.toolTip = ComposerMenus.summary(for: thread.accessMode) + " (⇧⌘A)"
+        footer.accessButton.toolTip = keyBindings.toolTip(ComposerMenus.summary(for: thread.accessMode), for: .accessMode)
         footer.accessButton.setAccessibilityLabel(String(localized: "Access: \(thread.accessMode.displayName)"))
 
         let planning = thread.interactionMode == .plan
@@ -475,7 +543,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             return
         }
         let queued = runner.queuedMessages(threadID)
-        if !queued.isEmpty { queueBanner.show(queued) }
+        if !queued.isEmpty { queueBanner.show(queued, canSteer: runner.canSteer(threadID)) }
         queueBanner.isHidden = queued.isEmpty
 
         // Usage belongs to whichever agent ran last; after a switch it says nothing about the new one.
@@ -548,8 +616,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         else { return }
         var plan: String?
         var reply: String?
+        // The latest turn's plan or reply, past any message steered into it.
         for item in thread.items.reversed() {
-            if item.kind == .user { break }
+            if item.opensUserTurn { break }
             switch item.kind {
             case .error: return
             case .plan where plan == nil: plan = item.text
@@ -559,6 +628,39 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         }
         let text = (plan ?? reply)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         proposedPlan = text.isEmpty ? nil : text
+    }
+
+    /// The selected agent's subscription limits: the footer meter, and a banner once a window is nearly used up.
+    private func refreshUsageLimits() {
+        let now = Date()
+        guard let thread, let reported = runner.usageLimits(for: thread.selection.provider), !reported.windows.isEmpty
+        else {
+            footer.usageMeter.isHidden = true
+            usageBanner.isHidden = true
+            usageClock?.invalidate()
+            usageClock = nil
+            return
+        }
+        let provider = thread.selection.provider
+        let limits = reported.current(at: now)
+        footer.usageMeter.update(provider: provider, limits: limits)
+        footer.usageMeter.isHidden = false
+        if let warning = limits.warning,
+            !dismissedUsageWarnings.contains(UsageLimits.warningKey(for: warning, provider: provider))
+        {
+            usageBanner.show(warning, provider: provider, now: now)
+            usageBanner.isHidden = false
+        } else {
+            usageBanner.isHidden = true
+        }
+        if usageClock == nil, view.window != nil {
+            let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshUsageLimits() }
+            }
+            timer.tolerance = 10
+            RunLoop.main.add(timer, forMode: .common)
+            usageClock = timer
+        }
     }
 
     private static func title(ofPlan plan: String) -> String? {
@@ -637,7 +739,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         !attachments.isEmpty || textView.string.contains { !$0.isWhitespace }
     }
 
-    /// Send while idle; while a turn runs, send queues the message and Stop sits beside it.
+    /// Send while idle; while a turn runs, send steers the turn (or queues when its agent can't take the message
+    /// now, or the alternate send's modifiers are held) and Stop sits beside it.
     private func updateSendState() {
         let send = footer.sendButton
         guard let threadID, let thread else {
@@ -656,7 +759,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         footer.implementButton.isHidden = !(proposedPlan != nil && !hasContent && !running)
         send.isHidden = !footer.implementButton.isHidden
         send.isEnabled = canSend
-        if running {
+        if running, runner.canSteer(threadID), !alternateHeld {
+            send.mode = .steer
+            send.toolTip =
+                store.settings.sendOnReturn
+                ? String(localized: "Steer: send into the current turn (↩). ⌘↩ or ⌘-click queues it for after the turn.")
+                : String(localized: "Steer: send into the current turn (⌘↩). ⇧⌘↩ or ⌘-click queues it for after the turn.")
+            send.setAccessibilityLabel(String(localized: "Steer message"))
+        } else if running {
             send.mode = .queue
             send.toolTip = String(localized: "Queue message. It is sent when the current turn finishes.")
             send.setAccessibilityLabel(String(localized: "Queue message"))
@@ -751,7 +861,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             return true
         }
         if flags.contains(.command) || (store.settings.sendOnReturn && flags.isDisjoint(with: [.shift, .option, .control])) {
-            primaryAction()
+            commandReturn(flags)
             return true
         }
         return false
@@ -762,7 +872,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         switch event.keyCode {
         case 36, 76:  // Return, Enter
             guard flags.contains(.command), !textView.hasMarkedText() else { return false }
-            primaryAction()
+            commandReturn(flags)
             return true
         case 126:  // Up
             guard flags == .option else { return false }
@@ -770,6 +880,13 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         default:
             return false
         }
+    }
+
+    /// A send from the keyboard. When Return sends, ⇧⌘↩ sends the next queued message into the running turn
+    /// (T3 Code's steer-queued shortcut) if there is one.
+    private func commandReturn(_ flags: NSEvent.ModifierFlags) {
+        if store.settings.sendOnReturn, flags.isSuperset(of: [.command, .shift]), steerNextQueued() { return }
+        primaryAction(alternate: isAlternate(flags))
     }
 
     /// The footer menus the Thread menu opens with ⇧⌘M, ⇧⌘E and ⇧⌘A.
@@ -932,7 +1049,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     /// The built-in commands plus one for each other agent that is ready, such as `/codex`.
     private var availableCommands: [ComposerCommand] {
-        ComposerCommand.available(agents: registry.readyKinds.filter { $0 != thread?.selection.provider })
+        let provider = thread?.selection.provider
+        let hasLimits = provider.flatMap { runner.usageLimits(for: $0) }.map { !$0.windows.isEmpty } ?? false
+        return ComposerCommand.available(agents: registry.readyKinds.filter { $0 != provider }, usageLimits: hasLimits)
     }
 
     private func perform(_ command: ComposerCommand) {
@@ -943,6 +1062,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             setInteractionMode(.plan)
         case .build:
             setInteractionMode(.build)
+        case .usageLimits:
+            DispatchQueue.main.async { [weak self] in self?.footer.usageMeter.showDetails() }
         case .agent(let provider):
             switchAgent(to: provider)
         }
@@ -1057,8 +1178,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     // MARK: Sending
 
-    /// Sends (queued while a turn runs), runs a typed command, or implements a proposed plan when empty.
-    @objc private func primaryAction() {
+    /// The send button; ⌘-click is the alternate send.
+    @objc private func sendClicked() {
+        primaryAction(alternate: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
+    }
+
+    /// Sends, runs a typed command, or implements a proposed plan when empty. While a turn runs the message
+    /// steers it when its agent can take it, and is queued otherwise; `alternate` does the other.
+    private func primaryAction(alternate: Bool = false) {
         guard let threadID else { return }
         let text = textView.string
         if attachments.isEmpty, let command = ComposerCommand.standalone(text, in: availableCommands) {
@@ -1079,8 +1206,45 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         }
         declinePendingRequests(threadID)
         let imagePaths = attachments.map(\.path)
+        let steers = runner.isRunning(threadID) && !alternate
         clearComposer()
-        Task { await runner.send(threadID: threadID, text: text, imagePaths: imagePaths) }
+        guard steers else {
+            Task { await runner.send(threadID: threadID, text: text, imagePaths: imagePaths) }
+            return
+        }
+        Task {
+            let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths)
+            announce(delivery)
+        }
+    }
+
+    /// Tells VoiceOver where a message typed while the agent worked went.
+    private func announce(_ delivery: ThreadRunner.FollowUpDelivery?) {
+        let message: String
+        switch delivery {
+        case .steered?: message = String(localized: "Sent into the current turn")
+        case .queued?: message = String(localized: "Queued for after the current turn")
+        case .sent?, nil: return
+        }
+        NSAccessibility.post(
+            element: textView, notification: .announcementRequested,
+            userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+    }
+
+    /// Sends a queued message into the running turn now, or as a new turn when none runs.
+    private func steerQueued(_ id: UUID) {
+        guard let threadID else { return }
+        Task {
+            let delivery = await runner.steerQueued(threadID: threadID, id: id)
+            announce(delivery)
+        }
+    }
+
+    /// Sends the oldest queued message into the running turn. False when there is none or the turn can't take it.
+    private func steerNextQueued() -> Bool {
+        guard let threadID, runner.canSteer(threadID), let next = runner.queuedMessages(threadID).first else { return false }
+        steerQueued(next.id)
+        return true
     }
 
     /// As in T3 Code, a message sent while the agent waits on an approval or a question declines it,

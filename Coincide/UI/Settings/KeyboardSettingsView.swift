@@ -2,21 +2,31 @@ import AppKit
 import CoincideKit
 import SwiftUI
 
-/// Keyboard shortcuts. Menu shortcuts are read from the menu bar, so the list always matches what the
-/// app does; keys that only work in one place (the composer, the terminal…) are listed with them.
+/// Keyboard shortcuts, as T3 Code's Keybindings settings: every menu command with its shortcut, changed by clicking
+/// it and pressing new keys. Shortcuts that clash with another command, macOS or Coincide's fixed shortcuts are
+/// marked. Keys that only work in one place (the composer, the terminal…) are listed after them and stay fixed.
 struct KeyboardSettingsView: View {
     let model: SettingsModel
-    @State private var menuGroups: [ShortcutGroup] = []
+    @State private var fixedMenuShortcuts: [FixedMenuShortcut] = []
     @State private var filter = ""
+    @State private var showsOnlyConflicts = false
+    @State private var recording: KeyCommand?
+    @State private var isConfirmingResetAll = false
 
     var body: some View {
-        let groups = filtered(menuGroups + placeGroups)
+        let bindings = model.settings.keyBindings
+        let reserved = KeyBindingsController.reservedShortcuts(fixed: fixedMenuShortcuts)
+        let conflicted = Set(bindings.commandsWithConflicts(reserved: reserved))
+        let commandGroups = filteredCommandGroups(bindings: bindings, conflicted: conflicted)
+        let fixedGroups = showsOnlyConflicts ? [] : filtered(otherMenuGroups + placeGroups)
         Form {
             Section {
                 SettingsPaneHeader(title: String(localized: "Keyboard Shortcuts")) {
                     SettingsIconTile(symbol: SettingsSection.keyboard.symbolName, color: SettingsSection.keyboard.tint, size: 44)
                 } subtitle: {
-                    Text("Shortcuts for Coincide’s commands. Standard macOS shortcuts such as Copy and Close Window work as usual.")
+                    Text(
+                        "Click a shortcut, then press the keys you want. Standard macOS shortcuts such as Copy and Close Window stay as they are."
+                    )
                 }
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
@@ -25,13 +35,76 @@ struct KeyboardSettingsView: View {
                         .labelsHidden()
                         .textFieldStyle(.plain)
                 }
-            }
-            if groups.isEmpty {
-                Section {
-                    ContentUnavailableView.search(text: filter)
+                if !conflicted.isEmpty || showsOnlyConflicts {
+                    HStack {
+                        Label {
+                            Text(conflicted.isEmpty ? "No shortcuts conflict." : "Some shortcuts conflict.")
+                        } icon: {
+                            Image(systemName: conflicted.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(conflicted.isEmpty ? .green : .orange)
+                        }
+                        Spacer()
+                        Toggle("Show only conflicts", isOn: $showsOnlyConflicts)
+                            .toggleStyle(.checkbox)
+                    }
                 }
             }
-            ForEach(groups) { group in
+            if !bindings.issues.isEmpty {
+                ShortcutIssuesSection(issues: bindings.issues) {
+                    model.update { $0.removeUnusableShortcuts() }
+                }
+            }
+            if commandGroups.isEmpty && fixedGroups.isEmpty {
+                Section {
+                    if filter.trimmingCharacters(in: .whitespaces).isEmpty {
+                        ContentUnavailableView("No Conflicts", systemImage: "checkmark.circle")
+                    } else {
+                        ContentUnavailableView.search(text: filter)
+                    }
+                }
+            }
+            ForEach(commandGroups) { group in
+                Section {
+                    ForEach(group.commands) { command in
+                        let shortcut = bindings.shortcut(for: command)
+                        let messages = messages(for: command, shortcut: shortcut, bindings: bindings, reserved: reserved)
+                        KeyBindingRow(
+                            command: command, shortcut: shortcut, isCustomized: bindings.isCustomized(command),
+                            warnings: messages.warnings, notes: messages.notes, isRecording: recording == command,
+                            onRecordingChange: { isRecording in
+                                if isRecording {
+                                    recording = command
+                                } else if recording == command {
+                                    recording = nil
+                                }
+                            },
+                            onChange: { shortcut in model.update { $0.setShortcut(shortcut, for: command) } },
+                            onReset: { model.update { $0.resetShortcut(for: command) } })
+                    }
+                } header: {
+                    Text(group.title)
+                } footer: {
+                    if let note = group.note {
+                        Text(note)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if !commandGroups.isEmpty {
+                Section {
+                    HStack {
+                        Text(
+                            "When two commands share a shortcut, a changed one wins over a default one. Fixed menu shortcuts such as Copy keep their keys."
+                        )
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Reset All…") { isConfirmingResetAll = true }
+                            .disabled(model.settings.shortcutOverrides.isEmpty)
+                    }
+                }
+            }
+            ForEach(fixedGroups) { group in
                 Section {
                     ForEach(group.shortcuts) { shortcut in
                         LabeledContent {
@@ -52,7 +125,7 @@ struct KeyboardSettingsView: View {
             }
             Section {
                 HStack {
-                    Text("To change a menu shortcut, add an App Shortcut for Coincide in System Settings › Keyboard.")
+                    Text("App Shortcuts added for Coincide in System Settings › Keyboard take priority over these.")
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Open Keyboard Settings…") {
@@ -64,7 +137,99 @@ struct KeyboardSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { menuGroups = ShortcutGroup.menuGroups(NSApp.mainMenu) }
+        .onAppear { fixedMenuShortcuts = KeyBindingsController.shared.fixedMenuShortcuts() }
+        .alert("Reset all keyboard shortcuts?", isPresented: $isConfirmingResetAll) {
+            Button("Reset All", role: .destructive) { model.update { $0.resetAllShortcuts() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every menu command goes back to its default shortcut.")
+        }
+    }
+
+    // MARK: Commands
+
+    /// Commands by menu, with Go to Thread 1–9 in a group of their own.
+    private var allCommandGroups: [CommandGroup] {
+        let groups = KeyCommand.Menu.allCases.map { menu in
+            CommandGroup(
+                title: menu.title, commands: KeyCommand.allCases.filter { $0.menu == menu && $0.threadJumpIndex == nil })
+        }
+        let held = threadJumpModifiers.map { $0.glyphs.joined() }
+        let jumps = CommandGroup(
+            title: String(localized: "Go to Thread"), commands: KeyCommand.allCases.filter { $0.threadJumpIndex != nil },
+            note: held.isEmpty
+                ? String(localized: "Threads are counted from the top of the sidebar.")
+                : String(
+                    localized: "Threads are counted from the top of the sidebar. Hold \(held.formatted(.list(type: .or))) to see their numbers."))
+        return (groups + [jumps]).filter { !$0.commands.isEmpty }
+    }
+
+    /// The modifier keys that show the sidebar's thread numbers: those of the Go to Thread shortcuts.
+    private var threadJumpModifiers: [KeyModifiers] {
+        model.settings.keyBindings.threadJumpModifiers(keeping: Set(fixedMenuShortcuts.map(\.shortcut)))
+    }
+
+    private func filteredCommandGroups(bindings: KeyBindings, conflicted: Set<KeyCommand>) -> [CommandGroup] {
+        let query = filter.trimmingCharacters(in: .whitespaces)
+        return allCommandGroups.compactMap { group in
+            let commands = group.commands.filter { command in
+                if showsOnlyConflicts, !conflicted.contains(command) { return false }
+                guard !query.isEmpty else { return true }
+                let shortcut = bindings.shortcut(for: command)
+                // Like T3's keybinding search: the name, the id and the keys.
+                return [group.title, command.title, command.rawValue, shortcut?.displayString ?? "", shortcut?.stringValue ?? ""]
+                    .contains { $0.localizedStandardContains(query) }
+            }
+            return commands.isEmpty ? nil : CommandGroup(title: group.title, commands: commands, note: group.note)
+        }
+    }
+
+    /// Sentences about what else uses the command's shortcut: warnings, and notes on keys a focused terminal keeps.
+    private func messages(
+        for command: KeyCommand, shortcut: KeyShortcut?, bindings: KeyBindings, reserved: [ReservedShortcut]
+    ) -> (warnings: [String], notes: [String]) {
+        guard let shortcut else { return ([], []) }
+        let keys = shortcut.displayString
+        var warnings: [String] = []
+        var notes: [String] = []
+        for conflict in bindings.conflicts(for: command, reserved: reserved) {
+            switch conflict {
+            case .command(let other, runsInstead: true):
+                warnings.append(String(localized: "\(keys) runs \(name(other.title)) instead."))
+            case .command(let other, runsInstead: false):
+                warnings.append(String(localized: "Also assigned to \(name(other.title))."))
+            case .reserved(let reserved):
+                switch reserved.owner {
+                case .system:
+                    warnings.append(String(localized: "macOS uses \(keys) for \(name(reserved.title))."))
+                case .app:
+                    // Menu items keep their shortcuts; keys the composer handles go to the menu command.
+                    warnings.append(
+                        fixedMenuShortcuts.contains { $0.title == reserved.title }
+                            ? String(localized: "\(keys) stays with \(name(reserved.title)), so this command has no shortcut.")
+                            : String(localized: "Takes \(keys) from \(name(reserved.title))."))
+                case .focusedView:
+                    notes.append(String(localized: "In a focused terminal, \(keys) does “\(reserved.title)” instead."))
+                }
+            }
+        }
+        return (warnings, notes)
+    }
+
+    /// A command or menu item's name inside a sentence, without the ellipsis its menu title may end with.
+    private func name(_ title: String) -> String {
+        title.hasSuffix("…") ? String(title.dropLast()) : title
+    }
+
+    // MARK: Fixed shortcuts
+
+    /// Menu items with a fixed shortcut that aren't standard macOS commands, such as Settings.
+    private var otherMenuGroups: [ShortcutGroup] {
+        let shortcuts = fixedMenuShortcuts.filter { !ShortcutGroup.standardActions.contains($0.action) }.map {
+            Shortcut($0.title, $0.shortcut.glyphs)
+        }
+        guard !shortcuts.isEmpty else { return [] }
+        return [ShortcutGroup(title: String(localized: "Other Menu Commands"), shortcuts: shortcuts)]
     }
 
     /// Keys that work in one part of the window. Composer keys follow the "Send messages with" setting.
@@ -88,8 +253,14 @@ struct KeyboardSettingsView: View {
                 shortcuts: [
                     Shortcut(String(localized: "Move to the composer"), ["↩"]),
                     Shortcut(String(localized: "Delete thread"), ["⌫"]),
-                    Shortcut(String(localized: "Show thread numbers for ⌘1…⌘9"), [String(localized: "Hold"), "⌘"]),
-                ]),
+                ]
+                    + (threadJumpModifiers.isEmpty
+                        ? []
+                        : [
+                            Shortcut(
+                                String(localized: "Show thread numbers for Go to Thread"),
+                                threadJumpModifiers.map { [String(localized: "Hold")] + $0.glyphs })
+                        ])),
             ShortcutGroup(
                 title: String(localized: "Conversation"),
                 shortcuts: [
@@ -104,17 +275,9 @@ struct KeyboardSettingsView: View {
                 note: String(localized: "Typing while the conversation has focus goes to the composer.")),
             ShortcutGroup(
                 title: String(localized: "Terminal"),
-                shortcuts: [
-                    Shortcut(String(localized: "New terminal"), ["⌘", "T"], or: ["⌘", "N"]),
-                    Shortcut(String(localized: "Split right"), ["⌘", "D"]),
-                    Shortcut(String(localized: "Split down"), ["⇧", "⌘", "D"]),
-                    Shortcut(String(localized: "Close terminal"), ["⌘", "W"]),
-                    Shortcut(String(localized: "Clear"), ["⌘", "K"]),
-                    Shortcut(String(localized: "Previous and next terminal tab"), ["⇧", "⌘", "["], or: ["⇧", "⌘", "]"]),
-                    Shortcut(String(localized: "Previous and next pane"), ["⌥", "⌘", "←"], or: ["⌥", "⌘", "→"]),
-                    Shortcut(String(localized: "Move to the start or end of the line"), ["⌘", "←"], or: ["⌘", "→"]),
-                    Shortcut(String(localized: "Move by word"), ["⌥", "←"], or: ["⌥", "→"]),
-                ],
+                shortcuts: KeyBindingsController.terminalKeys.map { entry in
+                    Shortcut(entry.title, entry.shortcuts.map(\.glyphs))
+                },
                 note: String(
                     localized: "While a terminal has focus these keys act on it instead of the menu commands they share, as in T3 Code.")),
             ShortcutGroup(
@@ -143,7 +306,15 @@ struct KeyboardSettingsView: View {
     }
 }
 
-/// One or two key combinations, as key caps.
+private struct CommandGroup: Identifiable {
+    let title: String
+    let commands: [KeyCommand]
+    var note: String?
+
+    var id: String { title }
+}
+
+/// One fixed shortcut: one or two key combinations, as key caps.
 private struct ShortcutKeys: View {
     let combos: [[String]]
 
@@ -173,6 +344,11 @@ private struct Shortcut: Identifiable {
         combos = [keys] + (alternative.map { [$0] } ?? [])
     }
 
+    init(_ title: String, _ combos: [[String]]) {
+        self.title = title
+        self.combos = combos
+    }
+
     var id: String { title + combos.flatMap(\.self).joined() }
 }
 
@@ -184,7 +360,7 @@ private struct ShortcutGroup: Identifiable {
     var id: String { title }
 
     /// Standard macOS commands every app has; the pane lists Coincide's own commands.
-    private static let standardActions: Set<String> = [
+    static let standardActions: Set<String> = [
         "undo:", "redo:", "cut:", "copy:", "paste:", "pasteAsPlainText:", "pasteAndMatchStyle:", "delete:",
         "selectAll:", "performFindPanelAction:", "performTextFinderAction:", "centerSelectionInVisibleArea:",
         "showGuessPanel:", "checkSpelling:", "toggleContinuousSpellChecking:", "startSpeaking:", "stopSpeaking:",
@@ -193,80 +369,6 @@ private struct ShortcutGroup: Identifiable {
         "toggleFullScreen:", "arrangeInFront:", "selectNextTab:", "selectPreviousTab:", "toggleTabBar:",
         "toggleTabOverview:", "mergeAllWindows:", "moveTabToNewWindow:", "runPageLayout:", "print:",
     ]
-
-    /// One group per top-level menu, listing every item with a key equivalent.
-    static func menuGroups(_ menu: NSMenu?) -> [ShortcutGroup] {
-        guard let menu else { return [] }
-        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Coincide"
-        return menu.items.enumerated().compactMap { index, item in
-            guard let submenu = item.submenu else { return nil }
-            var shortcuts: [Shortcut] = []
-            collect(submenu, path: [], into: &shortcuts)
-            guard !shortcuts.isEmpty else { return nil }
-            let title = index == 0 ? appName : (item.title.isEmpty ? submenu.title : item.title)
-            return ShortcutGroup(title: title, shortcuts: shortcuts)
-        }
-    }
-
-    private static func collect(_ menu: NSMenu, path: [String], into shortcuts: inout [Shortcut]) {
-        guard menu !== NSApp.servicesMenu else { return }
-        for item in menu.items where !item.isSeparatorItem && !item.isAlternate {
-            let action = item.action.map(NSStringFromSelector) ?? ""
-            // Command-1 … Command-9 are hidden items; list them once.
-            if action == "jumpToThread:" {
-                if item.tag == 1 {
-                    shortcuts.append(Shortcut(String(localized: "Go to Thread 1–9"), ["⌘", "1…9"]))
-                }
-                continue
-            }
-            guard !item.isHidden else { continue }
-            if let submenu = item.submenu {
-                collect(submenu, path: path + [item.title], into: &shortcuts)
-            } else if !item.keyEquivalent.isEmpty, !item.title.isEmpty, !standardActions.contains(action) {
-                let title = (path + [item.title]).joined(separator: " › ")
-                let shortcut = Shortcut(title, keys(item.keyEquivalent, item.keyEquivalentModifierMask))
-                if !shortcuts.contains(where: { $0.id == shortcut.id }) { shortcuts.append(shortcut) }
-            }
-        }
-    }
-
-    /// Modifier glyphs in Apple's order (⌃ ⌥ ⇧ ⌘) followed by the key.
-    static func keys(_ keyEquivalent: String, _ modifiers: NSEvent.ModifierFlags) -> [String] {
-        var modifiers = modifiers
-        if keyEquivalent.count == 1, keyEquivalent.first?.isUppercase == true { modifiers.insert(.shift) }
-        var keys: [String] = []
-        if modifiers.contains(.function) { keys.append("fn") }
-        if modifiers.contains(.control) { keys.append("⌃") }
-        if modifiers.contains(.option) { keys.append("⌥") }
-        if modifiers.contains(.shift) { keys.append("⇧") }
-        if modifiers.contains(.command) { keys.append("⌘") }
-        keys.append(glyph(keyEquivalent))
-        return keys
-    }
-
-    private static func glyph(_ key: String) -> String {
-        guard let scalar = key.unicodeScalars.first, key.unicodeScalars.count == 1 else { return key.uppercased() }
-        switch Int(scalar.value) {
-        case 0x0D: return "↩"
-        case 0x03: return "⌤"
-        case 0x1B: return "⎋"
-        case 0x09: return "⇥"
-        case 0x19: return "⇤"
-        case 0x08, 0x7F: return "⌫"
-        case 0x20: return String(localized: "Space")
-        case NSUpArrowFunctionKey: return "↑"
-        case NSDownArrowFunctionKey: return "↓"
-        case NSLeftArrowFunctionKey: return "←"
-        case NSRightArrowFunctionKey: return "→"
-        case NSDeleteFunctionKey: return "⌦"
-        case NSHomeFunctionKey: return "↖"
-        case NSEndFunctionKey: return "↘"
-        case NSPageUpFunctionKey: return "⇞"
-        case NSPageDownFunctionKey: return "⇟"
-        case NSF1FunctionKey...NSF35FunctionKey: return "F\(Int(scalar.value) - NSF1FunctionKey + 1)"
-        default: return key.uppercased()
-        }
-    }
 
     /// Key glyphs read out by name, for VoiceOver.
     static func spoken(_ keys: [String]) -> String {

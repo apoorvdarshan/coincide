@@ -14,6 +14,7 @@ final class ChatViewController: NSViewController {
         didSet {
             guard threadID != oldValue else { return }
             if let oldValue, oldValue == displayedThreadID { scrollStates[oldValue] = list.scrollState() }
+            transcriptHold = threadID.map(store.holdTranscript)
             loadThread()
         }
     }
@@ -40,6 +41,8 @@ final class ChatViewController: NSViewController {
     }()
 
     private var observation: ObservationToken?
+    /// Keeps the open thread's transcript in memory.
+    private var transcriptHold: TranscriptHold?
     private var displayedThreadID: UUID?
     private var itemsByID: [UUID: TranscriptItem] = [:]
     private var revisions: [UUID: Int] = [:]
@@ -51,6 +54,8 @@ final class ChatViewController: NSViewController {
     private var expanded: [UUID: Set<TranscriptRowID>] = [:]
     private var scrollStates: [UUID: TranscriptScrollState] = [:]
     private var changedFileSignatures: [UUID: Int] = [:]
+    /// The displayed thread's fork dividers, placed after their turns (see `refreshForkMarkers`).
+    private var forkMarkers = TranscriptForkMarkers()
     private var pendingItemIDs = Set<UUID>()
     private var needsFullReload = false
     private var updateScheduled = false
@@ -213,6 +218,7 @@ final class ChatViewController: NSViewController {
             runningTurn = nil
             itemsByID.removeAll()
             textCache.removeAll()
+            forkMarkers = TranscriptForkMarkers()
             list.update([], reload: true)
             updateChrome()
             updateLiveTimer()
@@ -221,6 +227,7 @@ final class ChatViewController: NSViewController {
         displayedThreadID = threadID
         runningTurn = runner.turn(threadID)
         refreshChangedFiles()
+        refreshForkMarkers()
         rebuild(reload: true)
         textCache.retain(only: Set(itemsByID.keys))
         list.restore(scrollStates[threadID])
@@ -265,7 +272,34 @@ final class ChatViewController: NSViewController {
         builder.topReserve = findBar.isHidden ? 0 : Self.findBarReserve
         builder.revisions = revisions
         builder.changedFiles = changedFileSignatures
+        builder.forkMarkers = forkMarkers
         return builder
+    }
+
+    /// Places T3's fork dividers: in a fork, "Forked from conversation" after the copied history; in a thread
+    /// that was forked, "Conversation fork" after each turn a fork copied through (unless that turn was
+    /// rewound away since). Returns whether they changed.
+    @discardableResult
+    private func refreshForkMarkers() -> Bool {
+        var placed = TranscriptForkMarkers()
+        if let threadID = displayedThreadID, let thread = store.thread(threadID) {
+            var markers: [(anchor: UUID?, marker: TranscriptForkMarker)] = []
+            if let lineage = store.lineage(of: threadID) {
+                let parent = store.summary(lineage.parentThreadID)
+                let marker = TranscriptForkMarker(
+                    direction: .forkedFrom, threadID: lineage.parentThreadID, title: parent?.title ?? lineage.parentTitle,
+                    isAvailable: parent != nil)
+                markers.append((lineage.forkPoint(in: thread.items), marker))
+            }
+            for (fork, lineage) in store.forks(of: threadID) {
+                guard let anchor = lineage.parentItemID, thread.items.contains(where: { $0.id == anchor }) else { continue }
+                markers.append((anchor, TranscriptForkMarker(direction: .forkedTo, threadID: fork.id, title: fork.title, isAvailable: true)))
+            }
+            if !markers.isEmpty { placed = builder(for: thread).placeForkMarkers(markers) }
+        }
+        guard placed != forkMarkers else { return false }
+        forkMarkers = placed
+        return true
     }
 
     private func updateChrome() {
@@ -306,13 +340,15 @@ final class ChatViewController: NSViewController {
             guard id == displayedThreadID else { return }
             updateChrome()
         case .threadList, .projects:
-            if let threadID, store.thread(threadID) == nil {
+            if let threadID, !store.hasThread(threadID) {
                 scrollStates[threadID] = nil
                 expanded[threadID] = nil
                 self.threadID = nil
-            } else if displayedThreadID == nil || !welcomeView.isHidden {
-                updateChrome()
+                return
             }
+            if displayedThreadID == nil || !welcomeView.isHidden { updateChrome() }
+            // A fork was made, renamed or deleted, or the thread this one was forked from.
+            if refreshForkMarkers() { rebuild() }
         case .settings:
             settingsChanged()
         case .providers:
@@ -345,6 +381,8 @@ final class ChatViewController: NSViewController {
         for id in pendingItemIDs { bumpRevision(id) }
         pendingItemIDs.removeAll()
         needsFullReload = false
+        // A rewind can cut the turn a fork divider followed.
+        if reload { refreshForkMarkers() }
         rebuild(reload: reload)
         if reload { list.scrollToBottom() }
         updateChrome()
@@ -359,6 +397,8 @@ final class ChatViewController: NSViewController {
             watchCheckpoints(for: finished.userItemID)
         }
         runningTurn = turn
+        // A turn an agent started itself ends the previous turn, which a fork divider may follow.
+        refreshForkMarkers()
         rebuild()
         list.reconfigureVisibleCells()
         updateChrome()
@@ -598,8 +638,8 @@ final class ChatViewController: NSViewController {
         var open = expanded[threadID] ?? []
         var layout = builder(for: thread)
         var rows = layout.build()
-        if !rows.contains(where: { $0.id == rowID }), let opener = layout.turnOpener(of: match.itemID) {
-            open.insert(.turnHeader(opener))
+        if !rows.contains(where: { $0.id == rowID }), let header = layout.foldingHeader(of: match.itemID) {
+            open.insert(header)
             layout.expanded = open
             rows = layout.build()
         }
@@ -717,36 +757,41 @@ final class ChatViewController: NSViewController {
         copyRow(at: sender.tag)
     }
 
-    @objc private func editClickedRow(_ sender: NSMenuItem) {
+    @objc private func rewindClickedRow(_ sender: NSMenuItem) {
         guard let id = list.rows[safe: sender.tag]?.itemID else { return }
-        editMessage(id)
+        rewindTurn(id)
     }
 
-    @objc private func revertClickedRow(_ sender: NSMenuItem) {
-        guard let id = list.rows[safe: sender.tag]?.itemID else { return }
-        revertTurn(id)
+    @objc private func forkClickedRow(_ sender: NSMenuItem) {
+        guard let row = list.rows[safe: sender.tag], let id = Self.turnItemID(of: row) else { return }
+        forkTurn(id)
+    }
+
+    @objc private func openClickedFork(_ sender: NSMenuItem) {
+        guard case .fork(let marker)? = list.rows[safe: sender.tag]?.kind else { return }
+        openThread(marker.threadID)
     }
 
     @objc private func toggleClickedRow(_ sender: NSMenuItem) {
         toggleRow(at: sender.tag, expand: nil)
     }
 
+    /// An item of the turn a row shows, for forking through that turn.
+    private static func turnItemID(of row: TranscriptRow) -> UUID? {
+        switch row.id {
+        case .item(let id), .turnHeader(let id), .group(let id), .changedFiles(let id): id
+        case .fork, .live, .header, .footer: nil
+        }
+    }
+
     // MARK: Rewind
 
-    private func confirm(title: String, message: String, action: String, isDestructive: Bool, then perform: @escaping () -> Void) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        let confirm = alert.addButton(withTitle: action)
-        confirm.hasDestructiveAction = isDestructive
-        alert.addButton(withTitle: String(localized: "Cancel"))
+    private func present(_ alert: NSAlert, then handle: @escaping (NSApplication.ModalResponse) -> Void) {
         guard let window = view.window else {
-            if alert.runModal() == .alertFirstButtonReturn { perform() }
+            handle(alert.runModal())
             return
         }
-        alert.beginSheetModal(for: window) { response in
-            if response == .alertFirstButtonReturn { perform() }
-        }
+        alert.beginSheetModal(for: window, completionHandler: handle)
     }
 
     /// Removes the conversation from `item` on and hands its text back to the composer.
@@ -754,6 +799,19 @@ final class ChatViewController: NSViewController {
         guard let threadID = displayedThreadID else { return }
         store.truncate(threadID, from: item.id)
         composer.setDraft(item.text, imagePaths: item.attachments ?? [])
+    }
+
+    /// Puts files back the way they were before the turn, then rewinds to it.
+    private func restoreFilesAndRewind(to item: TranscriptItem, in threadID: UUID) {
+        Task { @MainActor [weak self] in
+            do {
+                try await CheckpointService.shared.restore(threadID: threadID, toBefore: item.id)
+                guard let self, self.displayedThreadID == threadID else { return }
+                self.rewind(to: item)
+            } catch {
+                self?.present(error)
+            }
+        }
     }
 
     private func present(_ error: Error) {
@@ -793,50 +851,60 @@ extension ChatViewController: TranscriptHost {
         NSPasteboard.general.setText(text)
     }
 
-    func editMessage(_ itemID: UUID) {
+    /// T3's "Edit from here?": every message of the user's can be rewound to, keeping files as they are; when
+    /// the turn's checkpoint can be restored, "Revert Files Too" puts them back the way they were before it.
+    func rewindTurn(_ itemID: UUID) {
         guard let threadID = displayedThreadID, let item = itemsByID[itemID], item.kind == .user, !runner.isRunning(threadID) else {
             NSSound.beep()
             return
         }
-        confirm(
-            title: String(localized: "Edit this message?"),
-            message: String(
-                localized: "The conversation from this message on is removed so you can change it and send it again. Files on disk are not changed."),
-            action: String(localized: "Edit Message"), isDestructive: false
-        ) { [weak self] in
-            self?.rewind(to: item)
+        let canRestoreFiles = CheckpointService.shared.canRestore(threadID: threadID, userItemID: itemID)
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Edit from here?")
+        if canRestoreFiles {
+            alert.informativeText = String(
+                localized: "The conversation is rewound to before this message, which returns to the composer. “Revert Files Too” also puts files back the way they were before it, undoing any edits since."
+            )
+            alert.addButton(withTitle: String(localized: "Revert and Keep Changes"))
+            alert.addButton(withTitle: String(localized: "Revert Files Too")).hasDestructiveAction = true
+        } else {
+            alert.informativeText = String(
+                localized: "The conversation is rewound to before this message, which returns to the composer. Files on disk are not changed.")
+            alert.addButton(withTitle: String(localized: "Edit from Here"))
         }
-    }
-
-    func revertTurn(_ itemID: UUID) {
-        guard let threadID = displayedThreadID, let item = itemsByID[itemID], !runner.isRunning(threadID),
-            CheckpointService.shared.canRestore(threadID: threadID, userItemID: itemID)
-        else {
-            NSSound.beep()
-            return
-        }
-        confirm(
-            title: String(localized: "Revert to before this message?"),
-            message: String(
-                localized: "Files go back to how they were before this turn, and the conversation from this message on is removed. The message returns to the composer."
-            ),
-            action: String(localized: "Revert"), isDestructive: true
-        ) { [weak self] in
-            Task { @MainActor [weak self] in
-                do {
-                    try await CheckpointService.shared.restore(threadID: threadID, toBefore: itemID)
-                    guard let self, self.displayedThreadID == threadID else { return }
-                    self.rewind(to: item)
-                } catch {
-                    self?.present(error)
-                }
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        present(alert) { [weak self] response in
+            // An agent may have started a turn of its own while the alert was open.
+            guard let self, self.displayedThreadID == threadID, !self.runner.isRunning(threadID),
+                self.store.item(itemID, in: threadID) != nil
+            else { return }
+            switch response {
+            case .alertFirstButtonReturn:
+                self.rewind(to: item)
+            case .alertSecondButtonReturn where canRestoreFiles:
+                self.restoreFilesAndRewind(to: item, in: threadID)
+            default:
+                break
             }
         }
     }
 
-    func canRevert(_ itemID: UUID) -> Bool {
+    func forkTurn(_ itemID: UUID) {
+        guard let threadID = displayedThreadID else { return }
+        ThreadForking.fork(threadID, through: itemID)
+    }
+
+    func canFork(_ itemID: UUID) -> Bool {
         guard let threadID = displayedThreadID else { return false }
-        return CheckpointService.shared.canRestore(threadID: threadID, userItemID: itemID)
+        return ThreadForking.canFork(threadID, through: itemID)
+    }
+
+    func openThread(_ threadID: UUID) {
+        guard store.hasThread(threadID) else {
+            NSSound.beep()
+            return
+        }
+        AppEvents.openThread(threadID)
     }
 
     func showDiff(turnID: UUID, path: String?) {
@@ -939,21 +1007,28 @@ extension ChatViewController: NSMenuDelegate {
             item.tag = index
             menu.addItem(item)
         }
-        if case .user = row.kind, let id = row.itemID {
-            let running = isThreadRunning
-            add(String(localized: "Copy Message"), #selector(copyClickedRow(_:)))
-            add(String(localized: "Edit and Resend…"), #selector(editClickedRow(_:)))
-            menu.items.last?.isEnabled = !running
-            if canRevert(id) {
-                add(String(localized: "Revert to Before This Message…"), #selector(revertClickedRow(_:)))
-                menu.items.last?.isEnabled = !running
-            }
+        if case .fork(let marker) = row.kind {
+            add(TranscriptForkCell.actionLabel(marker), #selector(openClickedFork(_:)))
+            menu.items.last?.isEnabled = marker.isAvailable
+            add(String(localized: "Copy"), #selector(copyClickedRow(_:)))
             return
         }
-        if row.isExpandable {
-            add(isExpanded(row.id) ? String(localized: "Collapse") : String(localized: "Expand"), #selector(toggleClickedRow(_:)))
+        if case .user = row.kind {
+            add(String(localized: "Copy Message"), #selector(copyClickedRow(_:)))
+            add(String(localized: "Edit from Here…"), #selector(rewindClickedRow(_:)))
+            menu.items.last?.isEnabled = !isThreadRunning
+        } else {
+            if row.isExpandable {
+                add(isExpanded(row.id) ? String(localized: "Collapse") : String(localized: "Expand"), #selector(toggleClickedRow(_:)))
+            }
+            add(String(localized: "Copy"), #selector(copyClickedRow(_:)))
         }
-        add(String(localized: "Copy"), #selector(copyClickedRow(_:)))
+        // Any row of a turn forks the conversation through that turn, once the turn is over (as in T3).
+        if let id = Self.turnItemID(of: row) {
+            menu.addItem(.separator())
+            add(String(localized: "Fork from Here"), #selector(forkClickedRow(_:)))
+            menu.items.last?.isEnabled = canFork(id)
+        }
     }
 }
 

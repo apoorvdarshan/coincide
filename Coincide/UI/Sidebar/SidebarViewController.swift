@@ -58,7 +58,7 @@ final class SidebarViewController: NSViewController {
         let changed = threadID != selectedThreadID
         selectedThreadID = threadID
         guard hasLoaded else { return }
-        if let threadID, let thread = store.thread(threadID), !isSearching,
+        if let threadID, let thread = store.summary(threadID), !isSearching,
             store.project(thread.projectID)?.isExpanded == false
         {
             store.updateProject(thread.projectID) { $0.isExpanded = true }
@@ -83,7 +83,7 @@ final class SidebarViewController: NSViewController {
 
     /// Starts inline rename, first clearing a search or expanding a project that hides the row.
     func beginRename(threadID: UUID) {
-        guard let thread = store.thread(threadID) else { return }
+        guard let thread = store.summary(threadID) else { return }
         if isSearching {
             searchField.stringValue = ""
             searchChanged()
@@ -171,6 +171,8 @@ final class SidebarViewController: NSViewController {
             self, selector: #selector(activityChanged(_:)), name: .coincideThreadActivityChanged, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(hideJumpHints), name: NSApplication.didResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyBindingsChanged), name: KeyBindingsController.didChangeNotification, object: nil)
         // Project folders are moved and deleted in other apps.
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
@@ -181,7 +183,7 @@ final class SidebarViewController: NSViewController {
             MainActor.assumeIsolated { self?.refreshVisibleTimes(runningOnly: false) }
         }
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            self?.commandKeyChanged(event)
+            self?.modifiersChanged(event)
             return event
         }
         updateRunningTimer()
@@ -267,7 +269,7 @@ final class SidebarViewController: NSViewController {
         keptIDs = (projectIDs, allThreadIDs)
     }
 
-    private func children(for project: Project, threads: [ChatThread]) -> [SidebarNode] {
+    private func children(for project: Project, threads: [ThreadSummary]) -> [SidebarNode] {
         if threads.isEmpty { return [nodes.node(.empty(project.id))] }
         let limit = UIState.shared.values.sidebarThreadLimit
         if isSearching || limit <= 0 || threads.count <= limit {
@@ -322,7 +324,7 @@ final class SidebarViewController: NSViewController {
     /// When the open thread is deleted or archived away, opens its neighbour in the same project, as T3 does.
     private func handOffSelectionIfNeeded(oldChildren: [ObjectIdentifier: [SidebarNode]]) {
         guard let selected = selectedThreadID else { return }
-        if let thread = store.thread(selected), !thread.isArchived || showsArchived { return }
+        if let thread = store.summary(selected), !thread.isArchived || showsArchived { return }
         var fallback: UUID?
         for siblings in oldChildren.values {
             let ids = siblings.compactMap(\.threadID)
@@ -406,14 +408,15 @@ final class SidebarViewController: NSViewController {
         }
     }
 
-    private func rowModel(for thread: ChatThread, project: Project?) -> ThreadRowModel {
+    private func rowModel(for thread: ThreadSummary, project: Project?) -> ThreadRowModel {
         let status = status(of: thread.id)
         var lines = [thread.title]
         var place = project?.name ?? ""
         if let branch = thread.branch, !branch.isEmpty { place += place.isEmpty ? branch : " · \(branch)" }
         if !place.isEmpty { lines.append(place) }
+        if let forkedFrom = ThreadForking.forkedFromDescription(thread.id) { lines.append(forkedFrom) }
         lines.append("\(thread.selection.provider.displayName) · \(ProviderRegistry.shared.displayName(for: thread.selection))")
-        let others = thread.sessions.keys.filter { $0 != thread.selection.provider }.sorted { $0.rawValue < $1.rawValue }
+        let others = thread.sessionProviders.filter { $0 != thread.selection.provider }
         if !others.isEmpty {
             lines.append(String(localized: "Handed off from \(others.map(\.displayName).formatted(.list(type: .and)))"))
         }
@@ -421,13 +424,14 @@ final class SidebarViewController: NSViewController {
         // A turn the agent started itself shows as working like any other; the tooltip says why.
         if let note = AgentTurns.shared.runningNote(in: thread.id) { lines.append(note) }
         var jumpHint: String?
-        if showsJumpHints, let index = jumpOrder.firstIndex(of: thread.id) {
-            jumpHint = "⌘\(index + 1)"
+        if showsJumpHints, let index = jumpOrder.firstIndex(of: thread.id), let command = KeyCommand.jumpToThread(index + 1) {
+            jumpHint = KeyBindingsController.shared.displayString(for: command)
         }
         return ThreadRowModel(
             title: thread.title, provider: thread.selection.provider, isPinned: thread.isPinned,
             isArchived: thread.isArchived, status: status, updatedAt: thread.updatedAt,
-            canArchive: ThreadActions.canArchive(thread.id), toolTip: lines.joined(separator: "\n"),
+            canArchive: ThreadActions.canArchive(thread.id), canFork: ThreadForking.canFork(thread.id),
+            toolTip: lines.joined(separator: "\n"),
             accessibilityLabel: [thread.title, status.label, project?.name].compactMap(\.self).joined(separator: ", "),
             jumpHint: jumpHint)
     }
@@ -439,7 +443,7 @@ final class SidebarViewController: NSViewController {
     }
 
     private func refreshThreadRow(_ id: UUID) {
-        guard let node = nodes.existing(.thread(id)), let thread = store.thread(id) else { return }
+        guard let node = nodes.existing(.thread(id)), let thread = store.summary(id) else { return }
         let row = outlineView.row(forItem: node)
         if row >= 0, let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ThreadCell {
             cell.configure(rowModel(for: thread, project: store.project(thread.projectID)))
@@ -487,7 +491,7 @@ final class SidebarViewController: NSViewController {
 
     private func refreshVisibleThreadRows() {
         outlineView.enumerateAvailableRowViews { rowView, row in
-            guard let id = self.sidebarNode(atRow: row)?.threadID, let thread = self.store.thread(id),
+            guard let id = self.sidebarNode(atRow: row)?.threadID, let thread = self.store.summary(id),
                 let cell = rowView.view(atColumn: 0) as? ThreadCell
             else { return }
             cell.configure(self.rowModel(for: thread, project: self.store.project(thread.projectID)))
@@ -513,29 +517,39 @@ final class SidebarViewController: NSViewController {
         }
     }
 
-    // MARK: Command-key jump hints
+    // MARK: Go to Thread hints
 
-    private func commandKeyChanged(_ event: NSEvent) {
+    /// Holding the modifier keys of a Go to Thread shortcut (Command, unless the user changed them) shows each of
+    /// the first nine threads' shortcut, as T3 does.
+    private func modifiersChanged(_ event: NSEvent) {
         hideJumpHints()
-        guard Self.isOnlyCommandHeld(event.modifierFlags), view.window?.isKeyWindow == true else { return }
+        guard KeyBindingsController.shared.showsThreadJumpHints(for: event.modifierFlags), view.window?.isKeyWindow == true
+        else { return }
         // Wait a moment, so ordinary shortcuts do not flash the hints.
         jumpHintTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, NSApp.isActive, Self.isOnlyCommandHeld(NSEvent.modifierFlags) else { return }
+                guard let self, NSApp.isActive, KeyBindingsController.shared.showsThreadJumpHints(for: NSEvent.modifierFlags)
+                else { return }
                 self.showsJumpHints = true
             }
         }
     }
 
-    /// Also runs when Coincide goes to the background, which hides the Command key's release from it.
+    /// Also runs when Coincide goes to the background, which hides the keys' release from it.
     @objc private func hideJumpHints() {
         jumpHintTimer?.invalidate()
         jumpHintTimer = nil
         showsJumpHints = false
     }
 
-    private static func isOnlyCommandHeld(_ flags: NSEvent.ModifierFlags) -> Bool {
-        flags.intersection([.command, .shift, .option, .control]) == .command
+    /// New shortcuts change the hints shown, or whether the keys held still show them.
+    @objc private func keyBindingsChanged() {
+        guard showsJumpHints else { return }
+        if KeyBindingsController.shared.showsThreadJumpHints(for: NSEvent.modifierFlags) {
+            refreshVisibleThreadRows()
+        } else {
+            hideJumpHints()
+        }
     }
 
     // MARK: Actions
@@ -641,6 +655,7 @@ final class SidebarViewController: NSViewController {
         switch command {
         case .togglePin: ThreadActions.togglePin(id)
         case .rename: beginRename(threadID: id)
+        case .fork: ThreadForking.fork(id)
         case .toggleArchived: ThreadActions.toggleArchived(id)
         case .delete: ThreadActions.delete(id, in: view.window)
         }
@@ -673,7 +688,7 @@ final class SidebarViewController: NSViewController {
         switch editing.node.kind {
         case .thread(let id):
             ThreadActions.rename(id, to: title)
-            field.stringValue = store.thread(id)?.title ?? editing.original
+            field.stringValue = store.summary(id)?.title ?? editing.original
         case .project(let id):
             ThreadActions.rename(project: id, to: title)
             field.stringValue = store.project(id)?.name ?? editing.original
@@ -730,7 +745,7 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     }
 
     func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
-        (item as? SidebarNode)?.threadID.flatMap { store.thread($0)?.title }
+        (item as? SidebarNode)?.threadID.flatMap { store.summary($0)?.title }
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -749,7 +764,7 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
             return cell
         case .thread(let id):
             let cell = reuse("thread") { ThreadCell(frame: .zero) }
-            if let thread = store.thread(id) {
+            if let thread = store.summary(id) {
                 cell.configure(rowModel(for: thread, project: store.project(thread.projectID)))
             }
             cell.onCommand = { [weak self] command in self?.perform(command, onThread: id) }
@@ -891,7 +906,7 @@ extension SidebarViewController: NSMenuDelegate {
     }
 
     private func buildThreadMenu(_ menu: NSMenu, _ id: UUID) {
-        guard let thread = store.thread(id) else { return }
+        guard let thread = store.summary(id) else { return }
         menuFolder = ThreadActions.folder(for: id)
         menu.addItem(item(String(localized: "Rename…"), #selector(renameFromMenu(_:)), id))
         menu.addItem(item(thread.isPinned ? String(localized: "Unpin") : String(localized: "Pin"), #selector(pinFromMenu(_:)), id))
@@ -901,6 +916,9 @@ extension SidebarViewController: NSMenuDelegate {
         if let branch = thread.branch, !branch.isEmpty {
             menu.addItem(item(String(localized: "New Thread on \(branch)"), #selector(newThreadOnBranch(_:)), id))
         }
+        let fork = item(String(localized: "Fork Thread"), #selector(forkFromMenu(_:)), id)
+        fork.isEnabled = ThreadForking.canFork(id)
+        menu.addItem(fork)
         menu.addItem(.separator())
         addOpenItems(to: menu)
         menu.addItem(item(String(localized: "Copy Thread ID"), #selector(copyThreadID(_:)), id))
@@ -970,8 +988,14 @@ extension SidebarViewController: NSMenuDelegate {
     }
 
     @objc private func newThreadOnBranch(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID, let thread = store.thread(id) else { return }
+        guard let id = sender.representedObject as? UUID, let thread = store.summary(id) else { return }
         ThreadActions.newThread(in: thread.projectID, basedOn: thread)
+    }
+
+    /// Forks the conversation through its latest settled turn and opens the fork.
+    @objc private func forkFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        ThreadForking.fork(id)
     }
 
     @objc private func copyThreadID(_ sender: NSMenuItem) {

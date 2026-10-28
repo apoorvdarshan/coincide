@@ -185,10 +185,12 @@ final class ComposerControlButton: NSButton {
     }
 }
 
-/// The round primary button: sends, queues while a turn runs, or stops the turn.
+/// The round primary button: sends, steers or queues while a turn runs, or stops the turn.
 final class ComposerSendButton: NSButton {
     enum Mode {
         case send
+        /// Sends the message into the running turn.
+        case steer
         case queue
         case stop
     }
@@ -231,6 +233,7 @@ final class ComposerSendButton: NSButton {
         let symbol =
             switch mode {
             case .send: "arrow.up"
+            case .steer: "arrow.turn.up.right"
             case .queue: "text.line.last.and.arrowtriangle.forward"
             case .stop: "stop.fill"
             }

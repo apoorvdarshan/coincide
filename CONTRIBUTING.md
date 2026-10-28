@@ -27,6 +27,8 @@ open Coincide.xcodeproj
 
 To try your build, install and sign in to at least one agent CLI (see [Agents](README.md#agents)). Set `COINCIDE_DATA_DIR` to a scratch folder to keep test threads away from your real ones in `~/Library/Application Support/Coincide`.
 
+Builds are signed ad hoc by default. If your agent configuration lives in a protected folder (for example `~/.claude/CLAUDE.md` linked into `~/Documents`), macOS asks Coincide for access the first time an agent reads it, and an ad-hoc build gets a new identity on every build, so it asks again each time. To keep the answer, sign your builds with your own identity: create a gitignored `Local.xcconfig` in the repository root, as described in `Signing.xcconfig`, then run `xcodegen generate`.
+
 ## Project layout
 
 | Path | What's there |

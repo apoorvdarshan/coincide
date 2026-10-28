@@ -178,7 +178,7 @@ final class TerminalViewController: NSViewController {
 
     private var canCreateTerminals: Bool {
         guard let threadID else { return false }
-        return AppStore.shared.thread(threadID) != nil
+        return AppStore.shared.hasThread(threadID)
     }
 
     /// Routes a session's focus, shortcuts and context menu to this controller while it is shown here.

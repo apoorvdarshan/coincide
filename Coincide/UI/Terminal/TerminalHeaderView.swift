@@ -44,7 +44,9 @@ final class TerminalHeaderView: NSView {
         tabStrip.setAccessibilityLabel(String(localized: "Terminal tabs"))
 
         newTabButton.toolTip = String(localized: "New Terminal (⌘T)")
-        hideButton.toolTip = String(localized: "Hide Terminal (⌘J)")
+        keyBindingsChanged()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyBindingsChanged), name: KeyBindingsController.didChangeNotification, object: nil)
         directoryIcon.image = Theme.symbol("folder", size: 11)
         directoryIcon.contentTintColor = .tertiaryLabelColor
         directoryIcon.setAccessibilityElement(false)
@@ -79,6 +81,12 @@ final class TerminalHeaderView: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    /// Hide names the shortcut of Show or Hide Terminal, which the user can change. The terminal's own keys (⌘T, ⌘D)
+    /// are fixed.
+    @objc private func keyBindingsChanged() {
+        hideButton.toolTip = KeyBindingsController.shared.toolTip(String(localized: "Hide Terminal"), for: .toggleTerminal)
     }
 
     override func draw(_ dirtyRect: NSRect) {

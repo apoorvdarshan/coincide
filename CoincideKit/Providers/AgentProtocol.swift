@@ -173,6 +173,77 @@ public struct TokenUsage: Sendable, Hashable, Codable {
     }
 }
 
+/// One window of the user's subscription limits, such as Claude Code's five-hour session or Codex's weekly
+/// allowance (T3 Code's usage window).
+public struct UsageLimitWindow: Sendable, Hashable, Codable, Identifiable {
+    public enum Kind: String, Sendable, Hashable, Codable {
+        case session
+        case weekly
+        case monthly
+        case other
+    }
+
+    /// Stable for the provider, so a later report of the same window replaces it.
+    public var id: String
+    public var kind: Kind
+    /// Short name, e.g. "Session" or "Weekly".
+    public var label: String
+    /// How much of the window is used, 0–100.
+    public var usedPercent: Double
+    public var resetsAt: Date?
+    /// The window's length, when known; it tells how far through the window the user is.
+    public var durationMinutes: Int?
+
+    public nonisolated init(
+        id: String, kind: Kind, label: String, usedPercent: Double, resetsAt: Date? = nil, durationMinutes: Int? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.label = label
+        self.usedPercent = usedPercent.isFinite ? min(100, max(0, usedPercent)) : 0
+        self.resetsAt = resetsAt
+        self.durationMinutes = durationMinutes
+    }
+}
+
+/// A provider's usage windows as last reported, with when they were read.
+public struct UsageLimits: Sendable, Hashable {
+    /// Session windows first, then weekly, monthly and others.
+    public private(set) var windows: [UsageLimitWindow]
+    public var checkedAt: Date
+
+    public nonisolated init(windows: [UsageLimitWindow], checkedAt: Date) {
+        self.windows = Self.sorted(windows)
+        self.checkedAt = checkedAt
+    }
+
+    /// Applies a report that may name only some windows: those it names are replaced (keeping a reset time or
+    /// length the report leaves out), the others stay as they were.
+    public nonisolated func applying(_ update: [UsageLimitWindow], at date: Date) -> UsageLimits {
+        var byID = Dictionary(windows.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        for var window in update {
+            if let existing = byID[window.id] {
+                window.resetsAt = window.resetsAt ?? existing.resetsAt
+                window.durationMinutes = window.durationMinutes ?? existing.durationMinutes
+            }
+            byID[window.id] = window
+        }
+        return UsageLimits(windows: Array(byID.values), checkedAt: max(date, checkedAt))
+    }
+
+    private nonisolated static func sorted(_ windows: [UsageLimitWindow]) -> [UsageLimitWindow] {
+        func rank(_ kind: UsageLimitWindow.Kind) -> Int {
+            switch kind {
+            case .session: 0
+            case .weekly: 1
+            case .monthly: 2
+            case .other: 3
+            }
+        }
+        return windows.sorted { (rank($0.kind), $0.id) < (rank($1.kind), $1.id) }
+    }
+}
+
 /// What a session reports while it runs. Item ids are the provider's; Coincide maps them to
 /// transcript items. A delta for an id that has not been seen yet starts a new item.
 public enum AgentEvent: Sendable, Hashable {
@@ -203,6 +274,9 @@ public enum AgentEvent: Sendable, Hashable {
     /// The agent's current plan or todo list, as markdown. Replaces the previous plan of the turn.
     case plan(text: String)
     case usage(TokenUsage)
+    /// The user's subscription limits for this provider: the windows named here replace earlier reports of
+    /// the same windows, and windows left out keep their last report.
+    case rateLimits([UsageLimitWindow])
     /// The session reported which model it is actually using.
     case modelResolved(String)
     /// The provider discovered (or refreshed) its model list while running.
@@ -244,6 +318,15 @@ public protocol AgentSession: AnyObject {
     func interrupt()
     /// Ends the process. No events are expected afterwards.
     func shutdown()
+
+    /// Whether the provider takes more messages into a running turn (`steer`), as T3 Code's active steering.
+    var supportsSteering: Bool { get }
+    /// Adds the user's message to the running turn, so the agent takes it into account without starting over;
+    /// the turn still ends with one `.turnCompleted`. Returns once the provider accepted the message (a session may
+    /// first wait briefly for the provider to start the turn). Throws when it cannot take one now (the turn has not
+    /// started, is ending or is being stopped); the runner then sends the message after the turn instead. The input
+    /// carries no recap: the session has seen the whole thread.
+    func steer(_ input: AgentTurnInput) async throws
 }
 
 extension AgentSession {
@@ -252,6 +335,12 @@ extension AgentSession {
     }
 
     public func answer(userInput requestID: String, answers: [String: [String]]) {}
+
+    public var supportsSteering: Bool { false }
+
+    public func steer(_ input: AgentTurnInput) async throws {
+        throw AgentError.providerError(String(localized: "\(provider.displayName) can't take messages while it works."))
+    }
 }
 
 public struct ProviderStatus: Sendable, Hashable {
@@ -269,15 +358,19 @@ public struct ProviderStatus: Sendable, Hashable {
     /// Account or plan, e.g. "user@example.com (Max)", when the provider reports it.
     public var account: String?
     public var message: String?
+    /// The subscription's usage windows, when the check could read them.
+    public var usageLimits: UsageLimits?
 
     public nonisolated init(
-        state: State, version: String? = nil, executable: URL? = nil, account: String? = nil, message: String? = nil
+        state: State, version: String? = nil, executable: URL? = nil, account: String? = nil, message: String? = nil,
+        usageLimits: UsageLimits? = nil
     ) {
         self.state = state
         self.version = version
         self.executable = executable
         self.account = account
         self.message = message
+        self.usageLimits = usageLimits
     }
 
     public nonisolated static let unknown = ProviderStatus(state: .unknown)

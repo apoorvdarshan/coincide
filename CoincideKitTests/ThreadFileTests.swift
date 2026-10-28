@@ -140,6 +140,30 @@ struct ThreadFileTests {
         }
     }
 
+    @Test func aSteeredMessageKeepsItsMarkAndOtherItemsAreWrittenAsBefore() throws {
+        let store = AppStore(directory: directory)
+        let project = store.addProject(at: URL(fileURLWithPath: "/tmp"))
+        let thread = store.createThread(in: project.id)
+        store.append(TranscriptItem(kind: .user, text: "fix it"), to: thread.id)
+        store.append(TranscriptItem(kind: .user, text: "also the docs", steered: true), to: thread.id)
+        store.flush()
+        let json = try String(contentsOf: threadsDirectory.appendingPathComponent("\(thread.id.uuidString).json"), encoding: .utf8)
+        // Only the steered message carries the field.
+        #expect(json.components(separatedBy: #""steered""#).count == 2)
+        #expect(try !decode(json).hasUnreadContent)
+        let items = try #require(AppStore(directory: directory).thread(thread.id)?.items)
+        #expect(items.map(\.isSteered) == [false, true])
+        #expect(items.map(\.opensUserTurn) == [true, false])
+
+        // A file from before steering reads as it did; an unreadable mark is noticed, and reads as not steered.
+        let base = #""id":"\#(UUID().uuidString)","projectID":"\#(UUID().uuidString)""#
+        let user = #""id":"\#(UUID().uuidString)","kind":"user","text":"hi""#
+        let old = try decode("{\(base),\"items\":[{\(user)}]}")
+        #expect(old.thread.items.first?.steered == nil && !old.hasUnreadContent)
+        let odd = try decode("{\(base),\"items\":[{\(user),\"steered\":\"yes\"}]}")
+        #expect(odd.thread.items.first?.isSteered == false && odd.hasUnreadContent)
+    }
+
     @Test func aThreadThisVersionWroteIsNeverCopied() throws {
         let store = AppStore(directory: directory)
         let project = store.addProject(at: URL(fileURLWithPath: "/tmp"))
@@ -152,7 +176,7 @@ struct ThreadFileTests {
                 textInput: TextInputSpec(placeholder: "p", initialText: "i", isMultiline: true), responseText: "ok"),
             questions: UserInputRequest(
                 id: "q", title: "Pick", questions: [UserQuestion(id: "q1", header: "H", prompt: "P", options: [.init(label: "L", detail: "D")])]),
-            answers: ["q1": ["L"]], attachments: ["/tmp/a.png"], completedAt: Date())
+            answers: ["q1": ["L"]], attachments: ["/tmp/a.png"], steered: true, completedAt: Date())
         store.append(full, to: thread.id)
         // Fields that fall back to a value when unreadable, holding that value.
         store.append(TranscriptItem(kind: .user, text: "", createdAt: .distantPast), to: thread.id)

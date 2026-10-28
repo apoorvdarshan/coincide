@@ -145,6 +145,25 @@ final class OpenCodeSession: AgentSession {
         }
     }
 
+    let supportsSteering = true
+
+    /// Sends the message with `steer` delivery, as T3 Code does: the running execution takes it in at its next step,
+    /// or OpenCode starts another execution for it, which the turn waits for.
+    func steer(_ input: AgentTurnInput) async throws {
+        guard !isClosed, !isSending, let api, let sessionID, let turn = mapper?.turn, !turn.interruptRequested else {
+            throw AgentError.providerError(String(localized: "OpenCode can't take a message for this turn now."))
+        }
+        let id = Self.newPromptID()
+        mapper?.addSteer(id)
+        let content = Self.promptContent(text: input.text, imagePaths: input.imagePaths)
+        do {
+            try await api.prompt(sessionID, messageID: id, text: content.text, files: content.files, delivery: "steer")
+        } catch {
+            perform(mapper?.dropSteer(id) ?? [])
+            throw error
+        }
+    }
+
     func respond(to approvalID: String, optionID: String) {
         guard !isClosed, let api, case .permission(let action, let resources, let save)? = mapper?.pending[approvalID]?.kind
         else { return }
@@ -200,6 +219,10 @@ final class OpenCodeSession: AgentSession {
             return
         }
         mapper?.requestInterrupt()
+        // Steers not delivered yet would start the agent again after the stop.
+        for steer in mapper?.turn?.steers.sorted() ?? [] {
+            Task { try? await api.cancelInbox(sessionID, inboxID: steer, timeout: 2) }
+        }
         // ThreadRunner gives up after six seconds, so this ends the turn itself within that time.
         Task {
             let interrupted = try? await api.interrupt(sessionID, timeout: 3)

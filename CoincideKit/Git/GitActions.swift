@@ -19,6 +19,15 @@ public enum GitStackedAction: String, Sendable, CaseIterable {
         case .createPR: String(localized: "Create PR")
         }
     }
+
+    /// The title in the host's words: "Create MR" for GitLab.
+    public nonisolated func title(for term: ChangeRequestTerm) -> String {
+        switch (self, term) {
+        case (.commitPushPR, .mergeRequest): String(localized: "Commit, Push & Create MR")
+        case (.createPR, .mergeRequest): String(localized: "Create MR")
+        default: title
+        }
+    }
 }
 
 public struct GitActionRequest: Sendable {
@@ -51,6 +60,8 @@ public struct GitActionResult: Sendable, Equatable {
     public enum FollowUp: Sendable, Equatable {
         case run(GitStackedAction)
         case openPullRequest(URL)
+        /// The host's page for opening the pull request in the browser, since no signed-in CLI could.
+        case openChangeRequestPage(URL)
     }
 
     public var createdBranch: String?
@@ -62,6 +73,13 @@ public struct GitActionResult: Sendable, Equatable {
     public var title: String
     public var detail: String?
     public var followUp: FollowUp?
+    /// The host the branch's remote is on, when the action pushed or opened a pull request.
+    public var host: SourceControlHost? = nil
+    /// The host's page for creating the pull request, when it is to be finished in the browser.
+    public var changeRequestPage: URL? = nil
+
+    /// What the host calls pull requests.
+    public nonisolated var changeRequestTerm: ChangeRequestTerm { host?.kind.changeRequest ?? .pullRequest }
 }
 
 /// What the git action button offers for a status (T3 Code's quick action rules).
@@ -83,8 +101,9 @@ public struct GitQuickAction: Sendable, Equatable {
         self.isEnabled = isEnabled
     }
 
+    /// `term` is what the repository's host calls pull requests, for titles such as "Create MR".
     public nonisolated static func resolve(
-        status: GitStatus?, isBusy: Bool, hasOpenPullRequest: Bool
+        status: GitStatus?, isBusy: Bool, hasOpenPullRequest: Bool, term: ChangeRequestTerm = .pullRequest
     ) -> GitQuickAction {
         let commit = String(localized: "Commit")
         guard !isBusy else { return GitQuickAction(title: commit, kind: .hint(String(localized: "A Git action is running.")), isEnabled: false) }
@@ -92,10 +111,16 @@ public struct GitQuickAction: Sendable, Equatable {
             return GitQuickAction(title: commit, kind: .hint(String(localized: "Git status is unavailable.")), isEnabled: false)
         }
         guard status.branch != nil else {
-            return GitQuickAction(
-                title: commit,
-                kind: .hint(String(localized: "Check out a branch before pushing or opening a pull request.")),
-                isEnabled: false)
+            let hint =
+                term == .mergeRequest
+                ? String(localized: "Check out a branch before pushing or opening a merge request.")
+                : String(localized: "Check out a branch before pushing or opening a pull request.")
+            return GitQuickAction(title: commit, kind: .hint(hint), isEnabled: false)
+        }
+        let pushAndCreate =
+            term == .mergeRequest ? String(localized: "Push & Create MR") : String(localized: "Push & Create PR")
+        func run(_ action: GitStackedAction, title: String? = nil) -> GitQuickAction {
+            GitQuickAction(title: title ?? action.title(for: term), kind: .run(action), isEnabled: true)
         }
         let isAhead = status.ahead > 0
         let isBehind = status.behind > 0
@@ -104,8 +129,8 @@ public struct GitQuickAction: Sendable, Equatable {
             title: commit, kind: .hint(String(localized: "The branch is up to date. Nothing to do.")), isEnabled: false)
 
         if status.hasChanges {
-            if !status.hasUpstream, !status.hasRemote { return .run(.commit) }
-            return .run(hasOpenPullRequest || isDefault ? .commitPush : .commitPushPR)
+            if !status.hasUpstream, !status.hasRemote { return run(.commit) }
+            return run(hasOpenPullRequest || isDefault ? .commitPush : .commitPushPR)
         }
         if !status.hasUpstream {
             guard status.hasRemote else {
@@ -120,7 +145,7 @@ public struct GitQuickAction: Sendable, Equatable {
                         title: String(localized: "Push"), kind: .hint(String(localized: "No local commits to push.")),
                         isEnabled: false)
             }
-            return .run(hasOpenPullRequest || isDefault ? .push : .createPR, title: isDefault || hasOpenPullRequest ? nil : String(localized: "Push & Create PR"))
+            return run(hasOpenPullRequest || isDefault ? .push : .createPR, title: isDefault || hasOpenPullRequest ? nil : pushAndCreate)
         }
         if isAhead, isBehind {
             return GitQuickAction(
@@ -130,15 +155,11 @@ public struct GitQuickAction: Sendable, Equatable {
         }
         if isBehind { return GitQuickAction(title: String(localized: "Pull"), kind: .pull, isEnabled: true) }
         if isAhead {
-            return .run(hasOpenPullRequest || isDefault ? .push : .createPR, title: isDefault || hasOpenPullRequest ? nil : String(localized: "Push & Create PR"))
+            return run(hasOpenPullRequest || isDefault ? .push : .createPR, title: isDefault || hasOpenPullRequest ? nil : pushAndCreate)
         }
         if hasOpenPullRequest { return upToDate }
-        if status.aheadOfDefault > 0, !isDefault { return .run(.createPR) }
+        if status.aheadOfDefault > 0, !isDefault { return run(.createPR) }
         return upToDate
-    }
-
-    private nonisolated static func run(_ action: GitStackedAction, title: String? = nil) -> GitQuickAction {
-        GitQuickAction(title: title ?? action.title, kind: .run(action), isEnabled: true)
     }
 
     /// Pushing to (or opening a pull request from) the default branch asks first.
@@ -255,55 +276,106 @@ extension GitService {
             push = try await GitOps.push(cwd, fallbackBranch: branch)
         }
 
+        // The host names the pull request step's words ("merge request" on GitLab) and its follow-ups.
+        var host: SourceControlHost?
+        if wantsPush || wantsPR, let branch {
+            host = await sourceControlHost(cwd, branch: branch)
+        }
+        let term = host?.kind.changeRequest ?? .pullRequest
+
         var pullRequest: GitPullRequest?
         var pullRequestCreated = false
+        var changeRequestPage: URL?
         if wantsPR {
-            progress(String(localized: "Preparing pull request…"))
-            let step = try await runPullRequestStep(request, in: cwd, fallbackBranch: branch, progress: progress)
-            pullRequest = step.pullRequest
-            pullRequestCreated = step.created
+            progress(
+                term == .mergeRequest
+                    ? String(localized: "Preparing merge request…") : String(localized: "Preparing pull request…"))
+            switch try await runPullRequestStep(request, in: cwd, fallbackBranch: branch, host: host, progress: progress) {
+            case .existing(let found): pullRequest = found
+            case .created(let created):
+                pullRequest = created
+                pullRequestCreated = true
+            case .page(let page): changeRequestPage = page
+            }
         }
 
         var result = GitActionResult(
             createdBranch: createdBranch, commit: commit, push: push, pullRequest: pullRequest,
-            pullRequestCreated: pullRequestCreated, title: "", detail: nil, followUp: nil)
+            pullRequestCreated: pullRequestCreated, title: "", detail: nil, followUp: nil, host: host,
+            changeRequestPage: changeRequestPage)
         await summarize(&result, action: action, in: cwd)
         return result
     }
 
+    private enum PullRequestStep {
+        /// The branch already had an open pull request.
+        case existing(GitPullRequest)
+        case created(GitPullRequest)
+        /// No signed-in CLI for the host: the page to create it on, in the browser.
+        case page(URL)
+    }
+
+    /// Finds or creates the branch's pull request with the host's CLI. Without one signed in, GitHub
+    /// (and hosts Coincide can't name) still need `gh`, as before; other hosts give their page for
+    /// creating one, as they link to it after a push.
     private func runPullRequestStep(
-        _ request: GitActionRequest, in cwd: URL, fallbackBranch: String?, progress: @MainActor (String) -> Void
-    ) async throws -> (pullRequest: GitPullRequest, created: Bool) {
+        _ request: GitActionRequest, in cwd: URL, fallbackBranch: String?, host: SourceControlHost?,
+        progress: @MainActor (String) -> Void
+    ) async throws -> PullRequestStep {
+        let term = host?.kind.changeRequest ?? .pullRequest
         let status = try await GitOps.status(cwd)
         guard let branch = status.branch ?? fallbackBranch else {
-            throw GitError(String(localized: "Cannot create a pull request from a detached HEAD."))
+            throw GitError(
+                term == .mergeRequest
+                    ? String(localized: "Cannot create a merge request from a detached HEAD.")
+                    : String(localized: "Cannot create a pull request from a detached HEAD."))
         }
         guard status.hasUpstream else {
-            throw GitError(String(localized: "This branch has not been pushed. Push it before creating a pull request."))
+            throw GitError(
+                term == .mergeRequest
+                    ? String(localized: "This branch has not been pushed. Push it before creating a merge request.")
+                    : String(localized: "This branch has not been pushed. Push it before creating a pull request."))
         }
-        guard await isGitHubCLIReady(cwd) else { throw GitError(GitHubCLI.notReadyMessage) }
-        if let existing = await openPullRequest(for: branch, in: cwd, refresh: true) { return (existing, false) }
+        let kind = host?.kind ?? .unknown
+        let tool = kind.tool
+        var isReady = false
+        if let tool { isReady = await isChangeRequestToolReady(tool, for: host, in: cwd) }
+        guard let tool, isReady else {
+            guard let host, kind != .github, kind != .unknown else { throw GitError(GitHubCLI.notReadyMessage) }
+            let base = await pullRequestBase(cwd, branch: branch, upstream: status.upstream, host: host, tool: nil)
+            if let page = host.newChangeRequestURL(base: base, head: branch) ?? host.repositoryURL { return .page(page) }
+            throw GitError(
+                tool?.setupMessage
+                    ?? String(localized: "Coincide can't find this repository’s page on \(host.displayName)."))
+        }
+        if let existing = await openPullRequest(for: branch, in: cwd, refresh: true) { return .existing(existing) }
 
-        let base = await pullRequestBase(cwd, branch: branch, upstream: status.upstream)
+        let base = await pullRequestBase(cwd, branch: branch, upstream: status.upstream, host: host, tool: tool)
         let remotes = await GitOps.remoteNames(cwd)
         var rangeBase = base
         if let remote = GitOps.primaryRemote(remotes), await GitOps.refExists("refs/remotes/\(remote)/\(base)", in: cwd) {
             rangeBase = "\(remote)/\(base)"
         }
-        progress(String(localized: "Writing pull request…"))
+        progress(
+            term == .mergeRequest ? String(localized: "Writing merge request…") : String(localized: "Writing pull request…"))
         let range = await GitOps.rangeContext(cwd, baseRef: rangeBase)
         let content = await GitWriter.pullRequestContent(
             baseBranch: base, headBranch: branch, range: range, threadContext: request.threadContext,
             selection: request.selection, cwd: cwd)
-        progress(String(localized: "Creating pull request…"))
-        let created = try await GitHubCLI.createPullRequest(
-            title: content.title, body: content.body, base: base, head: branch, in: cwd)
-        return (created, true)
+        progress(
+            term == .mergeRequest
+                ? String(localized: "Creating merge request…") : String(localized: "Creating pull request…"))
+        let created = try await ChangeRequestCLI.create(
+            title: content.title, body: content.body, base: base, head: branch, tool: tool, host: host, in: cwd)
+        rememberPullRequest(created, for: branch, in: cwd)
+        return .created(created)
     }
 
     /// The branch a pull request should target: the recorded base, a differently named upstream,
-    /// the repository's default branch, then `main`.
-    private func pullRequestBase(_ cwd: URL, branch: String, upstream: String?) async -> String {
+    /// the repository's default branch (as the host's CLI knows it, else as git does), then `main`.
+    private func pullRequestBase(
+        _ cwd: URL, branch: String, upstream: String?, host: SourceControlHost?, tool: ChangeRequestTool?
+    ) async -> String {
         let remotes = await GitOps.remoteNames(cwd)
         func branchName(_ ref: String) -> String {
             var name = ref
@@ -323,7 +395,7 @@ extension GitService {
             let name = branchName(upstream)
             if !name.isEmpty, name != branch { return name }
         }
-        if let name = await GitHubCLI.defaultBranch(cwd) { return name }
+        if let tool, let name = await ChangeRequestCLI.defaultBranch(tool: tool, host: host, in: cwd) { return name }
         if let remote = GitOps.primaryRemote(remotes), let name = await GitOps.defaultBranch(cwd, remote: remote) {
             return name
         }
@@ -331,17 +403,33 @@ extension GitService {
     }
 
     private func summarize(_ result: inout GitActionResult, action: GitStackedAction, in cwd: URL) async {
-        if let pullRequest = result.pullRequest {
-            result.title =
-                result.pullRequestCreated
-                ? String(localized: "Created PR #\(pullRequest.number)")
-                : String(localized: "Opened PR #\(pullRequest.number)")
-            result.detail = pullRequest.title
-        } else if let push = result.push, push.outcome == .pushed {
+        let term = result.changeRequestTerm
+        var pushed: String?
+        if let push = result.push, push.outcome == .pushed {
             let target = push.upstream ?? push.branch
-            result.title =
+            pushed =
                 result.commit.map { String(localized: "Pushed \($0.shortSHA) to \(target)") }
                 ?? String(localized: "Pushed to \(target)")
+        }
+        if let pullRequest = result.pullRequest {
+            switch (term, result.pullRequestCreated) {
+            case (.pullRequest, true): result.title = String(localized: "Created PR #\(pullRequest.number)")
+            case (.pullRequest, false): result.title = String(localized: "Opened PR #\(pullRequest.number)")
+            case (.mergeRequest, true): result.title = String(localized: "Created MR !\(pullRequest.number)")
+            case (.mergeRequest, false): result.title = String(localized: "Opened MR !\(pullRequest.number)")
+            }
+            result.detail = pullRequest.title
+        } else if let page = result.changeRequestPage {
+            let name = result.host?.displayName ?? ""
+            result.title =
+                term == .mergeRequest
+                ? String(localized: "Create the merge request on \(name)")
+                : String(localized: "Create the pull request on \(name)")
+            result.detail = pushed
+            result.followUp = .openChangeRequestPage(page)
+            return
+        } else if let pushed {
+            result.title = pushed
             result.detail = result.commit?.subject
         } else if let commit = result.commit {
             result.title = String(localized: "Committed \(commit.shortSHA)")

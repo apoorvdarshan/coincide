@@ -23,7 +23,7 @@ enum TerminalLaunch {
         let store = AppStore.shared
         guard let preferred = store.workingDirectory(for: threadID) else { return (home, nil) }
         if isDirectory(preferred) { return (preferred, nil) }
-        if let thread = store.thread(threadID), let project = store.project(thread.projectID), isDirectory(project.url) {
+        if let thread = store.summary(threadID), let project = store.project(thread.projectID), isDirectory(project.url) {
             return (project.url, preferred)
         }
         return (home, preferred)

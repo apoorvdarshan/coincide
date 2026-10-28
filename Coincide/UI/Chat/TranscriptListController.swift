@@ -192,7 +192,7 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         for index in range.location..<min(rows.count, NSMaxRange(range)) {
             switch rows[index].id {
             case .item(let id), .turnHeader(let id), .group(let id), .changedFiles(let id): return id
-            case .live, .header, .footer: continue
+            case .fork, .live, .header, .footer: continue
             }
         }
         return nil
@@ -220,6 +220,7 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         case .notice: TranscriptNoticeCell.self
         case .turnHeader: TranscriptTurnHeaderCell.self
         case .changedFiles: TranscriptChangedFilesCell.self
+        case .fork: TranscriptForkCell.self
         case .live: TranscriptLiveCell.self
         case .spacer: TranscriptSpacerCell.self
         }
@@ -239,6 +240,7 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         case .notice: TranscriptNoticeCell()
         case .turnHeader: TranscriptTurnHeaderCell()
         case .changedFiles: TranscriptChangedFilesCell()
+        case .fork: TranscriptForkCell()
         case .live: TranscriptLiveCell()
         case .spacer: TranscriptSpacerCell()
         }

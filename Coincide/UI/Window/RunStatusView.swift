@@ -36,8 +36,10 @@ final class RunStatusView: NSView {
         stopButton.contentTintColor = .secondaryLabelColor
         stopButton.target = self
         stopButton.action = #selector(stopClicked)
-        stopButton.toolTip = String(localized: "Stop (⌘.)")
         stopButton.setAccessibilityLabel(String(localized: "Stop"))
+        keyBindingsChanged()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyBindingsChanged), name: KeyBindingsController.didChangeNotification, object: nil)
         let stack = NSStackView(views: [spinner, icon, label, stopButton])
         stack.spacing = 6
         stack.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
@@ -59,6 +61,11 @@ final class RunStatusView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    /// The stop button's tooltip names Stop's shortcut, which the user can change.
+    @objc private func keyBindingsChanged() {
+        stopButton.toolTip = KeyBindingsController.shared.toolTip(String(localized: "Stop"), for: .stopTurn)
+    }
 
     func update(_ state: State) {
         guard state != self.state else { return }

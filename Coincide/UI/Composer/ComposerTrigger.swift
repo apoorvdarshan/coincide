@@ -53,12 +53,15 @@ nonisolated enum ComposerCommand: Hashable, Sendable {
     case model
     case plan
     case build
+    /// Shows the selected agent's subscription limits (T3 Code's `/usage-limits`).
+    case usageLimits
     /// Continues the thread with another agent, such as `/codex`.
     case agent(ProviderKind)
 
-    /// The built-in commands followed by one per agent the user can switch to.
-    static func available(agents: [ProviderKind]) -> [ComposerCommand] {
-        [.model, .plan, .build] + agents.map { .agent($0) }
+    /// The built-in commands followed by one per agent the user can switch to. `/usage-limits` is offered when the
+    /// selected agent reported its limits.
+    static func available(agents: [ProviderKind], usageLimits: Bool = false) -> [ComposerCommand] {
+        [.model, .plan, .build] + (usageLimits ? [.usageLimits] : []) + agents.map { .agent($0) }
     }
 
     var name: String {
@@ -66,6 +69,7 @@ nonisolated enum ComposerCommand: Hashable, Sendable {
         case .model: "model"
         case .plan: "plan"
         case .build: "build"
+        case .usageLimits: "usage-limits"
         case .agent(let provider): provider.rawValue
         }
     }
@@ -77,6 +81,7 @@ nonisolated enum ComposerCommand: Hashable, Sendable {
         case .model: String(localized: "Switch the agent or model for this thread")
         case .plan: String(localized: "Switch this thread into plan mode")
         case .build: String(localized: "Switch this thread back to build mode")
+        case .usageLimits: String(localized: "Show this agent's usage limits")
         case .agent(let provider): String(localized: "Continue this thread with \(provider.displayName)")
         }
     }
@@ -86,6 +91,7 @@ nonisolated enum ComposerCommand: Hashable, Sendable {
         case .model: "cpu"
         case .plan: "pencil.and.ruler"
         case .build: "hammer"
+        case .usageLimits: "gauge.with.needle"
         case .agent(let provider): provider.symbolName
         }
     }

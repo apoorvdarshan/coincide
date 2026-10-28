@@ -10,6 +10,8 @@ final class GitActionsBar: NSView {
         var behind = 0
         var upstream: String?
         var pullRequest: GitPullRequest?
+        /// What the host calls the pull request: GitLab's are merge requests, written `!12`.
+        var changeRequestTerm = ChangeRequestTerm.pullRequest
         var quickAction = GitQuickAction(title: String(localized: "Commit"), kind: .hint(""), isEnabled: false)
         /// The step a running action is on, such as "Pushing…".
         var progress: String?
@@ -105,14 +107,14 @@ final class GitActionsBar: NSView {
         var tooltip = state.branch ?? String(localized: "HEAD is not on a branch.")
         if let upstream = state.upstream { tooltip += "\n" + String(localized: "Tracks \(upstream)") }
         if let pullRequest = state.pullRequest {
-            tooltip += "\n" + String(localized: "Pull request #\(pullRequest.number): \(pullRequest.title)")
+            tooltip += "\n" + state.changeRequestTerm.summary(pullRequest.number, title: pullRequest.title)
         }
         branchLabel.toolTip = tooltip
 
         var sync: [String] = []
         if state.ahead > 0 { sync.append("↑\(state.ahead)") }
         if state.behind > 0 { sync.append("↓\(state.behind)") }
-        if let pullRequest = state.pullRequest { sync.append("#\(pullRequest.number)") }
+        if let pullRequest = state.pullRequest { sync.append(state.changeRequestTerm.reference(pullRequest.number)) }
         syncLabel.stringValue = sync.joined(separator: " ")
         syncLabel.isHidden = sync.isEmpty
         syncLabel.setAccessibilityLabel(

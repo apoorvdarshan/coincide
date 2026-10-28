@@ -20,7 +20,7 @@ struct PaletteItem {
     var subtitle: String?
     var icon: NSImage?
     var iconTint: NSColor?
-    /// A shortcut ("⌘N") or an age ("5m").
+    /// A shortcut ("⌘N", the user's for a menu command) or an age ("5m").
     var trailing: String?
     var keywords: [String] = []
     var kind: Kind = .action
@@ -67,7 +67,12 @@ struct PaletteCatalog {
     static let threadLimit = 20
     static let secondaryLimit = 3
 
-    private var thread: ChatThread? { windowController?.selectedThread }
+    private var thread: ThreadSummary? { windowController?.selectedThread }
+
+    /// The menu command's current shortcut, nil when it has none.
+    private func keys(_ command: KeyCommand) -> String? {
+        KeyBindingsController.shared.displayString(for: command)
+    }
 
     // MARK: Actions
 
@@ -79,7 +84,8 @@ struct PaletteCatalog {
             items.append(
                 PaletteItem(
                     id: "action:new-thread", title: String(localized: "New Thread in \(project.name)"),
-                    icon: symbol("square.and.pencil"), trailing: "⌘N", keywords: ["new thread", "chat", "create", "draft"],
+                    icon: symbol("square.and.pencil"), trailing: keys(.newThread),
+                    keywords: ["new thread", "chat", "create", "draft"],
                     behavior: .run { window?.newThread(in: projectID) }))
         }
         if !store.projects.isEmpty {
@@ -91,12 +97,13 @@ struct PaletteCatalog {
         items.append(
             PaletteItem(
                 id: "action:add-project", title: String(localized: "Add Project…"), icon: symbol("folder.badge.plus"),
-                trailing: "⇧⌘O", keywords: ["add project", "open folder", "folder", "repository", "workspace"],
+                trailing: keys(.addProject), keywords: ["add project", "open folder", "folder", "repository", "workspace"],
                 behavior: .run { window?.addProject(nil) }))
         if let target = OpenTargets.preferred, window?.openFolder != nil {
             items.append(
                 PaletteItem(
-                    id: "action:open-in", title: String(localized: "Open in \(target.name)"), icon: target.icon, trailing: "⌘O",
+                    id: "action:open-in", title: String(localized: "Open in \(target.name)"), icon: target.icon,
+                    trailing: keys(.openInEditor),
                     keywords: ["open", "editor", "finder", "terminal", "reveal"], behavior: .run { window?.openInPreferred(nil) }))
         }
         if let split = window?.splitController {
@@ -104,18 +111,18 @@ struct PaletteCatalog {
                 PaletteItem(
                     id: "action:terminal",
                     title: split.content.isTerminalOpen ? String(localized: "Hide Terminal") : String(localized: "Show Terminal"),
-                    icon: symbol("terminal"), trailing: "⌘J", keywords: ["terminal", "shell", "console", "toggle"],
+                    icon: symbol("terminal"), trailing: keys(.toggleTerminal), keywords: ["terminal", "shell", "console", "toggle"],
                     behavior: .run { window?.toggleTerminalPanel(nil) }))
             items.append(
                 PaletteItem(
                     id: "action:diff", title: split.isDiffOpen ? String(localized: "Hide Diff") : String(localized: "Show Diff"),
-                    icon: symbol("plus.forwardslash.minus"), trailing: "⌘D",
+                    icon: symbol("plus.forwardslash.minus"), trailing: keys(.toggleDiff),
                     keywords: ["diff", "changes", "review", "git", "toggle"], behavior: .run { window?.toggleDiffPanel(nil) }))
         }
         if let thread, ThreadRunner.shared.isRunning(thread.id) {
             items.append(
                 PaletteItem(
-                    id: "action:stop", title: String(localized: "Stop Agent"), icon: symbol("stop.circle"), trailing: "⌘.",
+                    id: "action:stop", title: String(localized: "Stop Agent"), icon: symbol("stop.circle"), trailing: keys(.stopTurn),
                     keywords: ["stop", "interrupt", "cancel", "abort"], behavior: .run { window?.stopTurn(nil) }))
         }
         if thread != nil {
@@ -133,25 +140,26 @@ struct PaletteCatalog {
                 PaletteItem(
                     id: "action:sidebar",
                     title: split.isSidebarOpen ? String(localized: "Hide Sidebar") : String(localized: "Show Sidebar"),
-                    icon: symbol("sidebar.left"), trailing: "⌘B", keywords: ["sidebar", "projects", "threads", "toggle"],
+                    icon: symbol("sidebar.left"), trailing: keys(.toggleSidebar), keywords: ["sidebar", "projects", "threads", "toggle"],
                     behavior: .run { window?.toggleSidebarPanel(nil) }))
         }
         if let thread {
             items.append(
                 PaletteItem(
                     id: "action:pin", title: thread.isPinned ? String(localized: "Unpin Thread") : String(localized: "Pin Thread"),
-                    icon: symbol(thread.isPinned ? "pin.slash" : "pin"), trailing: "⇧⌘P", keywords: ["pin", "unpin", "favorite"],
+                    icon: symbol(thread.isPinned ? "pin.slash" : "pin"), trailing: keys(.pinThread),
+                    keywords: ["pin", "unpin", "favorite"],
                     behavior: .run { ThreadActions.togglePin(thread.id) }))
             items.append(
                 PaletteItem(
                     id: "action:rename", title: String(localized: "Rename Thread…"), icon: symbol("pencil"),
-                    keywords: ["rename", "title"], behavior: .run { window?.renameThread(nil) }))
+                    trailing: keys(.renameThread), keywords: ["rename", "title"], behavior: .run { window?.renameThread(nil) }))
             if ThreadActions.canArchive(thread.id) {
                 items.append(
                     PaletteItem(
                         id: "action:archive",
                         title: thread.isArchived ? String(localized: "Unarchive Thread") : String(localized: "Archive Thread"),
-                        icon: symbol("archivebox"), keywords: ["archive", "hide", "done"],
+                        icon: symbol("archivebox"), trailing: keys(.archiveThread), keywords: ["archive", "hide", "done"],
                         behavior: .run { ThreadActions.toggleArchived(thread.id) }))
             }
         }
@@ -185,7 +193,7 @@ struct PaletteCatalog {
         return store.recentThreads.map { threadItem($0, isCurrent: $0.id == current) }
     }
 
-    private func threadItem(_ thread: ChatThread, isCurrent: Bool) -> PaletteItem {
+    private func threadItem(_ thread: ThreadSummary, isCurrent: Bool) -> PaletteItem {
         let project = store.project(thread.projectID)?.name
         var parts = [project].compactMap(\.self)
         if let branch = thread.branch, !branch.isEmpty { parts.append("#\(branch)") }
@@ -228,25 +236,26 @@ struct PaletteCatalog {
 
     /// The composer's pickers (agent and model, reasoning effort, access, plan or build) and a switch to each
     /// other ready agent, as `/codex` and the like do in the composer.
-    private func composerActions(for thread: ChatThread) -> [PaletteItem] {
+    private func composerActions(for thread: ThreadSummary) -> [PaletteItem] {
         let window = windowController
         let registry = ProviderRegistry.shared
         var items: [PaletteItem] = [
             PaletteItem(
-                id: "action:model", title: String(localized: "Choose Agent and Model…"), icon: symbol("cpu"), trailing: "⇧⌘M",
+                id: "action:model", title: String(localized: "Choose Agent and Model…"), icon: symbol("cpu"),
+                trailing: keys(.chooseModel),
                 keywords: ["model", "agent", "provider", "switch", "change", "picker"], behavior: .submenu(modelMenu(thread)))
         ]
         if let model = registry.model(for: thread.selection), !model.efforts.isEmpty {
             items.append(
                 PaletteItem(
                     id: "action:effort", title: String(localized: "Choose Reasoning Effort…"), icon: symbol("brain"),
-                    trailing: "⇧⌘E", keywords: ["reasoning", "effort", "thinking", "think", "level"],
+                    trailing: keys(.reasoningEffort), keywords: ["reasoning", "effort", "thinking", "think", "level"],
                     behavior: .submenu(effortMenu(thread, model: model))))
         }
         items.append(
             PaletteItem(
                 id: "action:access", title: String(localized: "Choose Access…"),
-                icon: symbol(ComposerMenus.symbolName(for: thread.accessMode)), trailing: "⇧⌘A",
+                icon: symbol(ComposerMenus.symbolName(for: thread.accessMode)), trailing: keys(.accessMode),
                 keywords: ["access", "permissions", "approval", "approve", "full access", "ask", "mode"],
                 behavior: .submenu(accessMenu(thread))))
         let planning = thread.interactionMode == .plan
@@ -255,7 +264,8 @@ struct PaletteCatalog {
             PaletteItem(
                 id: "action:interaction-mode",
                 title: planning ? String(localized: "Switch to Build Mode") : String(localized: "Switch to Plan Mode"),
-                icon: symbol(planning ? "hammer" : "pencil.and.ruler"), keywords: ["plan", "build", "mode", "toggle"],
+                icon: symbol(planning ? "hammer" : "pencil.and.ruler"), trailing: keys(.planMode),
+                keywords: ["plan", "build", "mode", "toggle"],
                 behavior: .run { window?.splitController.content.chat.chooseInteractionMode(mode) }))
         for kind in registry.readyKinds where kind != thread.selection.provider {
             items.append(
@@ -269,12 +279,12 @@ struct PaletteCatalog {
     }
 
     /// Every model of the ready agents, grouped by agent, as in the composer's picker.
-    private func modelMenu(_ thread: ChatThread) -> PaletteMenu {
+    private func modelMenu(_ thread: ThreadSummary) -> PaletteMenu {
         let window = windowController
         let threadID = thread.id
         return PaletteMenu(title: String(localized: "Choose Agent and Model…"), placeholder: String(localized: "Search models…")) {
             let registry = ProviderRegistry.shared
-            let current = AppStore.shared.thread(threadID)?.selection ?? thread.selection
+            let current = AppStore.shared.summary(threadID)?.selection ?? thread.selection
             return registry.readyKinds.map { kind in
                 var models = registry.models(for: kind)
                 if kind == current.provider, !models.contains(where: { $0.modelID == current.modelID }) {
@@ -296,7 +306,7 @@ struct PaletteCatalog {
         }
     }
 
-    private func effortMenu(_ thread: ChatThread, model: ModelOption) -> PaletteMenu {
+    private func effortMenu(_ thread: ThreadSummary, model: ModelOption) -> PaletteMenu {
         let window = windowController
         let selected = thread.selection.effort ?? model.defaultEffort
         return PaletteMenu(
@@ -313,7 +323,7 @@ struct PaletteCatalog {
         }
     }
 
-    private func accessMenu(_ thread: ChatThread) -> PaletteMenu {
+    private func accessMenu(_ thread: ThreadSummary) -> PaletteMenu {
         let window = windowController
         let selected = thread.accessMode
         return PaletteMenu(title: String(localized: "Choose Access…"), placeholder: String(localized: "Search access modes…")) {

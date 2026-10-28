@@ -79,6 +79,8 @@ public struct ACPInitializeResult: Sendable, Hashable {
     public var promptImage: Bool
     public var promptAudio: Bool
     public var promptEmbeddedContext: Bool
+    /// The agent offers `logout` (`agentCapabilities.auth.logout`).
+    public var canLogout: Bool
     public var authMethods: [ACPAuthMethod]
     public var meta: JSONValue?
 
@@ -97,6 +99,7 @@ public struct ACPInitializeResult: Sendable, Hashable {
             promptImage = prompt?["image"].map { !$0.isNull } ?? false
             promptAudio = prompt?["audio"].map { !$0.isNull } ?? false
             promptEmbeddedContext = prompt?["embeddedContext"].map { !$0.isNull } ?? false
+            canLogout = json.at("capabilities.auth.logout").map { !$0.isNull && $0.bool != false } ?? false
         } else {
             generation = 1
             agentInfo = ACPImplementation(json: json["agentInfo"])
@@ -107,6 +110,7 @@ public struct ACPInitializeResult: Sendable, Hashable {
             promptImage = capabilities?.at("promptCapabilities.image")?.bool ?? false
             promptAudio = capabilities?.at("promptCapabilities.audio")?.bool ?? false
             promptEmbeddedContext = capabilities?.at("promptCapabilities.embeddedContext")?.bool ?? false
+            canLogout = capabilities?.at("auth.logout").map { !$0.isNull && $0.bool != false } ?? false
         }
     }
 

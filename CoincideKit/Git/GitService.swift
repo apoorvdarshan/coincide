@@ -15,6 +15,12 @@ public final class GitService {
     private var statusTasks: [String: Task<GitStatus, Error>] = [:]
     private var pullRequestCache: [String: (value: GitPullRequest?, date: Date)] = [:]
     private var gitHubReadyCache: [String: (value: Bool, date: Date)] = [:]
+    private var toolReadyCache: [String: (value: Bool, date: Date)] = [:]
+    private var hostCache: [String: (value: SourceControlHost?, date: Date)] = [:]
+    /// What `glab` and `tea` sign-ins made of host names no name identifies, by host.
+    private var refinedHostCache: [String: (kind: SourceControlKind, name: String, date: Date)] = [:]
+    /// Set by tests: false treats every host CLI as missing or signed out, so nothing reaches a real host.
+    var hostToolsOverride: Bool?
 
     public init(worktreesRoot: URL = GitService.worktreesDirectory) {
         self.worktreesRoot = worktreesRoot
@@ -272,19 +278,58 @@ public final class GitService {
         return ready
     }
 
-    /// The open pull request for `branch`, cached for a minute.
+    /// Whether `tool` is installed and signed in to `host`, cached for five minutes. `gh` is asked
+    /// about as `isGitHubCLIReady` asks.
+    public func isChangeRequestToolReady(_ tool: ChangeRequestTool, for host: SourceControlHost?, in cwd: URL) async
+        -> Bool
+    {
+        if let hostToolsOverride { return hostToolsOverride }
+        if tool == .gh { return await isGitHubCLIReady(cwd) }
+        let key = [tool.rawValue, host?.remote.host ?? "", cwd.standardizedFileURL.path].joined(separator: "\u{0}")
+        if let cached = toolReadyCache[key], Date().timeIntervalSince(cached.date) < 300 { return cached.value }
+        let ready = await ChangeRequestCLI.isReady(tool, host: host, in: cwd)
+        toolReadyCache[key] = (ready, Date())
+        return ready
+    }
+
+    /// The host of the remote `branch` tracks, else of `origin` (or the first remote), cached for a
+    /// minute. Nil without a remote, or for one that names no host, such as a local path. A host no
+    /// name identifies becomes GitLab or Forgejo when `glab` or `tea` is signed in to it.
+    public func sourceControlHost(_ cwd: URL, branch: String? = nil) async -> SourceControlHost? {
+        let key = "\(cwd.standardizedFileURL.path)\u{0}\(branch ?? "")"
+        if let cached = hostCache[key], Date().timeIntervalSince(cached.date) < 60 { return cached.value }
+        var host = await GitOps.remoteHost(cwd, branch: branch)
+        if let unknown = host, unknown.kind == .unknown, hostToolsOverride != false {
+            let hostKey = unknown.remote.host
+            if let cached = refinedHostCache[hostKey], Date().timeIntervalSince(cached.date) < 300 {
+                host = SourceControlHost(kind: cached.kind, name: cached.name, remote: unknown.remote)
+            } else {
+                let refined = await ChangeRequestCLI.refine(unknown, in: cwd)
+                refinedHostCache[hostKey] = (refined.kind, refined.name, Date())
+                host = refined
+            }
+        }
+        hostCache[key] = (host, Date())
+        return host
+    }
+
+    /// The open pull (or merge) request for `branch`, cached for a minute, read with the host's own
+    /// CLI: `gh` for GitHub, as before, and for hosts Coincide doesn't know; `glab`, `az` or `tea` for
+    /// GitLab, Azure DevOps and Forgejo. Nil when that CLI is missing or signed out, or the host has none.
     public func openPullRequest(for branch: String, in cwd: URL, refresh: Bool = false) async -> GitPullRequest? {
-        let key = "\(cwd.standardizedFileURL.path)\u{0}\(branch)"
+        let key = pullRequestKey(branch, cwd)
         if !refresh, let cached = pullRequestCache[key], Date().timeIntervalSince(cached.date) < 60 {
             return cached.value
         }
-        guard await isGitHubCLIReady(cwd) else { return nil }
-        let pullRequest = await GitHubCLI.pullRequest(for: branch, in: cwd, state: "open")
+        let host = await sourceControlHost(cwd, branch: branch)
+        guard let tool = (host?.kind ?? .unknown).tool, await isChangeRequestToolReady(tool, for: host, in: cwd)
+        else { return nil }
+        let pullRequest = await ChangeRequestCLI.openChangeRequest(for: branch, tool: tool, host: host, in: cwd)
         pullRequestCache[key] = (pullRequest, Date())
         return pullRequest
     }
 
-    /// Opens a pull request with `gh pr create`.
+    /// Opens a pull (or merge) request with the host's CLI: `gh pr create` for GitHub.
     public func createPullRequest(title: String, body: String, base: String, head: String, in cwd: URL) async throws
         -> GitPullRequest
     {
@@ -292,7 +337,22 @@ public final class GitService {
             pullRequestCache.removeAll()
             notifyChange(cwd)
         }
-        return try await GitHubCLI.createPullRequest(title: title, body: body, base: base, head: head, in: cwd)
+        let host = await sourceControlHost(cwd, branch: head)
+        guard let tool = (host?.kind ?? .unknown).tool else {
+            throw GitError(String(localized: "Create the pull request on \(host?.displayName ?? "") instead."))
+        }
+        if tool != .gh, await !isChangeRequestToolReady(tool, for: host, in: cwd) { throw GitError(tool.setupMessage) }
+        return try await ChangeRequestCLI.create(
+            title: title, body: body, base: base, head: head, tool: tool, host: host, in: cwd)
+    }
+
+    /// Remembers the change request just created for `branch`, so the next status shows it.
+    func rememberPullRequest(_ pullRequest: GitPullRequest, for branch: String, in cwd: URL) {
+        pullRequestCache[pullRequestKey(branch, cwd)] = (pullRequest, Date())
+    }
+
+    private func pullRequestKey(_ branch: String, _ cwd: URL) -> String {
+        "\(cwd.standardizedFileURL.path)\u{0}\(branch)"
     }
 
     // MARK: Notifications

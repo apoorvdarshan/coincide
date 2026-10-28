@@ -60,9 +60,12 @@ struct ThreadRowModel: Equatable {
     var status: Status
     var updatedAt: Date
     var canArchive: Bool
+    /// Whether the thread has a settled turn to fork from.
+    var canFork = false
     var toolTip: String
     var accessibilityLabel: String
-    /// "⌘1"… while the user holds Command, as in T3.
+    /// The thread's Go to Thread shortcut ("⌘1"…) while the user holds its modifier keys, as in T3. Nil when the
+    /// thread's command has no shortcut.
     var jumpHint: String?
 }
 
@@ -292,6 +295,7 @@ final class ThreadCell: HoverCellView {
     enum Command {
         case togglePin
         case rename
+        case fork
         case toggleArchived
         case delete
     }
@@ -377,6 +381,7 @@ final class ThreadCell: HoverCellView {
             accessibilityAction(model.isPinned ? String(localized: "Unpin") : String(localized: "Pin"), .togglePin),
             accessibilityAction(String(localized: "Rename"), .rename),
         ]
+        if model.canFork { actions.append(accessibilityAction(String(localized: "Fork Thread"), .fork)) }
         if model.canArchive {
             let title = model.isArchived ? String(localized: "Unarchive") : String(localized: "Archive")
             actions.append(accessibilityAction(title, .toggleArchived))

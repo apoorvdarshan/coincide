@@ -23,7 +23,12 @@ T3 Code is an Electron app with a Node server behind a web UI. Coincide is built
 - **Plan mode**, image attachments, `@` file mentions, `/` commands (including `/claude`, `/codex`, … to switch agents), queued follow-up messages and per-thread drafts.
 - **A native transcript** with Markdown, syntax-highlighted code, collapsible work logs per turn, and each reply labelled with the agent and model that wrote it.
 - **Git built in:** a diff inspector for uncommitted changes, the branch and each turn; checkpoints to revert a turn; per-thread worktrees; commit, push and pull requests with agent-written messages.
+- **Steer or queue.** While an agent works, steer the running turn (Claude Code, Codex, OpenCode, Pi) or queue a follow-up. The composer shows your Claude and Codex plan's usage limits.
+- **Fork and rewind.** Fork a thread from any turn, or edit an earlier message and continue from there.
+- **Pull and merge requests** on GitHub, GitLab, Bitbucket, Azure DevOps and Forgejo/Codeberg, through each host's CLI or its web page.
 - **Integrated terminal** per thread, with tabs and splits.
+- **Custom keyboard shortcuts** for every menu command, with conflict warnings.
+- Fast with long histories: thread lists load from a small index and transcripts load only when opened.
 - Notifications when a turn finishes or needs you while Coincide is in the background.
 
 ## Agents

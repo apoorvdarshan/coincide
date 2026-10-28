@@ -1,34 +1,49 @@
 import Foundation
 
 /// Google's Antigravity ACP agent (`agy_acp_server`), mirroring T3 Code's Antigravity provider.
-/// The executable needs its `localharness_external` helper in the same folder. Unlike T3 Code,
-/// Coincide runs it with the user's own Gemini profile and lets the agent open its own browser
-/// sign-in; the link is shown as a notice as well.
+/// The executable needs its `localharness_external` helper in the same folder; Coincide can download
+/// both from Google (see `AntigravityRuntime`).
+///
+/// Like T3 Code, Coincide runs it with a private Google profile under its data folder rather than the
+/// user's `~/.gemini` (see `AntigravityProfile`), and with browser launches redirected to Coincide:
+/// Google sign-in happens in Settings (`AntigravitySignIn`), never in the middle of a turn. A session
+/// that finds the profile signed out ends with a message that says so.
 struct AntigravityFlavor: ACPAgentFlavor {
     nonisolated static let defaultModelID = "antigravity-default"
-    nonisolated static let harnessName = "localharness_external"
+    nonisolated static let harnessName = AntigravityRelease.harnessName
+    /// The only sign-in Coincide uses: the user's Google account (subscription), never API billing.
+    nonisolated static let authMethodID = "oauth-personal"
     /// What the agent prints (on stdout or stderr) when it needs a Google sign-in.
     nonisolated static let signInPrefix = "Open the following link to authenticate the ACP server: "
-    /// Ambient credentials would switch the agent from the user's Google subscription to billed API access.
-    nonisolated static let removedEnvironmentKeys: Set<String> = [
-        "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT",
-        "GOOGLE_CLOUD_LOCATION", "GOOGLE_CLOUD_QUOTA_PROJECT", "GOOGLE_GENAI_USE_VERTEXAI", "GCLOUD_PROJECT",
-        "CLOUDSDK_CORE_PROJECT", "AGY_ACP_CCPA_PROJECT", "AGY_ACP_ENABLE_OAUTH", "ANTIGRAVITY_HARNESS_PATH",
-        "ELECTRON_RUN_AS_NODE",
-    ]
     /// The image types Antigravity accepts inline (T3 Code's list).
     nonisolated static let acceptedImageTypes = [
         "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp", "bmp": "image/bmp",
     ]
+    /// The models the last Google sign-in found, by profile folder, offered until a session reports its own.
+    static var knownModels: [String: [ModelOption]] = [:]
+
+    let paths: AntigravityPaths
+    let profile: AntigravityProfile
+    /// Leases the downloaded release a launch runs from; nil uses the shared runtime for managed paths.
+    let runtime: AntigravityRuntime?
+
+    init(paths: AntigravityPaths = .standard, profile: AntigravityProfile? = nil, runtime: AntigravityRuntime? = nil) {
+        self.paths = paths
+        self.profile = profile ?? AntigravityProfile(geminiHome: paths.profileDirectory)
+        self.runtime = runtime
+    }
 
     var provider: ProviderKind { .antigravity }
 
     func environment(_ base: [String: String], executable: URL) -> [String: String] {
-        // Keys are compared case-insensitively so an alias cannot slip through.
-        var environment = base.filter { !Self.removedEnvironmentKeys.contains($0.key.uppercased()) }
-        environment["ANTIGRAVITY_HARNESS_PATH"] = Self.harnessURL(for: executable).path
-        environment["PYTHONUNBUFFERED"] = "1"
-        return environment
+        profile.environment(base, harness: Self.harnessURL(for: executable))
+    }
+
+    /// Prepares the private profile and keeps a downloaded release in place while it runs.
+    func prepareLaunch(executable: URL, environment: [String: String]) async throws -> ACPLaunchLease? {
+        try await profile.prepare(environment: environment)
+        let runtime = runtime ?? (paths.isManaged(executable) ? AntigravityRuntime.shared : nil)
+        return runtime?.lease(for: executable)
     }
 
     /// Each launch unpacks about a gigabyte; a private folder is removed when the process ends.
@@ -38,7 +53,7 @@ struct AntigravityFlavor: ACPAgentFlavor {
     /// The agent is a one-file bundle that unpacks itself on every launch.
     var initializeTimeout: TimeInterval { 180 }
     /// Antigravity picks its credential source from the method, so it signs in before any session call.
-    func authMethodID(environment: [String: String]) -> String? { "oauth-personal" }
+    func authMethodID(environment: [String: String]) -> String? { Self.authMethodID }
     var authenticatesEagerly: Bool { true }
     /// Loading replays the whole history slowly; resume does not.
     var prefersResume: Bool { true }
@@ -124,9 +139,7 @@ struct AntigravityFlavor: ACPAgentFlavor {
 
     func message(for error: Error) -> String {
         if let error = error as? ACPError {
-            if error.code == ACPError.authRequired {
-                return String(localized: "Antigravity needs you to sign in with Google. Start the turn again to open the sign-in page.")
-            }
+            if error.code == ACPError.authRequired { return AntigravityProfile.signInRequiredMessage }
             if error.message.contains("SUBSCRIPTION_REQUIRED") || error.localizedDescription.contains("SUBSCRIPTION_REQUIRED") {
                 return String(localized: "Google requires an eligible Antigravity subscription for this account.")
             }
@@ -134,35 +147,27 @@ struct AntigravityFlavor: ACPAgentFlavor {
         return error.localizedDescription
     }
 
-    func notice(forOutputLine line: String) -> String? {
-        guard line.hasPrefix(Self.signInPrefix),
-            let url = Self.signInURL(String(line.dropFirst(Self.signInPrefix.count)))
-        else { return nil }
-        return String(localized: "Antigravity needs you to sign in with Google. Finish signing in in your browser: \(url)")
+    /// A sign-in link during a session means the profile is signed out. Sign-in only runs from
+    /// Settings (T3 Code fails the same way), so the launch ends instead of waiting for a browser.
+    func failure(forOutputLine line: String) -> String? {
+        guard let text = Self.authorizationText(in: line), AntigravityAuthorization.parse(text) != nil else { return nil }
+        return AntigravityProfile.signInRequiredMessage
     }
 
-    /// Only a Google OAuth link that redirects to this Mac is shown, as T3 Code checks it.
-    nonisolated static func signInURL(_ text: String) -> String? {
-        let text = text.trimmingCharacters(in: .whitespaces)
-        guard text.count <= 16_384, text.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
-            let components = URLComponents(string: text), components.scheme == "https",
-            components.host == "accounts.google.com", components.path == "/o/oauth2/v2/auth",
-            components.user == nil, components.password == nil, components.fragment == nil
-        else { return nil }
-        let items = components.queryItems ?? []
-        let value = { (name: String) in items.filter { $0.name == name } }
-        guard value("state").count == 1, let state = value("state").first?.value, !state.isEmpty, state.count <= 512,
-            value("response_type").count == 1, value("response_type").first?.value == "code",
-            value("redirect_uri").count == 1, let redirect = value("redirect_uri").first?.value,
-            let match = redirect.range(of: #"^http://127\.0\.0\.1:[1-9][0-9]{0,4}/$"#, options: .regularExpression),
-            let port = Int(redirect[match].dropFirst("http://127.0.0.1:".count).dropLast()), (1_024...65_535).contains(port)
-        else { return nil }
-        return text
+    /// The link in a line the agent printed itself, or that the profile's browser helper printed for it.
+    nonisolated static func authorizationText(in line: String) -> String? {
+        let line = line.hasSuffix("\r") ? String(line.dropLast()) : line
+        guard line.utf8.count <= AntigravityAuthorization.maxLength + 64 else { return nil }
+        for prefix in [signInPrefix, AntigravityProfile.browserMarker] where line.hasPrefix(prefix) {
+            return String(line.dropFirst(prefix.count))
+        }
+        return nil
     }
 
-    /// The agent unpacks about a gigabyte on every launch, so detection never starts it.
+    /// The agent unpacks about a gigabyte on every launch, so detection never starts it. It checks
+    /// the harness, a downloaded release's record, and whether the private profile holds a sign-in.
     func probe(executable: URL, environment: [String: String]) async -> ACPProbe {
-        let models = [ModelOption(provider: .antigravity, modelID: Self.defaultModelID, displayName: defaultModelName)]
+        let models = offlineModels(environment: environment)
         guard FileManager.default.isExecutableFile(atPath: Self.harnessURL(for: executable).path) else {
             return ACPProbe(
                 status: ProviderStatus(
@@ -173,10 +178,31 @@ struct AntigravityFlavor: ACPAgentFlavor {
                     )),
                 models: models)
         }
-        return ACPProbe(
-            status: ProviderStatus(
-                state: .ready, executable: executable, message: String(localized: "Google sign-in is checked when a session starts.")),
-            models: models)
+        var version: String?
+        if paths.isManaged(executable) {
+            do {
+                version = try AntigravityInstaller(paths: paths).activeRelease()?.version
+            } catch {
+                return ACPProbe(
+                    status: ProviderStatus(
+                        state: .error, executable: executable,
+                        message: String(localized: "The downloaded Antigravity runtime is incomplete. Install it again in Settings.")),
+                    models: models)
+            }
+        }
+        guard profile.isSignedIn else {
+            return ACPProbe(
+                status: ProviderStatus(
+                    state: .notAuthenticated, version: version, executable: executable,
+                    message: String(localized: "Sign in with Google in Settings to use Antigravity.")),
+                models: models)
+        }
+        return ACPProbe(status: ProviderStatus(state: .ready, version: version, executable: executable), models: models)
+    }
+
+    func offlineModels(environment: [String: String]) -> [ModelOption] {
+        Self.knownModels[profile.geminiHome.path].flatMap { $0.isEmpty ? nil : $0 }
+            ?? [ModelOption(provider: .antigravity, modelID: Self.defaultModelID, displayName: defaultModelName)]
     }
 
     /// The helper sits next to the real executable, even when PATH points at a symlink.

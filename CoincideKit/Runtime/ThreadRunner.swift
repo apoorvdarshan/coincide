@@ -32,6 +32,9 @@ public final class ThreadRunner {
         var delivered = false
         /// The model the turn runs with, recorded on its items even if the thread's selection changes meanwhile.
         var modelID: String?
+        /// The user's messages the turn took in while it ran (steering it), in order. Each is a user item
+        /// after `userItemID`, marked `steered`, that belongs to this turn rather than opening one.
+        public internal(set) var steeredItemIDs: [UUID] = []
 
         init(provider: ProviderKind, startedAt: Date, userItemID: UUID, modelID: String? = nil) {
             self.provider = provider
@@ -49,6 +52,16 @@ public final class ThreadRunner {
         public var createdAt: Date
     }
 
+    /// What became of a message the user sent (T3 Code's steer and queue).
+    public enum FollowUpDelivery: Sendable, Hashable {
+        /// No turn was running, so the message started one.
+        case sent
+        /// The running turn took it in.
+        case steered
+        /// It waits for the running turn to finish.
+        case queued
+    }
+
     /// A session whose `start()` is still running. Concurrent sends wait for it instead of spawning another.
     private struct Launch {
         let session: AgentSession
@@ -64,13 +77,19 @@ public final class ThreadRunner {
     private var lastActivity: [UUID: [ProviderKind: Date]] = [:]
     /// Provider item id ("kind:id") to transcript item id, per thread.
     private var itemMaps: [UUID: [String: UUID]] = [:]
-    public private(set) var turns: [UUID: TurnState] = [:]
+    public private(set) var turns: [UUID: TurnState] = [:] {
+        didSet { holdTranscriptsOfRunningTurns() }
+    }
+    /// Running turns keep their thread's transcript in memory (`AppStore.holdTranscript(_:)`).
+    private var transcriptHolds: [UUID: TranscriptHold] = [:]
     public private(set) var usage: [UUID: TokenUsage] = [:]
     /// Which provider the stored usage belongs to, so a switch doesn't show the previous agent's context.
     public private(set) var usageProviders: [UUID: ProviderKind] = [:]
     /// The model of the latest turn, so another model's context window is not kept.
     private var usageModels: [UUID: String] = [:]
     public private(set) var queues: [UUID: [QueuedMessage]] = [:]
+    /// Subscription usage each provider's sessions reported, merged over what an earlier check or report read.
+    private var reportedUsageLimits: [ProviderKind: UsageLimits] = [:]
     private var idleTimer: Timer?
     /// Seconds a stopped turn waits for the provider's confirmation. Tests shorten it.
     var stopTimeout: TimeInterval = ThreadRunner.defaultStopTimeout
@@ -85,6 +104,8 @@ public final class ThreadRunner {
     public static let turnFinishedNotification = Notification.Name("coincide.turnFinished")
     /// Posted when an agent asks for approval or asks a question. userInfo: "threadID" (UUID).
     public static let attentionNeededNotification = Notification.Name("coincide.attentionNeeded")
+    /// Posted when a provider's usage windows change. userInfo: "provider" (ProviderKind).
+    public static let usageLimitsChangedNotification = Notification.Name("coincide.usageLimitsChanged")
 
     /// Called when a turn ends. The app shell owns this; other modules observe `turnFinishedNotification`.
     public var onTurnFinished: ((UUID, TurnOutcome) -> Void)?
@@ -107,6 +128,14 @@ public final class ThreadRunner {
 
     // MARK: State
 
+    private func holdTranscriptsOfRunningTurns() {
+        guard transcriptHolds.count != turns.count || transcriptHolds.keys.contains(where: { turns[$0] == nil }) else { return }
+        transcriptHolds = transcriptHolds.filter { turns[$0.key] != nil }
+        for threadID in turns.keys where transcriptHolds[threadID] == nil {
+            transcriptHolds[threadID] = store.holdTranscript(threadID)
+        }
+    }
+
     public func isRunning(_ threadID: UUID) -> Bool { turns[threadID] != nil }
 
     /// True while the session is being spawned or the turn prepared, before the provider has the prompt.
@@ -123,6 +152,26 @@ public final class ThreadRunner {
 
     /// Messages waiting for the running turn to finish, oldest first.
     public func queuedMessages(_ threadID: UUID) -> [QueuedMessage] { queues[threadID] ?? [] }
+
+    /// Whether a message can go into the running turn now: its agent has the prompt, takes messages while it
+    /// works, and is still the thread's agent. A turn the agent started itself, or one being stopped, cannot.
+    public func canSteer(_ threadID: UUID) -> Bool {
+        guard let turn = turns[threadID], !turn.isStarting, turn.promptSent, !turn.interruptRequested,
+            !turn.isAgentInitiated, store.thread(threadID)?.selection.provider == turn.provider,
+            let session = sessions[threadID]?[turn.provider]
+        else { return false }
+        return session.supportsSteering
+    }
+
+    /// What the provider's plan allows, as its sessions last reported or its last check read, whichever is newer.
+    public func usageLimits(for provider: ProviderKind) -> UsageLimits? {
+        let checked = registry.status(provider).usageLimits
+        guard let reported = reportedUsageLimits[provider] else { return checked }
+        guard let checked else { return reported }
+        // A newer check reads every window afresh.
+        if checked.checkedAt >= reported.checkedAt, !checked.windows.isEmpty { return checked }
+        return checked.applying(reported.windows, at: reported.checkedAt)
+    }
 
     /// Approval items still waiting for an answer.
     public func pendingApprovals(_ threadID: UUID) -> [TranscriptItem] {
@@ -231,10 +280,90 @@ public final class ThreadRunner {
         usageModels[threadID] = modelID
     }
 
+    /// Sends a message into the running turn (T3 Code's steer), when its agent can take one now; otherwise
+    /// the message is queued for after the turn. With no turn running it starts one, as `send` does.
+    /// Nil when there is nothing to send.
+    @discardableResult
+    public func steer(threadID: UUID, text: String, imagePaths: [String] = []) async -> FollowUpDelivery? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || !imagePaths.isEmpty else { return nil }
+        guard isRunning(threadID) else {
+            await send(threadID: threadID, text: trimmed, imagePaths: imagePaths)
+            return .sent
+        }
+        let message = QueuedMessage(id: UUID(), text: trimmed, imagePaths: imagePaths, createdAt: Date())
+        return await steerOrQueue(message, threadID: threadID, queueIndex: nil)
+    }
+
+    /// Sends a queued message now: into the running turn when it can take one, or as a new turn when none runs.
+    /// A message the turn cannot take keeps its place in the queue. Nil when no such message is queued.
+    @discardableResult
+    public func steerQueued(threadID: UUID, id: UUID) async -> FollowUpDelivery? {
+        guard let index = queues[threadID]?.firstIndex(where: { $0.id == id }),
+            let message = removeQueued(threadID: threadID, id: id)
+        else { return nil }
+        guard isRunning(threadID) else {
+            await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths)
+            return .sent
+        }
+        return await steerOrQueue(message, threadID: threadID, queueIndex: index)
+    }
+
+    /// Hands the message to the running turn's session, recording it as a user item of that turn once taken.
+    /// A message the session refuses waits for the turn to end, or starts a turn if it already has.
+    private func steerOrQueue(_ message: QueuedMessage, threadID: UUID, queueIndex: Int?) async -> FollowUpDelivery {
+        guard canSteer(threadID), let turn = turns[threadID], let session = sessions[threadID]?[turn.provider],
+            let thread = store.thread(threadID)
+        else {
+            enqueue(message, threadID: threadID, at: queueIndex)
+            return .queued
+        }
+        // The session has seen the whole thread up to this turn, and nothing else can run meanwhile: no recap.
+        let input = AgentTurnInput(
+            text: message.text, imagePaths: message.imagePaths, selection: thread.selection, accessMode: thread.accessMode,
+            interactionMode: thread.interactionMode)
+        do {
+            try await session.steer(input)
+        } catch {
+            // The turn could not take it (not started, ending, or being stopped): it goes after the turn.
+            if isRunning(threadID) {
+                enqueue(message, threadID: threadID, at: queueIndex)
+                return .queued
+            }
+            await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths)
+            return .sent
+        }
+        // Marked as steered, so it stays part of the turn it went into instead of opening one.
+        let item = TranscriptItem(
+            kind: .user, text: message.text, provider: turn.provider, modelID: turn.modelID,
+            attachments: message.imagePaths.isEmpty ? nil : message.imagePaths, steered: true)
+        let countBefore = store.thread(threadID)?.items.count ?? 0
+        store.append(item, to: threadID)
+        if isActive(threadID, turn.userItemID) {
+            turns[threadID]?.steeredItemIDs.append(item.id)
+            store.updateThread(threadID, touch: true) { _ in }
+        } else {
+            // The turn ended while the message was on its way, yet its agent took it; it has seen the message.
+            store.updateThread(threadID, touch: true) { thread in
+                guard var ref = thread.sessions[turn.provider], ref.seenItemCount == countBefore else { return }
+                ref.seenItemCount = thread.items.count
+                thread.sessions[turn.provider] = ref
+            }
+        }
+        lastActivity[threadID, default: [:]][turn.provider] = Date()
+        store.notify(.runState(threadID))
+        return .steered
+    }
+
     /// Queues a message to send after the running turn.
     public func enqueue(threadID: UUID, text: String, imagePaths: [String] = []) {
-        let message = QueuedMessage(id: UUID(), text: text, imagePaths: imagePaths, createdAt: Date())
-        queues[threadID, default: []].append(message)
+        enqueue(QueuedMessage(id: UUID(), text: text, imagePaths: imagePaths, createdAt: Date()), threadID: threadID, at: nil)
+    }
+
+    private func enqueue(_ message: QueuedMessage, threadID: UUID, at index: Int?) {
+        var queue = queues[threadID] ?? []
+        queue.insert(message, at: min(index ?? queue.count, queue.count))
+        queues[threadID] = queue
         store.notify(.runState(threadID))
     }
 
@@ -395,7 +524,7 @@ public final class ThreadRunner {
         // A session launched with full access must not run a turn the user now wants to approve; providers
         // that only read the mode at launch would otherwise keep running unprompted. Restart it instead.
         if sessions[threadID]?[provider] != nil, launchedAccess[threadID]?[provider] == .fullAccess,
-            store.thread(threadID)?.accessMode == .approval
+            store.summary(threadID)?.accessMode == .approval
         {
             shutdown(threadID: threadID, provider: provider)
         }
@@ -428,7 +557,28 @@ public final class ThreadRunner {
         let task = Task { try await session.start() }
         launches[threadID, default: [:]][provider] = Launch(session: session, task: task)
         lastActivity[threadID, default: [:]][provider] = Date()
+        noteSlowStart(of: session, threadID: threadID, provider: provider)
         return try await join(Launch(session: session, task: task), threadID, provider)
+    }
+
+    /// How long an agent may take to start before the thread explains the likely reasons.
+    var slowStartNoticeDelay: Duration = .seconds(15)
+
+    /// Agents launched by Coincide read their own settings (for example `~/.claude/CLAUDE.md`), which often
+    /// live in folders macOS protects. Their reads then wait for the user to let Coincide access that folder,
+    /// so a launch that hangs usually means a permission prompt is waiting, or was declined.
+    private func noteSlowStart(of session: AgentSession, threadID: UUID, provider: ProviderKind) {
+        Task { [weak self] in
+            try? await Task.sleep(for: self?.slowStartNoticeDelay ?? .seconds(15))
+            guard let self, self.launches[threadID]?[provider]?.session === session else { return }
+            self.store.append(
+                TranscriptItem(
+                    kind: .notice,
+                    text: String(
+                        localized: "\(provider.displayName) is taking a while to start. If macOS asked whether Coincide may access a folder such as Documents, where agent settings often live, allow it. You can also grant access in System Settings › Privacy & Security › Files and Folders."),
+                    provider: provider),
+                to: threadID)
+        }
     }
 
     /// Waits for a session to start and makes it the thread's live session for its provider.
@@ -606,6 +756,8 @@ public final class ThreadRunner {
             usageProviders[threadID] = provider
             usage[threadID] = value.merged(with: usage[threadID] ?? TokenUsage())
             store.notify(.runState(threadID))
+        case .rateLimits(let windows):
+            recordUsageLimits(windows, for: provider)
         case .modelResolved:
             break
         case .modelsDiscovered(let models):
@@ -632,6 +784,20 @@ public final class ThreadRunner {
                 finishTurn(threadID, turn.userItemID, outcome: .failed(message))
             }
         }
+    }
+
+    /// Merges a provider's report of its usage windows and tells observers when anything changed. Agents repeat
+    /// unchanged windows with every token count, which changes nothing. Returns whether anything changed.
+    @discardableResult
+    func recordUsageLimits(_ windows: [UsageLimitWindow], for provider: ProviderKind, at date: Date = Date()) -> Bool {
+        guard !windows.isEmpty else { return false }
+        let current = usageLimits(for: provider)
+        let updated = (current ?? UsageLimits(windows: [], checkedAt: date)).applying(windows, at: date)
+        reportedUsageLimits[provider] = updated
+        guard updated.windows != current?.windows else { return false }
+        NotificationCenter.default.post(
+            name: Self.usageLimitsChangedNotification, object: self, userInfo: ["provider": provider])
+        return true
     }
 
     /// The model `provider` works with on the thread: its running turn's, or the one it was last sent a message

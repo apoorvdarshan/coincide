@@ -5,21 +5,25 @@ import QuartzCore
 // MARK: - User message
 
 /// The user's message: a right-aligned bubble with image thumbnails, long text folded behind
-/// "Show full message", and copy / edit / revert actions that appear on hover.
+/// "Show full message", and T3's "Edit from here" and copy actions that appear on hover. A message
+/// steered into a running turn carries T3's "Steer" mark above the bubble.
 final class TranscriptUserCell: TranscriptCell {
     private static let padding: CGFloat = 12
     private static let collapsedTextHeight: CGFloat = 176
     private static let thumbnailGap: CGFloat = 8
+    /// The "Steer" mark's line and the gap below it.
+    private static let steerMarkHeight: CGFloat = 14
+    private static let steerMarkGap: CGFloat = 4
 
     private let bubble = TranscriptBubbleView()
     private let textView = ChatTextView()
     private var thumbnails: [TranscriptThumbnailView] = []
     private let toggleButton = NSButton(title: "", target: nil, action: nil)
     private let timeLabel = NSTextField(labelWithString: "")
-    private lazy var editButton = TranscriptIconButton(
-        symbol: "pencil", label: String(localized: "Edit and resend"), action: #selector(edit), target: self)
-    private lazy var revertButton = TranscriptIconButton(
-        symbol: "arrow.uturn.backward", label: String(localized: "Revert to before this message"), action: #selector(revert), target: self)
+    private let steerIcon = NSImageView()
+    private let steerLabel = NSTextField(labelWithString: String(localized: "Steer"))
+    private lazy var rewindButton = TranscriptIconButton(
+        symbol: "arrow.uturn.backward", label: String(localized: "Edit from here"), action: #selector(rewind), target: self)
     private lazy var copyButton = TranscriptIconButton(
         symbol: "doc.on.doc", label: String(localized: "Copy message"), action: #selector(copyMessage), target: self)
     private var isHovered = false
@@ -42,7 +46,14 @@ final class TranscriptUserCell: TranscriptCell {
         bubble.addSubview(toggleButton)
         timeLabel.textColor = .tertiaryLabelColor
         timeLabel.alignment = .right
-        for view in [timeLabel, editButton, revertButton, copyButton] as [NSView] {
+        steerIcon.contentTintColor = .secondaryLabelColor
+        steerLabel.textColor = .secondaryLabelColor
+        for view in [steerIcon, steerLabel] as [NSView] {
+            view.toolTip = String(localized: "Steered the active turn")
+            view.setAccessibilityElement(false)
+            addSubview(view)
+        }
+        for view in [timeLabel, rewindButton, copyButton] as [NSView] {
             view.alphaValue = 0
             addSubview(view)
         }
@@ -76,11 +87,15 @@ final class TranscriptUserCell: TranscriptCell {
         timeLabel.stringValue = TranscriptFormat.timestamp(item.createdAt)
         timeLabel.font = .monospacedDigitSystemFont(ofSize: Theme.fontSize - 2, weight: .regular)
         timeLabel.toolTip = TranscriptFormat.fullTimestamp(item.createdAt)
-        let running = host.isThreadRunning
-        editButton.isEnabled = !running
-        revertButton.isHidden = !host.canRevert(item.id)
-        revertButton.isEnabled = !running
-        setAccessibilityLabel(String(localized: "You"))
+        // As in T3, the conversation cannot be rewound while a turn runs.
+        rewindButton.isEnabled = !host.isThreadRunning
+        steerIcon.isHidden = !item.isSteered
+        steerLabel.isHidden = !item.isSteered
+        if item.isSteered {
+            steerIcon.image = Theme.symbol("arrow.uturn.forward", size: Theme.fontSize - 3, weight: .medium)
+            steerLabel.font = .systemFont(ofSize: Theme.fontSize - 2)
+        }
+        setAccessibilityLabel(item.isSteered ? String(localized: "You, steered the active turn") : String(localized: "You"))
         updateActionsVisibility(animated: false)
     }
 
@@ -96,7 +111,7 @@ final class TranscriptUserCell: TranscriptCell {
         let content = TranscriptMetrics.column(width: width).width * 0.8 - padding * 2
         let text = TranscriptEstimate.textHeight(item.text, width: content)
         let images = (item.attachments ?? []).isEmpty ? 0 : CGFloat(((item.attachments?.count ?? 0) + 1) / 2) * 86
-        return min(text, collapsedTextHeight + 24) + images + padding * 2 + 28 + bottomSpacing(for: row)
+        return steerMarkSpace(item) + min(text, collapsedTextHeight + 24) + images + padding * 2 + 28 + bottomSpacing(for: row)
     }
 
     override var copyText: String? { item?.text }
@@ -106,6 +121,8 @@ final class TranscriptUserCell: TranscriptCell {
     }
 
     private struct Layout {
+        /// The "Steer" mark's line, above the bubble.
+        var steerMark: NSRect?
         var bubble: NSRect
         var thumbnails: [NSRect]
         var text: NSRect
@@ -113,6 +130,10 @@ final class TranscriptUserCell: TranscriptCell {
         var actionsY: CGFloat
         var height: CGFloat
         var isCollapsed: Bool
+    }
+
+    private static func steerMarkSpace(_ item: TranscriptItem) -> CGFloat {
+        item.isSteered ? steerMarkHeight + steerMarkGap : 0
     }
 
     static func shouldCollapse(_ text: String) -> Bool {
@@ -158,10 +179,12 @@ final class TranscriptUserCell: TranscriptCell {
             contentWidth = max(contentWidth, 126)
         }
         let bubbleWidth = min(maxBubble, ceil(contentWidth) + padding * 2)
-        let bubble = NSRect(x: column.x + column.width - bubbleWidth, y: 0, width: bubbleWidth, height: y + padding)
+        let top = steerMarkSpace(item)
+        let bubble = NSRect(x: column.x + column.width - bubbleWidth, y: top, width: bubbleWidth, height: y + padding)
         let actionsY = bubble.maxY + 4
+        let steerMark = item.isSteered ? NSRect(x: column.x, y: 0, width: column.width, height: steerMarkHeight) : nil
         return Layout(
-            bubble: bubble, thumbnails: thumbnails, text: text, toggle: toggle, actionsY: actionsY,
+            steerMark: steerMark, bubble: bubble, thumbnails: thumbnails, text: text, toggle: toggle, actionsY: actionsY,
             height: actionsY + 20 + bottomSpacing(for: row) - 4, isCollapsed: isCollapsed)
     }
 
@@ -181,9 +204,21 @@ final class TranscriptUserCell: TranscriptCell {
             toggleButton.alignment = .left
         }
         updateFade(collapsed: layout.isCollapsed)
+        if let mark = layout.steerMark {
+            // Right-aligned over the bubble, as T3 puts it.
+            steerLabel.sizeToFit()
+            let labelWidth = ceil(steerLabel.frame.width)
+            let labelHeight = ceil(steerLabel.frame.height)
+            steerLabel.frame = NSRect(
+                x: mark.maxX - 4 - labelWidth, y: mark.minY + ((mark.height - labelHeight) / 2).rounded(), width: labelWidth,
+                height: labelHeight)
+            let iconSize: CGFloat = 12
+            steerIcon.frame = NSRect(
+                x: steerLabel.frame.minX - 3 - iconSize, y: mark.minY + (mark.height - iconSize) / 2, width: iconSize, height: iconSize)
+        }
         let column = TranscriptMetrics.column(width: bounds.width)
         var x = column.x + column.width
-        for button in [copyButton, revertButton, editButton] where !button.isHidden {
+        for button in [copyButton, rewindButton] where !button.isHidden {
             x -= 22
             button.frame = NSRect(x: x, y: layout.actionsY, width: 22, height: 20)
         }
@@ -236,7 +271,7 @@ final class TranscriptUserCell: TranscriptCell {
 
     private func updateActionsVisibility(animated: Bool) {
         let alpha: CGFloat = isHovered || isRowSelected ? 1 : 0
-        let views = [timeLabel, editButton, revertButton, copyButton] as [NSView]
+        let views = [timeLabel, rewindButton, copyButton] as [NSView]
         if animated {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.15
@@ -254,14 +289,9 @@ final class TranscriptUserCell: TranscriptCell {
         host?.toggle(row.id)
     }
 
-    @objc private func edit() {
+    @objc private func rewind() {
         guard let item else { return }
-        host?.editMessage(item.id)
-    }
-
-    @objc private func revert() {
-        guard let item else { return }
-        host?.revertTurn(item.id)
+        host?.rewindTurn(item.id)
     }
 
     @objc private func copyMessage() {
@@ -279,7 +309,7 @@ final class TranscriptUserCell: TranscriptCell {
 // MARK: - Assistant message
 
 /// An agent reply rendered as Markdown. Code blocks get copy buttons; the turn's final reply ends
-/// with which provider and model answered, a copy button and the time.
+/// with which provider and model answered, copy and fork buttons and the time.
 final class TranscriptAssistantCell: TranscriptCell {
     private static let textInset: CGFloat = 4
     private static let metaHeight: CGFloat = 20
@@ -292,6 +322,8 @@ final class TranscriptAssistantCell: TranscriptCell {
     private let timeLabel = NSTextField(labelWithString: "")
     private lazy var copyButton = TranscriptIconButton(
         symbol: "doc.on.doc", label: String(localized: "Copy response"), action: #selector(copyResponse), target: self)
+    private lazy var forkButton = TranscriptIconButton(
+        symbol: "arrow.triangle.branch", label: String(localized: "Fork from this response"), action: #selector(fork), target: self)
     private var item: TranscriptItem?
     private var meta: AssistantMeta?
 
@@ -302,7 +334,7 @@ final class TranscriptAssistantCell: TranscriptCell {
         modelLabel.textColor = .secondaryLabelColor
         modelLabel.lineBreakMode = .byTruncatingTail
         timeLabel.textColor = .tertiaryLabelColor
-        for view in [providerIcon, modelLabel, timeLabel, copyButton] as [NSView] { addSubview(view) }
+        for view in [providerIcon, modelLabel, timeLabel, copyButton, forkButton] as [NSView] { addSubview(view) }
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
     }
@@ -332,6 +364,8 @@ final class TranscriptAssistantCell: TranscriptCell {
         }
         let showsMeta = meta != nil
         for view in [providerIcon, modelLabel, timeLabel, copyButton] as [NSView] { view.isHidden = !showsMeta }
+        // T3 forks from finished responses only; the meta row ends a turn that is over.
+        forkButton.isHidden = !showsMeta || !host.canFork(item.id)
         if let meta {
             providerIcon.image = Theme.symbol(meta.provider.symbolName, size: 11, weight: .semibold)
             providerIcon.contentTintColor = Theme.color(for: meta.provider)
@@ -395,6 +429,10 @@ final class TranscriptAssistantCell: TranscriptCell {
         x += labelWidth + 4
         copyButton.frame = NSRect(x: x, y: y, width: 22, height: Self.metaHeight)
         x += 24
+        if !forkButton.isHidden {
+            forkButton.frame = NSRect(x: x - 2, y: y, width: 22, height: Self.metaHeight)
+            x += 22
+        }
         timeLabel.sizeToFit()
         timeLabel.frame = NSRect(x: x, y: y + 2, width: timeLabel.frame.width, height: 16)
     }
@@ -431,6 +469,11 @@ final class TranscriptAssistantCell: TranscriptCell {
         guard let item else { return }
         host?.copyToPasteboard(item.text)
         copyButton.flashConfirmation()
+    }
+
+    @objc private func fork() {
+        guard let item else { return }
+        host?.forkTurn(item.id)
     }
 }
 

@@ -36,6 +36,11 @@ struct OpenCodeEventMapper {
         /// An execution started after the prompt was sent.
         var started = false
         var interruptRequested = false
+        /// Messages the user steered into the turn that OpenCode has not delivered to the agent yet.
+        var steers: Set<String> = []
+        /// How the execution ended while a steer still waited: OpenCode starts another execution for the steer,
+        /// and the turn ends with that one (or now, should the steer be withdrawn).
+        var heldEnd: TurnOutcome?
     }
 
     private struct Tool {
@@ -117,6 +122,17 @@ struct OpenCodeEventMapper {
         turn = nil
     }
 
+    /// A message steered into the running turn, by the id it was sent with.
+    mutating func addSteer(_ id: String) {
+        turn?.steers.insert(id)
+    }
+
+    /// A steer that will not reach the agent (OpenCode refused or withdrew it). An end held for it happens now.
+    mutating func dropSteer(_ id: String) -> [Effect] {
+        guard turn?.steers.remove(id) != nil, let held = turn?.heldEnd, turn?.steers.isEmpty == true else { return [] }
+        return endTurn(held).map { [.event($0)] } ?? []
+    }
+
     /// Takes a pending request the user answered. A denied tool call later reports as declined.
     mutating func resolve(_ id: String, declined: Bool) -> PendingRequest? {
         guard let request = pending.removeValue(forKey: id) else { return nil }
@@ -150,11 +166,19 @@ struct OpenCodeEventMapper {
 
         switch type {
         case "session.inbox.delivered":
-            if let promptID = turn?.promptID, data["inboxID"]?.string == promptID { turn?.delivered = true }
+            guard let inboxID = data["inboxID"]?.string else { return [] }
+            if inboxID == turn?.promptID { turn?.delivered = true }
+            // A steer delivered after the execution ended runs in a new execution, which ends the turn.
+            if turn?.steers.remove(inboxID) != nil { turn?.heldEnd = nil }
             return []
+        case "session.inbox.cancelled":
+            guard let inboxID = data["inboxID"]?.string else { return [] }
+            return dropSteer(inboxID)
         case "session.execution.started":
             executionRunning = true
             turn?.started = true
+            // The execution for a steer that waited: the turn goes on.
+            turn?.heldEnd = nil
             guard turn == nil, agentExecution == nil, !preparingPrompt else { return [] }
             agentExecution = false
             return [.event(.agentTurnStarted(note: String(localized: "OpenCode started working on its own.")))]
@@ -354,8 +378,15 @@ struct OpenCodeEventMapper {
         // stopped the turn while its prompt was still queued.
         let stoppedWhileQueued = outcome == .interrupted && turn.interruptRequested
         guard turn.delivered || turn.started || stoppedWhileQueued else { return [] }
+        // A steer still waiting gets an execution of its own, which the turn waits for.
+        if !turn.steers.isEmpty, outcome == .completed, !turn.interruptRequested {
+            self.turn?.heldEnd = outcome
+            return []
+        }
         var effects: [Effect] = []
         if !turn.delivered && turn.interruptRequested { effects.append(.cancelPrompt(messageID: turn.promptID)) }
+        // Steers the agent never got would otherwise start work after the turn ended.
+        effects += turn.steers.sorted().map { .cancelPrompt(messageID: $0) }
         if let end = endTurn(outcome) { effects.append(.event(end)) }
         return effects
     }
