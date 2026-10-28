@@ -19,11 +19,15 @@ enum ThreadActions {
     @discardableResult
     static func newThread(in projectID: UUID, basedOn source: ThreadSummary? = nil) -> UUID? {
         guard store.project(projectID) != nil else { return nil }
+        let defaults = store.newThreadDefaults(in: projectID)
+        let selection = ProviderRegistry.shared.usableSelection(preferring: defaults.selection)
         let id: UUID
-        if let empty = store.threads(in: projectID).first(where: { isUntouched($0, matching: source) }) {
+        if let empty = store.threads(in: projectID).first(where: {
+            isUntouched($0, matching: source) && $0.selection == selection
+                && $0.accessMode == defaults.accessMode && $0.interactionMode == defaults.interactionMode
+        }) {
             id = empty.id
         } else {
-            let selection = ProviderRegistry.shared.usableSelection(preferring: store.settings.defaultSelection)
             id = store.createThread(in: projectID, selection: selection).id
         }
         if let source, let thread = store.summary(id),

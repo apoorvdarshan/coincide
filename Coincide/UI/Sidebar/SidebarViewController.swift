@@ -1043,6 +1043,7 @@ extension SidebarViewController: NSMenuDelegate {
         if !FileManager.default.fileExists(atPath: project.path) {
             menu.addItem(item(String(localized: "Locate Folder…"), #selector(locateProjectFromMenu(_:)), id))
         }
+        menu.addItem(item(String(localized: "Project Defaults…"), #selector(projectDefaultsFromMenu(_:)), id))
         menu.addItem(item(String(localized: "Rename…"), #selector(renameProjectFromMenu(_:)), id))
         menu.addItem(item(String(localized: "Remove from Coincide…"), #selector(removeProjectFromMenu(_:)), id))
     }
@@ -1069,6 +1070,15 @@ extension SidebarViewController: NSMenuDelegate {
         item.target = self
         item.representedObject = id
         return item
+    }
+
+    @objc private func projectDefaultsFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID, let project = store.project(id), !project.isChats else { return }
+        let editor = ProjectDefaultsEditor(project: project, store: store, registry: .shared)
+        editor.onSave = { [weak store] defaults in
+            store?.updateProject(id) { $0.threadDefaults = defaults }
+        }
+        presentAsSheet(editor)
     }
 
     @objc private func renameFromMenu(_ sender: NSMenuItem) {
