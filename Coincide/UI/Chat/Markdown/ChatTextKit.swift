@@ -177,9 +177,11 @@ nonisolated final class ChatLayoutManager: NSLayoutManager {
 
 /// Read-only, selectable rich text for the transcript. Uses TextKit 1 so that text blocks
 /// (code panels, quotes, tables) lay out exactly as `ChatTextMeasurer` measured them.
-final class ChatTextView: NSTextView {
+final class ChatTextView: NSTextView, ComposerSelectionSource {
     /// Called for link clicks; return true when handled.
     var onOpenLink: ((Any) -> Bool)?
+    /// Set on agents' replies, whose selected text "Quote in Composer" attaches to the message.
+    var onQuote: ((String) -> Void)?
 
     convenience init() {
         let storage = NSTextStorage()
@@ -314,6 +316,52 @@ final class ChatTextView: NSTextView {
 
     /// The transcript scrolls; the text itself never does.
     override func scrollRangeToVisible(_ range: NSRange) {}
+
+    // MARK: Context menu and quoting
+
+    /// The selected text as it reads, its ranges joined by line breaks.
+    var selectedPlainText: String {
+        let text = string as NSString
+        return selectedRanges.map(\.rangeValue).filter { $0.length > 0 && NSMaxRange($0) <= text.length }
+            .map { text.substring(with: $0) }.joined(separator: "\n")
+    }
+
+    /// The themed text menu over a selection: Copy and, in an agent's reply, Quote in Composer. Anywhere else the row's
+    /// menu shows, as it does around the text.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard selectedPlainText.contains(where: { !$0.isWhitespace }) else {
+            var view = superview
+            while let current = view, !(current is NSTableView) { view = current.superview }
+            return view?.menu(for: event)
+        }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let copy = NSMenuItem(title: String(localized: "Copy"), action: #selector(copy(_:)), keyEquivalent: "")
+        copy.target = self
+        menu.addItem(copy)
+        if onQuote != nil {
+            let quote = NSMenuItem(title: addToComposerTitle, action: #selector(quoteSelection), keyEquivalent: "")
+            quote.target = self
+            menu.addItem(quote)
+        }
+        return ThemedContextMenu.show(menu, for: event, in: window)
+    }
+
+    @objc private func quoteSelection() {
+        let text = selectedPlainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        onQuote?(text)
+    }
+
+    var addToComposerTitle: String { String(localized: "Quote in Composer") }
+
+    var canAddSelectionToComposer: Bool {
+        onQuote != nil && selectedPlainText.contains { !$0.isWhitespace }
+    }
+
+    func addSelectionToComposer() {
+        quoteSelection()
+    }
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()

@@ -42,8 +42,8 @@ final class ComposerFooterView: NSView {
         implementButton.tintProminence = .primary
         implementButton.isHidden = true
         attachButton.configure(title: "", symbolName: "paperclip", chevron: false)
-        attachButton.toolTip = String(localized: "Attach images")
-        attachButton.setAccessibilityLabel(String(localized: "Attach images"))
+        attachButton.toolTip = String(localized: "Attach images or files")
+        attachButton.setAccessibilityLabel(String(localized: "Attach images or files"))
 
         for stack in [leadingControls, trailingControls] {
             stack.translatesAutoresizingMaskIntoConstraints = false

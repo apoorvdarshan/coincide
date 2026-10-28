@@ -51,6 +51,7 @@ public final class ThreadRunner {
         public var id: UUID
         public var text: String
         public var imagePaths: [String]
+        public var context: [MessageContext] = []
         public var createdAt: Date
     }
 
@@ -256,13 +257,13 @@ public final class ThreadRunner {
 
     // MARK: Turns
 
-    /// Sends a user message on the thread's selected provider and model.
+    /// Sends a user message on the thread's selected provider and model, with the images and context attached to it.
     /// While a turn is running the message is queued and sent when that turn completes.
-    public func send(threadID: UUID, text: String, imagePaths: [String] = []) async {
+    public func send(threadID: UUID, text: String, imagePaths: [String] = [], context: [MessageContext] = []) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !imagePaths.isEmpty else { return }
+        guard !trimmed.isEmpty || !imagePaths.isEmpty || !context.isEmpty else { return }
         if isRunning(threadID) {
-            enqueue(threadID: threadID, text: trimmed, imagePaths: imagePaths)
+            enqueue(threadID: threadID, text: trimmed, imagePaths: imagePaths, context: context)
             return
         }
         guard let thread = store.thread(threadID), store.project(thread.projectID) != nil else { return }
@@ -270,7 +271,7 @@ public final class ThreadRunner {
         let provider = selection.provider
 
         if !thread.hasUserMessages {
-            let provisional = Self.title(from: trimmed)
+            let provisional = Self.title(from: trimmed.isEmpty ? context.first?.summary ?? "" : trimmed)
             store.updateThread(threadID) { $0.title = provisional }
             if store.settings.generatesThreadTitles, !trimmed.isEmpty, let cwd = store.workingDirectory(for: threadID) {
                 Task { [store, registry] in
@@ -282,10 +283,10 @@ public final class ThreadRunner {
         }
         let userItem = TranscriptItem(
             kind: .user, text: trimmed, provider: provider, modelID: selection.modelID,
-            attachments: imagePaths.isEmpty ? nil : imagePaths)
+            attachments: imagePaths.isEmpty ? nil : imagePaths, context: context.isEmpty ? nil : context)
         let turnID = userItem.id
         store.append(userItem, to: threadID)
-        store.updateThread(threadID, touch: true) { $0.draft = nil }
+        store.updateThread(threadID, touch: true) { $0.draft = nil; $0.draftContext = nil }
         itemMaps[threadID] = [:]
         turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: turnID, modelID: selection.modelID)
         resetTurnUsage(threadID, provider: provider, modelID: selection.modelID)
@@ -331,10 +332,11 @@ public final class ThreadRunner {
             var snapshot = current
             snapshot.items = Array(current.items.prefix(userIndex))
             let input = AgentTurnInput(
-                message: trimmed, handoffRecap: Handoff.recap(thread: snapshot, provider: provider),
+                message: MessageContext.prompt(message: trimmed, context: context, workingDirectory: cwd.path),
+                handoffRecap: Handoff.recap(thread: snapshot, provider: provider),
                 newSessionRecap: Handoff.newSessionRecap(thread: snapshot, provider: provider), threadTitle: snapshot.title,
-                imagePaths: imagePaths, selection: selection, accessMode: snapshot.accessMode,
-                interactionMode: snapshot.interactionMode)
+                imagePaths: imagePaths, filePaths: context.compactMap(\.filePath), selection: selection,
+                accessMode: snapshot.accessMode, interactionMode: snapshot.interactionMode)
             turns[threadID]?.isStarting = false
             turns[threadID]?.promptSent = true
             store.notify(.runState(threadID))
@@ -363,14 +365,16 @@ public final class ThreadRunner {
     /// the message is queued for after the turn. With no turn running it starts one, as `send` does.
     /// Nil when there is nothing to send.
     @discardableResult
-    public func steer(threadID: UUID, text: String, imagePaths: [String] = []) async -> FollowUpDelivery? {
+    public func steer(threadID: UUID, text: String, imagePaths: [String] = [], context: [MessageContext] = []) async
+        -> FollowUpDelivery?
+    {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !imagePaths.isEmpty else { return nil }
+        guard !trimmed.isEmpty || !imagePaths.isEmpty || !context.isEmpty else { return nil }
         guard isRunning(threadID) else {
-            await send(threadID: threadID, text: trimmed, imagePaths: imagePaths)
+            await send(threadID: threadID, text: trimmed, imagePaths: imagePaths, context: context)
             return .sent
         }
-        let message = QueuedMessage(id: UUID(), text: trimmed, imagePaths: imagePaths, createdAt: Date())
+        let message = QueuedMessage(id: UUID(), text: trimmed, imagePaths: imagePaths, context: context, createdAt: Date())
         return await steerOrQueue(message, threadID: threadID, queueIndex: nil)
     }
 
@@ -382,7 +386,7 @@ public final class ThreadRunner {
             let message = removeQueued(threadID: threadID, id: id)
         else { return nil }
         guard isRunning(threadID) else {
-            await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths)
+            await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths, context: message.context)
             return .sent
         }
         return await steerOrQueue(message, threadID: threadID, queueIndex: index)
@@ -399,8 +403,10 @@ public final class ThreadRunner {
         }
         // The session has seen the whole thread up to this turn, and nothing else can run meanwhile: no recap.
         let input = AgentTurnInput(
-            text: message.text, imagePaths: message.imagePaths, selection: thread.selection, accessMode: thread.accessMode,
-            interactionMode: thread.interactionMode)
+            text: MessageContext.prompt(
+                message: message.text, context: message.context, workingDirectory: store.workingDirectory(for: threadID)?.path),
+            imagePaths: message.imagePaths, filePaths: message.context.compactMap(\.filePath), selection: thread.selection,
+            accessMode: thread.accessMode, interactionMode: thread.interactionMode)
         do {
             try await session.steer(input)
         } catch {
@@ -409,13 +415,14 @@ public final class ThreadRunner {
                 enqueue(message, threadID: threadID, at: queueIndex)
                 return .queued
             }
-            await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths)
+            await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths, context: message.context)
             return .sent
         }
         // Marked as steered, so it stays part of the turn it went into instead of opening one.
         let item = TranscriptItem(
             kind: .user, text: message.text, provider: turn.provider, modelID: turn.modelID,
-            attachments: message.imagePaths.isEmpty ? nil : message.imagePaths, steered: true)
+            attachments: message.imagePaths.isEmpty ? nil : message.imagePaths,
+            context: message.context.isEmpty ? nil : message.context, steered: true)
         let countBefore = store.thread(threadID)?.items.count ?? 0
         store.append(item, to: threadID)
         if isActive(threadID, turn.userItemID) {
@@ -435,8 +442,10 @@ public final class ThreadRunner {
     }
 
     /// Queues a message to send after the running turn.
-    public func enqueue(threadID: UUID, text: String, imagePaths: [String] = []) {
-        enqueue(QueuedMessage(id: UUID(), text: text, imagePaths: imagePaths, createdAt: Date()), threadID: threadID, at: nil)
+    public func enqueue(threadID: UUID, text: String, imagePaths: [String] = [], context: [MessageContext] = []) {
+        enqueue(
+            QueuedMessage(id: UUID(), text: text, imagePaths: imagePaths, context: context, createdAt: Date()),
+            threadID: threadID, at: nil)
     }
 
     private func enqueue(_ message: QueuedMessage, threadID: UUID, at index: Int?) {
@@ -1009,7 +1018,7 @@ public final class ThreadRunner {
         let proceed = outcome == .completed || (turn.isAgentInitiated && !turn.interruptRequested)
         if proceed, let next = queues[threadID]?.first {
             removeQueued(threadID: threadID, id: next.id)
-            Task { await send(threadID: threadID, text: next.text, imagePaths: next.imagePaths) }
+            Task { await send(threadID: threadID, text: next.text, imagePaths: next.imagePaths, context: next.context) }
         }
     }
 

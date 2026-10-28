@@ -638,6 +638,48 @@ struct ThreadRunnerTests {
         #expect(items.last { $0.kind == .user }?.opensUserTurn == true)
     }
 
+    // MARK: Context
+
+    @Test func contextTravelsWithTheMessageAndReachesTheAgentAsItsPrompt() async {
+        let quote = MessageContext(.quote(.init(text: "Use a lock", provider: .codex)))
+        let file = MessageContext(.file(.init(path: "/tmp/docs/spec.pdf")))
+        await runner.send(threadID: threadID, text: " Why? ", context: [quote, file])
+        let input = claude.last?.sent.last
+        // Files are mentioned relative to the thread's folder, the rest follows in a block.
+        #expect(input?.message.hasPrefix("Why?\n\n@docs/spec.pdf\n\n<coincide_context version=\"1\">") == true)
+        #expect(input?.message.contains("source: an earlier reply by Codex\ntext:\n  Use a lock") == true)
+        #expect(input?.filePaths == ["/tmp/docs/spec.pdf"])
+        // The transcript keeps what the user typed, with the context beside it.
+        let user = items.first { $0.kind == .user }
+        #expect(user?.text == "Why?" && user?.context == [quote, file])
+    }
+
+    @Test func aMessageOfContextAloneIsSentAndNamesTheThread() async {
+        let excerpt = MessageContext(
+            .terminal(.init(terminal: "Terminal 1", directory: "/tmp", lineStart: nil, lineEnd: nil, text: "error: build failed\nmore")))
+        await runner.send(threadID: threadID, text: "  ", context: [excerpt])
+        #expect(store.thread(threadID)?.title == "error: build failed")
+        #expect(claude.last?.sent.last?.message.hasPrefix("<coincide_context") == true)
+        #expect(items.first { $0.kind == .user }?.context == [excerpt])
+    }
+
+    @Test func steeredAndQueuedMessagesKeepTheirContext() async {
+        let session = await startRunningTurn()
+        let quote = MessageContext(.quote(.init(text: "Use a lock", provider: .claude)))
+        #expect(await runner.steer(threadID: threadID, text: "", context: [quote]) == .steered)
+        #expect(session.steered.last?.message.contains("<context kind=\"quote\" id=\"quote-1\">") == true)
+        #expect(items.last?.context == [quote] && items.last?.isSteered == true)
+
+        let file = MessageContext(.file(.init(path: "/tmp/a.txt")))
+        runner.enqueue(threadID: threadID, text: "later", context: [file])
+        #expect(runner.queuedMessages(threadID).last?.context == [file])
+        session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) }
+        session.emit(.turnCompleted(.completed))
+        #expect(await eventually { session.sent.count == 2 })
+        #expect(session.sent.last?.message == "later\n\n@a.txt")
+        #expect(session.sent.last?.filePaths == ["/tmp/a.txt"])
+    }
+
     @Test func aMessageTheTurnRefusesWaitsForIt() async {
         let session = await startRunningTurn()
         session.onSteer = { _, _ in throw AgentError.providerError("not now") }

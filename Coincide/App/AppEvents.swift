@@ -15,6 +15,9 @@ extension Notification.Name {
     static let coincideToggleTerminal = Notification.Name("coincide.toggleTerminal")
     /// Handled by the composer.
     static let coincideFocusComposer = Notification.Name("coincide.focusComposer")
+    /// Attaches context to the composer's message, from the terminal or the diff. Handled by the composer.
+    /// userInfo["threadID"]: UUID, ["context"]: MessageContext
+    static let coincideAddComposerContext = Notification.Name("coincide.addComposerContext")
     /// Writes `#123` into the composer, as picking the pull request from the `#` list does. Handled by the composer.
     /// userInfo["pullRequest"]: PullRequestSummary
     static let coincideMentionPullRequest = Notification.Name("coincide.mentionPullRequest")
@@ -50,6 +53,12 @@ enum AppEvents {
         if let section { info["section"] = section.rawValue }
         if let provider { info["provider"] = provider.rawValue }
         NotificationCenter.default.post(name: .coincideShowSettings, object: nil, userInfo: info)
+    }
+
+    /// Adds `context` to the message being written in `threadID`.
+    static func addToComposer(_ context: MessageContext, threadID: UUID) {
+        NotificationCenter.default.post(
+            name: .coincideAddComposerContext, object: nil, userInfo: ["threadID": threadID, "context": context])
     }
 
     static func post(_ name: Notification.Name, _ info: [String: Any] = [:]) {

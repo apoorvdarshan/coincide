@@ -50,6 +50,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private var attachments: [ComposerAttachment] = []
     /// Attachments of threads the user switched away from, restored when they come back.
     private var parkedAttachments: [UUID: [ComposerAttachment]] = [:]
+    /// Quotes, terminal output, diff comments and files attached to the message, shown as cards beside the images.
+    private var attachedContext: [MessageContext] = []
     private var draftSave: Task<Void, Never>?
     private var trigger: ComposerTrigger?
     /// A trigger dismissed with Escape stays hidden until the caret leaves its word.
@@ -104,6 +106,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(focusRequested), name: .coincideFocusComposer, object: nil)
         NotificationCenter.default.addObserver(
+            self, selector: #selector(contextRequested(_:)), name: .coincideAddComposerContext, object: nil)
+        NotificationCenter.default.addObserver(
             self, selector: #selector(mentionPullRequest(_:)), name: .coincideMentionPullRequest, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationWillTerminate), name: NSApplication.willTerminateNotification, object: nil)
@@ -124,7 +128,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         textView.font = Theme.bodyFont
         textView.textColor = .labelColor
         textView.onImages = { [weak self] sources in self?.addImages(sources) }
-        textView.onFiles = { [weak self] urls in self?.mention(urls) }
+        textView.onFiles = { [weak self] urls in self?.addFiles(urls) }
         textView.onKeyDown = { [weak self] event in self?.handleKeyDown(event) ?? false }
         textView.onDragHover = { [weak self] hovering in self?.setDropHighlight(hovering) }
         scrollView.documentView = textView
@@ -146,6 +150,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         surfaceStack.onDragHover = { [weak self] hovering in self?.setDropHighlight(hovering) }
         attachmentStrip.onRemove = { [weak self] attachment in self?.removeAttachment(attachment) }
         attachmentStrip.onOpen = { [weak self] attachment in self?.preview(attachment) }
+        attachmentStrip.onRemoveContext = { [weak self] context in self?.removeContext(context) }
+        attachmentStrip.onOpenContext = { [weak self] context, anchor in self?.openContext(context, from: anchor) }
         attachmentStrip.isHidden = true
         for view in [attachmentStrip, scrollView, footer] as [NSView] { surfaceStack.addArrangedSubview(view) }
         surfaceStack.setCustomSpacing(4, after: scrollView)
@@ -221,7 +227,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         footer.modeButton.target = self
         footer.modeButton.action = #selector(toggleInteractionMode)
         footer.attachButton.target = self
-        footer.attachButton.action = #selector(chooseImages)
+        footer.attachButton.action = #selector(chooseAttachments)
         footer.sendButton.target = self
         footer.sendButton.action = #selector(sendClicked)
         footer.stopButton.target = self
@@ -304,12 +310,13 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         suggestions.reposition(above: surface)
     }
 
-    /// Replaces the text and attachments, for example when the user edits a message they already sent.
-    func setDraft(_ text: String, imagePaths: [String]) {
+    /// Replaces the text, attachments and context, for example when the user edits a message they already sent.
+    func setDraft(_ text: String, imagePaths: [String], context: [MessageContext] = []) {
         textView.setText(text)
         textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
         attachments = imagePaths.filter { FileManager.default.fileExists(atPath: $0) }
             .map { ComposerAttachment(path: $0, name: ($0 as NSString).lastPathComponent) }
+        attachedContext = context
         refreshAttachments()
         textChanged()
         focus()
@@ -410,7 +417,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
         editUndoManager.removeAllActions()
         attachments = threadID.flatMap { parkedAttachments.removeValue(forKey: $0) } ?? []
-        attachmentStrip.show(attachments, warning: nil)
+        attachedContext = thread?.draftContext ?? []
+        attachmentStrip.show(attachments, context: attachedContext, warning: nil)
         refreshThread()
         refreshRunState()
         refreshRequests(announcing: false)
@@ -649,7 +657,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             planBanner.isHidden = proposedPlan == nil
             if let proposedPlan { planBanner.show(planTitle: Self.title(ofPlan: proposedPlan)) }
         }
-        guard let threadID, let thread, thread.interactionMode == .plan, !runner.isRunning(threadID), attachments.isEmpty
+        guard let threadID, let thread, thread.interactionMode == .plan, !runner.isRunning(threadID), attachments.isEmpty,
+            attachedContext.isEmpty
         else { return }
         var plan: String?
         var reply: String?
@@ -729,7 +738,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         if !attachments.isEmpty, let thread, let model = registry.model(for: thread.selection), !model.supportsImages {
             warning = String(localized: "\(model.displayName) may not be able to read images.")
         }
-        attachmentStrip.show(attachments, warning: warning)
+        attachmentStrip.show(attachments, context: attachedContext, warning: warning)
         refreshPlan()
         updateSendState()
     }
@@ -790,7 +799,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     private var hasContent: Bool {
-        !attachments.isEmpty || textView.string.contains { !$0.isWhitespace }
+        !attachments.isEmpty || !attachedContext.isEmpty || textView.string.contains { !$0.isWhitespace }
     }
 
     /// Send while idle; while a turn runs, send steers or queues as the follow-up behavior says (the other while the
@@ -968,7 +977,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     /// Up in an empty composer recalls earlier messages of the thread; Down walks back toward the draft.
     private func recallHistory(backward: Bool) -> Bool {
-        guard attachments.isEmpty, history != nil || textView.string.isEmpty,
+        guard attachments.isEmpty, attachedContext.isEmpty, history != nil || textView.string.isEmpty,
             textView.caretIsOnEdgeLine(top: backward), let thread
         else { return false }
         var prompts: [String] = []
@@ -1011,8 +1020,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         draftSave = nil
         let text = textView.string
         let draft = text.contains { !$0.isWhitespace } ? text : nil
-        guard let thread = store.thread(id), thread.draft != draft else { return }
-        store.updateThread(id) { $0.draft = draft }
+        let context = attachedContext.isEmpty ? nil : attachedContext
+        guard let thread = store.thread(id), thread.draft != draft || thread.draftContext != context else { return }
+        store.updateThread(id) { $0.draft = draft; $0.draftContext = context }
     }
 
     // MARK: Suggestions
@@ -1309,7 +1319,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private func primaryAction(alternate: Bool = false) {
         guard let threadID else { return }
         let text = textView.string
-        if attachments.isEmpty, let command = ComposerCommand.standalone(text, in: availableCommands) {
+        if attachments.isEmpty, attachedContext.isEmpty, let command = ComposerCommand.standalone(text, in: availableCommands) {
             clearComposer()
             perform(command)
             return
@@ -1331,18 +1341,19 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             behavior: followUpBehavior)
         declinePendingRequests(threadID)
         let imagePaths = attachments.map(\.path)
+        let context = attachedContext
         clearComposer()
         switch dispatch {
         case .steer:
             Task {
-                let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths)
+                let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths, context: context)
                 announce(delivery)
             }
         case .send, .queue:
             Task {
                 // `send` queues the message while a turn runs.
                 let queues = runner.isRunning(threadID)
-                await runner.send(threadID: threadID, text: text, imagePaths: imagePaths)
+                await runner.send(threadID: threadID, text: text, imagePaths: imagePaths, context: context)
                 if queues { announce(.queued) }
             }
         }
@@ -1407,10 +1418,13 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         textView.setText("")
         editUndoManager.removeAllActions()
         attachments = []
+        attachedContext = []
         history = nil
         trigger = nil
         suggestions.hide()
-        if let threadID, thread?.draft != nil { store.updateThread(threadID) { $0.draft = nil } }
+        if let threadID, thread?.draft != nil || thread?.draftContext != nil {
+            store.updateThread(threadID) { $0.draft = nil; $0.draftContext = nil }
+        }
         refreshAttachments()
         updateTextHeight()
     }
@@ -1423,6 +1437,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         textView.setText(text)
         textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
         attachments += message.imagePaths.map { ComposerAttachment(path: $0, name: ($0 as NSString).lastPathComponent) }
+        attachedContext += message.context
         refreshAttachments()
         textChanged()
         focus()
@@ -1436,17 +1451,19 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     // MARK: Attachments
 
-    @objc private func chooseImages() {
+    /// Images are attached as pictures; other files as cards the agent gets by path (and Claude Code reads PDFs).
+    @objc private func chooseAttachments() {
         guard let window = view.window else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.prompt = String(localized: "Attach")
-        panel.message = String(localized: "Choose images to send with your message.")
+        panel.message = String(localized: "Choose images, PDFs or other files to send with your message.")
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK else { return }
-            self?.addImages(panel.urls.map { .file($0) })
+            let images = panel.urls.filter(ComposerAttachmentImporter.isImage)
+            self?.addImages(images.map { .file($0) })
+            self?.addFiles(panel.urls.filter { !ComposerAttachmentImporter.isImage($0) })
         }
     }
 
@@ -1482,7 +1499,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         refreshAttachments()
     }
 
-    /// Mentions dropped or pasted files by path, relative to the working directory when inside it.
+    /// Mentions dropped or pasted folders by path, relative to the working directory when inside it.
     private func mention(_ urls: [URL]) {
         let root = threadID.flatMap { store.workingDirectory(for: $0) }?.standardizedFileURL.path
         let paths = urls.map { url -> String in
@@ -1495,13 +1512,84 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         focus()
     }
 
+    // MARK: Context
+
+    /// Attaches context to the message (a quote from the transcript, terminal output, a diff comment or a file) as a
+    /// card above the text, and puts the caret back here to say something about it. The same thing is attached once.
+    func addContext(_ context: MessageContext) {
+        guard threadID != nil else { return }
+        if !attachedContext.contains(where: { $0.content == context.content }) {
+            attachedContext.append(context)
+            if let threadID { saveDraft(to: threadID) }
+            refreshAttachments()
+            attachmentStrip.reveal(context)
+            NSAccessibility.post(
+                element: textView, notification: .announcementRequested,
+                userInfo: [
+                    .announcement: String(localized: "Added \(context.title) to the message"),
+                    .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+                ])
+        }
+        focus()
+    }
+
+    /// Context from the terminal or the diff (`AppEvents.addToComposer`). Context for another thread waits with that
+    /// thread's message.
+    @objc private func contextRequested(_ notification: Notification) {
+        guard let target = notification.userInfo?["threadID"] as? UUID,
+            let context = notification.userInfo?["context"] as? MessageContext
+        else { return }
+        if target == threadID {
+            addContext(context)
+        } else if store.thread(target) != nil {
+            store.updateThread(target) { thread in
+                var contextItems = thread.draftContext ?? []
+                if !contextItems.contains(where: { $0.content == context.content }) { contextItems.append(context) }
+                thread.draftContext = contextItems
+            }
+        }
+    }
+
+    private func removeContext(_ context: MessageContext) {
+        attachedContext.removeAll { $0.id == context.id }
+        if let threadID { saveDraft(to: threadID) }
+        refreshAttachments()
+    }
+
+    /// Files dropped, pasted or chosen become cards; folders are mentioned in the text, as before.
+    private func addFiles(_ urls: [URL]) {
+        var folders: [URL] = []
+        for url in urls {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { continue }
+            if isDirectory.boolValue {
+                folders.append(url)
+            } else {
+                addContext(MessageContext(.file(.init(path: url.standardizedFileURL.path))))
+            }
+        }
+        if !folders.isEmpty { mention(folders) }
+    }
+
+    private func openContext(_ context: MessageContext, from anchor: NSView) {
+        MessageContextDetails.show(context, from: anchor) { [weak self] url in
+            guard let self else { return }
+            let files = attachedContext.compactMap(\.filePath).map { URL(fileURLWithPath: $0) }
+            showQuickLook(files, selected: files.firstIndex(of: url) ?? 0)
+        }
+    }
+
     private func setDropHighlight(_ highlighted: Bool) {
         surface.tintColor = highlighted ? Theme.dropTint : nil
     }
 
     private func preview(_ attachment: ComposerAttachment) {
-        previewURLs = attachments.map(\.url)
-        previewIndex = attachments.firstIndex(of: attachment) ?? 0
+        showQuickLook(attachments.map(\.url), selected: attachments.firstIndex(of: attachment) ?? 0)
+    }
+
+    private func showQuickLook(_ urls: [URL], selected index: Int) {
+        previewURLs = urls
+        previewIndex = index
         focus()
         guard let panel = QLPreviewPanel.shared() else { return }
         if panel.isVisible {

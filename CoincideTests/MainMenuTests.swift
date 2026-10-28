@@ -112,6 +112,7 @@ struct MainMenuTests {
             "Thread › Pin Thread": "⇧⌘P", "Thread › Choose Agent and Model…": "⇧⌘M", "Thread › Reasoning Effort…": "⇧⌘E",
             "Thread › Access…": "⇧⌘A", "Thread › Previous Thread": "⇧⌘[", "Thread › Next Thread": "⇧⌘]",
             "Coincide › Settings…": "⌘,", "Edit › Find › Search Threads": "⌥⌘F", "Edit › Find › Find…": "⌘F",
+            "Edit › Add Selection to Composer": "⌘L",
         ]
         for (title, keys) in expected {
             #expect(byTitle[title] == keys, "\(title)")
