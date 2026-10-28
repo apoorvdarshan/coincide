@@ -31,13 +31,13 @@ struct GeneralSettingsView: View {
                     if model.settings.appearance != .light || highlighted == .darkTheme {
                         ThemeGridRow(
                             title: String(localized: "Dark theme"), themes: AppTheme.dark, selection: model.binding(\.darkTheme),
-                            isRevealed: highlighted == .darkTheme)
+                            isRevealed: highlighted == .darkTheme, onPick: showMode(of:))
                             .settingsRevealable(.darkTheme, highlighted: highlighted)
                     }
                     if model.settings.appearance != .dark || highlighted == .lightTheme {
                         ThemeGridRow(
                             title: String(localized: "Light theme"), themes: AppTheme.light, selection: model.binding(\.lightTheme),
-                            isRevealed: highlighted == .lightTheme)
+                            isRevealed: highlighted == .lightTheme, onPick: showMode(of:))
                             .settingsRevealable(.lightTheme, highlighted: highlighted)
                     }
                 }
@@ -154,6 +154,12 @@ struct GeneralSettingsView: View {
 
     private var idleTimeoutOptions: [Int] {
         Array(Set([5, 10, 15, 30, 60, 120, 240, model.settings.idleSessionTimeoutMinutes])).sorted()
+    }
+
+    /// Picking a theme of the mode the app isn't showing switches to that mode, so the choice shows right away.
+    private func showMode(of theme: AppTheme) {
+        guard theme.isDark != NSApp.effectiveAppearance.isDark else { return }
+        model.update { $0.appearance = theme.isDark ? .dark : .light }
     }
 
     private func restoreDefaults() {
@@ -520,6 +526,8 @@ private struct ThemeGridRow: View {
     @Binding var selection: String
     /// A settings search led here, so the grid opens.
     var isRevealed = false
+    /// Runs after a theme is picked.
+    var onPick: (AppTheme) -> Void = { _ in }
     @State private var isExpanded = false
 
     private var current: AppTheme { themes.first { $0.id == selection } ?? themes[0] }
@@ -547,7 +555,10 @@ private struct ThemeGridRow: View {
             if isExpanded {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 10)], alignment: .leading, spacing: 10) {
                     ForEach(themes) { theme in
-                        ThemeTile(theme: theme, isSelected: theme.id == selection) { selection = theme.id }
+                        ThemeTile(theme: theme, isSelected: theme.id == selection) {
+                            selection = theme.id
+                            onPick(theme)
+                        }
                     }
                 }
             }
