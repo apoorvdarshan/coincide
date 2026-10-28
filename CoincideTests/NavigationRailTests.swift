@@ -17,7 +17,7 @@ struct NavigationRailTests {
             view.subviews.forEach(collect)
         }
         collect(rail.view)
-        #expect(buttons.count == 8)
+        #expect(buttons.count == 9)
         let frames = buttons.map { $0.convert($0.bounds, to: rail.view) }.sorted { $0.minY < $1.minY }
         for frame in frames {
             #expect(frame.width == RailButton.side)
@@ -26,5 +26,48 @@ struct NavigationRailTests {
         for (upper, lower) in zip(frames, frames.dropFirst()) {
             #expect(lower.minY - upper.maxY >= 4, "\(upper) and \(lower) leave no gap")
         }
+    }
+}
+
+/// The diff and the pull requests share the inspector column; the rail's buttons switch it like tabs.
+@MainActor
+@Suite(.serialized)
+struct InspectorPanelTests {
+    @Test func theRailSwitchesTheInspectorBetweenTheDiffAndThePullRequests() {
+        let saved = UIState.shared.values
+        defer { UIState.shared.update { $0 = saved } }
+        UIState.shared.update {
+            $0.isInspectorOpen = false
+            $0.inspectorPanel = .diff
+        }
+        let split = MainSplitViewController()
+        split.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 800)
+        #expect(!split.isDiffOpen && !split.isPullRequestsOpen)
+
+        split.togglePullRequestsPanel()
+        #expect(split.isPullRequestsOpen && !split.isDiffOpen)
+        #expect(split.inspector.selectedTabViewItemIndex == 1)
+        #expect(UIState.shared.values.inspectorPanel == .pullRequests)
+
+        // The diff takes the open column over rather than closing it.
+        split.toggleDiffPanel()
+        #expect(split.isDiffOpen && !split.isPullRequestsOpen)
+        #expect(UIState.shared.values.inspectorPanel == .diff)
+
+        // Turn diffs always show the diff.
+        split.togglePullRequestsPanel()
+        split.showDiffPanel()
+        #expect(split.isDiffOpen)
+    }
+
+    @Test func theInspectorReopensOnThePanelLastShown() {
+        let saved = UIState.shared.values
+        defer { UIState.shared.update { $0 = saved } }
+        UIState.shared.update { $0.inspectorPanel = .pullRequests }
+        let inspector = InspectorViewController(diff: DiffViewController(), pullRequests: PullRequestsViewController())
+        #expect(inspector.panel == .pullRequests)
+        inspector.show(.diff)
+        #expect(inspector.panel == .diff)
+        #expect(UIState.shared.values.inspectorPanel == .diff)
     }
 }

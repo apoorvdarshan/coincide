@@ -1,17 +1,19 @@
 import CoincideKit
 import Foundation
 
-/// The word before the caret when it asks for completions: `@path`, `/command` or `$skill`.
+/// The word before the caret when it asks for completions: `@path`, `/command`, `$skill` or `#pull-request`.
 nonisolated struct ComposerTrigger: Equatable, Sendable {
     enum Kind: Sendable {
         case path
         case command
         /// The agent's skills (T3 Code's `$` picker).
         case skill
+        /// The repository's open pull requests (T3 Code's `#` picker).
+        case pullRequest
     }
 
     var kind: Kind
-    /// What follows the `@`, `/` or `$`.
+    /// What follows the `@`, `/`, `$` or `#`.
     var query: String
     /// UTF-16 range of the whole word, `@` or `/` included.
     var range: NSRange
@@ -37,6 +39,11 @@ nonisolated struct ComposerTrigger: Equatable, Sendable {
         case 0x24:  // $
             // An amount such as $20 is not a skill.
             return query.first?.isNumber == true ? nil : ComposerTrigger(kind: .skill, query: query, range: range)
+        case 0x23:  // #
+            // A number or a word (a letter or digit, then letters, digits, `_` and `-`), as in T3 Code; `##` and
+            // `#!` are left alone.
+            return query.isEmpty || query.range(of: #"^[\p{L}\p{N}][\p{L}\p{N}_-]*$"#, options: .regularExpression) != nil
+                ? ComposerTrigger(kind: .pullRequest, query: query, range: range) : nil
         default:
             return nil
         }
@@ -136,4 +143,6 @@ nonisolated enum ComposerSuggestion: Equatable, Sendable {
     case command(ComposerCommand)
     /// One of the agent's own commands or skills, written as `token` (`/` or `$`) plus its name.
     case agentCommand(ProviderCommand, provider: ProviderKind, token: String)
+    /// An open pull request of the thread's repository, written as `#123`.
+    case pullRequest(PullRequestSummary)
 }

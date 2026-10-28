@@ -18,20 +18,30 @@ enum ThreadActions {
     /// With `source`, the new thread starts in the same worktree and branch.
     @discardableResult
     static func newThread(in projectID: UUID, basedOn source: ThreadSummary? = nil) -> UUID? {
+        newThread(in: projectID, worktreePath: source?.worktreePath, branch: source?.branch, setsFolder: source != nil)
+    }
+
+    /// Opens a new thread in the worktree at `worktreePath` on `branch`, such as one checked out for a pull request.
+    @discardableResult
+    static func newThread(in projectID: UUID, worktreePath: String, branch: String?) -> UUID? {
+        newThread(in: projectID, worktreePath: worktreePath, branch: branch, setsFolder: true)
+    }
+
+    /// An empty thread in the same folder is reused rather than adding another. With `setsFolder` the thread runs in
+    /// `worktreePath` (the project folder when nil) on `branch`.
+    private static func newThread(in projectID: UUID, worktreePath: String?, branch: String?, setsFolder: Bool) -> UUID? {
         guard store.project(projectID) != nil else { return nil }
         let id: UUID
-        if let empty = store.threads(in: projectID).first(where: { isUntouched($0, matching: source) }) {
+        if let empty = store.threads(in: projectID).first(where: { isUntouched($0, in: worktreePath) }) {
             id = empty.id
         } else {
             let selection = ProviderRegistry.shared.usableSelection(preferring: store.settings.defaultSelection)
             id = store.createThread(in: projectID, selection: selection).id
         }
-        if let source, let thread = store.summary(id),
-            thread.worktreePath != source.worktreePath || thread.branch != source.branch
-        {
+        if setsFolder, let thread = store.summary(id), thread.worktreePath != worktreePath || thread.branch != branch {
             store.updateThread(id) { thread in
-                thread.worktreePath = source.worktreePath
-                thread.branch = source.branch
+                thread.worktreePath = worktreePath
+                thread.branch = branch
             }
         }
         if store.project(projectID)?.isExpanded == false {
@@ -42,10 +52,10 @@ enum ThreadActions {
         return id
     }
 
-    private static func isUntouched(_ thread: ThreadSummary, matching source: ThreadSummary?) -> Bool {
+    private static func isUntouched(_ thread: ThreadSummary, in worktreePath: String?) -> Bool {
         thread.itemCount == 0 && !thread.hasDraft && !thread.isArchived
             && !ThreadInbox.shared.isSettled(thread)
-            && (thread.snoozedUntil ?? .distantPast) <= Date() && thread.worktreePath == source?.worktreePath
+            && (thread.snoozedUntil ?? .distantPast) <= Date() && thread.worktreePath == worktreePath
     }
 
     static func rename(_ threadID: UUID, to title: String) {
