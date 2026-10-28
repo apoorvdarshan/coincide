@@ -195,14 +195,17 @@ struct ThemedSwitchToggleStyle: ToggleStyle {
     var showsLabel = true
 
     func makeBody(configuration: Configuration) -> some View {
-        HStack(alignment: .center) {
+        Group {
             if showsLabel {
-                VStack(alignment: .leading, spacing: 2) {
+                // LabeledContent gives a second text in the label the form's caption style, as Toggle does.
+                LabeledContent {
+                    ThemedSwitch(isOn: configuration.$isOn)
+                } label: {
                     configuration.label
                 }
-                Spacer(minLength: 12)
+            } else {
+                ThemedSwitch(isOn: configuration.$isOn)
             }
-            ThemedSwitch(isOn: configuration.$isOn)
         }
         .accessibilityRepresentation {
             Toggle(isOn: configuration.$isOn) { configuration.label }
