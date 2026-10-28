@@ -7,11 +7,37 @@ import Testing
     let kind = ProviderKind.codex
     let executableNames = ["sh"]
     let setupHint = ""
+    var sessions: [ScheduledTestSession] = []
     func detect(executable: URL?, environment: [String: String]) async -> ProviderStatus { ProviderStatus(state: .ready) }
     func models(status: ProviderStatus, environment: [String: String]) async -> [ModelOption] {
         [ModelOption(provider: .codex, modelID: "scheduled-test", displayName: "Test")]
     }
-    func makeSession(_ launch: AgentLaunch) -> AgentSession { fatalError("These tests never launch an agent") }
+    func makeSession(_ launch: AgentLaunch) -> AgentSession {
+        let session = ScheduledTestSession()
+        sessions.append(session)
+        return session
+    }
+}
+
+/// No subprocess: the turn completes while its reported subagent keeps working.
+@MainActor private final class ScheduledTestSession: AgentSession, BackgroundWorkReporting {
+    let provider = ProviderKind.codex
+    let sessionID: String? = UUID().uuidString
+    var onEvent: ((AgentEvent) -> Void)?
+    private(set) var hasBackgroundWork = false
+    func start() async throws { onEvent?(.sessionStarted(id: sessionID!)) }
+    func send(_ input: AgentTurnInput) async throws {
+        hasBackgroundWork = true
+        onEvent?(.backgroundWork([BackgroundTask(id: "audit", title: "Review changes", kind: .agent)]))
+        onEvent?(.turnCompleted(.completed))
+    }
+    func finishBackgroundWork() {
+        hasBackgroundWork = false
+        onEvent?(.backgroundWork([]))
+    }
+    func respond(to approvalID: String, optionID: String) {}
+    func interrupt() { onEvent?(.turnCompleted(.interrupted)) }
+    func shutdown() {}
 }
 
 @MainActor @Suite(.serialized) struct ScheduledTaskUITests {
@@ -33,6 +59,63 @@ import Testing
         #expect(store.thread(first)?.accessMode == .approval)
         #expect(store.thread(first)?.items.isEmpty == true)
         #expect(!runner.isRunning(first))
+    }
+
+    @Test func backgroundSubagentOutlastingTheTurnSkipsTheNextScheduledSlot() async throws {
+        let directory = TemporaryDirectory("scheduled-background-work")
+        let store = AppStore(directory: directory.url)
+        store.updateSettings {
+            $0.checkpointsEnabled = false
+            $0.generatesThreadTitles = false
+            $0.defaultSelection = ModelSelection(provider: .codex, modelID: "scheduled-test")
+        }
+        let provider = ScheduledTestProvider()
+        let registry = ProviderRegistry(store: store, providers: [provider])
+        await registry.refresh()
+        let runner = ThreadRunner(store: store, registry: registry)
+        let project = store.addProject(at: directory.url)
+        let firstOccurrence = ISO8601DateFormatter().date(from: "2026-10-28T09:00:00Z")!
+        var now = firstOccurrence.addingTimeInterval(-3600)
+        let service = ScheduledTasks(store: store, registry: registry, runner: runner, now: { now })
+        let task = ScheduledTask(name: "Review", projectID: project.id, prompt: "Review changes",
+            recurrence: TaskRecurrence(kind: .daily, timeZoneID: "UTC", hour: 9), now: now)
+        try service.scheduler.save(task)
+        service.start()
+        defer { service.stop(); runner.shutdownAll(); store.flush() }
+
+        now = firstOccurrence
+        service.scheduler.tick()
+        try await waitForRuns(1, service: service, provider: provider, taskID: task.id)
+        let last = try #require(service.schedules.task(task.id))
+        let threadID = try #require(last.lastThreadID)
+        #expect(!runner.isRunning(threadID))
+        #expect(!runner.backgroundTasks(threadID).isEmpty)
+        #expect(service.hasActiveWork(last))
+
+        now = firstOccurrence.addingTimeInterval(86_400)
+        service.scheduler.tick()
+        #expect(service.schedules.task(task.id)?.lastThreadID == threadID)
+        #expect(service.schedules.task(task.id)?.nextRunAt == firstOccurrence.addingTimeInterval(172_800))
+        #expect(throws: ScheduleError.self) { try service.scheduler.runNow(task.id) }
+
+        try #require(provider.sessions.first).finishBackgroundWork()
+        #expect(!service.hasActiveWork(last))
+        service.scheduler.tick()
+        #expect(service.schedules.task(task.id)?.activeThreadID == nil)
+        #expect(provider.sessions.count == 1)
+        now = firstOccurrence.addingTimeInterval(172_800)
+        service.scheduler.tick()
+        try await waitForRuns(2, service: service, provider: provider, taskID: task.id)
+        #expect(service.schedules.task(task.id)?.lastThreadID != threadID)
+    }
+
+    private func waitForRuns(_ count: Int, service: ScheduledTasks, provider: ScheduledTestProvider, taskID: UUID) async throws {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while (provider.sessions.count < count || service.schedules.task(taskID)?.activeThreadID != nil), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(provider.sessions.count == count)
+        try #require(service.schedules.task(taskID)?.activeThreadID == nil)
     }
 
     @Test func saveFailureKeepsThePromptAndTimeZoneEditable() throws {
