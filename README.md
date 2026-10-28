@@ -33,6 +33,14 @@ T3 Code is an Electron app with a Node server behind a web UI. Coincide is built
 - Notifications when a turn finishes or needs you while Coincide is in the background.
 - **19 languages:** English, Chinese (Simplified and Traditional), Dutch, French, German, Hindi, Indonesian, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Spanish (Spain and Latin America), Turkish, Ukrainian and Vietnamese. The translations are machine-made and marked for review; corrections are welcome.
 
+### Import earlier CLI conversations
+
+Choose **File → Import CLI Session…** to browse local Claude Code and Codex histories, search by title or folder, and preview a conversation before importing it. **Choose File…** also accepts a specific session JSONL file. Importing never starts an agent; imported threads begin in approval mode. Their provider session IDs allow normal native resume, and switching agents uses Coincide's conversation handoff. Existing sessions open their existing Coincide thread instead of creating duplicates.
+
+The original CLI file stays untouched. Coincide keeps an exact private copy alongside its app data; **File → Reveal Imported Source** reveals that copy. Unsupported records, attachments, excluded conversation branches, and text beyond the transcript limit stay in this source copy. The readable transcript follows Claude's latest main conversation branch and Codex rollback events. Deleting an imported thread also deletes its saved source copy; Undo restores both.
+
+Imports accept up to 32 MB per file, 4 MB per record, and 100,000 records. Individual displayed transcript fields are capped at 100,000 characters, and the preview at 200,000. The scanner respects `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, lists up to 2,000 files, and offers manual selection when a history cannot be listed. It does not scan Claude subagent histories automatically. If a CLI changes a file after preview, refresh the preview before importing.
+
 ## Agents
 
 Install and sign in to at least one:

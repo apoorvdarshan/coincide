@@ -26,6 +26,7 @@ on:
       - "CoincideKit/Providers/ACP/UnifiedDiff.swift"
       - "CoincideKit/Providers/Cursor/CursorDiff.swift"
       - "CoincideKit/Providers/Handoff.swift"
+      - "CoincideKit/Import/CLISessionImport.swift"
       - "CoincideKit/Support/JSONValue.swift"
       - "CoincideKit/Support/TerminalText.swift"
       - "CoincideKit/Support/TextClip.swift"

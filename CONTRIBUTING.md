@@ -96,7 +96,7 @@ scripts/translations.py import de de-translated.json
 | `DiffParserFuzzer` | `DiffParser` reads back patches written the way `git diff` writes them (renames, modes, binaries, quoted names), and keeps counts and line numbers consistent for any text |
 | `DiffGeneratorFuzzer` | The diffs written for ACP agents and Cursor parse cleanly and, applied to the old text, give the new text |
 | `TerminalTextFuzzer` | Escape-sequence stripping removes exactly the escape sequences, output tails stay within their limits, clipping keeps whole characters |
-| `HandoffFuzzer` | Saved threads load leniently and save back unchanged; handoff recaps cover what each agent missed and stay within budget |
+| `HandoffFuzzer` | Saved threads load leniently and save back unchanged; CLI imports preserve source bytes and session identity; handoff recaps cover what each agent missed and stay within budget |
 
 The Fuzz workflow runs them on Linux (in the official `swift` Docker image, with AddressSanitizer) for pull requests that change a fuzzed file, weekly and on demand. A failure uploads the input that caused it as the `fuzz-failure-<fuzzer>` artifact.
 

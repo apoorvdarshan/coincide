@@ -1,0 +1,5 @@
+{"type":"session_meta","payload":{"id":"33333333-3333-3333-3333-333333333333","cwd":"/tmp/project"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix this"}]}}
+{"type":"response_item","payload":{"type":"function_call","call_id":"t","name":"read","arguments":"file"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"t","output":"contents"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}}

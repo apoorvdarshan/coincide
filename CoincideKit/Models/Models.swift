@@ -517,6 +517,21 @@ public struct ProviderSessionRef: Codable, Hashable, Sendable {
     }
 }
 
+/// Import provenance stays with the transcript even when rewinding clears native session references.
+public struct ImportedSession: Codable, Hashable, Sendable {
+    public var provider: ProviderKind
+    public var sessionID: String
+    public var sourcePath: String
+    public var importedAt: Date
+
+    public init(provider: ProviderKind, sessionID: String, sourcePath: String, importedAt: Date = Date()) {
+        self.provider = provider
+        self.sessionID = sessionID
+        self.sourcePath = sourcePath
+        self.importedAt = importedAt
+    }
+}
+
 public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     public var id: UUID
     public var projectID: UUID
@@ -539,6 +554,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     public var draft: String?
     /// Unsent context cards, restored with the draft after switching threads or restarting.
     public var draftContext: [MessageContext]?
+    public var importedSession: ImportedSession?
 
     public nonisolated init(
         id: UUID = UUID(), projectID: UUID, title: String = String(localized: "New thread"),
@@ -590,5 +606,6 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         branch = container.lenient(String.self, forKey: .branch)
         draft = container.lenient(String.self, forKey: .draft)
         draftContext = container.contains(.draftContext) ? container.lenientArray(MessageContext.self, forKey: .draftContext) : nil
+        importedSession = container.lenient(ImportedSession.self, forKey: .importedSession)
     }
 }

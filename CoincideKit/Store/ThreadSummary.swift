@@ -29,6 +29,8 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
     public var hasUserMessages: Bool
     /// Agents with a native session for the thread, in a fixed order. Others than the selected one handed it off.
     public var sessionProviders: [ProviderKind]
+    public var nativeSessionIDs: [ProviderKind: String]
+    public var importedSession: ImportedSession?
 
     public nonisolated init(_ thread: ChatThread) {
         id = thread.id
@@ -48,6 +50,8 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
         itemCount = thread.items.count
         hasUserMessages = thread.hasUserMessages
         sessionProviders = Self.ordered(thread.sessions.keys)
+        nativeSessionIDs = thread.sessions.mapValues(\.sessionID)
+        importedSession = thread.importedSession
     }
 
     nonisolated static func ordered(_ providers: some Sequence<ProviderKind>) -> [ProviderKind] {
@@ -94,10 +98,12 @@ struct ThreadSummaryFile: Decodable {
             draftContext: container.lenientArray(MessageContext.self, forKey: key("draftContext")), createdAt: createdAt)
         thread.updatedAt = container.lenient(Date.self, forKey: key("updatedAt")) ?? createdAt
         thread.snoozedUntil = container.lenient(Date.self, forKey: key("snoozedUntil"))
+        thread.importedSession = container.lenient(ImportedSession.self, forKey: key("importedSession"))
         summary = ThreadSummary(thread)
         summary.itemCount = items.count
         summary.hasUserMessages = items.contains { $0.kind == .user }
         summary.sessionProviders = ThreadSummary.ordered(sessions.keys)
+        summary.nativeSessionIDs = sessions.mapValues(\.sessionID)
     }
 
     /// An item's kind, read with the requirements of `TranscriptItem.init(from:)`, so the same items count.

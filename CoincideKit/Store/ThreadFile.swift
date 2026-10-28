@@ -71,6 +71,10 @@ struct ThreadFile: Decodable {
         case "isPinned", "isArchived": container.reads(Bool.self, key)
         case "draftContext": readsContext(in: container, key, decoded: try? container.decode([MessageContext].self, forKey: key))
         case "selection": readsSelection(container, key)
+        case "importedSession":
+            container.reads(ImportedSession.self, key)
+                && (try? container.nestedContainer(keyedBy: FileKey.self, forKey: key))?
+                    .hasOnly(["provider", "sessionID", "sourcePath", "importedAt"]) == true
         default: false
         }
     }
