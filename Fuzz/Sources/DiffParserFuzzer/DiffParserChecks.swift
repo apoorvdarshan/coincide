@@ -46,6 +46,13 @@ enum DiffParserChecks {
         var additions = 0
         var deletions = 0
         for hunk in file.hunks {
+            let pairs = SplitDiffLine.align(hunk.lines)
+            let represented = pairs.flatMap { [$0.before, $0.after].compactMap { $0 } }
+            expectEqual(Set(represented), Set(hunk.lines.indices), "side-by-side layout preserves every source line")
+            for pair in pairs {
+                if let index = pair.before { expect(hunk.lines[index].kind != .addition, "no addition on the old side") }
+                if let index = pair.after { expect(hunk.lines[index].kind != .deletion, "no deletion on the new side") }
+            }
             var oldLine = hunk.oldStart
             var newLine = hunk.newStart
             for line in hunk.lines {
@@ -97,7 +104,9 @@ enum DiffParserChecks {
             expected.append(file.diff)
         }
         let patch = lines.joined(separator: "\n") + (input.bool() ? "\n" : "")
-        expectEqual(DiffParser.parse(patch), expected, "parse(\(patch.debugDescription))")
+        let parsed = DiffParser.parse(patch)
+        expectEqual(parsed, expected, "parse(\(patch.debugDescription))")
+        for file in parsed { checkConsistency(file) }
     }
 
     /// One file of `git -c core.quotePath=<quotePath> diff --find-renames --src-prefix=a/ --dst-prefix=b/`.

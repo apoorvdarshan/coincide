@@ -19,6 +19,7 @@ on:
       - "CoincideKit/Git/CheckpointService.swift"
       - "CoincideKit/Git/GitModels.swift"
       - "CoincideKit/Git/GitParsing.swift"
+      - "CoincideKit/Git/SplitDiff.swift"
       - "CoincideKit/Models/LenientDecoding.swift"
       - "CoincideKit/Models/MessageContext.swift"
       - "CoincideKit/Models/Models.swift"
