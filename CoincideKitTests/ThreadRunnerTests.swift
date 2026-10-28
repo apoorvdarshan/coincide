@@ -916,3 +916,36 @@ struct ChatsProjectTests {
         #expect(try JSONDecoder().decode(Project.self, from: Data(old.utf8)).isChats == false)
     }
 }
+
+@MainActor
+struct MessageSearchTests {
+    @Test func messagesAreSearchedInMemoryAndOnDiskIgnoringCaseAndAccents() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-search-\(UUID().uuidString)")
+        let store = AppStore(directory: directory)
+        let project = store.addProject(at: URL(fileURLWithPath: "/tmp"))
+        let saved = store.createThread(in: project.id).id
+        store.append(TranscriptItem(kind: .user, text: "Fix the login screen"), to: saved)
+        store.append(
+            TranscriptItem(kind: .assistant, text: "Done.\nThe café email now lives in UserDefaults at /prefs.", provider: .claude),
+            to: saved)
+        let other = store.createThread(in: project.id).id
+        store.append(TranscriptItem(kind: .user, text: "Unrelated"), to: other)
+        store.flush()
+
+        let inMemory = await store.searchMessages("CAFE EMAIL")
+        #expect(inMemory[saved] == "The café email now lives in UserDefaults at /prefs.")
+        #expect(inMemory[other] == nil)
+
+        // A fresh store has nothing in memory, so it reads the files.
+        let reopened = AppStore(directory: directory)
+        #expect(await reopened.searchMessages("café email")[saved] != nil)
+        #expect(await reopened.searchMessages("at /prefs")[saved] != nil)
+        #expect(await reopened.searchMessages("x").isEmpty)
+    }
+
+    @Test func longLinesAreCutAroundTheMatch() {
+        let text = String(repeating: "a", count: 100) + " needle " + String(repeating: "b", count: 200)
+        let snippet = AppStore.messageMatch("needle", in: [TranscriptItem(kind: .user, text: text)])
+        #expect(snippet?.hasPrefix("…") == true && snippet?.hasSuffix("…") == true && snippet?.contains("needle") == true)
+    }
+}

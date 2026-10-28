@@ -25,6 +25,9 @@ final class SidebarViewController: NSViewController {
 
     private var selectedThreadID: UUID?
     private var query = ""
+    /// Threads whose messages match the search, with the matching line, found after a short pause in typing.
+    private var messageMatches: [UUID: String] = [:]
+    private var messageSearch: Task<Void, Never>?
     private var searchQuery = PaletteSearch.Query("")
     private var isSearching: Bool { !searchQuery.isEmpty }
     /// Projects showing every thread instead of the first few.
@@ -239,10 +242,11 @@ final class SidebarViewController: NSViewController {
                     PaletteSearch.scoreTerms(searchQuery, name: project.name, keywords: [], typos: false) != nil
                 if !projectMatches {
                     threads = all.filter { thread in
-                        PaletteSearch.scoreThread(
-                            searchQuery, title: thread.title, branch: thread.branch, project: project.name,
-                            updatedAt: thread.updatedAt, typos: false,
-                            branchPrefix: store.settings.worktreeBranchPrefix) != nil
+                        messageMatches[thread.id] != nil
+                            || PaletteSearch.scoreThread(
+                                searchQuery, title: thread.title, branch: thread.branch, project: project.name,
+                                updatedAt: thread.updatedAt, typos: false,
+                                branchPrefix: store.settings.worktreeBranchPrefix) != nil
                     }
                     if threads.isEmpty { continue }
                 }
@@ -427,6 +431,7 @@ final class SidebarViewController: NSViewController {
             lines.append(String(localized: "Handed off from \(others.map(\.displayName).formatted(.list(type: .and)))"))
         }
         if let label = status.label { lines.append(label) }
+        if isSearching, let match = messageMatches[thread.id] { lines.append("“\(match)”") }
         let background = ThreadRunner.shared.backgroundTasks(thread.id)
         if !status.isRunning, !background.isEmpty {
             lines.append(String(localized: "Working in the background: \(background.map(\.task.title).formatted(.list(type: .and)))"))
@@ -568,7 +573,26 @@ final class SidebarViewController: NSViewController {
     @objc private func searchChanged() {
         query = searchField.stringValue
         searchQuery = PaletteSearch.Query(query)
+        searchMessages()
         rebuild()
+    }
+
+    /// Looks for the query in every thread's messages once typing pauses, then adds those threads to the results.
+    private func searchMessages() {
+        messageSearch?.cancel()
+        let text = query
+        guard text.trimmingCharacters(in: .whitespaces).count >= 2 else {
+            messageMatches = [:]
+            return
+        }
+        messageSearch = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard let self, !Task.isCancelled else { return }
+            let matches = await store.searchMessages(text)
+            guard !Task.isCancelled, query == text else { return }
+            messageMatches = matches
+            rebuild()
+        }
     }
 
     @objc private func rowClicked() {
