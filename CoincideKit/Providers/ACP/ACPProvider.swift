@@ -56,18 +56,20 @@ public enum ACPProfile: String, Sendable, CaseIterable {
     }
 }
 
-/// Finds, probes and launches an ACP agent CLI.
+/// Finds, probes and launches an ACP agent CLI: a built-in one (`ACPProfile`) or one the user added
+/// (`ACPAgentConfig`).
 @MainActor
 public final class ACPProvider: AgentProvider {
-    public let profile: ACPProfile
-    public var kind: ProviderKind { profile.kind }
-    public var executableNames: [String] { profile.executableNames }
-    public var setupHint: String { profile.setupHint }
+    public let kind: ProviderKind
+    public var executableNames: [String] { names() }
+    public var setupHint: String { hint() }
 
     /// Models the last probe listed and the model its default stands for, with the executable it probed.
     private var probed: (executable: URL, models: [ModelOption], defaultModel: String?)?
     /// The plan's usage windows the last check read, with the account they belong to.
     private var checkedUsageLimits: (account: String?, limits: UsageLimits)?
+    private let names: @MainActor () -> [String]
+    private let hint: @MainActor () -> String
     private let makeFlavor: @MainActor () -> ACPAgentFlavor
 
     public convenience init(profile: ACPProfile) {
@@ -75,8 +77,26 @@ public final class ACPProvider: AgentProvider {
     }
 
     /// `flavor` replaces the profile's in tests.
-    init(profile: ACPProfile, flavor: @escaping @MainActor () -> ACPAgentFlavor) {
-        self.profile = profile
+    convenience init(profile: ACPProfile, flavor: @escaping @MainActor () -> ACPAgentFlavor) {
+        self.init(kind: profile.kind, executableNames: { profile.executableNames }, setupHint: { profile.setupHint }, flavor: flavor)
+    }
+
+    /// The user-added agent `id`, reading its settings from `store` at every use, so edits apply to the next check
+    /// and launch.
+    public convenience init(agent id: String, store: AppStore, paths: ACPRegistryPaths = .standard) {
+        let config = { store.settings.acpAgent(id) ?? ACPAgentConfig(id: id, name: id, source: .local) }
+        self.init(
+            kind: .acp(id), executableNames: { ACPCustomFlavor.executableNames(config(), paths: paths) },
+            setupHint: { ACPCustomFlavor.setupHint(config()) }, flavor: { ACPCustomFlavor(config: config(), paths: paths) })
+    }
+
+    init(
+        kind: ProviderKind, executableNames: @escaping @MainActor () -> [String], setupHint: @escaping @MainActor () -> String,
+        flavor: @escaping @MainActor () -> ACPAgentFlavor
+    ) {
+        self.kind = kind
+        names = executableNames
+        hint = setupHint
         makeFlavor = flavor
     }
 

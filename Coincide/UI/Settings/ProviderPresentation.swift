@@ -159,6 +159,9 @@ struct ProviderSetupGuide {
             (nil, "muse login", URL(string: "https://dev.meta.ai/docs/muse-code"),
              String(
                  localized: "Muse Code uses the sign-in `muse login` saves. To use an API key instead, add META_API_KEY under Environment Variables; one set in your login shell is ignored."))
+        // An added agent's page has its own install and sign-in sections.
+        case .acp:
+            (nil, nil, nil, nil)
         }
     }
 

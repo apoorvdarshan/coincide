@@ -4,7 +4,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15854/badge)](https://www.bestpractices.dev/projects/15854)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/apoorvdarshan/coincide/badge)](https://scorecard.dev/viewer/?uri=github.com/apoorvdarshan/coincide)
 
-A native macOS app for the coding agents you already pay for — **Claude Code, Codex, Cursor, Grok Build, OpenCode, Pi, Antigravity, fx and Muse Code** — in one window, with one model picker, and the ability to **switch agents in the middle of a thread**.
+A native macOS app for the coding agents you already pay for — **Claude Code, Codex, Cursor, Grok Build, OpenCode, Pi, Antigravity, fx and Muse Code**, plus any agent from the ACP Registry or a local ACP command — in one window, with one model picker, and the ability to **switch agents in the middle of a thread**.
 
 Coincide is a native AppKit port of [T3 Code](https://github.com/pingdotgg/t3code). It drives each agent's own command-line tool with the login you already have, so your existing subscriptions keep working. Coincide never sells, proxies or meters tokens.
 
@@ -53,6 +53,15 @@ Install and sign in to at least one:
 fx offers neither full access nor plan mode, so as in T3 Code its threads always run in fx's Supervised mode: fx asks before it changes files or runs commands. Its model picker starts with **Default**, the model `fx status` reports, and every fx model has an effort setting that starts at Medium. Type `$` in the composer to pick one of the skills fx finds in its skill folders. Another ready agent writes the commit messages and pull request text of an fx thread, since fx keeps every session it opens (with no other agent ready, Coincide falls back to its plain summary).
 
 Muse Code is off until you turn it on, as in T3 Code. It uses the login `muse login` saves; to use an API key instead, add `META_API_KEY` to its environment variables in Settings (one set in your login shell is ignored). As in T3 Code, Muse has no Plan mode, so the composer doesn't offer one; when Muse writes commit messages or pull request text, it runs without its shell and file-writing tools.
+
+### Any other ACP agent
+
+Coincide also runs any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com), as T3 Code does. Open **Settings › Providers** and choose **Add ACP Agent…**:
+
+- **ACP Registry:** search the official [ACP Registry](https://agentclientprotocol.com/get-started/registry) and choose **Add**. Coincide installs the agent at the version the registry publishes, into `tools/acp/<agent-id>/<version>/` in its data folder: a download is checked against the registry's SHA-256 when it publishes one (otherwise only HTTPS vouches for it), and an npm or Python package installs with your own `npm` or `uv` into a prefix Coincide owns, never globally. The search only lists agents that can run on this Mac, and leaves out the agents Coincide has built in. Registry agents are third-party code that runs with your permissions: review an agent's source and license before you add it. The agent's page offers updates when the registry publishes a newer version; removing the agent deletes its files.
+- **Local ACP command:** enter an installed executable (a name on your shell's PATH or a full path), one literal argument per row, a name and any environment variables. Coincide starts it directly, without a shell. For DeepSeek Harness, use `dsh` with the arguments `--profile` and `acp`.
+
+Then sign in on the agent's page with the methods it advertises: Coincide asks the agent to sign in by itself (showing any page it wants opened before telling it to go on), runs a terminal sign-in in Terminal, or names the API key variables to set under **Environment Variables**. Credentials stay in the agent's own store. Models, modes and reasoning options come from the agent over ACP; add model IDs it doesn't list under **Models**. An added agent works like a built-in one: it appears in the model picker, threads can switch to it mid-thread (`/<agent-id>`), and approvals follow the thread's access mode. As in T3 Code, added agents don't write commit messages or pull request text; another ready agent does.
 
 ## Requirements
 

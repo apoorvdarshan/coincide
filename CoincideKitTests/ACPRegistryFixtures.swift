@@ -1,0 +1,37 @@
+import Foundation
+
+@testable import CoincideKit
+
+/// Entries of the official ACP Registry index (fetched once, read-only, on 2026-10-28) trimmed to the macOS and one
+/// Linux target, plus entries that break the registry's rules. Registry content is third-party data; tests only parse
+/// it and never download or run anything it names.
+enum ACPRegistryFixtures {
+    /// Real entries: archives with and without a SHA-256, npm and Python packages, and agents Coincide has built in.
+    static let realAgents = #"""
+{"id":"claude-acp","name":"Claude Agent","version":"0.98.0","description":"ACP wrapper for Anthropic's Claude","repository":"https://github.com/agentclientprotocol/claude-agent-acp","authors":["Anthropic","Zed Industries","JetBrains"],"license":"proprietary","distribution":{"npx":{"package":"@agentclientprotocol/claude-agent-acp@0.98.0"}},"icon":"https://cdn.agentclientprotocol.com/registry/v1/latest/claude-acp.svg"},
+{"id":"cursor","name":"Cursor","version":"2026.10.22","description":"Cursor's coding agent","website":"https://cursor.com/docs/cli/acp","authors":["Cursor"],"license":"proprietary","distribution":{"binary":{"darwin-aarch64":{"archive":"https://downloads.cursor.com/lab/2026.10.22-27dcf5f/darwin/arm64/agent-cli-package.tar.gz","cmd":"./dist-package/cursor-agent","args":["acp"]},"darwin-x86_64":{"archive":"https://downloads.cursor.com/lab/2026.10.22-27dcf5f/darwin/x64/agent-cli-package.tar.gz","cmd":"./dist-package/cursor-agent","args":["acp"]},"linux-x86_64":{"archive":"https://downloads.cursor.com/lab/2026.10.22-27dcf5f/linux/x64/agent-cli-package.tar.gz","cmd":"./dist-package/cursor-agent","args":["acp"]}}},"icon":"https://cdn.agentclientprotocol.com/registry/v1/latest/cursor.svg"},
+{"id":"devin","name":"Devin","version":"3000.11.228","description":"Devin CLI coding agent by Cognition","website":"https://docs.devin.ai/cli","authors":["Cognition"],"license":"proprietary","repository":"https://github.com/CognitionAI/devin-cli","distribution":{"binary":{"darwin-aarch64":{"archive":"https://static.devin.ai/cli/3000.11.228/devin-3000.11.228-aarch64-apple-darwin.tar.gz","cmd":"./bin/devin","args":["acp"]},"darwin-x86_64":{"archive":"https://static.devin.ai/cli/3000.11.228/devin-3000.11.228-x86_64-apple-darwin.tar.gz","cmd":"./bin/devin","args":["acp"]},"linux-x86_64":{"archive":"https://static.devin.ai/cli/3000.11.228/devin-3000.11.228-x86_64-unknown-linux.tar.gz","cmd":"./bin/devin","args":["acp"]}}},"icon":"https://cdn.agentclientprotocol.com/registry/v1/latest/devin.svg"},
+{"id":"fast-agent","name":"fast-agent","version":"0.10.1","description":"Code and build agents with comprehensive multi-provider support","repository":"https://github.com/evalstate/fast-agent","website":"https://fast-agent.ai","authors":["enquiries@fast-agent.ai"],"license":"Apache 2.0","distribution":{"uvx":{"package":"fast-agent-acp==0.10.1","args":["-x"],"env":{"FAST_AGENT_MODEL":"codexplan"}}},"icon":"https://cdn.agentclientprotocol.com/registry/v1/latest/fast-agent.svg"},
+{"id":"gemini","name":"Gemini CLI","version":"0.66.0","description":"Google's official CLI for Gemini","repository":"https://github.com/google-gemini/gemini-cli","website":"https://geminicli.com","authors":["Google"],"license":"Apache-2.0","distribution":{"npx":{"package":"@google/gemini-cli@0.66.0","args":["--acp"]}},"icon":"https://cdn.agentclientprotocol.com/registry/v1/latest/gemini.svg"},
+{"id":"goose","name":"goose","version":"1.56.0","description":"A local, extensible, open source AI agent that automates engineering tasks","repository":"https://github.com/block/goose","website":"https://block.github.io/goose/","authors":["Block"],"license":"Apache-2.0","distribution":{"binary":{"darwin-aarch64":{"archive":"https://github.com/block/goose/releases/download/v1.56.0/goose-aarch64-apple-darwin.tar.bz2","cmd":"./goose","args":["acp"],"sha256":"62d806417b19be167474297eaaec7783ff9917f4fa772e781e977f2bdc155163"},"darwin-x86_64":{"archive":"https://github.com/block/goose/releases/download/v1.56.0/goose-x86_64-apple-darwin.tar.bz2","cmd":"./goose","args":["acp"],"sha256":"0dabf1bc691a1855bc06d2bb5445d27d9c7c08f7ea5af49d32e460a85b98a2ad"},"linux-x86_64":{"archive":"https://github.com/block/goose/releases/download/v1.56.0/goose-x86_64-unknown-linux-gnu.tar.bz2","cmd":"./goose","args":["acp"],"sha256":"e29544421a6e698aab0fe4becda96096218ff36abe85b83785519d41c555c714"}}},"icon":"https://cdn.agentclientprotocol.com/registry/v1/latest/goose.svg"},
+{"id":"kilo","name":"Kilo","version":"7.8.18","description":"The open source coding agent","repository":"https://github.com/Kilo-Org/kilocode","website":"https://kilo.ai/","authors":["Kilo Code"],"license":"MIT","icon":"https://cdn.agentclientprotocol.com/registry/v1/latest/kilo.svg","distribution":{"binary":{"darwin-aarch64":{"archive":"https://github.com/Kilo-Org/kilocode/releases/download/v7.8.18/kilo-darwin-arm64.zip","cmd":"./kilo","args":["acp"],"sha256":"1ea2285a2f45ec27b7fa3b644f92700adf4a91fd671aaf18ba0cb8f26c795df5"},"darwin-x86_64":{"archive":"https://github.com/Kilo-Org/kilocode/releases/download/v7.8.18/kilo-darwin-x64.zip","cmd":"./kilo","args":["acp"],"sha256":"00f6ac8fb49368e5726dc23780ee1c18fd1fd89a817e8cc38c1fe9d7db6232d2"},"linux-x86_64":{"archive":"https://github.com/Kilo-Org/kilocode/releases/download/v7.8.18/kilo-linux-x64.tar.gz","cmd":"./kilo","args":["acp"],"sha256":"503561fb8c4b8ede26703457a912b98cf18c9c9e8961649f3718cf7676b5c02a"}},"npx":{"package":"@kilocode/cli@7.8.18","args":["acp"]}}},
+{"id":"kimi","name":"Kimi CLI","version":"1.52.0","description":"Moonshot AI's coding assistant","repository":"https://github.com/MoonshotAI/kimi-cli","website":"https://moonshotai.github.io/kimi-cli/","authors":["Moonshot AI"],"license":"MIT","distribution":{"binary":{"darwin-aarch64":{"archive":"https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-aarch64-apple-darwin.tar.gz","cmd":"./kimi","args":["acp"],"sha256":"43fe091f70bbf8860974200f9021a05689a020857cc9926d56f1505f0d0d5cb8"},"linux-x86_64":{"archive":"https://github.com/MoonshotAI/kimi-cli/releases/download/1.52.0/kimi-1.52.0-x86_64-unknown-linux-gnu.tar.gz","cmd":"./kimi","args":["acp"],"sha256":"a676204f7804ed5dae87652a9d66f578e0718d5026c9cb1bfa32b9a5eace4208"}}},"icon":"https://cdn.agentclientprotocol.com/registry/v1/latest/kimi.svg"}
+"""#
+
+    /// Entries the checks must leave out, each for one reason.
+    static let invalidAgents = #"""
+{"id":"plain-http","name":"Plain","version":"1.0.0","description":"","distribution":{"binary":{"darwin-aarch64":{"archive":"http://example.com/a.tar.gz","cmd":"./a"}}}},
+{"id":"bad-sha","name":"Bad","version":"1.0.0","description":"","distribution":{"binary":{"darwin-aarch64":{"archive":"https://example.com/a.tar.gz","cmd":"./a","sha256":"abc"}}}},
+{"id":"loose-npm","name":"Loose","version":"1.0.0","description":"","distribution":{"npx":{"package":"some-agent@latest"}}},
+{"id":"Upper Case","name":"Upper","version":"1.0.0","description":"","distribution":{}},
+{"id":"dot-version","name":"Dots","version":"..","description":"","distribution":{}},
+{"id":"credentials","name":"Creds","version":"1.0.0","description":"","website":"https://user:pass@example.com","distribution":{}},
+{"id":"no-name","name":"   ","version":"1.0.0","description":"","distribution":{}}
+"""#
+
+    static func index(_ agents: String...) -> Data {
+        Data("{\"version\":\"1.0.0\",\"agents\":[\(agents.joined(separator: ","))]}".utf8)
+    }
+
+    static var registry: Data { index(realAgents, invalidAgents) }
+}

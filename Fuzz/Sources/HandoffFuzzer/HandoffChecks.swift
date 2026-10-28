@@ -30,8 +30,11 @@ enum HandoffChecks {
         expectEqual(reloaded, thread, "save and load")
     }
 
+    /// The built-in agents and one the user added, which reads and writes as `acp:fuzz-agent`.
+    private static let fuzzedKinds = ProviderKind.allCases + [.acp("fuzz-agent")]
+
     private static func checkHandoff(_ thread: ChatThread) {
-        for provider in ProviderKind.allCases {
+        for provider in fuzzedKinds {
             let missed = Handoff.missedItems(in: thread, for: provider)
             if !missed.isEmpty {
                 // What a provider missed is always the end of the transcript.
@@ -108,7 +111,7 @@ enum HandoffChecks {
         var items: [TranscriptItem] = []
         for index in 0..<input.int(in: 0...24) {
             var item = TranscriptItem(id: uuid(index + 1), kind: input.pick(kinds), text: input.text(texts, maxPieces: 3), createdAt: date)
-            item.provider = input.bool() ? input.pick(ProviderKind.allCases) : nil
+            item.provider = input.bool() ? input.pick(fuzzedKinds) : nil
             item.modelID = input.pick([nil, "", "default", "gpt-5", "claude-opus"])
             item.title = input.bool() ? input.text(texts, maxPieces: 2) : nil
             item.category = input.pick([nil, .command, .fileChange, .read, .other])
@@ -125,7 +128,7 @@ enum HandoffChecks {
             id: uuid(0), projectID: uuid(0), title: "Thread", selection: ModelSelection(provider: .claude, modelID: "default"),
             items: items, createdAt: date)
         // Threads load leniently, so a damaged file can hold any count, negative or past the end.
-        for provider in ProviderKind.allCases where input.bool() {
+        for provider in fuzzedKinds where input.bool() {
             thread.sessions[provider] = ProviderSessionRef(sessionID: "s", seenItemCount: input.int(in: -2...(items.count + 2)))
         }
         return thread
