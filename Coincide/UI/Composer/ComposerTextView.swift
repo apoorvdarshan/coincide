@@ -39,6 +39,7 @@ final class ComposerTextView: NSTextView {
         isContinuousSpellCheckingEnabled = true
         textContainerInset = NSSize(width: 0, height: 3)
         selectedTextAttributes = [.backgroundColor: Theme.opaqueTextSelection(over: Theme.composerFill)]
+        insertionPointColor = Theme.accent
         textContainer?.lineFragmentPadding = 0
         textContainer?.widthTracksTextView = true
         isVerticallyResizable = true

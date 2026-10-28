@@ -296,7 +296,6 @@ private struct ExecutablePathRow: View {
             HStack(spacing: 6) {
                 TextField("Executable path", text: $draft, prompt: Text(verbatim: name))
                     .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
                     .font(.callout.monospaced())
                     .focused($isFocused)
                     .onSubmit(commit)
@@ -388,7 +387,6 @@ private struct ProviderModelsSection: View {
                 HStack(spacing: 6) {
                     TextField("Custom model ID", text: $draft, prompt: Text(Self.placeholder(kind)))
                         .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
                         .font(.callout.monospaced())
                         .onSubmit(add)
                         .onChange(of: draft) { error = nil }
@@ -546,7 +544,6 @@ private struct EnvironmentSection: View {
                 HStack(spacing: 6) {
                     TextField("Name", text: $variable.name, prompt: Text(verbatim: "NAME"))
                         .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
                         .frame(width: 180)
                         .focused($focus, equals: .name(variable.id))
                         .onSubmit(commit)
@@ -605,13 +602,11 @@ private struct EnvironmentSection: View {
         if Self.isSecret(variable.wrappedValue.name) && !revealed.contains(id) {
             SecureField("Value", text: variable.value, prompt: Text("value"))
                 .labelsHidden()
-                .textFieldStyle(.roundedBorder)
                 .focused($focus, equals: .value(id))
                 .onSubmit(commit)
         } else {
             TextField("Value", text: variable.value, prompt: Text("value"))
                 .labelsHidden()
-                .textFieldStyle(.roundedBorder)
                 .focused($focus, equals: .value(id))
                 .onSubmit(commit)
         }

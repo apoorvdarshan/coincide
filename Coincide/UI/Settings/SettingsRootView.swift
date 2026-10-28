@@ -18,6 +18,7 @@ struct SettingsRootView: View {
         }
         .toggleStyle(ThemedSwitchToggleStyle())
         .buttonStyle(ThemedButtonStyle())
+        .textFieldStyle(ThemedTextFieldStyle())
         .tint(Color(nsColor: Theme.ink))
         .toolbar(removing: .sidebarToggle)
         .searchable(text: $model.searchText, placement: .sidebar, prompt: Text("Search"))

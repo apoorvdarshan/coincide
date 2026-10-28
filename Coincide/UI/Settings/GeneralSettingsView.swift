@@ -293,7 +293,7 @@ private struct FontSizeRow: View {
         LabeledContent {
             HStack(spacing: 8) {
                 Text(verbatim: "A").font(.system(size: 10))
-                Slider(value: $size, in: 11...20, step: 1)
+                ThemedSlider(value: $size, range: 11...20)
                     .frame(width: 170)
                     .accessibilityLabel(Text("Font size"))
                     .accessibilityValue(Text("\(Int(size)) points"))
@@ -464,7 +464,6 @@ private struct BranchPrefixRow: View {
         LabeledContent {
             TextField("Branch prefix", text: $draft, prompt: Text("No prefix"))
                 .labelsHidden()
-                .textFieldStyle(.roundedBorder)
                 .font(.body.monospaced())
                 .frame(width: 170)
                 .focused($isFocused)

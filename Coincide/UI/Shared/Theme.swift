@@ -86,22 +86,23 @@ enum Theme {
     static let dropTint = ThemeSelection.color { theme in
         (theme.isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.06 * theme.emphasis)
     }
-    /// Selected text: the theme's text color laid thinly over whatever is behind it, in place of the system accent.
+    /// Selected text: the theme's accent laid over whatever is behind it, in place of the system's blue.
     nonisolated static let textSelection = ThemeSelection.color { theme in
-        (theme.ink ?? (theme.isDark ? .white : .black)).withAlphaComponent(theme.isDark ? 0.24 : 0.16)
+        theme.accent.withAlphaComponent(theme.isDark ? 0.38 : 0.26)
     }
     /// Selected text in a view that isn't taking keystrokes.
     nonisolated static let inactiveTextSelection = ThemeSelection.color { theme in
-        (theme.ink ?? (theme.isDark ? .white : .black)).withAlphaComponent(theme.isDark ? 0.14 : 0.09)
+        theme.accent.withAlphaComponent(theme.isDark ? 0.2 : 0.14)
     }
+    /// The theme's accent, for the caret.
+    static let accent = ThemeSelection.color { $0.accent }
     /// The selection drawn opaque over `background`, for views that can't blend a translucent one.
     static func opaqueTextSelection(over background: NSColor) -> NSColor {
         ThemeSelection.color { theme in
-            let ink = theme.ink ?? (theme.isDark ? .white : .black)
             let base = background
             var color = base
             NSAppearance(named: theme.isDark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
-                color = base.usingColorSpace(.sRGB)?.blended(withFraction: theme.isDark ? 0.24 : 0.16, of: ink) ?? base
+                color = base.usingColorSpace(.sRGB)?.blended(withFraction: theme.isDark ? 0.38 : 0.26, of: theme.accent) ?? base
             }
             return color
         }

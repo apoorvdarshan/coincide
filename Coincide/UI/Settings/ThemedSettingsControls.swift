@@ -286,3 +286,76 @@ struct ThemedCheckboxToggleStyle: ToggleStyle {
         }
     }
 }
+
+/// A slider in the app's theme: a thin track that fills with the text color up to a round knob, in place of the
+/// system slider. It snaps to `step`, and the arrow keys and VoiceOver adjust it a step at a time.
+struct ThemedSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var step: Double = 1
+
+    private let knob: CGFloat = 16
+
+    var body: some View {
+        GeometryReader { geometry in
+            let span = max(geometry.size.width - knob, 1)
+            let fraction = (value - range.lowerBound) / (range.upperBound - range.lowerBound)
+            let ink = Color(nsColor: Theme.ink)
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous)
+                    .fill(Color(nsColor: Theme.sidebarSelection))
+                    .frame(width: span, height: 4)
+                    .offset(x: knob / 2)
+                Capsule(style: .continuous)
+                    .fill(ink)
+                    .frame(width: span * fraction, height: 4)
+                    .offset(x: knob / 2)
+                Circle()
+                    .fill(Color(nsColor: Theme.contentBackground))
+                    .overlay(Circle().strokeBorder(ink, lineWidth: 1.5))
+                    .frame(width: knob, height: knob)
+                    .offset(x: span * fraction)
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0).onChanged { drag in
+                    let position = min(max((drag.location.x - knob / 2) / span, 0), 1)
+                    set(range.lowerBound + position * (range.upperBound - range.lowerBound))
+                })
+        }
+        .frame(height: 20)
+        .animation(.easeOut(duration: 0.08), value: value)
+        .accessibilityElement()
+        .accessibilityAddTraits(.allowsDirectInteraction)
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: set(value + step)
+            case .decrement: set(value - step)
+            @unknown default: break
+            }
+        }
+    }
+
+    private func set(_ newValue: Double) {
+        let snapped = (newValue / step).rounded() * step
+        let clamped = min(max(snapped, range.lowerBound), range.upperBound)
+        if clamped != value { value = clamped }
+    }
+}
+
+/// Text fields in the app's theme: a rounded raised fill with a border, like the theme's buttons and pickers.
+struct ThemedTextFieldStyle: TextFieldStyle {
+    // swiftlint:disable:next identifier_name
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        configuration
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 8)
+            .frame(minHeight: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color(nsColor: Theme.raisedFill)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(Color(nsColor: Theme.surfaceBorder), lineWidth: 1))
+    }
+}

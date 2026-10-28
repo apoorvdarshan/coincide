@@ -40,9 +40,22 @@ struct ModelsSettingsView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.background)
+            .scrollContentBackground(.hidden)
+            .background(Color(nsColor: Theme.raisedFill))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.separator))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color(nsColor: Theme.surfaceBorder)))
+            if isAdding {
+                AddCustomModelForm(model: model, provider: provider ?? model.kinds.first { model.isEnabled($0) } ?? .claude) {
+                    isAdding = false
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(nsColor: Theme.raisedFill)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color(nsColor: Theme.surfaceBorder)))
+                .transition(.opacity)
+            }
             bottomBar(rows)
         }
         .padding(20)
@@ -88,7 +101,6 @@ struct ModelsSettingsView: View {
             .labelsHidden()
             .fixedSize()
             TextField("Filter", text: $filter, prompt: Text("Filter models"))
-                .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 260)
             Spacer()
             Button {
@@ -134,7 +146,7 @@ struct ModelsSettingsView: View {
             }
             .width(min: 90, ideal: 140)
         }
-        .tableStyle(.inset(alternatesRowBackgrounds: true))
+        .tableStyle(.inset(alternatesRowBackgrounds: false))
         .contextMenu(forSelectionType: CatalogRow.ID.self) { ids in
             if ids.count == 1, let id = ids.first, let row = row(id) {
                 Button("Use for New Threads") { model.setDefaultModel(row.option) }
@@ -177,9 +189,9 @@ struct ModelsSettingsView: View {
         let selected = selection.compactMap { row($0) }
         let removable = !selected.isEmpty && selected.allSatisfy(\.isCustom)
         return HStack(spacing: 8) {
-            ControlGroup {
+            HStack(spacing: 4) {
                 Button {
-                    isAdding = true
+                    withAnimation(.easeOut(duration: 0.15)) { isAdding = true }
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -196,12 +208,7 @@ struct ModelsSettingsView: View {
                 .accessibilityLabel(Text("Remove Custom Model"))
             }
             .fixedSize()
-            .popover(isPresented: $isAdding, arrowEdge: .bottom) {
-                AddCustomModelForm(model: model, provider: provider ?? model.kinds.first { model.isEnabled($0) } ?? .claude) {
-                    isAdding = false
-                }
-                .presentationBackground(Color(nsColor: Theme.floatingFill))
-            }
+            .disabled(isAdding)
             Text("^[\(rows.count) model](inflect: true)")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -250,7 +257,7 @@ private struct AddCustomModelForm: View {
             }
         }
         .padding(16)
-        .frame(width: 340)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func add() {
