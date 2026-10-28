@@ -29,6 +29,9 @@ final class SidebarViewController: NSViewController {
     private let emptyView = SidebarEmptyView()
 
     private var selectedThreadID: UUID?
+    private var selectedInboxIDs: Set<UUID> = []
+    private lazy var undoButton = ThemedButton(title: "", style: .secondary, target: self, action: #selector(undoInbox))
+    private var undoHeight: NSLayoutConstraint?
     private var query = ""
     /// Threads whose messages match the search, with the matching line, found after a short pause in typing.
     private var messageMatches: [UUID: String] = [:]
@@ -66,6 +69,7 @@ final class SidebarViewController: NSViewController {
     func select(threadID: UUID?) {
         let changed = threadID != selectedThreadID
         selectedThreadID = threadID
+        selectedInboxIDs = Set([threadID].compactMap { $0 })
         guard hasLoaded else { return }
         if let threadID, let thread = store.summary(threadID), !isSearching,
             let project = store.project(thread.projectID), !project.isChats, !project.isExpanded
@@ -133,7 +137,7 @@ final class SidebarViewController: NSViewController {
         outlineView.indentationPerLevel = 14
         outlineView.floatsGroupRows = false
         outlineView.allowsEmptySelection = true
-        outlineView.allowsMultipleSelection = false
+        outlineView.allowsMultipleSelection = true
         outlineView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         outlineView.dataSource = self
         outlineView.delegate = self
@@ -159,7 +163,11 @@ final class SidebarViewController: NSViewController {
         emptyView.isHidden = true
         emptyView.translatesAutoresizingMaskIntoConstraints = false
 
-        for view: NSView in [topRows, scrollView, emptyView] { root.addSubview(view) }
+        undoButton.isHidden = true
+        undoButton.translatesAutoresizingMaskIntoConstraints = false
+        undoHeight = undoButton.heightAnchor.constraint(equalToConstant: 0)
+        undoHeight?.isActive = true
+        for view: NSView in [topRows, scrollView, emptyView, undoButton] { root.addSubview(view) }
         NSLayoutConstraint.activate([
             topRows.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 4),
             topRows.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
@@ -167,7 +175,10 @@ final class SidebarViewController: NSViewController {
             scrollView.topAnchor.constraint(equalTo: topRows.bottomAnchor, constant: 10),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: undoButton.topAnchor),
+            undoButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            undoButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            undoButton.bottomAnchor.constraint(equalTo: root.safeAreaLayoutGuide.bottomAnchor),
             emptyView.topAnchor.constraint(equalTo: scrollView.topAnchor),
             emptyView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             emptyView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -179,6 +190,8 @@ final class SidebarViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         token = store.observe { [weak self] change in self?.handle(change) }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(inboxChanged), name: ThreadInbox.didChange, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(activityChanged(_:)), name: .coincideThreadActivityChanged, object: nil)
         NotificationCenter.default.addObserver(
@@ -212,7 +225,9 @@ final class SidebarViewController: NSViewController {
         case .runState(let id):
             refreshSnoozedThread(id)
             updateRunningTimer()
-        case .items, .settings, .providers:
+        case .items(let id, _, _):
+            if UIState.shared.values.settledThreads[id.uuidString] != nil { rebuild() }
+        case .settings, .providers:
             break
         }
     }
@@ -227,7 +242,7 @@ final class SidebarViewController: NSViewController {
     }
 
     private func refreshSnoozedThread(_ id: UUID) {
-        if store.summary(id)?.snoozedUntil != nil { rebuild() }
+        if store.summary(id)?.snoozedUntil != nil || UIState.shared.values.settledThreads[id.uuidString] != nil { rebuild() }
         refreshThreadRow(id)
     }
 
@@ -235,6 +250,7 @@ final class SidebarViewController: NSViewController {
 
     private var showsArchived: Bool { UIState.shared.values.showsArchivedThreads }
     private var showsSnoozed: Bool { UIState.shared.values.showsSnoozedThreads }
+    private var showsSettled: Bool { UIState.shared.values.showsSettledThreads }
 
     /// Recomputes the tree from the store and applies the difference to the outline.
     private func rebuild() {
@@ -249,7 +265,8 @@ final class SidebarViewController: NSViewController {
         let now = Date()
         for project in store.projects {
             let all = store.threads(in: project.id, includeArchived: showsArchived).filter { thread in
-                showsSnoozed || isSearching || !ThreadSnooze.isHidden(thread, now: now)
+                (showsSnoozed || isSearching || !ThreadSnooze.isHidden(thread, now: now))
+                    && (showsSettled || isSearching || !ThreadInbox.isHidden(thread))
             }
             allThreadIDs.formUnion(all.map(\.id))
             var threads = all
@@ -351,7 +368,8 @@ final class SidebarViewController: NSViewController {
     private func handOffSelectionIfNeeded(oldChildren: [ObjectIdentifier: [SidebarNode]]) {
         guard let selected = selectedThreadID else { return }
         if let thread = store.summary(selected), !thread.isArchived || showsArchived,
-            showsSnoozed || isSearching || !ThreadSnooze.isHidden(thread)
+            showsSnoozed || isSearching || !ThreadSnooze.isHidden(thread),
+            showsSettled || isSearching || !ThreadInbox.isHidden(thread)
         { return }
         var fallback: UUID?
         for siblings in oldChildren.values {
@@ -363,7 +381,11 @@ final class SidebarViewController: NSViewController {
         }
         selectedThreadID = fallback
         let callback = onSelectThread
-        DispatchQueue.main.async { callback?(fallback) }
+        DispatchQueue.main.async { [weak self] in
+            // A bulk action can remove several successive neighbours before this callback runs.
+            guard self?.selectedThreadID == fallback else { return }
+            callback?(fallback)
+        }
     }
 
     private func isListed(_ node: SidebarNode) -> Bool {
@@ -392,12 +414,15 @@ final class SidebarViewController: NSViewController {
             outlineView.deselectAll(nil)
             return
         }
+        let rows = IndexSet(selectedInboxIDs.compactMap { id in
+            nodes.existing(.thread(id)).map { outlineView.row(forItem: $0) }
+        }.filter { $0 >= 0 })
         let row = outlineView.row(forItem: node)
-        if row < 0 {
-            outlineView.deselectAll(nil)
-        } else if outlineView.selectedRow != row {
-            outlineView.selectRowIndexes([row], byExtendingSelection: false)
+        let desired = rows.isEmpty ? (row < 0 ? IndexSet() : IndexSet(integer: row)) : rows
+        if outlineView.selectedRowIndexes != desired {
+            outlineView.selectRowIndexes(desired, byExtendingSelection: false)
         }
+        selectedInboxIDs = Set(desired.compactMap { sidebarNode(atRow: $0)?.threadID })
     }
 
     private func updateEmptyState() {
@@ -452,6 +477,7 @@ final class SidebarViewController: NSViewController {
         if let until = thread.snoozedUntil, until > Date() {
             lines.append(String(localized: "Snoozed until \(until.formatted(date: .abbreviated, time: .shortened))"))
         }
+        if ThreadInbox.shared.isSettled(thread) { lines.append(String(localized: "Settled")) }
         if isSearching, let match = messageMatches[thread.id] { lines.append("“\(match)”") }
         let background = ThreadRunner.shared.backgroundTasks(thread.id)
         if !status.isRunning, !background.isEmpty {
@@ -664,6 +690,9 @@ final class SidebarViewController: NSViewController {
         snoozed.target = self
         snoozed.state = showsSnoozed ? .on : .off
         menu.addItem(snoozed)
+        let settled = item(String(localized: "Show Settled Threads"), #selector(toggleShowSettled))
+        settled.state = showsSettled ? .on : .off
+        menu.addItem(settled)
         let limitItem = NSMenuItem(title: String(localized: "Threads per Project"), action: nil, keyEquivalent: "")
         let limits = NSMenu()
         for limit in [3, 6, 10, 20, 0] {
@@ -711,8 +740,7 @@ final class SidebarViewController: NSViewController {
     }
 
     private func deleteSelectedThread() {
-        guard let id = sidebarNode(atRow: outlineView.selectedRow)?.threadID else { return }
-        ThreadActions.delete(id, in: view.window)
+        ThreadActions.delete(outlineView.selectedRowIndexes.compactMap { sidebarNode(atRow: $0)?.threadID }, in: view.window)
     }
 
     /// A thread row's archive button and VoiceOver actions.
@@ -875,6 +903,9 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !isSyncingSelection else { return }
+        selectedInboxIDs = Set(outlineView.selectedRowIndexes.compactMap { sidebarNode(atRow: $0)?.threadID })
+        // Extending selection prepares a bulk action without navigating away from the open conversation.
+        if selectedInboxIDs.count > 1 { return }
         guard let id = sidebarNode(atRow: outlineView.selectedRow)?.threadID else {
             // Clicking empty space must not close the open thread.
             syncSelection()
@@ -972,7 +1003,11 @@ extension SidebarViewController: NSMenuDelegate {
         let node = sidebarNode(atRow: outlineView.clickedRow)
         switch node?.kind {
         case .thread(let id):
-            buildThreadMenu(menu, id)
+            if selectedInboxIDs.count > 1, selectedInboxIDs.contains(id) {
+                buildBulkMenu(menu, Array(selectedInboxIDs))
+            } else {
+                buildThreadMenu(menu, id)
+            }
         case .chats(let id), .project(let id), .showMore(let id), .showLess(let id), .empty(let id):
             buildProjectMenu(menu, id)
         case .header, nil:
@@ -984,6 +1019,9 @@ extension SidebarViewController: NSMenuDelegate {
             let snoozed = item(String(localized: "Show Snoozed Threads"), #selector(toggleShowSnoozed))
             snoozed.state = showsSnoozed ? .on : .off
             menu.addItem(snoozed)
+            let settled = item(String(localized: "Show Settled Threads"), #selector(toggleShowSettled))
+            settled.state = showsSettled ? .on : .off
+            menu.addItem(settled)
             menu.addItem(item(String(localized: "Expand All Projects"), #selector(expandAll)))
             menu.addItem(item(String(localized: "Collapse All Projects"), #selector(collapseAll)))
         }
@@ -1021,12 +1059,76 @@ extension SidebarViewController: NSMenuDelegate {
             snooze.submenu = presets
             menu.addItem(snooze)
         }
+        let settled = ThreadInbox.shared.isSettled(thread)
+        let settle = item(settled ? String(localized: "Unsettle") : String(localized: "Settle"), #selector(settleFromMenu(_:)))
+        settle.representedObject = ([id], !settled)
+        if !settled { settle.subtitle = String(localized: "Returns when new activity arrives") }
+        settle.isEnabled = settled || (!ThreadRunner.shared.isRunning(id)
+            && ThreadActivity.shared.pendingApprovalCount(id) == 0 && ThreadActivity.shared.pendingQuestionCount(id) == 0)
+        menu.addItem(settle)
         let archive = item(
             thread.isArchived ? String(localized: "Unarchive") : String(localized: "Archive"), #selector(archiveFromMenu(_:)), id)
         archive.isEnabled = ThreadActions.canArchive(id)
         menu.addItem(archive)
         menu.addItem(item(String(localized: "Delete…"), #selector(deleteFromMenu(_:)), id))
     }
+
+    private func buildBulkMenu(_ menu: NSMenu, _ ids: [UUID]) {
+        let archive = item(String(localized: "Archive Threads"), #selector(archiveMany(_:)))
+        archive.representedObject = (ids, true)
+        archive.isEnabled = ids.allSatisfy { !ThreadRunner.shared.isRunning($0) }
+        menu.addItem(archive)
+        if ids.contains(where: { store.summary($0)?.isArchived == true }) {
+            let unarchive = item(String(localized: "Unarchive Threads"), #selector(archiveMany(_:)))
+            unarchive.representedObject = (ids, false)
+            menu.addItem(unarchive)
+        }
+        for settled in [true, false] {
+            let entry = item(settled ? String(localized: "Settle Threads") : String(localized: "Unsettle Threads"), #selector(settleFromMenu(_:)))
+            entry.representedObject = (ids, settled)
+            entry.isEnabled = !settled || ids.allSatisfy {
+                !ThreadRunner.shared.isRunning($0) && ThreadActivity.shared.pendingApprovalCount($0) == 0
+                    && ThreadActivity.shared.pendingQuestionCount($0) == 0
+            }
+            menu.addItem(entry)
+        }
+        let delete = item(String(localized: "Delete Threads"), #selector(deleteMany(_:)))
+        delete.representedObject = ids
+        menu.addItem(.separator())
+        menu.addItem(delete)
+    }
+
+    @objc private func archiveMany(_ sender: NSMenuItem) {
+        guard let (ids, archived) = sender.representedObject as? ([UUID], Bool) else { return }
+        ThreadInbox.shared.archive(ids, archived: archived)
+    }
+
+    @objc private func settleFromMenu(_ sender: NSMenuItem) {
+        guard let (ids, settled) = sender.representedObject as? ([UUID], Bool) else { return }
+        ThreadInbox.shared.settle(ids, settled: settled)
+    }
+
+    @objc private func deleteMany(_ sender: NSMenuItem) {
+        guard let ids = sender.representedObject as? [UUID] else { return }
+        ThreadActions.delete(ids, in: view.window)
+    }
+
+    @objc private func toggleShowSettled() {
+        UIState.shared.update { $0.showsSettledThreads.toggle() }
+        rebuild()
+    }
+
+    @objc private func inboxChanged() {
+        let manager = ThreadInbox.shared.undoManager
+        undoButton.title = String(localized: "Undo")
+        undoButton.toolTip = manager.undoMenuItemTitle
+        undoButton.setAccessibilityLabel(manager.undoMenuItemTitle)
+        undoButton.isHidden = !manager.canUndo
+        undoHeight?.constant = manager.canUndo ? 30 : 0
+        rebuild()
+    }
+
+    @objc private func undoInbox() { ThreadInbox.shared.undo() }
 
     private func buildProjectMenu(_ menu: NSMenu, _ id: UUID) {
         guard let project = store.project(id) else { return }
@@ -1208,6 +1310,9 @@ final class SidebarOutlineView: NSOutlineView {
     var onActivate: (() -> Void)?
 
     var hasRows: Bool { numberOfRows > 0 }
+    override var undoManager: UndoManager? { ThreadInbox.shared.undoManager }
+    @objc func undo(_ sender: Any?) { ThreadInbox.shared.undo() }
+    @objc func redo(_ sender: Any?) { ThreadInbox.shared.redo() }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         ThemedContextMenu.show(super.menu(for: event), for: event, in: window)

@@ -93,6 +93,16 @@ enum DebugAutomation {
             case "request":
                 guard let threadID else { continue }
                 store.append(sampleRequest(value.string ?? "approval"), to: threadID)
+            case "inbox":
+                let titles = Set(value["titles"]?.array?.compactMap(\.string) ?? [])
+                let ids = store.threadSummaries.values.filter { titles.contains($0.title) }.map(\.id)
+                switch value["action"]?.string {
+                case "archive": ThreadInbox.shared.archive(ids, archived: true)
+                case "settle": ThreadInbox.shared.settle(ids, settled: true)
+                case "undo": ThreadInbox.shared.undo()
+                case "redo": ThreadInbox.shared.redo()
+                default: log("unknown inbox action")
+                }
             case "toggle":
                 let window = NSApp.windows.compactMap { $0.windowController as? MainWindowController }.first
                 switch value.string {
