@@ -57,8 +57,10 @@ public enum JSONValue: Sendable, Hashable, Codable {
     /// Follows a dotted path such as `"params.item.type"`.
     public nonisolated func at(_ path: String) -> JSONValue? {
         var current: JSONValue? = self
-        for key in path.split(separator: ".") {
-            current = current?[String(key)]
+        // Split on the dot scalar, not on Characters: a key ending in a prepended mark such as U+0602 would merge
+        // with the following dot into one Character and hide it.
+        for key in path.unicodeScalars.split(separator: ".") {
+            current = current?[String(Substring(key))]
         }
         return current
     }
