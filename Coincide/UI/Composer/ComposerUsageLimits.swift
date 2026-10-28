@@ -228,8 +228,17 @@ final class UsageLimitBar: NSView {
 
 /// Warns when the selected agent's plan is near or at one of its limits, with when it resets.
 final class ComposerUsageBanner: ComposerBanner {
+    /// What the banner offers for a thread its agent stopped working on at the limit (T3 Code's "Resume at reset").
+    enum ResumeOffer: Equatable {
+        case available
+        case scheduled(Date)
+    }
+
     var onDismiss: (() -> Void)?
     var onShowDetails: (() -> Void)?
+    var onToggleResume: (() -> Void)?
+
+    private let resumeButton = ThemedButton(title: "", style: .secondary, target: nil, action: nil)
 
     private let iconView = ComposerBanner.icon("gauge.with.needle", color: .systemOrange)
     private let message = NSTextField(wrappingLabelWithString: "")
@@ -251,15 +260,34 @@ final class ComposerUsageBanner: ComposerBanner {
         dismiss.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
         dismiss.toolTip = String(localized: "Dismiss")
         dismiss.setContentCompressionResistancePriority(.required, for: .horizontal)
+        resumeButton.target = self
+        resumeButton.action = #selector(toggleResume)
+        resumeButton.controlSize = .small
+        resumeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         content.alignment = .centerY
-        for view in [iconView, message, details, dismiss] as [NSView] { content.addArrangedSubview(view) }
+        for view in [iconView, message, resumeButton, details, dismiss] as [NSView] { content.addArrangedSubview(view) }
     }
 
-    func show(_ window: UsageLimitWindow, provider: ProviderKind, now: Date) {
+    func show(_ window: UsageLimitWindow, provider: ProviderKind, now: Date, resume: ResumeOffer? = nil) {
         iconView.contentTintColor = window.blocksWork ? .systemRed : .systemOrange
-        message.stringValue = UsageLimits.warningText(for: window, provider: provider, at: now)
+        var text = UsageLimits.warningText(for: window, provider: provider, at: now)
+        switch resume {
+        case .available?:
+            resumeButton.title = String(localized: "Resume at Reset")
+            resumeButton.toolTip = String(localized: "Continue this thread on its own once the limit resets.")
+        case .scheduled(let date)?:
+            resumeButton.title = String(localized: "Cancel Auto-Resume")
+            resumeButton.toolTip = nil
+            text += " " + String(localized: "This thread continues at \(date.formatted(date: .omitted, time: .shortened)).")
+        case nil:
+            break
+        }
+        resumeButton.isHidden = resume == nil
+        message.stringValue = text
         setAccessibilityLabel(message.stringValue)
     }
+
+    @objc private func toggleResume() { onToggleResume?() }
 
     @objc private func showDetails() { onShowDetails?() }
 

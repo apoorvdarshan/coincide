@@ -147,6 +147,48 @@ struct ThreadRunnerTests {
         await runner.send(threadID: threadID, text: text)
     }
 
+    // MARK: Usage limits
+
+    private func exhaustLimit(resettingIn seconds: TimeInterval) {
+        let window = UsageLimitWindow(
+            id: "session", kind: .session, label: "Session", usedPercent: 100, resetsAt: Date().addingTimeInterval(seconds))
+        _ = runner.recordUsageLimits([window], for: .claude)
+    }
+
+    @Test func aThreadScheduledToResumeContinuesOnceTheLimitResets() async {
+        await completeTurn("hello", reply: "Hi.")
+        runner.resumeDelay = 0
+        exhaustLimit(resettingIn: 0.2)
+        let reset = try! #require(runner.blockingLimitReset(for: .claude))
+        runner.resumeAtReset(threadID, at: reset)
+        #expect(runner.scheduledResumes[threadID] == reset)
+        #expect(await eventually { items.contains { $0.kind == .user && $0.text == ThreadRunner.resumePrompt } })
+        #expect(runner.scheduledResumes[threadID] == nil)
+    }
+
+    @Test func aCancelledResumeDoesNothing() async throws {
+        await completeTurn("hello", reply: "Hi.")
+        runner.resumeDelay = 0
+        runner.resumeAtReset(threadID, at: Date().addingTimeInterval(0.1))
+        runner.cancelResume(threadID)
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(!items.contains { $0.text == ThreadRunner.resumePrompt })
+    }
+
+    @Test func aTurnStoppedByTheLimitIsScheduledWhenTheSettingIsOn() async {
+        store.updateSettings { $0.resumesAfterUsageLimit = true }
+        exhaustLimit(resettingIn: 3_600)
+        claude.configure = { session in
+            session.onSend = { session, _ in session.emit(.turnCompleted(.failed("You've hit your usage limit."))) }
+        }
+        await runner.send(threadID: threadID, text: "hello")
+        #expect(await eventually { runner.scheduledResumes[threadID] != nil })
+        runner.cancelResume(threadID)
+        // An exhausted window that resets in the past stops nothing.
+        exhaustLimit(resettingIn: -10)
+        #expect(runner.blockingLimitReset(for: .claude) == nil)
+    }
+
     // MARK: Background work
 
     @Test func backgroundWorkOutlastsTheTurnAndEndsWithTheSession() async throws {

@@ -250,6 +250,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         }
         queueBanner.onSteer = { [weak self] id in self?.steerQueued(id) }
         usageBanner.onShowDetails = { [weak self] in self?.footer.usageMeter.showDetails() }
+        usageBanner.onToggleResume = { [weak self] in self?.toggleResumeAtReset() }
         usageBanner.onDismiss = { [weak self] in
             guard let self, let thread, let warning = runner.usageLimits(for: thread.selection.provider)?.current(at: Date()).warning
             else { return }
@@ -647,6 +648,23 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         proposedPlan = text.isEmpty ? nil : text
     }
 
+    /// "Resume at Reset" for a thread with a conversation that isn't running while the agent's limit stops work.
+    private func resumeOffer(provider: ProviderKind, now: Date) -> ComposerUsageBanner.ResumeOffer? {
+        guard let threadID, store.summary(threadID)?.hasUserMessages == true, !runner.isRunning(threadID) else { return nil }
+        if let date = runner.scheduledResumes[threadID] { return .scheduled(date) }
+        return runner.blockingLimitReset(for: provider, now: now) == nil ? nil : .available
+    }
+
+    private func toggleResumeAtReset() {
+        guard let threadID, let provider = thread?.selection.provider else { return }
+        if runner.scheduledResumes[threadID] != nil {
+            runner.cancelResume(threadID)
+        } else if let reset = runner.blockingLimitReset(for: provider) {
+            runner.resumeAtReset(threadID, at: reset)
+        }
+        refreshUsageLimits()
+    }
+
     /// The selected agent's subscription limits: the footer meter, and a banner once a window is nearly used up.
     private func refreshUsageLimits() {
         let now = Date()
@@ -665,7 +683,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         if let warning = limits.warning,
             !dismissedUsageWarnings.contains(UsageLimits.warningKey(for: warning, provider: provider))
         {
-            usageBanner.show(warning, provider: provider, now: now)
+            usageBanner.show(warning, provider: provider, now: now, resume: resumeOffer(provider: provider, now: now))
             usageBanner.isHidden = false
         } else {
             usageBanner.isHidden = true
