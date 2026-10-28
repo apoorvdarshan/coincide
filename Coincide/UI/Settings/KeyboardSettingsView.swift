@@ -45,7 +45,7 @@ struct KeyboardSettingsView: View {
                         }
                         Spacer()
                         Toggle("Show only conflicts", isOn: $showsOnlyConflicts)
-                            .toggleStyle(.checkbox)
+                            .toggleStyle(ThemedCheckboxToggleStyle())
                     }
                 }
             }
