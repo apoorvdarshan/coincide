@@ -80,10 +80,10 @@ final class ScheduledTasks {
         self.timer = timer
     }
 
-    /// A quota-resume or a continuation in the last run's thread also blocks the next occurrence.
+    /// Continued turns, quota resumes and background commands/subagents all block the next occurrence.
     func hasActiveWork(_ task: ScheduledTask) -> Bool {
         guard let id = task.lastThreadID else { return false }
-        return runner.isRunning(id) || runner.scheduledResumes[id] != nil
+        return runner.isRunning(id) || runner.scheduledResumes[id] != nil || !runner.backgroundTasks(id).isEmpty
     }
 
     /// `createThread` applies project defaults; the ready-provider fallback retains those access/interaction modes.
