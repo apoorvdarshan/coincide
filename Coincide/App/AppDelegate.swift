@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ProjectScripts.shared.start()
         ThreadSnooze.shared.start()
         PreviewSessions.shared.start()
+        AppUpdates.shared.start()
         // Chats are always listed, so the first one can be started from the sidebar.
         AppStore.shared.ensureChatsProject()
         mainWindow?.showWindow(nil)
@@ -83,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ThreadRunner.shared.usageHistory.flush()
         if mainWindow?.window?.isVisible == true { mainWindow?.saveLayout() }
         UIState.shared.flush()
+        AppUpdates.shared.authorizeCleanQuit()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -116,6 +118,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let id = sender.representedObject as? UUID else { return }
         NSApp.activate()
         AppEvents.openThread(id)
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        AppEvents.showSettings(section: .about)
+        AppUpdates.shared.check()
     }
 
     @objc func showSettings(_ sender: Any?) {

@@ -91,6 +91,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var confirmBeforeDeletingThreads: Bool
     /// Have the thread's agent name a new thread from its first message (T3 Code's generated titles).
     public var generatesThreadTitles: Bool
+    /// App update checks are opt-in and run at most daily, including across launches.
+    public var lastAppUpdateCheck: Date?
+    public var checksForAppUpdates: Bool
     /// Continue a thread on its own once the usage limit that stopped it resets (T3 Code's auto-resume).
     public var resumesAfterUsageLimit: Bool
     /// New Thread (⌘N) starts a chat without a project instead of a thread in the current project.
@@ -133,6 +136,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showReasoning = true
         confirmBeforeDeletingThreads = true
         generatesThreadTitles = true
+        lastAppUpdateCheck = nil
+        checksForAppUpdates = false
         resumesAfterUsageLimit = false
         newThreadStartsChat = false
         idleSessionTimeoutMinutes = 30
@@ -169,6 +174,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showReasoning = value(.showReasoning, defaults.showReasoning)
         confirmBeforeDeletingThreads = value(.confirmBeforeDeletingThreads, defaults.confirmBeforeDeletingThreads)
         generatesThreadTitles = value(.generatesThreadTitles, defaults.generatesThreadTitles)
+        lastAppUpdateCheck = value(.lastAppUpdateCheck, defaults.lastAppUpdateCheck)
+        checksForAppUpdates = value(.checksForAppUpdates, defaults.checksForAppUpdates)
         resumesAfterUsageLimit = value(.resumesAfterUsageLimit, defaults.resumesAfterUsageLimit)
         newThreadStartsChat = value(.newThreadStartsChat, defaults.newThreadStartsChat)
         idleSessionTimeoutMinutes = value(.idleSessionTimeoutMinutes, defaults.idleSessionTimeoutMinutes)
