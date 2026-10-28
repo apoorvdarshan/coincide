@@ -251,11 +251,18 @@ public final class AppStore {
         return project(thread.projectID)?.url
     }
 
+    /// Project-free chats always inherit the app defaults. Existing threads are never changed by this resolution.
+    public func newThreadDefaults(in projectID: UUID) -> ProjectThreadDefaults {
+        if let project = project(projectID), !project.isChats, let defaults = project.threadDefaults { return defaults }
+        return ProjectThreadDefaults(selection: settings.defaultSelection, accessMode: settings.defaultAccessMode)
+    }
+
     @discardableResult
     public func createThread(in projectID: UUID, selection: ModelSelection? = nil) -> ChatThread {
+        let defaults = newThreadDefaults(in: projectID)
         let thread = ChatThread(
-            projectID: projectID, selection: selection ?? settings.defaultSelection,
-            accessMode: settings.defaultAccessMode)
+            projectID: projectID, selection: selection ?? defaults.selection,
+            accessMode: defaults.accessMode, interactionMode: defaults.interactionMode)
         loadedThreads[thread.id] = thread
         threadSummaries[thread.id] = ThreadSummary(thread)
         markUsed(thread.id)

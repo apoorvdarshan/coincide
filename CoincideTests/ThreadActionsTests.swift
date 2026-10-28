@@ -45,6 +45,22 @@ struct ThreadActionsTests {
         }
     }
 
+    @Test func changedProjectDefaultsCreateAFreshThreadWithoutRewritingAnOldEmptyOne() throws {
+        try withProject { project, _ in
+            let oldID = try #require(ThreadActions.newThread(in: project.id))
+            let old = try #require(store.summary(oldID))
+            let access: AccessMode = old.accessMode == .fullAccess ? .approval : .fullAccess
+            store.updateProject(project.id) {
+                $0.threadDefaults = ProjectThreadDefaults(selection: old.selection, accessMode: access, interactionMode: .plan)
+            }
+            let newID = try #require(ThreadActions.newThread(in: project.id))
+            #expect(newID != oldID)
+            #expect(store.summary(newID)?.accessMode == access && store.summary(newID)?.interactionMode == .plan)
+            #expect(store.summary(oldID)?.accessMode == old.accessMode && store.summary(oldID)?.interactionMode == old.interactionMode)
+            #expect(ThreadActions.newThread(in: project.id) == newID)
+        }
+    }
+
     @Test func listingAndThreadCommandsReadNoTranscript() async throws {
         let folder = TemporaryDirectory("project")
         let project = store.addProject(at: folder.url)

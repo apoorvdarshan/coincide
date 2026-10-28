@@ -31,11 +31,15 @@ enum ThreadActions {
     /// `worktreePath` (the project folder when nil) on `branch`.
     private static func newThread(in projectID: UUID, worktreePath: String?, branch: String?, setsFolder: Bool) -> UUID? {
         guard store.project(projectID) != nil else { return nil }
+        let defaults = store.newThreadDefaults(in: projectID)
+        let selection = ProviderRegistry.shared.usableSelection(preferring: defaults.selection)
         let id: UUID
-        if let empty = store.threads(in: projectID).first(where: { isUntouched($0, in: worktreePath) }) {
+        if let empty = store.threads(in: projectID).first(where: {
+            isUntouched($0, in: worktreePath) && $0.selection == selection
+                && $0.accessMode == defaults.accessMode && $0.interactionMode == defaults.interactionMode
+        }) {
             id = empty.id
         } else {
-            let selection = ProviderRegistry.shared.usableSelection(preferring: store.settings.defaultSelection)
             id = store.createThread(in: projectID, selection: selection).id
         }
         if setsFolder, let thread = store.summary(id), thread.worktreePath != worktreePath || thread.branch != branch {
