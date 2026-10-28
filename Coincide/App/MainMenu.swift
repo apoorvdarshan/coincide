@@ -43,6 +43,9 @@ final class MainMenu: NSObject, NSMenuDelegate {
         let settings = item(String(localized: "Settings…"), #selector(AppDelegate.showSettings(_:)), ",")
         settings.target = appDelegate
         menu.addItem(settings)
+        let updates = item(String(localized: "Check for Updates…"), #selector(AppDelegate.checkForUpdates(_:)))
+        updates.target = appDelegate
+        menu.addItem(updates)
         menu.addItem(.separator())
         let services = NSMenu(title: String(localized: "Services"))
         NSApp.servicesMenu = services

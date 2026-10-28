@@ -40,6 +40,20 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
         DEFINES_MODULE: YES
+  CoincideUpdater:
+    type: tool
+    platform: macOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    sources:
+      - path: CoincideUpdater
+      - path: CoincideKit/Updates
+    settings:
+      base:
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.updater
+        SKIP_INSTALL: YES
   Coincide:
     type: application
     platform: macOS
@@ -50,7 +64,17 @@ targets:
       - path: Coincide
     dependencies:
       - target: CoincideKit
+      - target: CoincideUpdater
+        link: false
+        embed: false
       - package: SwiftTerm
+    postBuildScripts:
+      - name: Embed update helper
+        script: /usr/bin/install -m 755 "$BUILT_PRODUCTS_DIR/CoincideUpdater" "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/CoincideUpdater"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/CoincideUpdater
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/CoincideUpdater
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide
