@@ -108,6 +108,9 @@ public protocol ACPAgentFlavor {
     func probe(executable: URL, environment: [String: String]) async -> ACPProbe
     /// Models to offer before a probe succeeded, for example when the CLI is missing.
     func offlineModels(environment: [String: String]) -> [ModelOption]
+    /// Reads the plan's usage windows without starting the agent (T3 Code's usage limits), for a probe that found it
+    /// ready and while sessions run. Nil when the agent has no plan limits Coincide can read.
+    func usageLimits(environment: [String: String]) async -> UsageLimitsOutcome?
 }
 
 /// Held by a launch that runs from files that must not be removed meanwhile (see
@@ -259,6 +262,8 @@ extension ACPAgentFlavor {
     public func offlineModels(environment: [String: String]) -> [ModelOption] {
         [ModelOption(provider: provider, modelID: defaultModelID, displayName: defaultModelName)]
     }
+
+    public func usageLimits(environment: [String: String]) async -> UsageLimitsOutcome? { nil }
 }
 
 /// Shared mapping between ACP permission options and Coincide approval choices.

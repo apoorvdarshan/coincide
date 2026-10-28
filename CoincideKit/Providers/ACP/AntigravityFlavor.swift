@@ -26,11 +26,18 @@ struct AntigravityFlavor: ACPAgentFlavor {
     let profile: AntigravityProfile
     /// Leases the downloaded release a launch runs from; nil uses the shared runtime for managed paths.
     let runtime: AntigravityRuntime?
+    /// Reads the plan's quotas: the shared probe, which keeps the access token between checks, unless a test passes
+    /// its own.
+    let usage: AntigravityUsageProbe
 
-    init(paths: AntigravityPaths = .standard, profile: AntigravityProfile? = nil, runtime: AntigravityRuntime? = nil) {
+    init(
+        paths: AntigravityPaths = .standard, profile: AntigravityProfile? = nil, runtime: AntigravityRuntime? = nil,
+        usage: AntigravityUsageProbe? = nil
+    ) {
         self.paths = paths
         self.profile = profile ?? AntigravityProfile(geminiHome: paths.profileDirectory)
         self.runtime = runtime
+        self.usage = usage ?? .shared
     }
 
     var provider: ProviderKind { .antigravity }
@@ -203,6 +210,11 @@ struct AntigravityFlavor: ACPAgentFlavor {
     func offlineModels(environment: [String: String]) -> [ModelOption] {
         Self.knownModels[profile.geminiHome.path].flatMap { $0.isEmpty ? nil : $0 }
             ?? [ModelOption(provider: .antigravity, modelID: Self.defaultModelID, displayName: defaultModelName)]
+    }
+
+    /// The Google subscription's quotas, with the private profile's sign-in (see `AntigravityUsageLimits`).
+    func usageLimits(environment: [String: String]) async -> UsageLimitsOutcome? {
+        await usage.read(profile)
     }
 
     /// The helper sits next to the real executable, even when PATH points at a symlink.

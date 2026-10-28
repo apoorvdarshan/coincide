@@ -61,23 +61,44 @@ public final class ACPProvider: AgentProvider {
 
     /// Models the last probe listed, with the executable it probed.
     private var probed: (executable: URL, models: [ModelOption])?
+    /// The plan's usage windows the last check read, with the account they belong to.
+    private var checkedUsageLimits: (account: String?, limits: UsageLimits)?
+    private let makeFlavor: @MainActor () -> ACPAgentFlavor
 
-    public init(profile: ACPProfile) {
+    public convenience init(profile: ACPProfile) {
+        self.init(profile: profile, flavor: { profile.flavor })
+    }
+
+    /// `flavor` replaces the profile's in tests.
+    init(profile: ACPProfile, flavor: @escaping @MainActor () -> ACPAgentFlavor) {
         self.profile = profile
+        makeFlavor = flavor
     }
 
     public func detect(executable: URL?, environment: [String: String]) async -> ProviderStatus {
         guard let executable else {
             probed = nil
+            checkedUsageLimits = nil
             return ProviderStatus(state: .notInstalled, message: setupHint)
         }
-        let probe = await profile.flavor.probe(executable: executable, environment: environment)
+        let flavor = makeFlavor()
+        let probe = await flavor.probe(executable: executable, environment: environment)
         probed = (executable, probe.models)
-        return probe.status
+        var status = probe.status
+        // Like T3 Code, only a ready agent's limits are read. A failed read keeps what the last check of the same
+        // account read; another account, or one without limits to read, starts afresh.
+        guard status.state == .ready, let outcome = await flavor.usageLimits(environment: environment) else {
+            checkedUsageLimits = nil
+            return status
+        }
+        let previous = checkedUsageLimits.flatMap { $0.account == status.account ? $0.limits : nil }
+        status.usageLimits = outcome.resolved(after: previous)
+        checkedUsageLimits = status.usageLimits.map { (status.account, $0) }
+        return status
     }
 
     public func models(status: ProviderStatus, environment: [String: String]) async -> [ModelOption] {
-        let flavor = profile.flavor
+        let flavor = makeFlavor()
         if let probed, probed.executable == status.executable, !probed.models.isEmpty { return probed.models }
         if let executable = status.executable, status.state == .ready || status.state == .notAuthenticated {
             let models = await flavor.probe(executable: executable, environment: environment).models
@@ -87,6 +108,6 @@ public final class ACPProvider: AgentProvider {
     }
 
     public func makeSession(_ launch: AgentLaunch) -> AgentSession {
-        ACPSession(launch: launch, flavor: profile.flavor)
+        ACPSession(launch: launch, flavor: makeFlavor())
     }
 }

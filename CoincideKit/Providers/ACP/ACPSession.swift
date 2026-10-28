@@ -125,6 +125,8 @@ public final class ACPSession: AgentSession {
     private var temporaryDirectory: URL?
     /// What `prepareLaunch` handed out for the running process, released once it has ended.
     private var launchLease: ACPLaunchLease?
+    /// When this session last read the plan's usage windows (see `reportUsageLimits`).
+    private var usageLimitsRead: Date?
 
     public init(launch: AgentLaunch, flavor: ACPAgentFlavor, transport: ACPTransportFactory? = nil) {
         self.launch = launch
@@ -450,6 +452,24 @@ public final class ACPSession: AgentSession {
         emit(continued ? .sessionContinued(id: id) : .sessionStarted(id: id))
         if let model = setup.currentModelID ?? initialized?.modelState?.currentModelID { emit(.modelResolved(model)) }
         publishModels()
+        reportUsageLimits()
+    }
+
+    /// How often a session reads the plan's usage windows again: T3 Code checks providers this often.
+    nonisolated static let usageLimitsInterval: TimeInterval = 5 * 60
+
+    /// Reads the plan's usage windows (`ACPAgentFlavor.usageLimits`) when the session starts and after its turns, at
+    /// most every `usageLimitsInterval`, so the composer's meter stays current as Codex's does: ACP agents do not
+    /// report their limits themselves. Only windows read are reported; a failed read changes nothing.
+    private func reportUsageLimits() {
+        if let usageLimitsRead, Date().timeIntervalSince(usageLimitsRead) < Self.usageLimitsInterval { return }
+        usageLimitsRead = Date()
+        Task { [weak self, flavor, environment = launch.environment] in
+            guard let windows = await flavor.usageLimits(environment: environment)?.limits?.windows, !windows.isEmpty else {
+                return
+            }
+            self?.emit(.rateLimits(windows))
+        }
     }
 
     private func spawn(accessMode: AccessMode, lease: ACPLaunchLease?) throws -> ACPClient {
@@ -1110,6 +1130,7 @@ public final class ACPSession: AgentSession {
         if usage.contextWindow == nil { usage.contextWindow = modelContextWindow }
         if usage != TokenUsage() { emit(.usage(usage)) }
         emit(.turnCompleted(outcome))
+        reportUsageLimits()
     }
 
     /// Answers every waiting request with its cancelled form.

@@ -240,6 +240,16 @@
         }
       }
     },
+    "%@ · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@"
+          }
+        }
+      }
+    },
     "%@ · %@. Choose the agent and model" : {
       "localizations" : {
         "en" : {
@@ -547,6 +557,9 @@
 
     },
     "1 result" : {
+
+    },
+    "5-hour" : {
 
     },
     "A %@ hook failed." : {
@@ -1146,6 +1159,9 @@
 
     },
     "Choose…" : {
+
+    },
+    "Claude & GPT (shared)" : {
 
     },
     "Claude API %@; retrying…" : {
@@ -3583,6 +3599,9 @@
     "Quitting stops them." : {
 
     },
+    "Quota" : {
+
+    },
     "Ran %lld commands" : {
 
     },
@@ -3761,6 +3780,9 @@
 
     },
     "Report an Issue" : {
+
+    },
+    "Reported quota" : {
 
     },
     "Reset All" : {
@@ -4385,6 +4407,9 @@
 
     },
     "Submit Answers" : {
+
+    },
+    "Subscription" : {
 
     },
     "Substitutions" : {
