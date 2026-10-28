@@ -396,3 +396,23 @@ struct PaletteCatalogTests {
         #expect(!more.contains { $0.id == "action:pin" || $0.id == "action:sidebar" })
     }
 }
+
+struct ProjectTextSearchTests {
+    @Test func grepAndRipgrepLinesParseIntoMatches() {
+        let output = "./Sources/App.swift:12:    let email = defaults.string(forKey: \"login:last\")\nREADME.md:3:Login\nnot a match\n"
+        #expect(
+            TextSearch.parse(output) == [
+                .init(path: "Sources/App.swift", line: 12, text: "let email = defaults.string(forKey: \"login:last\")"),
+                .init(path: "README.md", line: 3, text: "Login"),
+            ])
+    }
+
+    @Test func aSearchFindsTextInTheFolder() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-text-search-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try "one\nthe needle is here\nthree\n".write(to: root.appendingPathComponent("src/a.txt"), atomically: true, encoding: .utf8)
+        try "nothing\n".write(to: root.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+        let matches = await TextSearch.run("needle", in: root)
+        #expect(matches == [.init(path: "src/a.txt", line: 2, text: "the needle is here")])
+    }
+}
