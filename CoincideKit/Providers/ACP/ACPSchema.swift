@@ -22,13 +22,6 @@ public struct ACPAuthMethod: Sendable, Hashable {
     public var description: String?
     /// `agent` (or nil) when the agent signs in by itself; `terminal` and `env_var` need the user.
     public var type: String?
-    /// A `terminal` method's arguments, added to the agent's own, and environment.
-    public var arguments: [String]
-    public var environment: [String: String]
-    /// The variables an `env_var` method reads, such as an API key.
-    public var variables: [String]
-    /// Where an `env_var` method's key comes from.
-    public var link: URL?
 
     nonisolated init?(json: JSONValue) {
         guard let id = json["id"]?.string ?? json["methodId"]?.string else { return nil }
@@ -36,12 +29,6 @@ public struct ACPAuthMethod: Sendable, Hashable {
         name = json["name"]?.string ?? id
         description = json["description"]?.string
         type = json["type"]?.string
-        arguments = (json["args"]?.array ?? []).compactMap(\.string)
-        environment = (json["env"]?.object ?? [:]).compactMapValues(\.string)
-        variables = (json["vars"]?.array ?? []).compactMap { $0["name"]?.string ?? $0.string }
-        link = json["link"]?.string.flatMap { text in
-            URL(string: text).flatMap { ["https", "http"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil }
-        }
     }
 
     /// Whether the agent can complete this method without a terminal or typed credentials.
@@ -56,19 +43,16 @@ public struct ACPClientCapabilities: Sendable, Hashable {
     public var notices: Bool
     /// Form elicitations, shown as questions.
     public var elicitationForms: Bool
-    /// URL elicitations, which ask the user to open a page (a browser sign-in in Settings).
-    public var elicitationURLs: Bool
 
     public nonisolated init(
         readTextFile: Bool = false, writeTextFile: Bool = false, terminal: Bool = false, notices: Bool = true,
-        elicitationForms: Bool = true, elicitationURLs: Bool = false
+        elicitationForms: Bool = true
     ) {
         self.readTextFile = readTextFile
         self.writeTextFile = writeTextFile
         self.terminal = terminal
         self.notices = notices
         self.elicitationForms = elicitationForms
-        self.elicitationURLs = elicitationURLs
     }
 
     nonisolated var json: JSONValue {
@@ -77,10 +61,7 @@ public struct ACPClientCapabilities: Sendable, Hashable {
             "terminal": .bool(terminal),
         ]
         if notices { object["session"] = ["notices": [:]] }
-        var elicitation: [String: JSONValue] = [:]
-        if elicitationForms { elicitation["form"] = [:] }
-        if elicitationURLs { elicitation["url"] = [:] }
-        if !elicitation.isEmpty { object["elicitation"] = .object(elicitation) }
+        if elicitationForms { object["elicitation"] = ["form": [:]] }
         return .object(object)
     }
 }

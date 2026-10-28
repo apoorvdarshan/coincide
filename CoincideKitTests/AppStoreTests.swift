@@ -671,3 +671,121 @@ struct ThreadSummaryTests {
         }
     }
 }
+
+/// Coincide once let users add their own ACP agents (local commands and ACP Registry agents), saved as
+/// `acpAgents` in the settings and run as `acp:<id>` providers. Files written then still load: those agents' entries
+/// are skipped like any unknown provider's, and nothing else in them is lost.
+@MainActor
+struct RemovedACPAgentFilesTests {
+    private let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-acp-agents-\(UUID().uuidString)")
+
+    private var threadsDirectory: URL { directory.appendingPathComponent("threads") }
+    private var indexFile: URL { directory.appendingPathComponent("thread-index.json") }
+
+    private func copiesAside(in folder: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0.contains(".unreadable-") }
+    }
+
+    @Test func settingsKeepEverythingButTheAddedAgents() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let json = #"""
+            {"acpAgents":[
+               {"id":"devin","name":"Devin","source":"registry","command":"","arguments":[],
+                "registry":{"agentID":"devin","version":"3000.11.228","distribution":"npx","executable":"npm/bin/devin",
+                            "arguments":["acp"],"environment":{"DEVIN_MODE":"acp"},"binDirectory":"npm/bin"}},
+               {"id":"dsh","name":"DeepSeek Harness","source":"local","command":"dsh","arguments":["--profile","acp"]}],
+             "providers":["codex",{"isEnabled":false},
+                          "acp:devin",{"isEnabled":true,"customModels":["swe-1.5"],"environment":{"DEVIN_MODE":"acp"}},
+                          "cursor",{"executablePath":"/opt/cursor-agent","customModels":["composer-2"]},
+                          "acp:dsh",{"executablePath":"/opt/dsh"}],
+             "defaultSelection":{"provider":"acp:dsh","modelID":"deepseek-v4","effort":"high"},
+             "defaultAccessMode":"approval","fontSize":15,"sendOnReturn":false,"cursorKeychainUsageEnabled":true}
+            """#
+        let settingsFile = directory.appendingPathComponent("settings.json")
+        try Data(json.utf8).write(to: settingsFile)
+
+        let store = AppStore(directory: directory)
+        let settings = store.settings
+        #expect(
+            settings.providers == [
+                .codex: ProviderSettings(isEnabled: false),
+                .cursor: ProviderSettings(executablePath: "/opt/cursor-agent", customModels: ["composer-2"]),
+            ])
+        // A default on an added agent falls back like one on any provider this version does not know.
+        #expect(settings.defaultSelection == AppSettings().defaultSelection)
+        #expect(settings.defaultAccessMode == .approval)
+        #expect(settings.fontSize == 15)
+        #expect(!settings.sendOnReturn)
+        #expect(settings.cursorKeychainUsageEnabled)
+        #expect(try copiesAside(in: directory).isEmpty)
+
+        // The next save leaves the agents out and keeps the rest.
+        store.updateSettings { $0.showReasoning = false }
+        store.flush()
+        let saved = try String(contentsOf: settingsFile, encoding: .utf8)
+        #expect(!saved.contains("acpAgents") && !saved.contains("acp:"))
+        var expected = settings
+        expected.showReasoning = false
+        #expect(AppStore(directory: directory).settings == expected)
+    }
+
+    @Test func threadsKeepTheirTranscriptsAndTheOtherAgentsSessions() throws {
+        let first = AppStore(directory: directory)
+        let project = first.addProject(at: URL(fileURLWithPath: "/tmp"))
+        let id = first.createThread(in: project.id).id
+        first.flush()
+        // The thread as that version saved it: it ran on the added agent `devin`, then switched to Codex.
+        let ids = (0..<4).map { _ in UUID().uuidString }
+        let json = """
+            {"id":"\(id.uuidString)","projectID":"\(project.id.uuidString)","title":"Try Devin",
+             "createdAt":"2026-10-01T10:00:00Z","updatedAt":"2026-10-01T10:05:00Z",
+             "selection":{"provider":"acp:devin","modelID":"swe-1.5","effort":"high"},
+             "accessMode":"approval","interactionMode":"plan","isPinned":true,"isArchived":false,
+             "items":[
+               {"id":"\(ids[0])","kind":"user","text":"Add a test","createdAt":"2026-10-01T10:00:00Z"},
+               {"id":"\(ids[1])","kind":"assistant","text":"Added.","createdAt":"2026-10-01T10:01:00Z","provider":"acp:devin","modelID":"swe-1.5"},
+               {"id":"\(ids[2])","kind":"user","text":"Continue with Codex","createdAt":"2026-10-01T10:02:00Z"},
+               {"id":"\(ids[3])","kind":"assistant","text":"Done.","createdAt":"2026-10-01T10:03:00Z","provider":"codex","modelID":"gpt-5"}
+             ],
+             "sessions":["acp:devin",{"sessionID":"native-1","seenItemCount":2},"codex",{"sessionID":"c1","seenItemCount":4}]}
+            """
+        let file = threadsDirectory.appendingPathComponent("\(id.uuidString).json")
+        try Data(json.utf8).write(to: file)
+
+        let store = AppStore(directory: directory)
+        let thread = try #require(store.thread(id))
+        #expect(thread.title == "Try Devin" && thread.isPinned)
+        #expect(thread.accessMode == .approval && thread.interactionMode == .plan)
+        #expect(thread.selection == ModelSelection(provider: .claude, modelID: "default"))
+        #expect(thread.items.map(\.text) == ["Add a test", "Added.", "Continue with Codex", "Done."])
+        #expect(thread.items[1].provider == nil && thread.items[1].modelID == "swe-1.5")
+        #expect(thread.items[3].provider == .codex)
+        #expect(thread.sessions == [.codex: ProviderSessionRef(sessionID: "c1", seenItemCount: 4)])
+        store.flush()
+
+        // The index that version wrote names the agent too; its entry is read again from the file.
+        var index = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: indexFile)) as? [String: Any])
+        var entries = try #require(index["entries"] as? [[String: Any]])
+        #expect(entries.count == 1)
+        var summary = try #require(entries.first?["summary"] as? [String: Any])
+        summary["selection"] = ["provider": "acp:devin", "modelID": "swe-1.5", "effort": "high"]
+        summary["sessionProviders"] = ["acp:devin", "codex"]
+        entries[0]["summary"] = summary
+        index["entries"] = entries
+        try JSONSerialization.data(withJSONObject: index).write(to: indexFile)
+        let relaunched = AppStore(directory: directory)
+        #expect(relaunched.summaryReads == 1)
+        let listed = try #require(relaunched.summary(id))
+        #expect(listed.title == "Try Devin" && listed.itemCount == 4)
+        #expect(listed.selection == ModelSelection(provider: .claude, modelID: "default"))
+        #expect(listed.sessionProviders == [.codex])
+
+        // The first save copies the file aside, so the agent's selection and session are kept there.
+        #expect(try copiesAside(in: threadsDirectory).isEmpty)
+        relaunched.append(TranscriptItem(kind: .user, text: "Back to it"), to: id)
+        relaunched.flush()
+        let copy = try #require(try copiesAside(in: threadsDirectory).first)
+        #expect(try String(contentsOf: threadsDirectory.appendingPathComponent(copy), encoding: .utf8) == json)
+        #expect(AppStore(directory: directory).thread(id)?.items.map(\.text).last == "Back to it")
+    }
+}

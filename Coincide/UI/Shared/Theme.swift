@@ -55,14 +55,8 @@ enum Theme {
         case .grok: NSColor.systemGray
         case .opencode: NSColor.systemTeal
         case .antigravity: NSColor.systemBlue
-        // Each added agent keeps one color of its own, picked from its instance ID.
-        case .acp(let id): acpColors[Int(id.utf8.reduce(UInt32(2_166_136_261)) { ($0 ^ UInt32($1)) &* 16_777_619 } % UInt32(acpColors.count))]
         }
     }
-
-    private static let acpColors: [NSColor] = [
-        .systemOrange, .systemGreen, .systemPink, .systemMint, .systemCyan, .systemBrown, .systemRed, .systemYellow,
-    ]
 
     static func symbol(_ name: String, size: CGFloat = 13, weight: NSFont.Weight = .regular) -> NSImage? {
         let config = NSImage.SymbolConfiguration(pointSize: size, weight: weight)

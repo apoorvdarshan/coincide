@@ -6,7 +6,6 @@ import SwiftUI
 
 struct ProvidersSettingsView: View {
     let model: SettingsModel
-    @State private var addingAgent = false
 
     var body: some View {
         Form {
@@ -26,11 +25,6 @@ struct ProvidersSettingsView: View {
                     LastCheckedLabel(model: model)
                     Spacer()
                     Button {
-                        addingAgent = true
-                    } label: {
-                        Label("Add ACP Agent…", systemImage: "plus")
-                    }
-                    Button {
                         model.checkAll()
                     } label: {
                         Label("Check All Again", systemImage: "arrow.clockwise")
@@ -41,9 +35,6 @@ struct ProvidersSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .sheet(isPresented: $addingAgent) {
-            AddACPAgentSheet(model: model)
-        }
     }
 }
 
@@ -140,9 +131,6 @@ struct ProviderSettingsView: View {
                     Text("Offer its models in the model picker and let threads run it.")
                 }
             }
-            if let agent = model.acpAgent(kind) {
-                ACPAgentSections(model: model, agent: agent)
-            }
             if needsSetup {
                 ProviderSetupSection(model: model, kind: kind)
             }
@@ -152,11 +140,8 @@ struct ProviderSettingsView: View {
             if kind == .cursor && model.isEnabled(kind) {
                 CursorUsageSection(model: model)
             }
-            // A local command's executable is part of the agent's own section.
-            if model.acpAgent(kind)?.source != .local {
-                Section("Executable") {
-                    ExecutablePathRow(model: model, kind: kind)
-                }
+            Section("Executable") {
+                ExecutablePathRow(model: model, kind: kind)
             }
             ProviderModelsSection(model: model, kind: kind)
             EnvironmentSection(model: model, kind: kind)
@@ -324,8 +309,6 @@ private struct ExecutablePathRow: View {
             Text("Custom path")
             if !saved.isEmpty && !Self.isExecutable(saved) {
                 Text("There’s no executable file at this path.").foregroundStyle(.red)
-            } else if kind.acpAgentID != nil {
-                Text("Leave empty to run the version Coincide installed. A custom executable keeps the registry’s arguments.")
             } else {
                 Text("Leave empty to look for `\(name)` on your shell’s PATH.")
             }
@@ -447,7 +430,6 @@ private struct ProviderModelsSection: View {
         case .grok: "grok-4.7"
         case .opencode: "openai/gpt-5"
         case .antigravity: "gemini-3-pro"
-        case .acp: "model-id"
         }
     }
 }

@@ -5,11 +5,7 @@ import Foundation
 public final class ProviderRegistry {
     public static let shared = ProviderRegistry(store: .shared)
 
-    /// The providers Coincide was built with (or a test passed in), by kind.
-    private let fixedProviders: [ProviderKind: AgentProvider]
-    /// Providers of the user's ACP agents, made on first use and kept while the agent is in settings.
-    private var customProviders: [String: AgentProvider] = [:]
-    private let makeCustomProvider: @MainActor (String) -> AgentProvider
+    public let providers: [ProviderKind: AgentProvider]
     public private(set) var statuses: [ProviderKind: ProviderStatus] = [:]
     public private(set) var discoveredModels: [ProviderKind: [ModelOption]] = [:]
     /// True while any provider is being checked.
@@ -29,16 +25,11 @@ public final class ProviderRegistry {
     /// reads it at once.
     var environmentRereadAge: TimeInterval = 15 * 60
 
-    /// `custom` makes the provider of a user-added ACP agent from its instance ID; tests replace it.
-    public init(
-        store: AppStore, providers: [AgentProvider]? = nil, shell: ShellEnvironment = .shared,
-        custom: (@MainActor (String) -> AgentProvider)? = nil
-    ) {
+    public init(store: AppStore, providers: [AgentProvider]? = nil, shell: ShellEnvironment = .shared) {
         self.store = store
         self.shell = shell
         let all = providers ?? Self.builtInProviders(store: store)
-        fixedProviders = Dictionary(all.map { ($0.kind, $0) }, uniquingKeysWith: { first, _ in first })
-        makeCustomProvider = custom ?? { ACPProvider(agent: $0, store: store) }
+        self.providers = Dictionary(all.map { ($0.kind, $0) }, uniquingKeysWith: { first, _ in first })
         // Coming back to Coincide after installing or signing in to an agent finds it without a manual refresh.
         activationObserver = NotificationCenter.default.addObserver(
             forName: Self.didBecomeActive, object: nil, queue: .main
@@ -69,25 +60,12 @@ public final class ProviderRegistry {
         ]
     }
 
-    /// The provider of `kind`; for a user-added ACP agent, only while the agent is in settings.
-    public func provider(_ kind: ProviderKind) -> AgentProvider? {
-        if let fixed = fixedProviders[kind] { return fixed }
-        guard let id = kind.acpAgentID, store.settings.acpAgent(id) != nil else { return nil }
-        if let existing = customProviders[id] { return existing }
-        let created = makeCustomProvider(id)
-        customProviders[id] = created
-        return created
-    }
+    public func provider(_ kind: ProviderKind) -> AgentProvider? { providers[kind] }
 
     public func status(_ kind: ProviderKind) -> ProviderStatus { statuses[kind] ?? .unknown }
 
-    /// Providers in display order: the built-in agents, then the user's ACP agents in the order they were added.
-    public var orderedKinds: [ProviderKind] {
-        let builtIn = ProviderKind.allCases.filter { fixedProviders[$0] != nil }
-        let custom = store.settings.acpAgents.map(\.kind)
-        let fixedCustom = fixedProviders.keys.filter { $0.acpAgentID != nil && !custom.contains($0) }.sorted { $0.rawValue < $1.rawValue }
-        return builtIn + custom + fixedCustom
-    }
+    /// Providers in display order.
+    public var orderedKinds: [ProviderKind] { ProviderKind.allCases.filter { providers[$0] != nil } }
 
     /// Providers that are enabled, installed and signed in.
     public var readyKinds: [ProviderKind] { orderedKinds.filter { status($0).state == .ready } }
@@ -127,29 +105,6 @@ public final class ProviderRegistry {
         await environment(for: kind, fresh: false)
     }
 
-    /// How to start the user-added ACP agent `id` outside a thread, for signing in from Settings: the executable,
-    /// arguments and environment its sessions get. Nil when it has no executable.
-    public func acpLaunch(for id: String, paths: ACPRegistryPaths = .standard) async -> ACPAgentLaunch? {
-        guard store.settings.acpAgent(id) != nil, let executable = await executable(for: .acp(id)) else { return nil }
-        let environment = await environment(for: .acp(id))
-        // Settings may have changed while the environment was read.
-        guard let config = store.settings.acpAgent(id) else { return nil }
-        let flavor = ACPCustomFlavor(config: config, paths: paths)
-        return ACPAgentLaunch(
-            name: config.displayName, executable: executable, arguments: flavor.arguments(for: .approval),
-            environment: flavor.environment(environment, executable: executable),
-            registryEnvironment: config.source == .registry ? config.registry?.environment ?? [:] : [:])
-    }
-
-    /// Drops what the registry knows about a user-added agent that was removed from settings.
-    public func forget(_ kind: ProviderKind) {
-        guard let id = kind.acpAgentID, store.settings.acpAgent(id) == nil else { return }
-        customProviders[id] = nil
-        statuses[kind] = nil
-        discoveredModels[kind] = nil
-        store.notify(.providers)
-    }
-
     /// With `fresh`, waits for a login shell environment that is being read again instead of using the
     /// previous one, so a check sees a PATH the user just changed.
     private func executable(for kind: ProviderKind, fresh: Bool) async -> URL? {
@@ -157,7 +112,7 @@ public final class ProviderRegistry {
             let url = URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
             return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
         }
-        guard let provider = provider(kind) else { return nil }
+        guard let provider = providers[kind] else { return nil }
         for name in provider.executableNames {
             if let url = await shell.which(name, fresh: fresh) { return url }
         }
@@ -231,7 +186,7 @@ public final class ProviderRegistry {
     }
 
     private func refreshOne(_ kind: ProviderKind) async {
-        guard let provider = provider(kind) else { return }
+        guard let provider = providers[kind] else { return }
         guard store.settings.settings(for: kind).isEnabled else {
             statuses[kind] = ProviderStatus(state: .unknown, message: String(localized: "Disabled in Settings"))
             discoveredModels[kind] = []
@@ -251,13 +206,10 @@ public final class ProviderRegistry {
         store.notify(.providers)
     }
 
-    /// Picks a usable selection: the requested one if its provider is ready, otherwise the first ready model. With
-    /// `writingText`, only providers that support text generation count (user-added ACP agents do not; see
-    /// `ProviderKind.supportsTextGeneration`).
-    public func usableSelection(preferring selection: ModelSelection, writingText: Bool = false) -> ModelSelection {
-        let usable = { (kind: ProviderKind) in !writingText || kind.supportsTextGeneration }
-        if status(selection.provider).state == .ready, usable(selection.provider) { return selection }
-        for kind in readyKinds where usable(kind) {
+    /// Picks a usable selection: the requested one if its provider is ready, otherwise the first ready model.
+    public func usableSelection(preferring selection: ModelSelection) -> ModelSelection {
+        if status(selection.provider).state == .ready { return selection }
+        for kind in readyKinds {
             if let first = models(for: kind).first {
                 return ModelSelection(provider: kind, modelID: first.modelID, effort: first.defaultEffort)
             }

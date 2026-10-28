@@ -70,7 +70,7 @@ nonisolated enum ComposerCommand: Hashable, Sendable {
         case .plan: "plan"
         case .build: "build"
         case .usageLimits: "usage-limits"
-        case .agent(let provider): provider.commandName
+        case .agent(let provider): provider.rawValue
         }
     }
 

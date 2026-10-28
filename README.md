@@ -4,7 +4,7 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15854/badge)](https://www.bestpractices.dev/projects/15854)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/apoorvdarshan/coincide/badge)](https://scorecard.dev/viewer/?uri=github.com/apoorvdarshan/coincide)
 
-A native macOS app for the coding agents you already pay for — **Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity**, plus any agent from the ACP Registry or a local ACP command — in one window, with one model picker, and the ability to **switch agents in the middle of a thread**.
+A native macOS app for the coding agents you already pay for — **Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity** — in one window, with one model picker, and the ability to **switch agents in the middle of a thread**.
 
 Coincide is a native AppKit port of [T3 Code](https://github.com/pingdotgg/t3code). It drives each agent's own command-line tool with the login you already have, so your existing subscriptions keep working. Coincide never sells, proxies or meters tokens.
 
@@ -46,15 +46,6 @@ Install and sign in to at least one:
 | Antigravity | Antigravity's ACP runtime | Install Antigravity and sign in with Google |
 
 **Full access** runs agents without asking first (for Claude Code that is `--permission-mode bypassPermissions`, the same as T3 Code's full-access mode). Choose **Ask for approval** in the composer to approve each command and file change.
-
-### Any other ACP agent
-
-Coincide also runs any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com), as T3 Code does. Open **Settings › Providers** and choose **Add ACP Agent…**:
-
-- **ACP Registry:** search the official [ACP Registry](https://agentclientprotocol.com/get-started/registry) and choose **Add**. Coincide installs the agent at the version the registry publishes, into `tools/acp/<agent-id>/<version>/` in its data folder: a download is checked against the registry's SHA-256 when it publishes one (otherwise only HTTPS vouches for it), and an npm or Python package installs with your own `npm` or `uv` into a prefix Coincide owns, never globally. The search only lists agents that can run on this Mac, and leaves out the agents Coincide has built in. Registry agents are third-party code that runs with your permissions: review an agent's source and license before you add it. The agent's page offers updates when the registry publishes a newer version; removing the agent deletes its files.
-- **Local ACP command:** enter an installed executable (a name on your shell's PATH or a full path), one literal argument per row, a name and any environment variables. Coincide starts it directly, without a shell. For DeepSeek Harness, use `dsh` with the arguments `--profile` and `acp`.
-
-Then sign in on the agent's page with the methods it advertises: Coincide asks the agent to sign in by itself (showing any page it wants opened before telling it to go on), runs a terminal sign-in in Terminal, or names the API key variables to set under **Environment Variables**. Credentials stay in the agent's own store. Models, modes and reasoning options come from the agent over ACP; add model IDs it doesn't list under **Models**. An added agent works like a built-in one: it appears in the model picker, threads can switch to it mid-thread (`/<agent-id>`), and approvals follow the thread's access mode. As in T3 Code, added agents don't write commit messages or pull request text; another ready agent does.
 
 ## Requirements
 

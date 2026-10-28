@@ -260,11 +260,8 @@ enum AgentPrompt {
         _ prompt: String, selection: ModelSelection, cwd: URL, timeout: TimeInterval,
         registry: ProviderRegistry = .shared
     ) async -> String? {
-        // A thread on a user-added ACP agent has another ready agent write the text, as T3 Code has the user pick
-        // another provider for it.
-        let resolved = registry.usableSelection(preferring: selection, writingText: true)
-        guard resolved.provider.supportsTextGeneration, registry.status(resolved.provider).state == .ready,
-            let provider = registry.provider(resolved.provider),
+        let resolved = registry.usableSelection(preferring: selection)
+        guard registry.status(resolved.provider).state == .ready, let provider = registry.provider(resolved.provider),
             let executable = await registry.executable(for: resolved.provider)
         else { return nil }
         var turnSelection = resolved
