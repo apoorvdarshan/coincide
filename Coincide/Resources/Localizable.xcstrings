@@ -2299,6 +2299,12 @@
         }
       }
     },
+    "%@ failed" : {
+
+    },
+    "%@ finished" : {
+
+    },
     "%@ fork" : {
       "localizations" : {
         "de" : {
@@ -2411,6 +2417,19 @@
         }
       }
     },
+    "%@ has a question" : {
+
+    },
+    "%@ in %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ in %2$@"
+          }
+        }
+      }
+    },
     "%@ is not installed or could not be found on PATH." : {
       "localizations" : {
         "de" : {
@@ -2519,6 +2538,16 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%@ 未安裝，或在 PATH 中找不到。"
+          }
+        }
+      }
+    },
+    "%@ is running %lld tasks in the background" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ is running %2$lld tasks in the background"
           }
         }
       }
@@ -2855,6 +2884,16 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%@ 正在等待啟動"
+          }
+        }
+      }
+    },
+    "%@ is working in the background: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ is working in the background: %2$@"
           }
         }
       }
@@ -3306,6 +3345,9 @@
           }
         }
       }
+    },
+    "%@ needs approval" : {
+
     },
     "%@ needs more information" : {
       "localizations" : {
@@ -15022,6 +15064,9 @@
         }
       }
     },
+    "AI" : {
+
+    },
     "API key" : {
       "localizations" : {
         "de" : {
@@ -17038,6 +17083,12 @@
         }
       }
     },
+    "Add Script" : {
+
+    },
+    "Add Script…" : {
+
+    },
     "Add Selection to Composer" : {
       "localizations" : {
         "de" : {
@@ -17485,6 +17536,9 @@
           }
         }
       }
+    },
+    "Add a project script, such as your dev server or tests" : {
+
     },
     "Add a project to start" : {
       "localizations" : {
@@ -28758,6 +28812,9 @@
         }
       }
     },
+    "Auto-resume" : {
+
+    },
     "Awaiting approval" : {
       "localizations" : {
         "de" : {
@@ -32286,6 +32343,9 @@
         }
       }
     },
+    "Cancel Auto-Resume" : {
+
+    },
     "Cancelled" : {
       "localizations" : {
         "de" : {
@@ -34245,6 +34305,9 @@
           }
         }
       }
+    },
+    "Chats" : {
+
     },
     "Check Again" : {
       "localizations" : {
@@ -51120,6 +51183,9 @@
         }
       }
     },
+    "Configure" : {
+
+    },
     "Confirm before deleting threads" : {
       "localizations" : {
         "de" : {
@@ -52581,6 +52647,9 @@
           }
         }
       }
+    },
+    "Continue this thread on its own once the limit resets." : {
+
     },
     "Continue this thread with %@" : {
       "localizations" : {
@@ -67160,6 +67229,9 @@
         }
       }
     },
+    "Debug" : {
+
+    },
     "Decline" : {
       "localizations" : {
         "de" : {
@@ -69742,6 +69814,9 @@
         }
       }
     },
+    "Dev server" : {
+
+    },
     "Diff" : {
       "localizations" : {
         "de" : {
@@ -72149,6 +72224,9 @@
           }
         }
       }
+    },
+    "Edit Script" : {
+
     },
     "Edit file" : {
       "localizations" : {
@@ -84164,6 +84242,9 @@
         }
       }
     },
+    "Go to File…" : {
+
+    },
     "Go to Thread" : {
       "localizations" : {
         "de" : {
@@ -89092,6 +89173,9 @@
         }
       }
     },
+    "Icon" : {
+
+    },
     "Ignore Whitespace" : {
       "localizations" : {
         "de" : {
@@ -89424,6 +89508,28 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "實作計畫。"
+          }
+        }
+      }
+    },
+    "Import %lld Scripts from t3.json" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Import %lld Script from t3.json"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Import %lld Scripts from t3.json"
+                }
+              }
+            }
           }
         }
       }
@@ -95109,6 +95215,9 @@
           }
         }
       }
+    },
+    "Lint" : {
+
     },
     "List %@" : {
       "localizations" : {
@@ -104874,6 +104983,9 @@
         }
       }
     },
+    "Name threads with the agent" : {
+
+    },
     "Navigation" : {
       "localizations" : {
         "de" : {
@@ -105433,6 +105545,9 @@
           }
         }
       }
+    },
+    "New Chat" : {
+
     },
     "New Terminal" : {
       "localizations" : {
@@ -106217,6 +106332,9 @@
           }
         }
       }
+    },
+    "New Thread starts a chat" : {
+
     },
     "New Threads" : {
       "localizations" : {
@@ -109921,6 +110039,9 @@
         }
       }
     },
+    "No chats yet" : {
+
+    },
     "No checks ran on this pull request." : {
       "localizations" : {
         "de" : {
@@ -111824,6 +111945,9 @@
           }
         }
       }
+    },
+    "No project" : {
+
     },
     "No recorded activity in this period." : {
       "localizations" : {
@@ -125671,6 +125795,9 @@
         }
       }
     },
+    "Project scripts" : {
+
+    },
     "Projects" : {
       "localizations" : {
         "de" : {
@@ -132315,6 +132442,9 @@
           }
         }
       }
+    },
+    "Rate limit" : {
+
     },
     "Read %@" : {
       "localizations" : {
@@ -140461,6 +140591,12 @@
         }
       }
     },
+    "Resume after usage limits" : {
+
+    },
+    "Resume at Reset" : {
+
+    },
     "Retry Installation" : {
       "localizations" : {
         "de" : {
@@ -142925,6 +143061,16 @@
         }
       }
     },
+    "Run %@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Run %1$@: %2$@"
+          }
+        }
+      }
+    },
     "Run `%@`" : {
       "localizations" : {
         "de" : {
@@ -143709,6 +143855,9 @@
         }
       }
     },
+    "Run when a thread gets a new worktree" : {
+
+    },
     "Running agents and terminal commands in these threads will stop. Undo restores conversations, but does not restart stopped work." : {
       "localizations" : {
         "de" : {
@@ -143932,6 +144081,9 @@
           }
         }
       }
+    },
+    "Runs in a terminal of the thread, in its worktree or the project folder. $COINCIDE_PROJECT_ROOT is the project folder and $COINCIDE_WORKTREE_PATH the worktree." : {
+
     },
     "Runtime" : {
       "localizations" : {
@@ -144604,6 +144756,9 @@
           }
         }
       }
+    },
+    "Scripts" : {
+
     },
     "Scroll to the newest messages" : {
       "localizations" : {
@@ -145837,6 +145992,9 @@
         }
       }
     },
+    "Search files…" : {
+
+    },
     "Search for `%@`" : {
       "localizations" : {
         "de" : {
@@ -146296,6 +146454,9 @@
           }
         }
       }
+    },
+    "Search in Project…" : {
+
     },
     "Search models" : {
       "localizations" : {
@@ -146856,6 +147017,9 @@
           }
         }
       }
+    },
+    "Search text in files…" : {
+
     },
     "Search the Help menu" : {
       "localizations" : {
@@ -152066,6 +152230,9 @@
           }
         }
       }
+    },
+    "Shortcut" : {
+
     },
     "Shortcut for %@" : {
       "localizations" : {
@@ -157573,6 +157740,9 @@
           }
         }
       }
+    },
+    "Skills" : {
+
     },
     "Skipped" : {
       "localizations" : {
@@ -166784,6 +166954,9 @@
         }
       }
     },
+    "Test" : {
+
+    },
     "Text Replacement" : {
       "localizations" : {
         "de" : {
@@ -169483,6 +169656,9 @@
           }
         }
       }
+    },
+    "The agent" : {
+
     },
     "The agent asked a question" : {
       "localizations" : {
@@ -174418,6 +174594,9 @@
         }
       }
     },
+    "The thread's agent titles it from your first message, with its quickest model." : {
+
+    },
     "The typeface of agents’ replies in the conversation." : {
       "localizations" : {
         "de" : {
@@ -176552,6 +176731,9 @@
           }
         }
       }
+    },
+    "This thread continues at %@." : {
+
     },
     "This thread is no longer available" : {
       "localizations" : {
@@ -179048,6 +179230,9 @@
           }
         }
       }
+    },
+    "Titles" : {
+
     },
     "Tomorrow" : {
       "comment" : "Snooze preset: show the conversation again at 09:00 tomorrow.",
@@ -189137,6 +189322,9 @@
         }
       }
     },
+    "What can I help with?" : {
+
+    },
     "What should change? (optional)" : {
       "localizations" : {
         "de" : {
@@ -189472,6 +189660,9 @@
           }
         }
       }
+    },
+    "When an agent stops at its plan's limit, the thread continues on its own once the limit resets." : {
+
     },
     "When two commands share a shortcut, a changed one wins over a default one. Fixed menu shortcuts such as Copy keep their keys." : {
       "localizations" : {
@@ -190480,6 +190671,9 @@
           }
         }
       }
+    },
+    "Working in the background: %@" : {
+
     },
     "Workspace: %@" : {
       "localizations" : {
@@ -199527,6 +199721,9 @@
           }
         }
       }
+    },
+    "⌘N starts a chat without a project, like a chat app. New threads in a project stay in its menu." : {
+
     },
     "⌫ Back" : {
       "localizations" : {
