@@ -1,11 +1,11 @@
 import AppKit
 import SwiftTerm
 
-/// Terminal colors for light and dark appearance. The ANSI palettes and caret colors are T3 Code's;
-/// text, background and selection use the system's semantic colors.
+/// Terminal colors for light and dark appearance. The ANSI palettes and caret colors are T3 Code's; the background and
+/// text are the theme's conversation colors, and selection the system's.
 enum TerminalTheme {
     /// Behind the terminal and its header, so they read as one surface.
-    static var background: NSColor { .textBackgroundColor }
+    static var background: NSColor { Theme.contentBackground }
 
     /// Applies the colors for the view's effective appearance. SwiftTerm stores plain RGB, so this
     /// runs again whenever the appearance changes.
@@ -13,7 +13,7 @@ enum TerminalTheme {
         let appearance = view.effectiveAppearance
         let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         appearance.performAsCurrentDrawingAppearance {
-            view.nativeForegroundColor = resolved(.textColor)
+            view.nativeForegroundColor = resolved(Theme.ink)
             view.nativeBackgroundColor = resolved(background)
             view.selectedTextBackgroundColor = resolved(.selectedTextBackgroundColor)
             view.selectedTextForegroundColor = resolved(.selectedTextColor)

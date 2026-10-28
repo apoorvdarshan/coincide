@@ -13,6 +13,10 @@ final class ThemedButton: NSButton {
     var style: Style = .secondary {
         didSet { needsDisplay = true }
     }
+    /// Fully rounded ends, for a floating pill such as Jump to Latest.
+    var isCapsule = false {
+        didSet { needsDisplay = true }
+    }
 
     private var isHovered = false
 
@@ -50,6 +54,10 @@ final class ThemedButton: NSButton {
         didSet { needsDisplay = true }
     }
 
+    /// The button paints its own fill across its bounds, so its frame must be exactly the size it is laid out at: the
+    /// default push style's alignment insets would make the frame, and the fill, larger than the layout allows for.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for area in trackingAreas { removeTrackingArea(area) }
@@ -67,7 +75,8 @@ final class ThemedButton: NSButton {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        let radius = isCapsule ? bounds.height / 2 : 8
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
         let destructive = hasDestructiveAction && style == .primary
         let fill: NSColor?
         let text: NSColor
@@ -342,5 +351,37 @@ final class ThemedAlertPanel: NSPanel {
 
     override func cancelOperation(_ sender: Any?) {
         onCancel?()
+    }
+}
+
+/// A list row whose selection is the theme's soft fill, never the system's accent or its emphasized look, so the
+/// row's text keeps its colors when selected. Tables using it must not use the source-list style, whose selection is a
+/// system material drawn outside the row view.
+final class ThemedTableRowView: NSTableRowView {
+    private let inset: CGFloat
+
+    init(inset: CGFloat = 6) {
+        self.inset = inset
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isEmphasized: Bool {
+        get { false }
+        set {}
+    }
+
+    override var isSelected: Bool {
+        didSet { if isSelected != oldValue { needsDisplay = true } }
+    }
+
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        Theme.sidebarSelection.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: inset, dy: 1), xRadius: 7, yRadius: 7).fill()
     }
 }

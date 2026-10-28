@@ -113,17 +113,18 @@ final class PaletteHeaderCell: NSTableCellView {
     }
 }
 
-/// Draws the highlighted result as a rounded accent capsule, always in its focused look,
-/// because the search field keeps keyboard focus.
+/// Draws the highlighted result on the theme's soft fill, the same while the search field keeps keyboard focus.
 final class PaletteRowView: NSTableRowView {
     override var isEmphasized: Bool {
-        get { true }
+        get { false }
         set {}
     }
 
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
+
     override func drawSelection(in dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 6, dy: 1)
-        NSColor.selectedContentBackgroundColor.setFill()
+        Theme.sidebarSelection.setFill()
         NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8).fill()
     }
 }

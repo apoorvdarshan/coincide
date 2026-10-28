@@ -76,6 +76,10 @@ final class DiffFileListView: NSView, NSTableViewDataSource, NSTableViewDelegate
 
     func numberOfRows(in tableView: NSTableView) -> Int { files.count }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        ThemedTableRowView(inset: 4)
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let identifier = NSUserInterfaceItemIdentifier("fileCell")
         let cell = tableView.makeView(withIdentifier: identifier, owner: nil) as? DiffFileCell ?? DiffFileCell()

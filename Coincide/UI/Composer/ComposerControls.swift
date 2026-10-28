@@ -78,6 +78,10 @@ final class ComposerControlButton: NSButton {
         NSSize(width: width(compact: isCompact), height: 26)
     }
 
+    /// The button paints its own fill across its bounds, so its frame must be exactly the size it is laid out at: the
+    /// default push style's alignment insets would make the frame, and the fill, larger than the layout allows for.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+
     /// The width the control needs with or without its title, for fitting the footer.
     func width(compact: Bool) -> CGFloat {
         let title = titleText(compact: compact)
@@ -259,6 +263,10 @@ final class ComposerSendButton: NSButton {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override var intrinsicContentSize: NSSize { NSSize(width: Self.side, height: Self.side) }
+
+    /// The button paints its own fill across its bounds, so its frame must be exactly the size it is laid out at: the
+    /// default push style's alignment insets would make the frame, and the fill, larger than the layout allows for.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()

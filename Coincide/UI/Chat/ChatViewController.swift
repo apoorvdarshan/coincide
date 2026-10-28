@@ -30,10 +30,15 @@ final class ChatViewController: NSViewController {
     private let noThreadView = ChatNoThreadView()
     private let welcomeView = ChatWelcomeView()
     private lazy var jumpButton: NSButton = {
-        let button = NSButton(title: String(localized: "Jump to Latest"), target: self, action: #selector(jumpToLatest))
-        button.bezelStyle = .glass
-        button.borderShape = .capsule
-        button.controlSize = .regular
+        let button = ThemedButton(title: String(localized: "Jump to Latest"), style: .secondary, target: self, action: #selector(jumpToLatest))
+        button.isCapsule = true
+        button.font = .systemFont(ofSize: 12, weight: .medium)
+        // Floats over the conversation, so it casts a soft shadow.
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.25)
+        shadow.shadowBlurRadius = 8
+        shadow.shadowOffset = NSSize(width: 0, height: -2)
+        button.shadow = shadow
         button.image = Theme.symbol("arrow.down", size: 11, weight: .semibold)
         button.imagePosition = .imageLeading
         button.toolTip = String(localized: "Scroll to the newest messages")

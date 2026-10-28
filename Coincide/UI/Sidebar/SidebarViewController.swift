@@ -118,7 +118,9 @@ final class SidebarViewController: NSViewController {
         outlineView.addTableColumn(column)
         outlineView.outlineTableColumn = column
         outlineView.headerView = nil
-        outlineView.style = .sourceList
+        // Plain, not source list: a source list draws selection with a system material the theme cannot reach.
+        outlineView.style = .plain
+        outlineView.backgroundColor = .clear
         outlineView.rowSizeStyle = .custom
         outlineView.indentationPerLevel = 14
         outlineView.floatsGroupRows = false
@@ -749,6 +751,10 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
 
     func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
         (item as? SidebarNode)?.threadID.flatMap { store.summary($0)?.title }
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        ThemedTableRowView(inset: 10)
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {

@@ -647,7 +647,7 @@ final class TranscriptRowView: NSTableRowView {
         guard isEmphasized else { return }
         let column = TranscriptMetrics.column(width: bounds.width)
         let rect = NSRect(x: column.x - 8, y: 0, width: column.width + 16, height: bounds.height).insetBy(dx: 0, dy: 1)
-        NSColor.controlAccentColor.withAlphaComponent(0.1).setFill()
+        Theme.sidebarSelection.setFill()
         NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8).fill()
     }
 
