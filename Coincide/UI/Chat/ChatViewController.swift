@@ -858,7 +858,7 @@ final class ChatViewController: NSViewController {
     private func rewind(to item: TranscriptItem) {
         guard let threadID = displayedThreadID else { return }
         store.truncate(threadID, from: item.id)
-        composer.setDraft(item.text, imagePaths: item.attachments ?? [])
+        composer.setDraft(item.text, imagePaths: item.attachments ?? [], context: item.context ?? [])
     }
 
     /// Puts files back the way they were before the turn, then rewinds to it.
@@ -1004,6 +1004,14 @@ extension ChatViewController: TranscriptHost {
         }
         SafeLinks.openFile(url, inside: base, from: view.window)
         return true
+    }
+
+    func quote(_ text: String, from itemID: UUID) {
+        composer.addContext(MessageContext(.quote(.init(text: text, provider: item(itemID)?.provider))))
+    }
+
+    func openContext(_ context: MessageContext, from anchor: NSView) {
+        MessageContextDetails.show(context, from: anchor) { [weak self] url in self?.previewAttachments([url.path], selected: 0) }
     }
 
     func previewAttachments(_ paths: [String], selected: Int) {

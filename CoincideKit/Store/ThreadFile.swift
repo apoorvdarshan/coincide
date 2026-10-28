@@ -129,6 +129,8 @@ struct ThreadFile: Decodable {
                 case "questions": decoded.questions != nil
                 case "answers": decoded.answers != nil
                 case "attachments": decoded.attachments != nil
+                // Every entry, including any of a kind added later that was left out.
+                case "context": decoded.context?.count == (try? item.nestedUnkeyedContainer(forKey: key))?.count
                 case "steered": decoded.steered != nil
                 case "completedAt": decoded.completedAt != nil
                 default: false

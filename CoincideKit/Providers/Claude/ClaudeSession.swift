@@ -158,6 +158,7 @@ final class ClaudeSession: AgentSession {
                 message: input.message, recap: input.recap(forNewSession: isNewConversation),
                 ultrathink: settings.effort.ultrathink, skills: commandNames)
             let (images, skipped) = ClaudeAttachments.imageBlocks(for: input.imagePaths)
+            let documents = ClaudeAttachments.documentBlocks(for: input.filePaths)
             guard turn?.id == turnID else { return }
             if turn?.interruptRequested == true {
                 finishTurn(.interrupted)
@@ -168,7 +169,7 @@ final class ClaudeSession: AgentSession {
                 emit(.notice(String(localized: "Couldn't attach \((path as NSString).lastPathComponent).")))
             }
             mapper.beginTurn()
-            transport.write(Self.userMessage(texts: texts, images: images, uuid: turnID).compactJSON)
+            transport.write(Self.userMessage(texts: texts, images: images, documents: documents, uuid: turnID).compactJSON)
             turn?.accepted = true
             if !conversationExists, let title = TerminalText.nonEmpty(input.threadTitle) { name(title) }
             conversationExists = true
@@ -204,9 +205,11 @@ final class ClaudeSession: AgentSession {
         for path in skipped {
             emit(.notice(String(localized: "Couldn't attach \((path as NSString).lastPathComponent).")))
         }
+        let documents = ClaudeAttachments.documentBlocks(for: input.filePaths)
         let id = Self.newID()
         turn?.steerIDs.append(id)
-        transport.write(Self.userMessage(texts: texts, images: images, uuid: id, priority: "now").compactJSON)
+        transport.write(
+            Self.userMessage(texts: texts, images: images, documents: documents, uuid: id, priority: "now").compactJSON)
     }
 
     func respond(to approvalID: String, optionID: String) {
@@ -874,13 +877,16 @@ final class ClaudeSession: AgentSession {
     }
 
     /// A user message as the SDK sends it, stamped with a uuid that lifecycle frames and results echo, and marked
-    /// as typed by a person. Images go first: Claude runs a slash command or skill only when it starts the last
-    /// text block. Priority `now` steers a running turn.
-    static func userMessage(texts: [String], images: [JSONValue] = [], uuid: String, priority: String? = nil) -> JSONValue {
+    /// as typed by a person. Images and documents go first: Claude runs a slash command or skill only when it starts
+    /// the last text block. Priority `now` steers a running turn.
+    static func userMessage(
+        texts: [String], images: [JSONValue] = [], documents: [JSONValue] = [], uuid: String, priority: String? = nil
+    ) -> JSONValue {
         let texts = texts.filter { !$0.isEmpty }
+        let attachments = images + documents
         let content: JSONValue =
-            images.isEmpty && texts.count <= 1
-            ? .string(texts.first ?? "") : .array(images + texts.map { ["type": "text", "text": .string($0)] })
+            attachments.isEmpty && texts.count <= 1
+            ? .string(texts.first ?? "") : .array(attachments + texts.map { ["type": "text", "text": .string($0)] })
         var message: [String: JSONValue] = [
             "type": "user", "message": ["role": "user", "content": content], "parent_tool_use_id": nil, "uuid": .string(uuid),
             "origin": ["kind": "human"],

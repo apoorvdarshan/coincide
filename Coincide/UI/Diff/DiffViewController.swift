@@ -131,6 +131,11 @@ final class DiffViewController: NSViewController {
         splitView.setHoldingPriority(.init(250), forSubviewAt: 1)
         fileList.onSelect = { [weak self] index in self?.document.scrollToFile(at: index) }
         document.onVisibleFileChange = { [weak self] index in self?.fileList.select(index) }
+        // A comment on lines goes to the message of the thread whose changes these are.
+        document.onAddComment = { [weak self] context in
+            guard let threadID = self?.threadID else { return }
+            AppEvents.addToComposer(context, threadID: threadID)
+        }
 
         actionsBar.onQuickAction = { [weak self] in self?.runQuickAction() }
         actionsBar.menuProvider = { [weak self] in self?.actionsMenu() ?? NSMenu() }

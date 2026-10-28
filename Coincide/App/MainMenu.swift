@@ -91,6 +91,12 @@ final class MainMenu: NSObject, NSMenuDelegate {
         menu.addItem(standard(String(localized: "Delete"), #selector(NSText.delete(_:))))
         menu.addItem(standard(String(localized: "Select All"), #selector(NSText.selectAll(_:)), "a"))
         menu.addItem(.separator())
+        // Quotes a reply, takes terminal output or comments on diff lines, whichever has focus.
+        menu.addItem(
+            item(
+                String(localized: "Add Selection to Composer"), #selector(MainWindowController.addSelectionToComposer(_:)),
+                .addToComposer))
+        menu.addItem(.separator())
 
         let find = NSMenu(title: String(localized: "Find"))
         let finder = #selector(NSResponder.performTextFinderAction(_:))

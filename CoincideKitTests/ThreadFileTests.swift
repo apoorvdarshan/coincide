@@ -134,6 +134,9 @@ struct ThreadFileTests {
             ("{\(base),\"sessions\":[\"future\",{\"sessionID\":\"f\",\"seenItemCount\":1}]}", true),
             ("{\(base),\"sessions\":[\"claude\",{\"sessionID\":\"c\",\"seenItemCount\":1,\"cost\":3}]}", true),
             ("{\(base),\"items\":{\"not\":\"a list\"}}", true),
+            ("{\(base),\"items\":[{\(item),\"context\":[{\"id\":\"\(UUID().uuidString)\",\"kind\":\"file\",\"path\":\"/a\"}]}]}", false),
+            // Context of a kind added later is left out, so the file is copied aside before it is saved.
+            ("{\(base),\"items\":[{\(item),\"context\":[{\"id\":\"\(UUID().uuidString)\",\"kind\":\"sketch\"}]}]}", true),
         ]
         for (json, unread) in cases {
             #expect(try decode(json).hasUnreadContent == unread, "\(json)")
@@ -176,7 +179,14 @@ struct ThreadFileTests {
                 textInput: TextInputSpec(placeholder: "p", initialText: "i", isMultiline: true), responseText: "ok"),
             questions: UserInputRequest(
                 id: "q", title: "Pick", questions: [UserQuestion(id: "q1", header: "H", prompt: "P", options: [.init(label: "L", detail: "D")])]),
-            answers: ["q1": ["L"]], attachments: ["/tmp/a.png"], steered: true, completedAt: Date())
+            answers: ["q1": ["L"]], attachments: ["/tmp/a.png"],
+            context: [
+                MessageContext(.quote(.init(text: "quoted", provider: .claude))),
+                MessageContext(.terminal(.init(terminal: "Terminal 1", directory: "/tmp", lineStart: 1, lineEnd: 1, text: "ok"))),
+                MessageContext(
+                    .diffComment(.init(path: "a.swift", lineStart: 2, lineEnd: 3, isBeforeChange: false, diff: "+x", comment: "why"))),
+                MessageContext(.file(.init(path: "/tmp/spec.pdf"))),
+            ], steered: true, completedAt: Date())
         store.append(full, to: thread.id)
         // Fields that fall back to a value when unreadable, holding that value.
         store.append(TranscriptItem(kind: .user, text: "", createdAt: .distantPast), to: thread.id)
