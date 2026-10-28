@@ -133,6 +133,7 @@ public final class AppStore {
         if let existing = projects.first(where: { $0.path == path }) { return existing }
         let project = Project(name: url.lastPathComponent, path: path)
         projects.append(project)
+        keepChatsLast()
         saveProjects()
         notify(.projects)
         return project
@@ -160,6 +161,7 @@ public final class AppStore {
         guard projects.indices.contains(source) else { return }
         let project = projects.remove(at: source)
         projects.insert(project, at: min(max(0, destination), projects.count))
+        keepChatsLast()
         saveProjects()
         notify(.projects)
     }
@@ -175,6 +177,28 @@ public final class AppStore {
     }
 
     public func project(_ id: UUID) -> Project? { projects.first { $0.id == id } }
+
+    /// Where chats live, once the first one was started.
+    public var chatsProject: Project? { projects.first(where: \.isChats) }
+
+    /// The home of chats, made with its folder (`Chats` in Coincide's data folder) the first time it is needed.
+    @discardableResult
+    public func ensureChatsProject() -> Project {
+        let folder = directory.appendingPathComponent("Chats", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if let existing = chatsProject { return existing }
+        let project = Project(name: String(localized: "Chats"), path: folder.path, isChats: true)
+        projects.append(project)
+        saveProjects()
+        notify(.projects)
+        return project
+    }
+
+    /// Chats stay below every project, wherever projects are added or moved.
+    private func keepChatsLast() {
+        guard let index = projects.firstIndex(where: \.isChats), index != projects.count - 1 else { return }
+        projects.append(projects.remove(at: index))
+    }
 
     // MARK: Threads
 

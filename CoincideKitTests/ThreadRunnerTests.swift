@@ -891,3 +891,28 @@ struct ProjectScriptTests {
         #expect(scripts.last?.runOnWorktreeCreate == false)
     }
 }
+
+@MainActor
+struct ChatsProjectTests {
+    @Test func chatsLiveInCoincidesFolderAndStayBelowProjects() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-chats-\(UUID().uuidString)")
+        let store = AppStore(directory: directory)
+        let first = store.addProject(at: URL(fileURLWithPath: "/tmp/one"))
+        let chats = store.ensureChatsProject()
+        #expect(chats.isChats && chats.path == directory.appendingPathComponent("Chats").path)
+        #expect(FileManager.default.fileExists(atPath: chats.path))
+        #expect(store.ensureChatsProject().id == chats.id)
+
+        store.addProject(at: URL(fileURLWithPath: "/tmp/two"))
+        #expect(store.projects.last?.isChats == true)
+        store.moveProject(from: 0, to: store.projects.count)
+        #expect(store.projects.last?.isChats == true)
+        #expect(store.projects.first?.id != first.id)
+
+        store.flush()
+        let reopened = AppStore(directory: directory)
+        #expect(reopened.chatsProject?.id == chats.id)
+        let old = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Lumen","path":"/tmp/lumen"}"#
+        #expect(try JSONDecoder().decode(Project.self, from: Data(old.utf8)).isChats == false)
+    }
+}

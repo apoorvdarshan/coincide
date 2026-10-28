@@ -377,7 +377,9 @@ final class SidebarViewController: NSViewController {
     }
 
     private func updateEmptyState() {
-        if store.projects.isEmpty {
+        // Before the first project and chat, the sidebar invites adding a project rather than listing an empty Chats.
+        let hasChats = store.chatsProject.map { !store.threads(in: $0.id).isEmpty } ?? false
+        if !store.projects.contains(where: { !$0.isChats }), !hasChats {
             emptyView.showNoProjects()
             emptyView.isHidden = false
             scrollView.isHidden = true
@@ -792,9 +794,10 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
                 self?.showAllThreads(false, in: id)
             }
             return cell
-        case .empty:
+        case .empty(let id):
             let cell = reuse("note") { SidebarNoteCell(frame: .zero) }
-            cell.configure(text: String(localized: "No threads yet"), symbol: nil)
+            let isChats = store.project(id)?.isChats == true
+            cell.configure(text: isChats ? String(localized: "No chats yet") : String(localized: "No threads yet"), symbol: nil)
             return cell
         }
     }
@@ -843,7 +846,7 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         guard let node = item as? SidebarNode, case .project(let id) = node.kind, !isSearching,
-            let project = store.project(id)
+            let project = store.project(id), !project.isChats
         else { return nil }
         let pasteboardItem = NSPasteboardItem()
         pasteboardItem.setString(id.uuidString, forType: .coincideProject)
@@ -884,7 +887,9 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
             guard let id = UUID(uuidString: value), let source = store.projects.firstIndex(where: { $0.id == id }) else {
                 return false
             }
-            let destination = index > source ? index - 1 : index
+            // Chats stay below every project.
+            let lastProject = store.projects.lastIndex { !$0.isChats } ?? 0
+            let destination = min(index > source ? index - 1 : index, lastProject)
             if destination != source { store.moveProject(from: source, to: destination) }
             return true
         }
@@ -946,6 +951,11 @@ extension SidebarViewController: NSMenuDelegate {
     private func buildProjectMenu(_ menu: NSMenu, _ id: UUID) {
         guard let project = store.project(id) else { return }
         menuFolder = project.url
+        if project.isChats {
+            // Chats have no folder of the user's to open, rename or remove.
+            menu.addItem(item(String(localized: "New Chat"), #selector(newThreadFromMenu(_:)), id))
+            return
+        }
         menu.addItem(item(String(localized: "New Thread"), #selector(newThreadFromMenu(_:)), id))
         menu.addItem(.separator())
         addOpenItems(to: menu)

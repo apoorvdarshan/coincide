@@ -94,6 +94,11 @@ struct GeneralSettingsView: View {
                                 : String(localized: "Agents ask before running commands or editing files."))
                     }
                     .settingsRevealable(.accessMode, highlighted: highlighted)
+                    Toggle(isOn: model.binding(\.newThreadStartsChat)) {
+                        Text("New Thread starts a chat")
+                        Text("⌘N starts a chat without a project, like a chat app. New threads in a project stay in its menu.")
+                    }
+                    .settingsRevealable(.newThreadChat, highlighted: highlighted)
                     Toggle(isOn: model.binding(\.generatesThreadTitles)) {
                         Text("Name threads with the agent")
                         Text("The thread's agent titles it from your first message, with its quickest model.")
@@ -185,6 +190,7 @@ struct GeneralSettingsView: View {
             settings.sendOnReturn = defaults.sendOnReturn
             settings.followUpBehavior = defaults.followUpBehavior
             settings.generatesThreadTitles = defaults.generatesThreadTitles
+            settings.newThreadStartsChat = defaults.newThreadStartsChat
             settings.resumesAfterUsageLimit = defaults.resumesAfterUsageLimit
             settings.showReasoning = defaults.showReasoning
             settings.confirmBeforeDeletingThreads = defaults.confirmBeforeDeletingThreads

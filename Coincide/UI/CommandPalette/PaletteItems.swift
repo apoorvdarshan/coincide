@@ -88,6 +88,11 @@ struct PaletteCatalog {
                     keywords: ["new thread", "chat", "create", "draft"],
                     behavior: .run { window?.newThread(in: projectID) }))
         }
+        items.append(
+            PaletteItem(
+                id: "action:new-chat", title: String(localized: "New Chat"), icon: symbol("bubble.left.and.bubble.right"),
+                keywords: ["new chat", "chat", "no project", "without project", "conversation"],
+                behavior: .run { ThreadActions.newChat() }))
         if !store.projects.isEmpty {
             items.append(
                 PaletteItem(
