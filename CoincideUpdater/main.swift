@@ -6,7 +6,7 @@ import Foundation
 guard CommandLine.arguments.count == 2 else { exit(2) }
 let planURL = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL
 let job = planURL.deletingLastPathComponent()
-var authorizedQuit = false
+var quitGate = AppUpdateQuitGate()
 var appBundle: Bundle?
 @MainActor func showResult(_ installed: Bool) {
     let application = NSApplication.shared
@@ -29,12 +29,11 @@ do {
           parent.bundleURL?.resolvingSymlinksInPath() == plan.target.resolvingSymlinksInPath(),
           parent.bundleIdentifier == AppUpdateSecurity.bundleID else { throw AppUpdateError.running }
     try AppUpdateSecurity.validateSignature(at: plan.target, team: team, identifier: AppUpdateSecurity.bundleID)
-    try AppUpdateInstallation.waitForCleanExit(processID: plan.processID) {
-        FileHandle.standardOutput.write(Data("READY\n".utf8))
+    try quitGate.waitForConsent(plan: plan, job: job) {
+        try AppUpdateInstallation.waitForCleanExit(processID: plan.processID) {
+            FileHandle.standardOutput.write(Data("READY\n".utf8))
+        }
     }
-    let consent = try String(contentsOf: job.appendingPathComponent("clean-quit"), encoding: .utf8)
-    guard consent == plan.nonce.uuidString else { throw AppUpdateError.running }
-    authorizedQuit = true
     let backup = try AppUpdateInstallation.install(plan: plan, job: job, team: team) {
         NSWorkspace.shared.runningApplications.contains {
             $0.bundleIdentifier == AppUpdateSecurity.bundleID && !$0.isTerminated
@@ -45,6 +44,6 @@ do {
     exit(0)
 } catch {
     try? JSONEncoder().encode(["state": "failed"]).write(to: job.appendingPathComponent("result.json"), options: .atomic)
-    if authorizedQuit { showResult(false) }
+    if quitGate.shouldReportFailure { showResult(false) }
     exit(1)
 }

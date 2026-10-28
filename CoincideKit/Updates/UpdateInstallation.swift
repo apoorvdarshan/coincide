@@ -14,11 +14,25 @@ public struct AppUpdatePlan: Codable, Sendable {
     }
 }
 
+/// Missing consent still forbids installation, but a normally exited app needs a visible failure result.
+public struct AppUpdateQuitGate {
+    public private(set) var shouldReportFailure = false
+    public init() {}
+
+    public mutating func waitForConsent(plan: AppUpdatePlan, job: URL, waitForCleanExit: () throws -> Void) throws {
+        shouldReportFailure = false
+        try waitForCleanExit()
+        shouldReportFailure = true
+        let consent = try String(contentsOf: job.appendingPathComponent("clean-quit"), encoding: .utf8)
+        guard consent == plan.nonce.uuidString else { throw AppUpdateError.running }
+    }
+}
+
 public enum AppUpdateStaging {
     /// Owns only this newly created job folder. A failed stage never changes the running application.
     public static func prepare(download: URL, release: AppUpdateRelease, root: URL, target: URL) throws -> URL {
         let team = try AppUpdateSecurity.signingTeam(at: target)
-        guard let current = Bundle(url: target)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String else { throw AppUpdateError.incompatible }
+        let current = try AppUpdateSecurity.bundleVersion(at: target)
         let fm = FileManager.default
         try fm.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let job = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -51,8 +65,8 @@ public enum AppUpdateInstallation {
     /// Re-extract and verify the immutable release bytes after quit; never trust the previously expanded bundle.
     public static func install(plan: AppUpdatePlan, job: URL, team: String, isRunning: () -> Bool) throws -> URL {
         let target = plan.target.standardizedFileURL
-        guard target.isFileURL, target.pathExtension == "app", target == target.resolvingSymlinksInPath(),
-              let current = Bundle(url: target)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String else { throw AppUpdateError.incompatible }
+        guard target.isFileURL, target.pathExtension == "app", target == target.resolvingSymlinksInPath() else { throw AppUpdateError.incompatible }
+        let current = try AppUpdateSecurity.bundleVersion(at: target)
         try AppUpdateSecurity.validateSignature(at: target, team: team, identifier: AppUpdateSecurity.bundleID)
         let archive = job.appendingPathComponent("release.zip")
         try AppUpdateStaging.checkArchive(archive, release: plan.release)

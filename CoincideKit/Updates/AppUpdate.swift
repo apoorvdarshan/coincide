@@ -100,20 +100,42 @@ public enum AppUpdateSecurity {
     }
 
     public static func verifyBundle(_ url: URL, release: AppUpdateRelease, team: String, currentVersion: String) throws {
-        guard let expected = UpdateVersion(release.version), let current = UpdateVersion(currentVersion), expected > current,
-              let bundle = Bundle(url: url), bundle.bundleIdentifier == bundleID,
-              bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String == release.version,
-              let executable = bundle.executableURL,
-              executable.standardizedFileURL.path.hasPrefix(url.standardizedFileURL.path + "/Contents/MacOS/") else { throw AppUpdateError.incompatible }
-        if let minimum = bundle.object(forInfoDictionaryKey: "LSMinimumSystemVersion") {
-            guard let minimum = minimum as? String else { throw AppUpdateError.incompatible }
-            let version = try minimumOSVersion(minimum)
-            guard ProcessInfo.processInfo.isOperatingSystemAtLeast(version) else { throw AppUpdateError.incompatible }
-        }
+        let executable = try verifyBundleMetadata(at: url, release: release, currentVersion: currentVersion)
         try validateSignature(at: url, team: team, identifier: bundleID)
         try command("/usr/bin/lipo", ["-verify_arch", AppUpdateRelease.architecture, executable.path])
         // Gatekeeper also assesses Developer ID trust and notarization; a valid ad-hoc signature never qualifies.
         try command("/usr/sbin/spctl", ["--assess", "--type", "execute", url.path])
+    }
+
+    /// Bundle caches Info.plist by path, even after an atomic replacement. Verification must read the bytes now on disk.
+    private static func bundleInfo(at url: URL) throws -> [String: Any] {
+        let data = try Data(contentsOf: url.appendingPathComponent("Contents/Info.plist"))
+        guard let info = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+        else { throw AppUpdateError.incompatible }
+        return info
+    }
+
+    public static func bundleVersion(at url: URL) throws -> String {
+        guard let version = try bundleInfo(at: url)["CFBundleShortVersionString"] as? String,
+              UpdateVersion(version) != nil else { throw AppUpdateError.incompatible }
+        return version
+    }
+
+    /// The metadata portion is independently exercised with synthetic bundles; production also checks signatures and Gatekeeper.
+    static func verifyBundleMetadata(at url: URL, release: AppUpdateRelease, currentVersion: String) throws -> URL {
+        let info = try bundleInfo(at: url)
+        guard let expected = UpdateVersion(release.version), let current = UpdateVersion(currentVersion), expected > current,
+              info["CFBundleIdentifier"] as? String == bundleID,
+              info["CFBundleShortVersionString"] as? String == release.version,
+              let name = info["CFBundleExecutable"] as? String, !name.isEmpty,
+              name != ".", name != "..", !name.contains("/"), !name.contains("\0") else { throw AppUpdateError.incompatible }
+        let executable = url.appendingPathComponent("Contents/MacOS").appendingPathComponent(name)
+        if let minimum = info["LSMinimumSystemVersion"] {
+            guard let minimum = minimum as? String else { throw AppUpdateError.incompatible }
+            let version = try minimumOSVersion(minimum)
+            guard ProcessInfo.processInfo.isOperatingSystemAtLeast(version) else { throw AppUpdateError.incompatible }
+        }
+        return executable
     }
 
     static func minimumOSVersion(_ value: String) throws -> OperatingSystemVersion {

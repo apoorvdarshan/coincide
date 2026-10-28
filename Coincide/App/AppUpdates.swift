@@ -20,7 +20,7 @@ final class AppUpdates {
     @ObservationIgnored private let bundleURL: URL
     @ObservationIgnored private let fetch: @Sendable (URL, Int64) async throws -> (URL, Int)
     @ObservationIgnored private let root: URL
-    private var version: String { Bundle(url: bundleURL)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0" }
+    private var version: String { (try? AppUpdateSecurity.bundleVersion(at: bundleURL)) ?? "0.0.0" }
 
     init(store: AppStore = .shared, bundleURL: URL = Bundle.main.bundleURL, root: URL? = nil,
          fetch: @escaping @Sendable (URL, Int64) async throws -> (URL, Int) = { try await AppUpdateDownload.fetch($0, maximum: $1) }) {
@@ -130,25 +130,36 @@ final class AppUpdates {
                     return (try? pipe.fileHandleForReading.read(upToCount: 6)) == Data("READY\n".utf8)
                 }.value
                 guard ready, process.isRunning else { if process.isRunning { process.terminate() }; throw AppUpdateError.installation }
-                self.plan = plan
-                state = .armed
-                process.terminationHandler = { [weak updates = self] _ in
-                    Task { @MainActor in
-                        guard let updates, updates.state == .armed else { return }
-                        updates.plan = nil
-                        updates.state = .failed(AppUpdateError.installation.localizedDescription)
-                    }
-                }
+                armHelper(process, plan: plan)
             } catch { state = .failed((error as? AppUpdateError)?.localizedDescription ?? AppUpdateError.installation.localizedDescription) }
         }
     }
 
     func cancelInstallation() {
         guard state == .armed else { return }
+        let process = helper
+        process?.terminationHandler = nil
+        helper = nil
         plan = nil
         state = .ready
-        if helper?.isRunning == true { helper?.terminate() }
+        if process?.isRunning == true { process?.terminate() }
+    }
+
+    /// Separated from launch/readiness so cancellation races can be tested without running an installer.
+    func armHelper(_ process: Process, plan: AppUpdatePlan) {
+        helper = process
+        self.plan = plan
+        state = .armed
+        process.terminationHandler = { [weak self] terminated in
+            Task { @MainActor in self?.helperTerminated(terminated) }
+        }
+    }
+
+    func helperTerminated(_ process: Process) {
+        guard helper === process, state == .armed else { return }
         helper = nil
+        plan = nil
+        state = .failed(AppUpdateError.installation.localizedDescription)
     }
 
     /// Called after provider shutdown and store/UI flush in applicationWillTerminate, never during a check or download.

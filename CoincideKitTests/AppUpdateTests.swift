@@ -147,6 +147,65 @@ struct AppUpdateTests {
         #expect(throws: AppUpdateError.self) { try AppUpdateInstallation.waitForCleanExit(processID: 0, ready: {}) }
     }
 
+    @Test func exchangeVerifiesFreshMetadataAfterBundleCachedThePreviousVersion() throws {
+        let directory = temporary()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = directory.appendingPathComponent("Coincide.app"), candidate = directory.appendingPathComponent("New.app")
+        try bundleInfo(at: target, version: "0.1.0", executable: "OldExecutable")
+        try bundleInfo(at: candidate, version: "0.2.0", executable: "NewExecutable")
+        let cached = try #require(Bundle(url: target))
+        #expect(cached.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String == "0.1.0")
+        #expect(cached.object(forInfoDictionaryKey: "CFBundleExecutable") as? String == "OldExecutable")
+        let release = try #require(try AppUpdateRelease.parse(metadata(), newerThan: "0.1.0"))
+        let current = try AppUpdateSecurity.bundleVersion(at: target)
+        var verifiedInstalledTarget = false
+        let backup = try AppUpdateInstallation.exchange(candidate: candidate, target: target, isRunning: { false }) { url in
+            let executable = try AppUpdateSecurity.verifyBundleMetadata(at: url, release: release, currentVersion: current)
+            #expect(executable.lastPathComponent == "NewExecutable")
+            if url == target { verifiedInstalledTarget = true }
+        }
+        #expect(verifiedInstalledTarget)
+        #expect(try AppUpdateSecurity.bundleVersion(at: target) == "0.2.0")
+        #expect(try AppUpdateSecurity.bundleVersion(at: backup) == "0.1.0")
+    }
+
+    @Test func metadataValidationRereadsChangedIdentityExecutableAndSystemRequirement() throws {
+        let directory = temporary()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = directory.appendingPathComponent("Coincide.app")
+        try bundleInfo(at: target, version: "0.2.0", executable: "Coincide")
+        let cached = try #require(Bundle(url: target))
+        #expect(cached.bundleIdentifier == AppUpdateSecurity.bundleID)
+        let release = try #require(try AppUpdateRelease.parse(metadata(), newerThan: "0.1.0"))
+        for changes: [String: Any] in [["CFBundleIdentifier": "com.example.other"], ["CFBundleExecutable": "../outside"],
+                                      ["LSMinimumSystemVersion": "9999"], ["LSMinimumSystemVersion": 27]] {
+            try bundleInfo(at: target, version: "0.2.0", executable: "Coincide", changes: changes)
+            #expect(throws: AppUpdateError.self) {
+                try AppUpdateSecurity.verifyBundleMetadata(at: target, release: release, currentVersion: "0.1.0")
+            }
+        }
+    }
+
+    @Test func cleanExitWithoutConsentReportsFailureButAbnormalExitStaysSilent() throws {
+        let directory = temporary()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let release = try #require(try AppUpdateRelease.parse(metadata(), newerThan: "0.1.0"))
+        let plan = AppUpdatePlan(release: release, target: directory.appendingPathComponent("Coincide.app"), processID: 123)
+        var gate = AppUpdateQuitGate()
+        #expect(throws: (any Error).self) { try gate.waitForConsent(plan: plan, job: directory, waitForCleanExit: {}) }
+        #expect(gate.shouldReportFailure)
+        try Data("wrong nonce".utf8).write(to: directory.appendingPathComponent("clean-quit"))
+        #expect(throws: AppUpdateError.self) { try gate.waitForConsent(plan: plan, job: directory, waitForCleanExit: {}) }
+        #expect(gate.shouldReportFailure)
+        try Data(plan.nonce.uuidString.utf8).write(to: directory.appendingPathComponent("clean-quit"))
+        #expect(throws: AppUpdateError.self) {
+            try gate.waitForConsent(plan: plan, job: directory) { throw AppUpdateError.running }
+        }
+        #expect(!gate.shouldReportFailure)
+        try gate.waitForConsent(plan: plan, job: directory, waitForCleanExit: {})
+        #expect(gate.shouldReportFailure)
+    }
+
     @Test func readsDeflatedArchivesProducedByMacOSTools() throws {
         let directory = temporary()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -169,6 +228,15 @@ struct AppUpdateTests {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-update-tests-\(UUID())")
         try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
         return url
+    }
+    private func bundleInfo(at url: URL, version: String, executable: String, changes: [String: Any] = [:]) throws {
+        let contents = url.appendingPathComponent("Contents")
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        var info: [String: Any] = ["CFBundleIdentifier": AppUpdateSecurity.bundleID, "CFBundlePackageType": "APPL",
+                                  "CFBundleShortVersionString": version, "CFBundleExecutable": executable, "LSMinimumSystemVersion": "13.0"]
+        info.merge(changes) { _, new in new }
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: contents.appendingPathComponent("Info.plist"), options: .atomic)
     }
     private func metadata(_ changes: [String: Any] = [:], asset changesToAsset: [String: Any] = [:]) -> Data {
         var asset: [String: Any] = ["name": "Coincide-macos-universal.zip", "size": 10, "digest": "sha256:" + String(repeating: "a", count: 64),
