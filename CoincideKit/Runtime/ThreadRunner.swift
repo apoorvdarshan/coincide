@@ -113,6 +113,8 @@ public final class ThreadRunner {
     public var onApprovalRequested: ((UUID, ApprovalRequest) -> Void)?
     /// Called when an agent asks the user questions.
     public var onUserInputRequested: ((UUID, UserInputRequest) -> Void)?
+    /// Called when an agent is slow to start, which usually means macOS is waiting on a permission prompt.
+    public var onSlowStart: ((UUID, ProviderKind) -> Void)?
 
     public init(store: AppStore, registry: ProviderRegistry) {
         self.store = store
@@ -566,7 +568,8 @@ public final class ThreadRunner {
 
     /// Agents launched by Coincide read their own settings (for example `~/.claude/CLAUDE.md`), which often
     /// live in folders macOS protects. Their reads then wait for the user to let Coincide access that folder,
-    /// so a launch that hangs usually means a permission prompt is waiting, or was declined.
+    /// and macOS shows that prompt only while Coincide is the active app, so a launch that hangs usually means
+    /// a prompt is waiting, or was declined.
     private func noteSlowStart(of session: AgentSession, threadID: UUID, provider: ProviderKind) {
         Task { [weak self] in
             try? await Task.sleep(for: self?.slowStartNoticeDelay ?? .seconds(15))
@@ -575,9 +578,10 @@ public final class ThreadRunner {
                 TranscriptItem(
                     kind: .notice,
                     text: String(
-                        localized: "\(provider.displayName) is taking a while to start. If macOS asked whether Coincide may access a folder such as Documents, where agent settings often live, allow it. You can also grant access in System Settings › Privacy & Security › Files and Folders."),
+                        localized: "\(provider.displayName) is taking a while to start. macOS may be waiting for you to let Coincide access a folder such as Documents, where agent settings often live, and it asks only while Coincide is the active app. You can also grant access in System Settings › Privacy & Security › Files and Folders."),
                     provider: provider),
                 to: threadID)
+            self.onSlowStart?(threadID, provider)
         }
     }
 

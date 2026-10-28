@@ -131,7 +131,7 @@ enum ComposerUsageDetails {
         }
         if let warning = limits.warning {
             let text = note(UsageLimits.warningText(for: warning, provider: provider, at: now))
-            text.textColor = warning.isExhausted ? .systemRed : .systemOrange
+            text.textColor = warning.blocksWork ? .systemRed : .systemOrange
             rows.append(text)
         }
         let stack = NSStackView(views: rows)
@@ -262,7 +262,7 @@ final class ComposerUsageBanner: ComposerBanner {
     }
 
     func show(_ window: UsageLimitWindow, provider: ProviderKind, now: Date) {
-        iconView.contentTintColor = window.isExhausted ? .systemRed : .systemOrange
+        iconView.contentTintColor = window.blocksWork ? .systemRed : .systemOrange
         message.stringValue = UsageLimits.warningText(for: window, provider: provider, at: now)
         setAccessibilityLabel(message.stringValue)
     }

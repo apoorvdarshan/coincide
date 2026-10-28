@@ -20,6 +20,9 @@ extension UsageLimitWindow {
 
     public nonisolated var isExhausted: Bool { usedPercent >= 100 }
 
+    /// Used up with nothing to fall back on, so the agent can't work until the window resets.
+    public nonisolated var blocksWork: Bool { isExhausted && !continuesOnCredits }
+
     public nonisolated var isNearLimit: Bool { usedPercent >= Self.warningPercent }
 
     /// How much of the window has passed, 0–1, when its length and reset time are known.
@@ -73,9 +76,11 @@ extension UsageLimits {
     }
 
     /// The window to warn about: an exhausted one that resets last (all of them must reset before work can go on),
-    /// otherwise the fullest one at or past the warning level.
+    /// preferring one that stops work over one the agent continues past on credits, otherwise the fullest one at
+    /// or past the warning level.
     public nonisolated var warning: UsageLimitWindow? {
-        let exhausted = windows.filter(\.isExhausted)
+        let blocking = windows.filter(\.blocksWork)
+        let exhausted = blocking.isEmpty ? windows.filter(\.isExhausted) : blocking
         if !exhausted.isEmpty {
             return exhausted.max { ($0.resetsAt ?? .distantFuture) < ($1.resetsAt ?? .distantFuture) }
         }
@@ -95,6 +100,13 @@ extension UsageLimits {
     public nonisolated static func warningText(for window: UsageLimitWindow, provider: ProviderKind, at now: Date) -> String {
         let name = provider.displayName
         let limit = window.label.lowercased()
+        if window.isExhausted, window.continuesOnCredits {
+            if let resetsAt = window.resetsAt, resetsAt > now {
+                return String(
+                    localized: "\(name) \(limit) limit reached. Using credits until it resets in \(UsageLimitWindow.duration(resetsAt.timeIntervalSince(now))).")
+            }
+            return String(localized: "\(name) \(limit) limit reached. Using credits.")
+        }
         if window.isExhausted {
             if let resetsAt = window.resetsAt, resetsAt > now {
                 return String(
@@ -112,7 +124,7 @@ extension UsageLimits {
 
     /// Identifies a warning, so dismissing it lasts until the window resets or gets worse.
     public nonisolated static func warningKey(for window: UsageLimitWindow, provider: ProviderKind) -> String {
-        let stage = window.isExhausted ? "reached" : "near"
+        let stage = window.isExhausted ? (window.continuesOnCredits ? "credits" : "reached") : "near"
         let reset = window.resetsAt.map { String(Int($0.timeIntervalSince1970 / 60)) } ?? "-"
         return "\(provider.rawValue)/\(window.id)/\(stage)/\(reset)"
     }

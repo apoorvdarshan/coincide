@@ -2,8 +2,8 @@ import AppKit
 import CoincideKit
 import UserNotifications
 
-/// Posts a system notification when a turn ends or an agent asks for approval while Coincide is in
-/// the background (`AppSettings.notifyWhenInBackground`), and opens the thread when one is clicked.
+/// Posts a system notification when a turn ends, an agent asks for approval or an agent is slow to start
+/// while Coincide is in the background (`AppSettings.notifyWhenInBackground`), and opens the thread when one is clicked.
 final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationController()
 
@@ -12,6 +12,7 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
         case question
         case completed
         case failed
+        case slowStart
     }
 
     private var center: UNUserNotificationCenter { .current() }
@@ -36,11 +37,16 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
             previousQuestion?(threadID, request)
             self?.questionAsked(threadID, request: request)
         }
+        let previousSlowStart = runner.onSlowStart
+        runner.onSlowStart = { [weak self] threadID, provider in
+            previousSlowStart?(threadID, provider)
+            self?.slowStart(threadID, provider: provider)
+        }
     }
 
     /// Clears delivered notifications for a thread the user is now looking at.
     func clearDelivered(for threadID: UUID) {
-        let ids = [Kind.approval, .question, .completed, .failed].map { identifier(threadID, $0) }
+        let ids = [Kind.approval, .question, .completed, .failed, .slowStart].map { identifier(threadID, $0) }
         center.removeDeliveredNotifications(withIdentifiers: ids)
     }
 
@@ -64,6 +70,14 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
     private func questionAsked(_ threadID: UUID, request: UserInputRequest) {
         let body = request.title ?? request.questions.first?.prompt
         post(.question, threadID: threadID, title: String(localized: "Input needed"), body: body)
+    }
+
+    /// macOS shows folder permission prompts only while Coincide is active, so a stalled start needs the user here.
+    private func slowStart(_ threadID: UUID, provider: ProviderKind) {
+        post(
+            .slowStart, threadID: threadID,
+            title: String(localized: "\(provider.displayName) is waiting to start"),
+            body: String(localized: "Switch to Coincide in case macOS is asking for permission to access a folder."))
     }
 
     private func post(_ kind: Kind, threadID: UUID, title: String, body: String?) {
