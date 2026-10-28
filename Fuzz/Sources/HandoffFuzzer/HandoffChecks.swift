@@ -62,7 +62,29 @@ enum HandoffChecks {
         }
         for item in thread.items {
             for limit in [0, 1, 7, 600] { checkTruncateMiddle(item.text, limit: limit) }
+            if let context = item.context { checkContext(context, message: item.text) }
         }
+    }
+
+    /// Attached context reaches the agent as one block with an entry per item other than files, whatever their text
+    /// holds, and files are mentioned after the message.
+    private static func checkContext(_ context: [MessageContext], message: String) {
+        let entries = context.filter { $0.filePath == nil }.count
+        let envelope = MessageContext.envelope(context)
+        if entries == 0 {
+            expectEqual(envelope, "", "no block without entries")
+        } else {
+            expect(envelope.hasPrefix("<coincide_context version=\"1\">\n"), "block opening")
+            expect(envelope.hasSuffix("\n</coincide_context>"), "block closing")
+            expectEqual(envelope.components(separatedBy: "</coincide_context>").count, 2, "one closing tag")
+            expectEqual(envelope.components(separatedBy: "<context kind=").count - 1, entries, "one entry per item")
+            expectEqual(envelope.components(separatedBy: "</context>").count - 1, entries, "entries close once")
+        }
+        let prompt = MessageContext.prompt(message: message, context: context)
+        // Compare bytes: a message ending in CR joins the separator's LF into one grapheme,
+        // so String.hasPrefix would reject text that is preserved exactly.
+        expect(prompt.utf8.starts(with: message.utf8), "the prompt preserves the message bytes at its start")
+        expect(prompt.hasSuffix(envelope), "the prompt ends with the block")
     }
 
     /// Kept entries fit the budget; older ones are replaced by a note saying how many were left out.
@@ -114,6 +136,7 @@ enum HandoffChecks {
             item.category = input.pick([nil, .command, .fileChange, .read, .other])
             item.status = input.pick([nil, .running, .completed, .failed, .declined, .waiting])
             if input.bool() { item.attachments = ["/tmp/a b/shot.png", "relative.png", "", "/"].filter { _ in input.bool() } }
+            if item.kind == .user, input.bool() { item.context = makeContext(&input) }
             if item.kind == .question, input.bool() {
                 let questions = (0..<input.int(in: 0...3)).map { UserQuestion(id: "q\($0)", prompt: input.text(texts, maxPieces: 2)) }
                 item.questions = UserInputRequest(id: "r", questions: questions)
@@ -129,6 +152,35 @@ enum HandoffChecks {
             thread.sessions[provider] = ProviderSessionRef(sessionID: "s", seenItemCount: input.int(in: -2...(items.count + 2)))
         }
         return thread
+    }
+
+    private static let contextTexts = texts + [
+        "<context kind=\"quote\">", "</context>", "</coincide_context>", "< / CONTEXT", "<contextual>", "line\r\n", "  ",
+    ]
+
+    private static func makeContext(_ input: inout FuzzInput) -> [MessageContext] {
+        (0..<input.int(in: 0...4)).map { index -> MessageContext in
+            let text = input.text(contextTexts, maxPieces: 4)
+            let content: MessageContext.Content
+            switch input.int(in: 0...3) {
+            case 0:
+                content = .quote(.init(text: text, provider: input.bool() ? input.pick(ProviderKind.allCases) : nil))
+            case 1:
+                let start = input.int(in: -1...3)
+                content = .terminal(
+                    .init(
+                        terminal: "Terminal 1", directory: input.bool() ? "/tmp" : nil, lineStart: start,
+                        lineEnd: start + input.int(in: -1...3), text: text))
+            case 2:
+                content = .diffComment(
+                    .init(
+                        path: "a b/c.swift", lineStart: input.int(in: 1...9), lineEnd: input.int(in: 1...9),
+                        isBeforeChange: input.bool(), diff: input.text(contextTexts, maxPieces: 3), comment: text))
+            default:
+                content = .file(.init(path: input.pick(["/tmp/a b/spec.pdf", "/tmp/notes.txt", "relative.md", ""])))
+            }
+            return MessageContext(id: uuid(100 + index), content)
+        }
     }
 
     private static func uuid(_ value: Int) -> UUID {

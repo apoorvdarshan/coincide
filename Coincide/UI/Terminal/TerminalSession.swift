@@ -201,8 +201,10 @@ enum TerminalCommand {
 }
 
 /// SwiftTerm's local-process view, themed for Coincide and wired to its session.
-final class ShellTerminalView: LocalProcessTerminalView {
+final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource {
     var onOutput: (() -> Void)?
+    /// Attaches the selected output to the composer's message.
+    var onAddSelection: (() -> Void)?
     /// The raw `waitpid` status of the shell.
     var onExit: ((Int32) -> Void)?
     /// Input that arrived while no shell was running.
@@ -266,7 +268,24 @@ final class ShellTerminalView: LocalProcessTerminalView {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
-        contextMenu?()
+        ThemedContextMenu.show(contextMenu?(), for: event, in: window)
+    }
+
+    /// The selected text with the buffer lines it spans, counting from 1, or nil when nothing is selected.
+    func selectedLines() -> (text: String, first: Int, last: Int)? {
+        guard selectionActive, let text = getSelection(), text.contains(where: { !$0.isWhitespace }), let selection else {
+            return nil
+        }
+        let rows = [selection.start.row, selection.end.row]
+        return (text, (rows.min() ?? 0) + 1, (rows.max() ?? 0) + 1)
+    }
+
+    var addToComposerTitle: String { String(localized: "Add Selection to Composer") }
+
+    var canAddSelectionToComposer: Bool { onAddSelection != nil && selectedLines() != nil }
+
+    func addSelectionToComposer() {
+        onAddSelection?()
     }
 
     override func viewDidChangeEffectiveAppearance() {
