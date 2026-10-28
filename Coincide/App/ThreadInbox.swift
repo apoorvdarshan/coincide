@@ -12,12 +12,21 @@ final class ThreadInbox {
     private let store: AppStore
     private let ui: UIState
     private let isRunning: (UUID) -> Bool
+    private let reportError: (Error) -> Void
+    private struct RestoreRetry {
+        var snapshots: [AppStore.DeletedThread]
+        var restored: [UUID]
+    }
+    /// Retain failed snapshots while UndoManager consumes its current action; requeue after it returns.
+    private var restoreRetries: [RestoreRetry] = []
 
     init(store: AppStore = .shared, ui: UIState = .shared,
-         isRunning: @escaping (UUID) -> Bool = { ThreadRunner.shared.isRunning($0) }) {
+         isRunning: @escaping (UUID) -> Bool = { ThreadRunner.shared.isRunning($0) },
+         reportError: @escaping (Error) -> Void = { _ = NSApp.presentError($0) }) {
         self.store = store
         self.ui = ui
         self.isRunning = isRunning
+        self.reportError = reportError
         undoManager.levelsOfUndo = 20
         undoManager.groupsByEvent = false
     }
@@ -81,7 +90,12 @@ final class ThreadInbox {
                 if let snapshot = try store.deleteThreadForUndo(id) { deleted.append(snapshot) }
             }
         } catch {
-            for snapshot in deleted { _ = try? store.restoreDeletedThread(snapshot) }
+            var failed: [AppStore.DeletedThread] = []
+            for snapshot in deleted {
+                do { _ = try store.restoreDeletedThread(snapshot) } catch { failed.append(snapshot) }
+            }
+            if !failed.isEmpty { restoreRetries.append(RestoreRetry(snapshots: failed, restored: [])) }
+            requeueRestores()
             throw error
         }
         guard !deleted.isEmpty else { return }
@@ -89,24 +103,56 @@ final class ThreadInbox {
         changed()
     }
 
-    private func restore(_ snapshots: [AppStore.DeletedThread]) {
-        var restored: [UUID] = []
+    private func restore(_ snapshots: [AppStore.DeletedThread], restored previouslyRestored: [UUID] = []) {
+        var restored = previouslyRestored
+        var failed: [AppStore.DeletedThread] = []
+        var firstError: Error?
         for snapshot in snapshots {
             do {
                 if try store.restoreDeletedThread(snapshot) { restored.append(snapshot.id) }
-            } catch { NSApp.presentError(error) }
+            } catch {
+                failed.append(snapshot)
+                if firstError == nil { firstError = error }
+            }
+        }
+        if !failed.isEmpty {
+            restoreRetries.append(RestoreRetry(snapshots: failed, restored: restored))
+            if let firstError { reportError(firstError) }
+            changed()
+            return
         }
         guard !restored.isEmpty else { return }
         register(String(localized: "Delete Threads")) { inbox in
             // Redo does not silently stop new work started since Undo.
             let idle = restored.filter { !inbox.isRunning($0) && !ThreadActions.hasBusyTerminals($0) }
-            do { try inbox.delete(idle) } catch { NSApp.presentError(error) }
+            do { try inbox.delete(idle) } catch { inbox.reportError(error) }
         }
         changed()
     }
 
-    func undo() { if undoManager.canUndo { undoManager.undo() }; changed() }
-    func redo() { if undoManager.canRedo { undoManager.redo() }; changed() }
+    func undo() {
+        if undoManager.canUndo { undoManager.undo() }
+        requeueRestores()
+        changed()
+    }
+
+    func redo() {
+        if undoManager.canRedo { undoManager.redo() }
+        requeueRestores()
+        changed()
+    }
+
+    /// Register on the Undo stack only after an undo/redo finishes. Registering inside an undo would
+    /// incorrectly make the recovery a Redo; dropping the snapshots would lose the only recovery copy.
+    private func requeueRestores() {
+        guard !undoManager.isUndoing, !undoManager.isRedoing, !restoreRetries.isEmpty else { return }
+        let retries = restoreRetries
+        restoreRetries.removeAll()
+        for retry in retries {
+            register(String(localized: "Delete Threads")) { $0.restore(retry.snapshots, restored: retry.restored) }
+        }
+        changed()
+    }
 
     private func register(_ name: String, action: @escaping (ThreadInbox) -> Void) {
         let needsGroup = !undoManager.isUndoing && !undoManager.isRedoing

@@ -449,10 +449,10 @@ public final class AppStore {
                 }
             }
         }
-        let importedSource = importedSourceURL(for: id).map { try? Data(contentsOf: $0) } ?? nil
-        if thread.importedSession != nil, FileManager.default.fileExists(atPath: importArchiveURL(id).path), importedSource == nil {
-            throw CocoaError(.fileReadUnknown)
-        }
+        // The archive may belong to provenance a newer version wrote and this one cannot decode.
+        // Capture by the thread's canonical archive path, independently of the lenient metadata.
+        let archive = importArchiveURL(id)
+        let importedSource = FileManager.default.fileExists(atPath: archive.path) ? try Data(contentsOf: archive) : nil
         undoableDeletions[id, default: 0] += 1
         let snapshot = DeletedThread(thread: thread, data: data, unreadOriginal: unreadOriginal, importedSource: importedSource) { [weak self] in
             guard let self else { return }
@@ -470,6 +470,7 @@ public final class AppStore {
         let thread = snapshot.thread
         guard !hasThread(thread.id), project(thread.projectID) != nil else { return false }
         writer.waitUntilIdle()
+        guard !FileManager.default.fileExists(atPath: threadURL(thread.id).path) else { throw CocoaError(.fileWriteFileExists) }
         try FileManager.default.createDirectory(at: threadsDirectory, withIntermediateDirectories: true)
         if let original = snapshot.unreadOriginal {
             try original.write(to: threadURL(thread.id).appendingPathExtension("unreadable-undo-\(UUID().uuidString)"), options: .atomic)
