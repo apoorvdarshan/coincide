@@ -88,6 +88,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Menu shortcuts the user changed, by `KeyCommand` id, written like T3 Code's keybindings (`mod+shift+k`).
     /// An empty string removes the command's shortcut. Commands not listed use their defaults.
     public var shortcutOverrides: [String: String]
+    /// Read the Cursor CLI's login from the macOS Keychain to show the plan's usage limits (T3 Code's
+    /// `cursorKeychainUsageEnabled`). Off by default, because macOS may ask the user to allow the read.
+    public var cursorKeychainUsageEnabled: Bool
 
     public nonisolated init() {
         defaultSelection = ModelSelection(provider: .claude, modelID: "default")
@@ -104,6 +107,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         worktreeBranchPrefix = "coincide/"
         fontSize = 13
         shortcutOverrides = [:]
+        cursorKeychainUsageEnabled = false
     }
 
     public nonisolated func settings(for provider: ProviderKind) -> ProviderSettings {
@@ -133,6 +137,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         // A value that is not text stays as written, so the Keyboard pane can point it out.
         shortcutOverrides = (container.lenient([String: JSONValue].self, forKey: .shortcutOverrides) ?? [:])
             .compactMapValues { $0.isNull ? nil : ($0.string ?? $0.displayText) }
+        cursorKeychainUsageEnabled = value(.cursorKeychainUsageEnabled, defaults.cursorKeychainUsageEnabled)
     }
 }
 

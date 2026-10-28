@@ -27,6 +27,17 @@ struct OpenCodeLiveTests {
         #expect(models.allSatisfy { $0.provider == .opencode && $0.modelID.contains("/") })
     }
 
+    /// Reads the OpenCode Go plan's usage with the user's own OpenCode files, read-only. Without a Go key or Console
+    /// key there is nothing to read and nothing is requested; only a failed read is wrong.
+    @Test func readsTheGoPlansUsage() async {
+        let environment = await ShellEnvironment.shared.environment()
+        let outcome = await OpenCodeUsageLimits.read(environment: environment)
+        #expect(outcome != .failed)
+        if case .limits(let limits) = outcome {
+            #expect(limits.windows.map(\.kind) == [.session, .weekly, .monthly])
+        }
+    }
+
     @Test func turnsKeepContextAndResume() async throws {
         try await withLiveOpenCode { live in
             let first = try await live.start()

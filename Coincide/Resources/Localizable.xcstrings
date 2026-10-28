@@ -1844,6 +1844,9 @@
     "Cursor API key" : {
 
     },
+    "Cursor Models" : {
+
+    },
     "Cursor can't run the model %@: %@. Choose one of the models from your Cursor account." : {
       "localizations" : {
         "en" : {
@@ -2354,6 +2357,15 @@
 
     },
     "Go to Thread %lld" : {
+
+    },
+    "Go · Monthly" : {
+
+    },
+    "Go · Session" : {
+
+    },
+    "Go · Weekly" : {
 
     },
     "Google Account" : {
@@ -3224,7 +3236,13 @@
     "Other Menu Commands" : {
 
     },
+    "Other Models" : {
+
+    },
     "Output tokens" : {
+
+    },
+    "Overall" : {
 
     },
     "Overview" : {
@@ -3622,6 +3640,9 @@
 
     },
     "Read files" : {
+
+    },
+    "Read your Cursor CLI login from the macOS Keychain to show your plan’s monthly limits in the composer. macOS may ask you to allow access." : {
 
     },
     "Ready" : {
@@ -4135,6 +4156,9 @@
 
     },
     "Show Toolbar" : {
+
+    },
+    "Show account usage" : {
 
     },
     "Show full message" : {
@@ -4917,6 +4941,9 @@
 
     },
     "Updated the plan %lld times" : {
+
+    },
+    "Usage Limits" : {
 
     },
     "Use %@" : {
