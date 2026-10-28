@@ -35,7 +35,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private let planBanner = ComposerPlanBanner()
     private let questionBanner = ComposerQuestionBanner()
     private let approvalBanner = ComposerApprovalBanner()
-    private let surface = NSGlassEffectView()
+    private let surface = FlatSurfaceView(style: .composer)
     private let surfaceStack = ComposerDropStack()
     private let attachmentStrip = ComposerAttachmentStrip()
     private let scrollView = NSScrollView()
@@ -156,7 +156,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             footer.widthAnchor.constraint(equalTo: surfaceStack.widthAnchor, constant: -16),
         ])
         surfaceStack.translatesAutoresizingMaskIntoConstraints = false
-        surface.cornerRadius = 18
+        surface.cornerRadius = 22
         surface.contentView = surfaceStack
         NSLayoutConstraint.activate([
             surfaceStack.leadingAnchor.constraint(equalTo: surface.leadingAnchor),

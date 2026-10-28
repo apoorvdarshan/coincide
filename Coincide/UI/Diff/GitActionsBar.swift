@@ -20,7 +20,7 @@ final class GitActionsBar: NSView {
     var onQuickAction: (() -> Void)?
     var menuProvider: (() -> NSMenu)?
 
-    private let glass = NSGlassEffectView()
+    private let glass = FlatSurfaceView()
     private let branchIcon = NSImageView()
     private let branchLabel = NSTextField(labelWithString: "")
     private let syncLabel = NSTextField(labelWithString: "")
@@ -162,7 +162,7 @@ final class GitActionsBar: NSView {
 /// A short-lived message above the action bar: what a git action did, or why it failed,
 /// with an optional follow-up such as "Create PR".
 final class GitResultBanner: NSView {
-    private let glass = NSGlassEffectView()
+    private let glass = FlatSurfaceView()
     private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(wrappingLabelWithString: "")

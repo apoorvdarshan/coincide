@@ -3,6 +3,8 @@ import CoincideKit
 
 extension NSToolbarItem.Identifier {
     static let newThread = NSToolbarItem.Identifier("coincide.newThread")
+    /// Coincide's own sidebar button, plain like the other items (the system's always draws a bezel).
+    static let sidebar = NSToolbarItem.Identifier("coincide.sidebar")
     static let runStatus = NSToolbarItem.Identifier("coincide.runStatus")
     static let openIn = NSToolbarItem.Identifier("coincide.openIn")
     static let toggleTerminal = NSToolbarItem.Identifier("coincide.toggleTerminal")
@@ -13,7 +15,8 @@ extension NSToolbarItem.Identifier {
 /// "Open in" picker and terminal toggle over the chat; and the diff toggle over the inspector.
 extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMenuDelegate {
     func makeToolbar() -> NSToolbar {
-        let toolbar = NSToolbar(identifier: "MainToolbar")
+        // A new identifier, so toolbars saved before the plain sidebar button start from the new defaults.
+        let toolbar = NSToolbar(identifier: "MainToolbar2")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -23,7 +26,7 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            .toggleSidebar, .flexibleSpace, .newThread, .sidebarTrackingSeparator, .flexibleSpace, .runStatus, .openIn,
+            .sidebar, .flexibleSpace, .newThread, .sidebarTrackingSeparator, .flexibleSpace, .runStatus, .openIn,
             .toggleTerminal, .inspectorTrackingSeparator, .flexibleSpace, .toggleDiff,
         ]
     }
@@ -44,6 +47,11 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
             item = paletteItem(itemIdentifier, label: String(localized: "Status"), symbol: "clock")
         case .openIn where !flag:
             item = paletteItem(itemIdentifier, label: String(localized: "Open In"), symbol: "arrow.up.forward.app")
+        case .sidebar:
+            item = button(
+                itemIdentifier, label: String(localized: "Sidebar"), symbol: "sidebar.left",
+                toolTip: KeyBindingsController.shared.toolTip(String(localized: "Sidebar"), for: .toggleSidebar),
+                action: #selector(toggleSidebarPanel(_:)))
         case .newThread:
             item = button(
                 itemIdentifier, label: String(localized: "New Thread"), symbol: "square.and.pencil",
@@ -73,7 +81,7 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
             menuItem.showsIndicator = true
             menuItem.target = self
             menuItem.action = #selector(openInPreferred(_:))
-            menuItem.isBordered = true
+            menuItem.isBordered = false
             item = menuItem
         default:
             return nil
@@ -111,13 +119,15 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         item.target = self
         item.action = action
-        item.isBordered = true
+        item.isBordered = false
         return item
     }
 
     /// Keeps toggle labels, tooltips and symbols in step with the panels.
     func updatePanelItems() {
         let keyBindings = KeyBindingsController.shared
+        // The open sidebar starts threads from its own first row.
+        toolbarItems[.newThread]?.isHidden = splitController.isSidebarOpen
         if let item = toolbarItems[.toggleTerminal] {
             let open = splitController.content.isTerminalOpen
             item.toolTip = keyBindings.toolTip(
@@ -133,6 +143,7 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
     /// The tooltips name the menu commands' shortcuts, which the user can change.
     @objc func updateToolbarShortcuts() {
         toolbarItems[.newThread]?.toolTip = KeyBindingsController.shared.toolTip(String(localized: "New Thread"), for: .newThread)
+        toolbarItems[.sidebar]?.toolTip = KeyBindingsController.shared.toolTip(String(localized: "Sidebar"), for: .toggleSidebar)
         updatePanelItems()
         updateOpenInItem()
     }

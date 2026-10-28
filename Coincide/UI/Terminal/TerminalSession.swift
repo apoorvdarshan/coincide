@@ -389,7 +389,7 @@ final class TerminalPaneView: NSView {
 
     let terminalView: ShellTerminalView
     var onRestart: (() -> Void)?
-    private var exitBanner: (glass: NSGlassEffectView, content: NSView)?
+    private var exitBanner: (glass: FlatSurfaceView, content: NSView)?
 
     init(terminalView: ShellTerminalView) {
         self.terminalView = terminalView
@@ -449,7 +449,7 @@ final class TerminalPaneView: NSView {
         let stack = NSStackView(views: [label, restart, close])
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 14, bottom: 6, right: 8)
-        let banner = NSGlassEffectView()
+        let banner = FlatSurfaceView()
         banner.cornerRadius = 16
         banner.contentView = stack
         banner.setAccessibilityElement(true)

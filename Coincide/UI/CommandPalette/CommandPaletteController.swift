@@ -44,7 +44,7 @@ final class CommandPaletteController {
 
     private func makePanel() -> PalettePanel {
         let panel = PalettePanel()
-        let glass = NSGlassEffectView()
+        let glass = FlatSurfaceView(style: .floating)
         glass.cornerRadius = 18
         glass.contentView = content.view
         panel.contentView = glass

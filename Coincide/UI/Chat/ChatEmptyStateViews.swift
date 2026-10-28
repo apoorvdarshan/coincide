@@ -85,6 +85,9 @@ final class ChatWelcomeView: NSView {
     private var projectID: UUID?
     /// Runs when the user picks an agent from the row of agents.
     var onChooseAgent: ((ProviderKind) -> Void)?
+    /// How to set up the agents that aren't ready, with buttons to check again and open their settings. The chat
+    /// places it under the composer, which sits in the middle of an empty thread.
+    let setupView = NSStackView()
 
     /// For text that gives way before the chat grows: above a stack view's hugging (250), so it keeps its
     /// size when there is room, and below the sidebar's holding priority (260), so the split view never
@@ -131,24 +134,31 @@ final class ChatWelcomeView: NSView {
         missingRow.spacing = 8
         missingRow.setViews([warning, missingLabel, locateButton], in: .center)
         missingRow.isHidden = true
-        let stack = NSStackView(views: [headline, selectionLabel, missingRow, providerRow, hintsStack, footer])
+        let stack = NSStackView(views: [headline, selectionLabel, missingRow, providerRow])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 8
         stack.setCustomSpacing(6, after: headline)
         stack.setCustomSpacing(26, after: selectionLabel)
         stack.setCustomSpacing(18, after: missingRow)
-        stack.setCustomSpacing(22, after: providerRow)
-        stack.setCustomSpacing(14, after: hintsStack)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        // The headline and agents sit just above the composer; when the window is short they scroll off the top
+        // rather than push it down.
+        let fitsBelowTop = stack.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 12)
+        fitsBelowTop.priority = .defaultLow
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -10),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
+            fitsBelowTop,
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
             stack.widthAnchor.constraint(lessThanOrEqualToConstant: Theme.contentMaxWidth),
         ])
+        setupView.setViews([hintsStack, footer], in: .top)
+        setupView.orientation = .vertical
+        setupView.alignment = .centerX
+        setupView.spacing = 14
     }
 
     required init?(coder: NSCoder) {

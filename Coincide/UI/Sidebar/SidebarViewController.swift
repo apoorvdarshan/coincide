@@ -17,7 +17,8 @@ final class SidebarViewController: NSViewController {
     private var header: SidebarNode { nodes.header }
     private var token: ObservationToken?
 
-    private let searchField = NSSearchField()
+    private lazy var topRows = SidebarHeaderView { AppEvents.newThread() }
+    private var searchField: NSSearchField { topRows.searchField }
     private let outlineView = SidebarOutlineView()
     private let scrollView = NSScrollView()
     private let emptyView = SidebarEmptyView()
@@ -102,14 +103,15 @@ final class SidebarViewController: NSViewController {
     // MARK: View
 
     override func loadView() {
-        let root = NSView()
+        // Opaque, a step darker than the conversation, in place of the sidebar's translucent material.
+        let root = SolidBackgroundView(color: Theme.sidebarBackground)
         searchField.placeholderString = String(localized: "Search")
         searchField.setAccessibilityLabel(String(localized: "Search threads and projects"))
         searchField.target = self
         searchField.action = #selector(searchChanged)
         searchField.delegate = self
-        searchField.controlSize = .regular
-        searchField.translatesAutoresizingMaskIntoConstraints = false
+        topRows.setNewThreadShortcut(KeyBindingsController.shared.displayString(for: .newThread))
+        topRows.translatesAutoresizingMaskIntoConstraints = false
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("main"))
         column.resizingMask = .autoresizingMask
@@ -147,12 +149,12 @@ final class SidebarViewController: NSViewController {
         emptyView.isHidden = true
         emptyView.translatesAutoresizingMaskIntoConstraints = false
 
-        for view: NSView in [searchField, scrollView, emptyView] { root.addSubview(view) }
+        for view: NSView in [topRows, scrollView, emptyView] { root.addSubview(view) }
         NSLayoutConstraint.activate([
-            searchField.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 6),
-            searchField.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
-            searchField.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
-            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 6),
+            topRows.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 4),
+            topRows.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
+            topRows.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
+            scrollView.topAnchor.constraint(equalTo: topRows.bottomAnchor, constant: 10),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
@@ -544,6 +546,7 @@ final class SidebarViewController: NSViewController {
 
     /// New shortcuts change the hints shown, or whether the keys held still show them.
     @objc private func keyBindingsChanged() {
+        topRows.setNewThreadShortcut(KeyBindingsController.shared.displayString(for: .newThread))
         guard showsJumpHints else { return }
         if KeyBindingsController.shared.showsThreadJumpHints(for: NSEvent.modifierFlags) {
             refreshVisibleThreadRows()

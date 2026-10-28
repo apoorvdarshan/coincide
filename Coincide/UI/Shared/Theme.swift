@@ -42,6 +42,21 @@ enum Theme {
     static var secondaryText: NSColor { .secondaryLabelColor }
     static var tertiaryText: NSColor { .tertiaryLabelColor }
     static var separator: NSColor { .separatorColor }
+    /// The window's surfaces, flat and opaque: the sidebar a step darker than the conversation, and the composer
+    /// and bars a step lighter.
+    static let sidebarBackground = color(light: 0xF7F7F6, dark: 0x181818)
+    static let contentBackground = color(light: 0xFFFFFF, dark: 0x212121)
+    static let composerFill = color(light: 0xFFFFFF, dark: 0x2B2B2B)
+    static let raisedFill = color(light: 0xF4F4F3, dark: 0x282828)
+    static let floatingFill = color(light: 0xFFFFFF, dark: 0x262626)
+    static let surfaceBorder = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: 0.08) : NSColor(white: 0, alpha: 0.1)
+    }
+    /// Rows in the sidebar while hovered and while selected.
+    static let sidebarHover = dynamic(.labelColor, alpha: 0.05)
+    static let sidebarSelection = dynamic(.labelColor, alpha: 0.09)
+
     /// The user's messages sit on a quiet card, so the agents' replies carry the color.
     static let userBubble = dynamic(.labelColor, alpha: 0.06)
     static let codeBackground = dynamic(.labelColor, alpha: 0.06)
@@ -85,15 +100,16 @@ enum Theme {
     }
 
     private static let agentColors = (
-        claude: pair(light: 0xC2603D, dark: 0xE08A6B),
-        codex: pair(light: 0x0E8A6A, dark: 0x3CC79A),
-        cursor: pair(light: 0x5A5FD6, dark: 0x9A9EFF),
-        grok: pair(light: 0x6B7077, dark: 0xA9AEB4),
-        opencode: pair(light: 0xB7700C, dark: 0xE9B04E),
-        antigravity: pair(light: 0x2F6BDB, dark: 0x6FA3FF)
+        claude: color(light: 0xC2603D, dark: 0xE08A6B),
+        codex: color(light: 0x0E8A6A, dark: 0x3CC79A),
+        cursor: color(light: 0x5A5FD6, dark: 0x9A9EFF),
+        grok: color(light: 0x6B7077, dark: 0xA9AEB4),
+        opencode: color(light: 0xB7700C, dark: 0xE9B04E),
+        antigravity: color(light: 0x2F6BDB, dark: 0x6FA3FF)
     )
 
-    private static func pair(light: UInt32, dark: UInt32) -> NSColor {
+    /// A color with one sRGB value for light mode and one for dark mode.
+    static func color(light: UInt32, dark: UInt32) -> NSColor {
         func color(_ hex: UInt32) -> NSColor {
             NSColor(
                 srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255,

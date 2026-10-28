@@ -128,7 +128,7 @@ final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableVie
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -16),
             emptyLabel.centerYAnchor.constraint(equalTo: content.centerYAnchor),
         ])
-        let glass = NSGlassEffectView()
+        let glass = FlatSurfaceView(style: .floating)
         glass.cornerRadius = 14
         glass.contentView = content
         panel.contentView = glass

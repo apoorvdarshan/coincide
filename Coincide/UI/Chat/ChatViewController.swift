@@ -74,6 +74,8 @@ final class ChatViewController: NSViewController {
     private var appliedFontSize = 0.0
     private var appliedReplyTypeface = ReplyTypeface.newYork
     private var rails: [TranscriptRowID: TranscriptRail] = [:]
+    private var composerAtBottom: NSLayoutConstraint!
+    private var composerCentered: NSLayoutConstraint!
     private var appliedShowReasoning = true
     private var previewURLs: [URL] = []
     private var previewIndex = 0
@@ -87,7 +89,7 @@ final class ChatViewController: NSViewController {
     // MARK: View
 
     override func loadView() {
-        let root = NSView()
+        let root = SolidBackgroundView(color: Theme.contentBackground)
         view = root
         list.host = self
         list.onPinnedChange = { [weak self] pinned in self?.setJumpButtonVisible(!pinned) }
@@ -105,7 +107,7 @@ final class ChatViewController: NSViewController {
 
         addChild(composer)
         welcomeView.onChooseAgent = { [weak self] kind in self?.switchAgent(to: kind) }
-        for subview in [list.scrollView, welcomeView, composerContainer, jumpButton, findBar, noThreadView] as [NSView] {
+        for subview in [list.scrollView, welcomeView, welcomeView.setupView, composerContainer, jumpButton, findBar, noThreadView] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(subview)
         }
@@ -114,6 +116,9 @@ final class ChatViewController: NSViewController {
         let composerView = composer.view
         composerView.translatesAutoresizingMaskIntoConstraints = false
         composerContainer.addSubview(composerView)
+        composerAtBottom = composerContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor)
+        // In an empty thread the composer waits a little below the middle, under the headline and agents.
+        composerCentered = composerContainer.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: 48)
         let collapsedComposer = composerContainer.heightAnchor.constraint(equalToConstant: 0)
         collapsedComposer.priority = .defaultLow
         NSLayoutConstraint.activate([
@@ -129,8 +134,14 @@ final class ChatViewController: NSViewController {
 
             composerContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             composerContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            composerContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            composerAtBottom,
             collapsedComposer,
+
+            welcomeView.setupView.topAnchor.constraint(equalTo: composerContainer.bottomAnchor, constant: 18),
+            welcomeView.setupView.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            welcomeView.setupView.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: 24),
+            welcomeView.setupView.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -24),
+            welcomeView.setupView.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -12),
             composerView.topAnchor.constraint(equalTo: composerContainer.topAnchor),
             composerView.leadingAnchor.constraint(equalTo: composerContainer.leadingAnchor),
             composerView.trailingAnchor.constraint(equalTo: composerContainer.trailingAnchor),
@@ -325,7 +336,24 @@ final class ChatViewController: NSViewController {
         list.scrollView.isHidden = false
         let isEmpty = thread.items.isEmpty && !runner.isRunning(threadID)
         welcomeView.isHidden = !isEmpty
+        welcomeView.setupView.isHidden = !isEmpty
+        placeComposer(centered: isEmpty)
         if isEmpty { welcomeView.update(thread: thread, project: store.project(thread.projectID), registry: registry) }
+    }
+
+    /// Moves the composer between the middle of an empty thread and the bottom of a conversation. Sending the first
+    /// message slides it down, unless the user asked for less motion.
+    private func placeComposer(centered: Bool) {
+        guard composerCentered.isActive != centered else { return }
+        let animates = view.window != nil && !centered && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        composerAtBottom.isActive = !centered
+        composerCentered.isActive = centered
+        guard animates else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.25
+            context.allowsImplicitAnimation = true
+            view.layoutSubtreeIfNeeded()
+        }
     }
 
     // MARK: Store changes

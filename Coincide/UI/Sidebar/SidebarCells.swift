@@ -253,7 +253,7 @@ final class ProjectCell: HoverCellView {
         if nameField.currentEditor() == nil { nameField.stringValue = project.name }
         let exists = FileManager.default.fileExists(atPath: project.path)
         icon.image = Theme.symbol(exists ? "folder" : "questionmark.folder", size: 14)
-        icon.contentTintColor = exists ? .controlAccentColor : .secondaryLabelColor
+        icon.contentTintColor = .secondaryLabelColor
         icon.setAccessibilityLabel(exists ? String(localized: "Folder") : String(localized: "Folder not found"))
         let path = Formatting.abbreviatedPath(project.path)
         toolTip = exists ? path : String(localized: "Folder not found: \(path)")
