@@ -103,19 +103,72 @@ public struct ModelSelection: Codable, Hashable, Sendable {
     }
 }
 
+/// A command the user runs often in a project, such as starting the dev server or the tests (T3 Code's project
+/// scripts). It runs in a terminal of the thread, in its worktree or the project folder.
+public struct ProjectScript: Codable, Hashable, Sendable, Identifiable {
+    public enum Icon: String, Codable, Sendable, CaseIterable {
+        case play, test, lint, configure, build, debug
+    }
+
+    public var id: UUID
+    public var name: String
+    public var command: String
+    public var icon: Icon
+    /// Runs on its own in a new worktree as soon as a thread gets one, to install dependencies or copy settings.
+    public var runOnWorktreeCreate: Bool
+
+    public nonisolated init(
+        id: UUID = UUID(), name: String, command: String, icon: Icon = .play, runOnWorktreeCreate: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.command = command
+        self.icon = icon
+        self.runOnWorktreeCreate = runOnWorktreeCreate
+    }
+
+    public nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = container.lenient(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decode(String.self, forKey: .name)
+        command = try container.decode(String.self, forKey: .command)
+        icon = container.lenient(Icon.self, forKey: .icon) ?? .play
+        runOnWorktreeCreate = container.lenient(Bool.self, forKey: .runOnWorktreeCreate) ?? false
+    }
+
+    /// The scripts of a T3 Code `t3.json` file, so a project set up for T3 Code brings its scripts along.
+    public nonisolated static func scripts(fromT3File data: Data) -> [ProjectScript] {
+        guard let json = JSONValue.parse(String(decoding: data, as: UTF8.self)) else { return [] }
+        return (json["scripts"]?.array ?? []).compactMap { entry in
+            guard let name = entry["name"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty,
+                let command = entry["command"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !command.isEmpty
+            else { return nil }
+            return ProjectScript(
+                name: name, command: command, icon: entry["icon"]?.string.flatMap(Icon.init(rawValue:)) ?? .play,
+                runOnWorktreeCreate: entry["runOnWorktreeCreate"]?.bool ?? false)
+        }
+    }
+}
+
 public struct Project: Codable, Hashable, Sendable, Identifiable {
     public var id: UUID
     public var name: String
     public var path: String
     public var createdAt: Date
     public var isExpanded: Bool
+    /// The project's scripts, in the order the menu lists them.
+    public var scripts: [ProjectScript]
 
-    public nonisolated init(id: UUID = UUID(), name: String, path: String, createdAt: Date = Date(), isExpanded: Bool = true) {
+    public nonisolated init(
+        id: UUID = UUID(), name: String, path: String, createdAt: Date = Date(), isExpanded: Bool = true,
+        scripts: [ProjectScript] = []
+    ) {
         self.id = id
         self.name = name
         self.path = path
         self.createdAt = createdAt
         self.isExpanded = isExpanded
+        self.scripts = scripts
     }
 
     public nonisolated var url: URL { URL(fileURLWithPath: path) }
@@ -127,6 +180,7 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
         name = container.lenient(String.self, forKey: .name) ?? (path as NSString).lastPathComponent
         createdAt = container.lenient(Date.self, forKey: .createdAt) ?? .distantPast
         isExpanded = container.lenient(Bool.self, forKey: .isExpanded) ?? true
+        scripts = container.lenientArray(ProjectScript.self, forKey: .scripts)
     }
 }
 

@@ -129,6 +129,14 @@ struct TerminalLaunchTests {
         }
     }
 
+    @Test func aScriptsOwnVariablesSurviveWhileInheritedOnesAreDropped() {
+        let entries = TerminalLaunch.environment(
+            from: ["COINCIDE_DATA_DIR": "/tmp/data", "PATH": "/bin"], directory: URL(fileURLWithPath: "/"),
+            extra: ["COINCIDE_PROJECT_ROOT": "/work"])
+        #expect(entries.contains("COINCIDE_PROJECT_ROOT=/work"))
+        #expect(!entries.contains { $0.hasPrefix("COINCIDE_DATA_DIR=") })
+    }
+
     @Test func aUTF8LocaleIsSetWhenNoneIsInherited() {
         let entries = TerminalLaunch.environment(from: ["PATH": "/bin"], directory: URL(fileURLWithPath: "/"))
         let language = entries.first { $0.hasPrefix("LANG=") }
