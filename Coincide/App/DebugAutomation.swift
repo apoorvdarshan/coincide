@@ -148,6 +148,11 @@ enum DebugAutomation {
             case "snapshot":
                 guard let content = mainWindow?.window?.contentView, let file = value.string else { continue }
                 draw(content, to: URL(fileURLWithPath: file))
+            case "zoom":
+                guard let window = mainWindow?.window else { continue }
+                window.zoom(nil)
+                try? await Task.sleep(for: .milliseconds(600))
+                log("zoomed=\(window.isZoomed) frame=\(NSStringFromRect(window.frame)) visible=\(NSStringFromRect(window.screen?.visibleFrame ?? .zero))")
             case "sleep":
                 try? await Task.sleep(for: .seconds(value.number ?? 1))
             case "log":

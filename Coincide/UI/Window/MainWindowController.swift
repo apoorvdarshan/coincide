@@ -375,6 +375,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: NSWindowDelegate
 
+    /// Zoom (the green button with Option, Window › Zoom, or double-clicking the title bar) fills the screen's visible
+    /// area. Without this AppKit picks a width of its own and only the height fills.
+    func windowWillUseStandardFrame(_ window: NSWindow, defaultFrame newFrame: NSRect) -> NSRect {
+        newFrame
+    }
+
     func windowDidMove(_ notification: Notification) {
         saveFrame()
     }

@@ -196,7 +196,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         column.translatesAutoresizingMaskIntoConstraints = false
         rootView.addSubview(column)
         let fullWidth = column.widthAnchor.constraint(equalTo: rootView.widthAnchor, constant: -2 * Theme.horizontalPadding)
-        fullWidth.priority = .defaultHigh
+        // Below the window's own size priority: otherwise the column's 820-point cap also caps how wide the window can
+        // get (zoom and resizing stopped at the sidebar plus 868 points).
+        fullWidth.priority = NSLayoutConstraint.Priority(NSLayoutConstraint.Priority.windowSizeStayPut.rawValue - 1)
         NSLayoutConstraint.activate([
             column.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 8),
             column.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -12),
