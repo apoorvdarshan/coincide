@@ -8,6 +8,9 @@ struct GrokFlavor: ACPAgentFlavor {
     /// Only this allow-always choice is scoped to the session; the others persist project grants.
     nonisolated static let sessionEditsOptionID = "allow-edits-session"
 
+    /// Reads the plan's allowance; tests replace it so they never read real credentials or reach xAI.
+    var usage = GrokUsageLimits.Reader.live
+
     var provider: ProviderKind { .grok }
 
     /// Explicit flags override Grok's config, so ask-for-approval threads cannot inherit always-approve.
@@ -207,6 +210,11 @@ struct GrokFlavor: ACPAgentFlavor {
 
     func offlineModels(environment: [String: String]) -> [ModelOption] {
         GrokCLI.modelOptions(listed: [], cache: GrokCLI.cachedModels(environment))
+    }
+
+    /// The grok.com subscription's allowance from xAI's billing endpoint (see `GrokUsageLimits`).
+    func usageLimits(environment: [String: String]) async -> UsageLimitsOutcome? {
+        await usage.read(environment: environment)
     }
 }
 

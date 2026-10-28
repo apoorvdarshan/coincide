@@ -6,7 +6,7 @@ import Testing
 @MainActor
 struct ACPSessionTests {
     private func makeSession(
-        _ agent: ACPFakeAgent, flavor: ACPAgentFlavor = GrokFlavor(), launch: AgentLaunch = acpLaunch()
+        _ agent: ACPFakeAgent, flavor: ACPAgentFlavor = GrokFlavor(usage: .offline), launch: AgentLaunch = acpLaunch()
     ) -> (ACPSession, ACPEventLog) {
         let session = ACPSession(launch: launch, flavor: flavor, transport: agent.factory)
         let log = ACPEventLog()

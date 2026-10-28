@@ -253,13 +253,20 @@ func acpInstructed(_ text: String, _ mode: InteractionMode = .build) -> String {
 }
 
 /// An Antigravity flavor whose data folder (private profile and downloaded runtime) and home folder are
-/// fresh temporary folders, so tests never touch the real `~/Library/Application Support/Coincide`.
+/// fresh temporary folders, so tests never touch the real `~/Library/Application Support/Coincide`. Its quota checks
+/// fail the test if they reach for the network unless `usage` answers them.
 @MainActor
-func acpAntigravityFlavor(runtime: AntigravityRuntime? = nil) throws -> AntigravityFlavor {
+func acpAntigravityFlavor(runtime: AntigravityRuntime? = nil, usage: AntigravityUsageProbe? = nil) throws -> AntigravityFlavor {
     let data = try acpTemporaryDirectory()
     let paths = runtime?.paths ?? AntigravityPaths(dataDirectory: data)
     let profile = AntigravityProfile(geminiHome: paths.profileDirectory, userHome: data.appendingPathComponent("home", isDirectory: true))
-    return AntigravityFlavor(paths: paths, profile: profile, runtime: runtime)
+    return AntigravityFlavor(
+        paths: paths, profile: profile, runtime: runtime, usage: usage ?? AntigravityUsageProbe(fetch: UsageFetchStub.unused().fetch))
+}
+
+extension GrokUsageLimits.Reader {
+    /// Finds no credentials and fails the test if it reaches for the network.
+    static var offline: Self { Self(readFile: { _ in nil }, fetch: UsageFetchStub.unused().fetch) }
 }
 
 func acpTemporaryDirectory() throws -> URL {

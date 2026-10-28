@@ -286,6 +286,8 @@ public final class AntigravitySignIn {
         }
         models = []
         AntigravityFlavor.knownModels[profile.geminiHome.path] = nil
+        // The quota checks' access token belongs to the account that just signed out.
+        AntigravityUsageProbe.shared.clear()
         phase = .idle
         message = String(localized: "Signed out of Google.")
     }

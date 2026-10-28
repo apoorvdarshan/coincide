@@ -169,12 +169,24 @@ struct UsageLimitsOutcomeTests {
 
 /// Answers usage requests in tests and records them, so nothing reaches the network.
 final class UsageFetchStub: @unchecked Sendable {
+    typealias Answer = @Sendable (URLRequest) throws -> (status: Int, body: String)
+
     private let lock = NSLock()
     private var recorded: [URLRequest] = []
-    private let answer: @Sendable (URLRequest) throws -> (status: Int, body: String)
+    private var answer: Answer
 
-    init(_ answer: @escaping @Sendable (URLRequest) throws -> (status: Int, body: String)) {
+    init(_ answer: @escaping Answer) {
         self.answer = answer
+    }
+
+    /// Answers every later request with `answer`.
+    func answer(with answer: @escaping Answer) {
+        lock.withLock { self.answer = answer }
+    }
+
+    /// A 200 (or `status`) answer with `value` as its body.
+    static func json(_ value: JSONValue, status: Int = 200) -> (status: Int, body: String) {
+        (status, value.compactJSON)
     }
 
     /// A stub that fails the test when anything is requested.
@@ -187,6 +199,10 @@ final class UsageFetchStub: @unchecked Sendable {
 
     var requests: [URLRequest] { lock.withLock { recorded } }
 
+    func requests(endingWith suffix: String) -> [URLRequest] {
+        requests.filter { $0.url?.absoluteString.hasSuffix(suffix) == true }
+    }
+
     /// The bearer tokens of the requests, in order.
     var tokens: [String] {
         requests.map { ($0.value(forHTTPHeaderField: "Authorization") ?? "").replacing("Bearer ", with: "") }
@@ -194,8 +210,11 @@ final class UsageFetchStub: @unchecked Sendable {
 
     var fetch: UsageLimitsFetch {
         { request in
-            self.lock.withLock { self.recorded.append(request) }
-            let (status, body) = try self.answer(request)
+            let answer = self.lock.withLock {
+                self.recorded.append(request)
+                return self.answer
+            }
+            let (status, body) = try answer(request)
             let response = HTTPURLResponse(
                 url: request.url ?? URL(fileURLWithPath: "/"), statusCode: status, httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"])!
