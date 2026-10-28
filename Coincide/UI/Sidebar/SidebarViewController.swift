@@ -15,6 +15,11 @@ final class SidebarViewController: NSViewController {
     private let store = AppStore.shared
     private var nodes = SidebarNodeCache()
     private var header: SidebarNode { nodes.header }
+    private var sections: [SidebarNode] = []
+    /// Real projects live under Projects; project-free conversations live directly under Chats.
+    private var threadContainers: [SidebarNode] {
+        header.children + sections.filter { $0.kind != .header }
+    }
     private var token: ObservationToken?
 
     private lazy var topRows = SidebarHeaderView { AppEvents.newThread() }
@@ -63,7 +68,7 @@ final class SidebarViewController: NSViewController {
         selectedThreadID = threadID
         guard hasLoaded else { return }
         if let threadID, let thread = store.summary(threadID), !isSearching,
-            store.project(thread.projectID)?.isExpanded == false
+            let project = store.project(thread.projectID), !project.isChats, !project.isExpanded
         {
             store.updateProject(thread.projectID) { $0.isExpanded = true }
         }
@@ -82,7 +87,7 @@ final class SidebarViewController: NSViewController {
 
     /// Threads in the order the sidebar shows them, for Previous/Next Thread and Command-1…9.
     var visibleThreadIDs: [UUID] {
-        header.children.filter { outlineView.isItemExpanded($0) }.flatMap { $0.children.compactMap(\.threadID) }
+        threadContainers.filter { outlineView.isItemExpanded($0) }.flatMap { $0.children.compactMap(\.threadID) }
     }
 
     /// Starts inline rename, first clearing a search or expanding a project that hides the row.
@@ -92,7 +97,7 @@ final class SidebarViewController: NSViewController {
             searchField.stringValue = ""
             searchChanged()
         }
-        if store.project(thread.projectID)?.isExpanded == false {
+        if let project = store.project(thread.projectID), !project.isChats, !project.isExpanded {
             store.updateProject(thread.projectID) { $0.isExpanded = true }
         }
         guard let node = nodes.existing(.thread(threadID)) else { return }
@@ -234,10 +239,12 @@ final class SidebarViewController: NSViewController {
     /// Recomputes the tree from the store and applies the difference to the outline.
     private func rebuild() {
         guard hasLoaded else { return }
+        let oldSections = sections
         let oldProjects = header.children
-        let oldChildren = Dictionary(uniqueKeysWithValues: oldProjects.map { (ObjectIdentifier($0), $0.children) })
+        let oldChildren = Dictionary(uniqueKeysWithValues: threadContainers.map { (ObjectIdentifier($0), $0.children) })
         openThreadPastCut = nil
         var projectNodes: [SidebarNode] = []
+        var chatsNode: SidebarNode?
         var allThreadIDs = Set<UUID>()
         let now = Date()
         for project in store.projects {
@@ -260,17 +267,19 @@ final class SidebarViewController: NSViewController {
                     if threads.isEmpty { continue }
                 }
             }
-            let node = nodes.node(.project(project.id))
+            let node = nodes.node(project.isChats ? .chats(project.id) : .project(project.id))
             node.children = children(for: project, threads: threads)
-            projectNodes.append(node)
+            if project.isChats { chatsNode = node } else { projectNodes.append(node) }
         }
         header.children = projectNodes
+        sections = (!isSearching || !projectNodes.isEmpty) ? [header] : []
+        if let chatsNode { sections.append(chatsNode) }
         handOffSelectionIfNeeded(oldChildren: oldChildren)
 
-        if !outlineView.hasRows || oldProjects != projectNodes {
+        if !outlineView.hasRows || oldProjects != projectNodes || oldSections != sections {
             outlineView.reloadData()
         } else {
-            for node in projectNodes {
+            for node in threadContainers {
                 let old = oldChildren[ObjectIdentifier(node)] ?? []
                 guard old != node.children else { continue }
                 apply(from: old, to: node)
@@ -358,13 +367,13 @@ final class SidebarViewController: NSViewController {
     }
 
     private func isListed(_ node: SidebarNode) -> Bool {
-        header.children.contains { $0.children.contains(node) }
+        threadContainers.contains { $0.children.contains(node) }
     }
 
     private func syncExpansion() {
         isSyncingExpansion = true
         defer { isSyncingExpansion = false }
-        if !outlineView.isItemExpanded(header) { outlineView.expandItem(header) }
+        for section in sections where !outlineView.isItemExpanded(section) { outlineView.expandItem(section) }
         for node in header.children {
             guard let id = node.projectID else { continue }
             let expand = isSearching || (store.project(id)?.isExpanded ?? true)
@@ -392,13 +401,11 @@ final class SidebarViewController: NSViewController {
     }
 
     private func updateEmptyState() {
-        // Before the first project and chat, the sidebar invites adding a project rather than listing an empty Chats.
-        let hasChats = store.chatsProject.map { !store.threads(in: $0.id).isEmpty } ?? false
-        if !store.projects.contains(where: { !$0.isChats }), !hasChats {
+        if store.projects.isEmpty {
             emptyView.showNoProjects()
             emptyView.isHidden = false
             scrollView.isHidden = true
-        } else if isSearching && header.children.isEmpty {
+        } else if isSearching && sections.isEmpty {
             emptyView.showNoResults(for: query)
             emptyView.isHidden = false
             scrollView.isHidden = false
@@ -482,7 +489,7 @@ final class SidebarViewController: NSViewController {
 
     /// Updates project rows (their collapsed status) and "Show more" rows (their hidden status).
     private func refreshProjectRows(only projectID: UUID? = nil) {
-        for node in header.children {
+        for node in threadContainers {
             guard let id = node.projectID, projectID == nil || id == projectID else { continue }
             let row = outlineView.row(forItem: node)
             if row >= 0, let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ProjectCell,
@@ -626,7 +633,7 @@ final class SidebarViewController: NSViewController {
             showAllThreads(true, in: id)
         case .showLess(let id):
             showAllThreads(false, in: id)
-        case .header, .thread, .empty:
+        case .header, .chats, .thread, .empty:
             break
         }
     }
@@ -639,6 +646,10 @@ final class SidebarViewController: NSViewController {
 
     @objc private func addProject() {
         ThreadActions.addProject(in: view.window)
+    }
+
+    @objc private func newChat() {
+        ThreadActions.newChat()
     }
 
     @objc private func showOptions(_ sender: NSButton) {
@@ -688,13 +699,13 @@ final class SidebarViewController: NSViewController {
     }
 
     @objc private func expandAll() {
-        for project in store.projects where !project.isExpanded {
+        for project in store.projects where !project.isChats && !project.isExpanded {
             store.updateProject(project.id) { $0.isExpanded = true }
         }
     }
 
     @objc private func collapseAll() {
-        for project in store.projects where project.isExpanded {
+        for project in store.projects where !project.isChats && project.isExpanded {
             store.updateProject(project.id) { $0.isExpanded = false }
         }
     }
@@ -756,33 +767,33 @@ final class SidebarViewController: NSViewController {
 
 extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate {
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        guard let node = item as? SidebarNode else { return store.projects.isEmpty ? 0 : 1 }
+        guard let node = item as? SidebarNode else { return sections.count }
         return node.children.count
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        guard let node = item as? SidebarNode else { return header }
+        guard let node = item as? SidebarNode else { return sections[index] }
         return node.children[index]
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         guard let node = item as? SidebarNode else { return false }
         switch node.kind {
-        case .header, .project: return true
+        case .header, .chats, .project: return true
         default: return false
         }
     }
 
     func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
-        (item as? SidebarNode)?.kind == .header
+        (item as? SidebarNode)?.isSection == true
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool {
-        (item as? SidebarNode)?.kind != .header
+        (item as? SidebarNode)?.isSection != true
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldCollapseItem item: Any) -> Bool {
-        (item as? SidebarNode)?.kind != .header
+        (item as? SidebarNode)?.isSection != true
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
@@ -792,7 +803,7 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
         guard let node = item as? SidebarNode else { return 28 }
         switch node.kind {
-        case .header: return 26
+        case .header, .chats: return 26
         case .project, .thread: return 28
         case .showMore, .showLess, .empty: return 24
         }
@@ -811,7 +822,16 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
         switch node.kind {
         case .header:
             return reuse("header") {
-                SidebarHeaderCell(target: self, addAction: #selector(addProject), optionsAction: #selector(showOptions(_:)))
+                SidebarHeaderCell(
+                    title: String(localized: "Projects"), target: self, addAction: #selector(addProject),
+                    addSymbol: "folder.badge.plus", addLabel: String(localized: "Add Project…"),
+                    optionsAction: #selector(showOptions(_:)))
+            }
+        case .chats:
+            return reuse("chatsHeader") {
+                SidebarHeaderCell(
+                    title: String(localized: "Chats"), target: self, addAction: #selector(newChat),
+                    addSymbol: "square.and.pencil", addLabel: String(localized: "New Chat"))
             }
         case .project(let id):
             let cell = reuse("project") { ProjectCell(frame: .zero) }
@@ -953,7 +973,7 @@ extension SidebarViewController: NSMenuDelegate {
         switch node?.kind {
         case .thread(let id):
             buildThreadMenu(menu, id)
-        case .project(let id), .showMore(let id), .showLess(let id), .empty(let id):
+        case .chats(let id), .project(let id), .showMore(let id), .showLess(let id), .empty(let id):
             buildProjectMenu(menu, id)
         case .header, nil:
             menu.addItem(item(String(localized: "Add Project…"), #selector(addProject)))
