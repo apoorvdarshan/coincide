@@ -7,6 +7,8 @@ final class SidebarNode: NSObject {
     enum Kind: Hashable {
         /// The "Projects" section header.
         case header
+        /// The "Chats" section header, backed by the existing project-free chat store.
+        case chats(UUID)
         case project(UUID)
         case thread(UUID)
         /// "Show N more" under a project whose list is cut short.
@@ -32,12 +34,19 @@ final class SidebarNode: NSObject {
 
     var projectID: UUID? {
         switch kind {
-        case .project(let id), .showMore(let id), .showLess(let id), .empty(let id): id
+        case .chats(let id), .project(let id), .showMore(let id), .showLess(let id), .empty(let id): id
         case .header, .thread: nil
         }
     }
 
     var isSelectable: Bool { threadID != nil }
+
+    var isSection: Bool {
+        switch kind {
+        case .header, .chats: true
+        default: false
+        }
+    }
 }
 
 /// Hands out one node per kind, so identity survives rebuilding the tree.
@@ -60,7 +69,7 @@ struct SidebarNodeCache {
             switch kind {
             case .header: true
             case .thread(let id): threadIDs.contains(id)
-            case .project(let id), .showMore(let id), .showLess(let id), .empty(let id): projectIDs.contains(id)
+            case .chats(let id), .project(let id), .showMore(let id), .showLess(let id), .empty(let id): projectIDs.contains(id)
             }
         }
     }
