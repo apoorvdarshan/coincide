@@ -3,10 +3,10 @@ import CoincideKit
 import QuickLookUI
 
 /// The message composer under the transcript, ported from T3 Code's ChatComposer: an auto-growing editor
-/// with `@` file mentions, `/` commands and image attachments; the unified agent and model picker,
-/// reasoning effort, access mode and Build/Plan controls; the usage and context meters, send and stop; and
-/// banners for pending approvals and questions, plan follow-ups, agent switches, usage limits and queued
-/// messages. Drafts persist per thread.
+/// with `@` file mentions, `/` commands, `$` skills, `#` pull requests and image attachments; the unified
+/// agent and model picker, reasoning effort, access mode and Build/Plan controls; the usage and context
+/// meters, send and stop; and banners for pending approvals and questions, plan follow-ups, agent switches,
+/// usage limits and queued messages. Drafts persist per thread.
 ///
 /// While a turn runs, send steers it (the agent takes the message in as it works) or queues the message for
 /// after the turn, as the follow-up behavior setting says; the alternate send (⌘↩, or ⇧⌘↩ when ⌘↩ sends, or
@@ -55,6 +55,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     /// A trigger dismissed with Escape stays hidden until the caret leaves its word.
     private var dismissedTrigger: ComposerTrigger?
     private var suggestionSearch: Task<Void, Never>?
+    /// Pull requests picked from the `#` list, by thread and number. A message that still mentions one sends the agent
+    /// its details; they are kept after sending, so a message edited or queued again keeps them too.
+    private var pullRequestMentions: [UUID: [Int: PullRequestSummary]] = [:]
     /// Approvals and questions the agent is waiting on, refreshed when one of them changes.
     private var pendingRequestIDs: Set<UUID> = []
     private var hasPendingApproval = false
@@ -103,6 +106,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         AccessDowngrades.shared.start()
         NotificationCenter.default.addObserver(
             self, selector: #selector(focusRequested), name: .coincideFocusComposer, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(mentionPullRequest(_:)), name: .coincideMentionPullRequest, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationWillTerminate), name: NSApplication.willTerminateNotification, object: nil)
         // Folders are moved and deleted in other apps.
@@ -322,6 +327,19 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     @objc private func focusRequested() {
+        focus()
+    }
+
+    /// Writes `#123` at the caret for a pull request chosen in the pull requests panel (after a space when it would
+    /// otherwise join the word before), so the agent gets the pull request's details as from the `#` list.
+    @objc private func mentionPullRequest(_ notification: Notification) {
+        guard let threadID, let pullRequest = notification.userInfo?["pullRequest"] as? PullRequestSummary else { return }
+        pullRequestMentions[threadID, default: [:]][pullRequest.number] = pullRequest
+        let text = textView.string as NSString
+        var range = textView.selectedRange()
+        if range.location > text.length { range = NSRange(location: text.length, length: 0) }
+        let before = range.location > 0 && !ComposerTrigger.isWhitespace(text.character(at: range.location - 1))
+        textView.insertText((before ? " " : "") + "#\(pullRequest.number) ", replacementRange: range)
         focus()
     }
 
@@ -1037,6 +1055,44 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
                     entries.map { .file($0) }, emptyText: String(localized: "No matching files or folders."),
                     listLabel: label, above: surface)
             }
+        case .pullRequest:
+            loadPullRequestSuggestions(trigger.query)
+        }
+    }
+
+    /// The repository's open pull requests matching `query`: the last list at once, then a fresh one when it is
+    /// older than a minute. Outside a GitHub repository, or without `gh`, `#` is just text and nothing shows.
+    private func loadPullRequestSuggestions(_ query: String) {
+        guard let cwd = threadID.flatMap({ store.workingDirectory(for: $0) }) else {
+            suggestions.hide()
+            return
+        }
+        let service = PullRequestService.shared
+        let label = String(localized: "Pull requests")
+        if let cached = service.cachedPullRequests(.open, in: cwd) { showPullRequests(cached, matching: query, label: label) }
+        suggestionSearch = Task { [weak self] in
+            let ready = await service.availability(cwd) == .ready
+            guard let self, !Task.isCancelled, self.trigger?.kind == .pullRequest, self.trigger?.query == query else { return }
+            guard ready else {
+                suggestions.hide()
+                return
+            }
+            if service.cachedPullRequests(.open, in: cwd) == nil, !suggestions.isVisible {
+                suggestions.show([], emptyText: String(localized: "Loading pull requests…"), listLabel: label, above: surface)
+            }
+            let list = (try? await service.pullRequests(.open, in: cwd, maxAge: 60)) ?? []
+            guard !Task.isCancelled, self.trigger?.kind == .pullRequest, self.trigger?.query == query else { return }
+            showPullRequests(list, matching: query, label: label)
+        }
+    }
+
+    /// Like `/` and `$`, the list closes when nothing matches, since `#` also starts headings and hashtags.
+    private func showPullRequests(_ pullRequests: [PullRequestSummary], matching query: String, label: String) {
+        let items = PullRequestMention.matching(query, in: pullRequests).map { ComposerSuggestion.pullRequest($0) }
+        if items.isEmpty {
+            suggestions.hide()
+        } else {
+            suggestions.show(items, emptyText: nil, listLabel: label, above: surface)
         }
     }
 
@@ -1057,7 +1113,17 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             perform(command)
         case .agentCommand(let command, _, let token):
             replace(trigger.range, with: token + command.name + " ")
+        case .pullRequest(let pullRequest):
+            replace(trigger.range, with: "#\(pullRequest.number) ")
+            if let threadID { pullRequestMentions[threadID, default: [:]][pullRequest.number] = pullRequest }
         }
+    }
+
+    /// What the agent is told about the pull requests the message mentions that were picked from the `#` list, as
+    /// T3 Code sends a pull request reference along with the message.
+    private func pullRequestContext(for text: String) -> String? {
+        guard let threadID, let picked = pullRequestMentions[threadID] else { return nil }
+        return PullRequestMention.context(for: PullRequestMention.numbers(in: text).compactMap { picked[$0] })
     }
 
     /// The selected agent's own commands (or with `skillsOnly`, its skills) matching `query`, as completions written
@@ -1244,18 +1310,19 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             behavior: followUpBehavior)
         declinePendingRequests(threadID)
         let imagePaths = attachments.map(\.path)
+        let context = pullRequestContext(for: text)
         clearComposer()
         switch dispatch {
         case .steer:
             Task {
-                let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths)
+                let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths, context: context)
                 announce(delivery)
             }
         case .send, .queue:
             Task {
                 // `send` queues the message while a turn runs.
                 let queues = runner.isRunning(threadID)
-                await runner.send(threadID: threadID, text: text, imagePaths: imagePaths)
+                await runner.send(threadID: threadID, text: text, imagePaths: imagePaths, context: context)
                 if queues { announce(.queued) }
             }
         }

@@ -1,12 +1,14 @@
 import AppKit
 import CoincideKit
 
-/// Thread list | chat over a collapsible terminal | diff inspector, right of the navigation rail
-/// (`MainRootViewController`). Panel sizes and visibility are remembered in `UIState`.
+/// Thread list | chat over a collapsible terminal | inspector (the diff or the pull requests), right of the navigation
+/// rail (`MainRootViewController`). Panel sizes and visibility are remembered in `UIState`.
 final class MainSplitViewController: NSSplitViewController {
     let sidebar = SidebarViewController()
     let content = ChatTerminalSplitViewController()
     let diff = DiffViewController()
+    let pullRequests = PullRequestsViewController()
+    private(set) lazy var inspector = InspectorViewController(diff: diff, pullRequests: pullRequests)
 
     private var sidebarItem: NSSplitViewItem!
     private var inspectorItem: NSSplitViewItem!
@@ -16,7 +18,8 @@ final class MainSplitViewController: NSSplitViewController {
     private var hasRestoredLayout = false
 
     var isSidebarOpen: Bool { !sidebarItem.isCollapsed }
-    var isDiffOpen: Bool { !inspectorItem.isCollapsed }
+    var isDiffOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .diff }
+    var isPullRequestsOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .pullRequests }
     /// Called after the sidebar, terminal or diff opens or closes, so the toolbar and menus can follow.
     var onPanelsChanged: (() -> Void)?
 
@@ -34,7 +37,7 @@ final class MainSplitViewController: NSSplitViewController {
         let contentItem = NSSplitViewItem(viewController: content)
         contentItem.minimumThickness = 420
 
-        inspectorItem = NSSplitViewItem(inspectorWithViewController: diff)
+        inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
         inspectorItem.minimumThickness = 320
         inspectorItem.maximumThickness = 1100
         inspectorItem.canCollapse = true
@@ -82,23 +85,42 @@ final class MainSplitViewController: NSSplitViewController {
         sidebarItem.animator().isCollapsed.toggle()
     }
 
-    /// Opens the inspector if it is closed.
+    /// Opens the inspector on the diff.
     func showDiffPanel() {
-        if inspectorItem.isCollapsed { toggleDiffPanel() }
+        showInspector(.diff)
     }
 
     func toggleDiffPanel() {
-        if inspectorItem.isCollapsed {
-            if hasSizedInspector {
-                inspectorItem.animator().isCollapsed = false
-            } else {
-                // The first opening has no earlier width to return to; give it the saved one.
-                inspectorItem.isCollapsed = false
-                sizeInspector()
-            }
-        } else {
+        toggleInspector(.diff)
+    }
+
+    func togglePullRequestsPanel() {
+        toggleInspector(.pullRequests)
+    }
+
+    /// Closes the inspector when it shows `panel`, otherwise shows `panel` in it, opening it if it is closed: the
+    /// rail's diff and pull request buttons work like tabs of one column.
+    private func toggleInspector(_ panel: UIState.InspectorPanel) {
+        if !inspectorItem.isCollapsed, inspector.panel == panel {
             saveLayout()
             inspectorItem.animator().isCollapsed = true
+        } else {
+            showInspector(panel)
+        }
+    }
+
+    private func showInspector(_ panel: UIState.InspectorPanel) {
+        if inspector.panel != panel {
+            inspector.show(panel)
+            onPanelsChanged?()
+        }
+        guard inspectorItem.isCollapsed else { return }
+        if hasSizedInspector {
+            inspectorItem.animator().isCollapsed = false
+        } else {
+            // The first opening has no earlier width to return to; give it the saved one.
+            inspectorItem.isCollapsed = false
+            sizeInspector()
         }
     }
 
@@ -111,7 +133,7 @@ final class MainSplitViewController: NSSplitViewController {
     /// Remembers the open panels' sizes. Called before a panel closes and when the window closes.
     func saveLayout() {
         let sidebarWidth = sidebarItem.isCollapsed ? nil : Double(sidebar.view.frame.width)
-        let inspectorWidth = inspectorItem.isCollapsed ? nil : Double(diff.view.frame.width)
+        let inspectorWidth = inspectorItem.isCollapsed ? nil : Double(inspector.view.frame.width)
         UIState.shared.update { state in
             if let sidebarWidth { state.listWidth = sidebarWidth }
             if let inspectorWidth { state.inspectorWidth = inspectorWidth }
@@ -122,6 +144,32 @@ final class MainSplitViewController: NSSplitViewController {
     func setThreadID(_ threadID: UUID?) {
         content.setThreadID(threadID)
         diff.threadID = threadID
+        pullRequests.threadID = threadID
+    }
+}
+
+/// The inspector column: the diff or the pull requests, one at a time, as T3 Code's right panel switches between
+/// them. It has no tabs of its own; the rail's buttons choose. A panel not showing is out of the window, so it loads
+/// nothing until it shows again.
+final class InspectorViewController: NSTabViewController {
+    init(diff: DiffViewController, pullRequests: PullRequestsViewController) {
+        super.init(nibName: nil, bundle: nil)
+        tabStyle = .unspecified
+        transitionOptions = []
+        canPropagateSelectedChildViewControllerTitle = false
+        addTabViewItem(NSTabViewItem(viewController: diff))
+        addTabViewItem(NSTabViewItem(viewController: pullRequests))
+        selectedTabViewItemIndex = UIState.shared.values.inspectorPanel == .pullRequests ? 1 : 0
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    var panel: UIState.InspectorPanel { selectedTabViewItemIndex == 1 ? .pullRequests : .diff }
+
+    func show(_ panel: UIState.InspectorPanel) {
+        selectedTabViewItemIndex = panel == .pullRequests ? 1 : 0
+        UIState.shared.update { $0.inspectorPanel = panel }
     }
 }
 

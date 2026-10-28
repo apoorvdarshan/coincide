@@ -683,6 +683,41 @@ struct ThreadRunnerTests {
         #expect(await runner.steerQueued(threadID: threadID, id: UUID()) == nil)
     }
 
+    // MARK: Context sent with a message
+
+    /// The pull requests a message mentions reach the agent after the message, as in T3 Code, but the transcript
+    /// keeps what the user wrote.
+    @Test func contextReachesTheAgentButStaysOutOfTheTranscript() async {
+        claude.configure = { session in session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) } }
+        await runner.send(threadID: threadID, text: "  Review #12  ", context: "<pull_request number=\"12\"/>")
+        #expect(claude.last?.sent.last?.message == "Review #12\n\n<pull_request number=\"12\"/>")
+        #expect(items.first { $0.kind == .user }?.text == "Review #12")
+        await runner.send(threadID: threadID, text: "plain", context: "")
+        #expect(claude.last?.sent.last?.message == "plain")
+    }
+
+    @Test func aQueuedMessageKeepsItsContext() async {
+        let session = await startRunningTurn(steering: false)
+        await runner.send(threadID: threadID, text: "two #3", context: "about 3")
+        #expect(runner.queuedMessages(threadID).map(\.context) == ["about 3"])
+        session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) }
+        session.emit(.turnCompleted(.completed))
+        #expect(await eventually { session.sent.count == 2 })
+        #expect(session.sent.last?.message == "two #3\n\nabout 3")
+        #expect(items.last { $0.kind == .user }?.text == "two #3")
+    }
+
+    @Test func aSteeredMessageKeepsItsContext() async {
+        let session = await startRunningTurn()
+        #expect(await runner.steer(threadID: threadID, text: "also #3", context: "about 3") == .steered)
+        #expect(session.steered.last?.message == "also #3\n\nabout 3")
+        #expect(items.last?.text == "also #3")
+        // A message the turn refuses waits in the queue with its context.
+        session.onSteer = { _, _ in throw AgentError.providerError("not now") }
+        #expect(await runner.steer(threadID: threadID, text: "later", context: "ctx") == .queued)
+        #expect(runner.queuedMessages(threadID).last?.context == "ctx")
+    }
+
     @Test func aQueuedMessageSentWhileIdleStartsATurn() async {
         let session = await startRunningTurn(steering: false)
         runner.enqueue(threadID: threadID, text: "later")

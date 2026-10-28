@@ -1,8 +1,8 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// The completion list for `@` mentions, `/` commands and `$` skills. It floats above the composer in a borderless
-/// child window, so the text view keeps keyboard focus while the composer moves the selection.
+/// The completion list for `@` mentions, `/` commands, `$` skills and `#` pull requests. It floats above the composer
+/// in a borderless child window, so the text view keeps keyboard focus while the composer moves the selection.
 final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     var onChoose: ((ComposerSuggestion) -> Void)?
 
@@ -170,6 +170,11 @@ final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableVie
             cell.show(
                 icon: Theme.logo(for: provider, size: 14), title: token + command.name + hint,
                 detail: command.description ?? "", tint: nil)
+        case .pullRequest(let pullRequest):
+            let glyph = PullRequestGlyph.state(pullRequest.state, isDraft: pullRequest.isDraft)
+            cell.show(
+                icon: glyph.image(), title: "#\(pullRequest.number) \(pullRequest.title)",
+                detail: pullRequest.author ?? pullRequest.headBranch, tint: glyph.color)
         }
         return cell
     }
@@ -187,6 +192,7 @@ final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableVie
             case .command(let command): "\(command.title), \(command.summary)"
             case .agentCommand(let command, _, let token): [token + command.name, command.description].compactMap(\.self)
                 .joined(separator: ", ")
+            case .pullRequest(let pullRequest): String(localized: "Pull request #\(pullRequest.number), \(pullRequest.title)")
             }
         NSAccessibility.post(
             element: tableView, notification: .announcementRequested,

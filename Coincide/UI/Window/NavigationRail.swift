@@ -39,7 +39,8 @@ final class MainRootViewController: NSViewController {
 }
 
 /// The slim column at the window's left edge with a button for each place and panel in the app: the thread list, a
-/// new thread, search, the terminal, the diff, the project's editor, the agents and settings. Buttons send their
+/// new thread, search, the terminal, the diff, the pull requests, the project's editor, the agents and settings.
+/// The diff and the pull requests share the inspector column, so at most one of the two is lit. Buttons send their
 /// actions up the responder chain, the way menu items do, so they run whatever the menu bar would.
 final class NavigationRailViewController: NSViewController {
     static let width: CGFloat = 60
@@ -59,6 +60,9 @@ final class NavigationRailViewController: NSViewController {
     private lazy var diffButton = RailButton(
         symbol: "plus.forwardslash.minus", label: String(localized: "Diff"), command: .toggleDiff,
         action: #selector(MainWindowController.toggleDiffPanel(_:)))
+    private lazy var pullRequestsButton = RailButton(
+        symbol: "arrow.triangle.pull", label: String(localized: "Pull Requests"), command: nil,
+        action: #selector(MainWindowController.togglePullRequestsPanel(_:)))
     private lazy var openInButton = RailButton(
         symbol: "arrow.up.forward.app", label: String(localized: "Open In"), command: .openInEditor,
         action: #selector(MainWindowController.openInPreferred(_:)))
@@ -71,7 +75,7 @@ final class NavigationRailViewController: NSViewController {
     override func loadView() {
         let root = RailBackgroundView()
         let top = stack([threadsButton, newThreadButton, searchButton])
-        let panels = stack([terminalButton, diffButton, openInButton])
+        let panels = stack([terminalButton, diffButton, pullRequestsButton, openInButton])
         let bottom = stack([agentsButton, settingsButton])
         let divider = RailDivider()
         for view in [top, divider, panels, bottom] as [NSView] {
@@ -117,15 +121,19 @@ final class NavigationRailViewController: NSViewController {
     }
 
     /// Lights the buttons of the panels that are open, and enables Open In only when there is a folder to open.
-    func update(threadsOpen: Bool, terminalOpen: Bool, diffOpen: Bool, canOpenFolder: Bool) {
+    func update(threadsOpen: Bool, terminalOpen: Bool, diffOpen: Bool, pullRequestsOpen: Bool, canOpenFolder: Bool) {
         threadsButton.isActive = threadsOpen
         terminalButton.isActive = terminalOpen
         diffButton.isActive = diffOpen
+        pullRequestsButton.isActive = pullRequestsOpen
         openInButton.isEnabled = canOpenFolder
     }
 
     @objc private func updateShortcuts() {
-        for button in [threadsButton, newThreadButton, searchButton, terminalButton, diffButton, openInButton] {
+        let buttons = [
+            threadsButton, newThreadButton, searchButton, terminalButton, diffButton, pullRequestsButton, openInButton,
+        ]
+        for button in buttons {
             button.updateToolTip()
         }
     }

@@ -49,6 +49,8 @@ public final class ThreadRunner {
         public var id: UUID
         public var text: String
         public var imagePaths: [String]
+        /// What the agent gets after the text, such as the pull requests it mentions (see `send`).
+        public var context: String?
         public var createdAt: Date
     }
 
@@ -213,11 +215,13 @@ public final class ThreadRunner {
 
     /// Sends a user message on the thread's selected provider and model.
     /// While a turn is running the message is queued and sent when that turn completes.
-    public func send(threadID: UUID, text: String, imagePaths: [String] = []) async {
+    /// `context` goes to the agent after the message but stays out of the transcript, as T3 Code sends the pull
+    /// requests a message mentions (`PullRequestMention`).
+    public func send(threadID: UUID, text: String, imagePaths: [String] = [], context: String? = nil) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !imagePaths.isEmpty else { return }
         if isRunning(threadID) {
-            enqueue(threadID: threadID, text: trimmed, imagePaths: imagePaths)
+            enqueue(threadID: threadID, text: trimmed, imagePaths: imagePaths, context: context)
             return
         }
         guard let thread = store.thread(threadID), store.project(thread.projectID) != nil else { return }
@@ -286,7 +290,8 @@ public final class ThreadRunner {
             var snapshot = current
             snapshot.items = Array(current.items.prefix(userIndex))
             let input = AgentTurnInput(
-                message: trimmed, handoffRecap: Handoff.recap(thread: snapshot, provider: provider),
+                message: Self.agentMessage(trimmed, context: context),
+                handoffRecap: Handoff.recap(thread: snapshot, provider: provider),
                 newSessionRecap: Handoff.newSessionRecap(thread: snapshot, provider: provider), threadTitle: snapshot.title,
                 imagePaths: imagePaths, selection: selection, accessMode: snapshot.accessMode,
                 interactionMode: snapshot.interactionMode)
@@ -300,6 +305,13 @@ public final class ThreadRunner {
             guard isActive(threadID, turnID) else { return }
             finishTurn(threadID, turnID, outcome: .failed(error.localizedDescription))
         }
+    }
+
+    /// The message the agent gets: what the user wrote, then the context sent with it, after the message as T3 Code
+    /// appends its context blocks.
+    nonisolated static func agentMessage(_ text: String, context: String?) -> String {
+        guard let context, !context.isEmpty else { return text }
+        return text.isEmpty ? context : text + "\n\n" + context
     }
 
     /// Usage reports fill in each other's missing fields, so a turn starts without the previous turn's
@@ -318,14 +330,16 @@ public final class ThreadRunner {
     /// the message is queued for after the turn. With no turn running it starts one, as `send` does.
     /// Nil when there is nothing to send.
     @discardableResult
-    public func steer(threadID: UUID, text: String, imagePaths: [String] = []) async -> FollowUpDelivery? {
+    public func steer(threadID: UUID, text: String, imagePaths: [String] = [], context: String? = nil) async
+        -> FollowUpDelivery?
+    {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !imagePaths.isEmpty else { return nil }
         guard isRunning(threadID) else {
-            await send(threadID: threadID, text: trimmed, imagePaths: imagePaths)
+            await send(threadID: threadID, text: trimmed, imagePaths: imagePaths, context: context)
             return .sent
         }
-        let message = QueuedMessage(id: UUID(), text: trimmed, imagePaths: imagePaths, createdAt: Date())
+        let message = QueuedMessage(id: UUID(), text: trimmed, imagePaths: imagePaths, context: context, createdAt: Date())
         return await steerOrQueue(message, threadID: threadID, queueIndex: nil)
     }
 
@@ -337,7 +351,7 @@ public final class ThreadRunner {
             let message = removeQueued(threadID: threadID, id: id)
         else { return nil }
         guard isRunning(threadID) else {
-            await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths)
+            await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths, context: message.context)
             return .sent
         }
         return await steerOrQueue(message, threadID: threadID, queueIndex: index)
@@ -354,8 +368,8 @@ public final class ThreadRunner {
         }
         // The session has seen the whole thread up to this turn, and nothing else can run meanwhile: no recap.
         let input = AgentTurnInput(
-            text: message.text, imagePaths: message.imagePaths, selection: thread.selection, accessMode: thread.accessMode,
-            interactionMode: thread.interactionMode)
+            text: Self.agentMessage(message.text, context: message.context), imagePaths: message.imagePaths,
+            selection: thread.selection, accessMode: thread.accessMode, interactionMode: thread.interactionMode)
         do {
             try await session.steer(input)
         } catch {
@@ -364,7 +378,7 @@ public final class ThreadRunner {
                 enqueue(message, threadID: threadID, at: queueIndex)
                 return .queued
             }
-            await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths)
+            await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths, context: message.context)
             return .sent
         }
         // Marked as steered, so it stays part of the turn it went into instead of opening one.
@@ -390,8 +404,10 @@ public final class ThreadRunner {
     }
 
     /// Queues a message to send after the running turn.
-    public func enqueue(threadID: UUID, text: String, imagePaths: [String] = []) {
-        enqueue(QueuedMessage(id: UUID(), text: text, imagePaths: imagePaths, createdAt: Date()), threadID: threadID, at: nil)
+    public func enqueue(threadID: UUID, text: String, imagePaths: [String] = [], context: String? = nil) {
+        enqueue(
+            QueuedMessage(id: UUID(), text: text, imagePaths: imagePaths, context: context, createdAt: Date()),
+            threadID: threadID, at: nil)
     }
 
     private func enqueue(_ message: QueuedMessage, threadID: UUID, at index: Int?) {
@@ -943,7 +959,7 @@ public final class ThreadRunner {
         let proceed = outcome == .completed || (turn.isAgentInitiated && !turn.interruptRequested)
         if proceed, let next = queues[threadID]?.first {
             removeQueued(threadID: threadID, id: next.id)
-            Task { await send(threadID: threadID, text: next.text, imagePaths: next.imagePaths) }
+            Task { await send(threadID: threadID, text: next.text, imagePaths: next.imagePaths, context: next.context) }
         }
     }
 
