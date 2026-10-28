@@ -52,8 +52,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private var parkedAttachments: [UUID: [ComposerAttachment]] = [:]
     /// Quotes, terminal output, diff comments and files attached to the message, shown as cards beside the images.
     private var attachedContext: [MessageContext] = []
-    /// Context of threads the user switched away from, restored when they come back.
-    private var parkedContext: [UUID: [MessageContext]] = [:]
     private var draftSave: Task<Void, Never>?
     private var trigger: ComposerTrigger?
     /// A trigger dismissed with Escape stays hidden until the caret leaves its word.
@@ -392,7 +390,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         guard let id else { return }
         saveDraft(to: id)
         if !attachments.isEmpty { parkedAttachments[id] = attachments }
-        if !attachedContext.isEmpty { parkedContext[id] = attachedContext }
     }
 
     private func bindThread() {
@@ -406,7 +403,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
         editUndoManager.removeAllActions()
         attachments = threadID.flatMap { parkedAttachments.removeValue(forKey: $0) } ?? []
-        attachedContext = threadID.flatMap { parkedContext.removeValue(forKey: $0) } ?? []
+        attachedContext = thread?.draftContext ?? []
         attachmentStrip.show(attachments, context: attachedContext, warning: nil)
         refreshThread()
         refreshRunState()
@@ -1004,8 +1001,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         draftSave = nil
         let text = textView.string
         let draft = text.contains { !$0.isWhitespace } ? text : nil
-        guard let thread = store.thread(id), thread.draft != draft else { return }
-        store.updateThread(id) { $0.draft = draft }
+        let context = attachedContext.isEmpty ? nil : attachedContext
+        guard let thread = store.thread(id), thread.draft != draft || thread.draftContext != context else { return }
+        store.updateThread(id) { $0.draft = draft; $0.draftContext = context }
     }
 
     // MARK: Suggestions
@@ -1355,7 +1353,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         history = nil
         trigger = nil
         suggestions.hide()
-        if let threadID, thread?.draft != nil { store.updateThread(threadID) { $0.draft = nil } }
+        if let threadID, thread?.draft != nil || thread?.draftContext != nil {
+            store.updateThread(threadID) { $0.draft = nil; $0.draftContext = nil }
+        }
         refreshAttachments()
         updateTextHeight()
     }
@@ -1451,6 +1451,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         guard threadID != nil else { return }
         if !attachedContext.contains(where: { $0.content == context.content }) {
             attachedContext.append(context)
+            if let threadID { saveDraft(to: threadID) }
             refreshAttachments()
             attachmentStrip.reveal(context)
             NSAccessibility.post(
@@ -1472,12 +1473,17 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         if target == threadID {
             addContext(context)
         } else if store.thread(target) != nil {
-            parkedContext[target, default: []].append(context)
+            store.updateThread(target) { thread in
+                var contextItems = thread.draftContext ?? []
+                if !contextItems.contains(where: { $0.content == context.content }) { contextItems.append(context) }
+                thread.draftContext = contextItems
+            }
         }
     }
 
     private func removeContext(_ context: MessageContext) {
         attachedContext.removeAll { $0.id == context.id }
+        if let threadID { saveDraft(to: threadID) }
         refreshAttachments()
     }
 

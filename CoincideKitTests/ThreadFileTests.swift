@@ -143,6 +143,19 @@ struct ThreadFileTests {
         }
     }
 
+    @Test func futureFieldsOnKnownContextAreKeptInTheBackup() throws {
+        let json = """
+            {"id":"\(UUID().uuidString)","projectID":"\(UUID().uuidString)","items":[
+              {"id":"\(UUID().uuidString)","kind":"user","context":[
+                {"id":"\(UUID().uuidString)","kind":"file","path":"/tmp/a.pdf","checksum":"future"}
+              ]}
+            ]}
+            """
+        let file = try decode(json)
+        #expect(file.thread.items.first?.context?.first?.filePath == "/tmp/a.pdf")
+        #expect(file.hasUnreadContent)
+    }
+
     @Test func aSteeredMessageKeepsItsMarkAndOtherItemsAreWrittenAsBefore() throws {
         let store = AppStore(directory: directory)
         let project = store.addProject(at: URL(fileURLWithPath: "/tmp"))
@@ -200,6 +213,7 @@ struct ThreadFileTests {
             $0.worktreePath = "/tmp/worktree"
             $0.branch = "feature"
             $0.draft = "unsent"
+            $0.draftContext = full.context
             $0.snoozedUntil = Date()
         }
         store.flush()

@@ -282,7 +282,7 @@ public final class ThreadRunner {
             attachments: imagePaths.isEmpty ? nil : imagePaths, context: context.isEmpty ? nil : context)
         let turnID = userItem.id
         store.append(userItem, to: threadID)
-        store.updateThread(threadID, touch: true) { $0.draft = nil }
+        store.updateThread(threadID, touch: true) { $0.draft = nil; $0.draftContext = nil }
         itemMaps[threadID] = [:]
         turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: turnID, modelID: selection.modelID)
         resetTurnUsage(threadID, provider: provider, modelID: selection.modelID)

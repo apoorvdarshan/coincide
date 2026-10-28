@@ -117,6 +117,18 @@ struct MessageContextTests {
         }
     }
 
+    @Test func invalidSavedTerminalLineNumbersCannotOverflowThePrompt() throws {
+        let json = """
+            {"id":"\(UUID().uuidString)","kind":"terminal","terminal":"T","text":"a\\nb",
+             "lineStart":\(Int.max),"lineEnd":\(Int.max)}
+            """
+        let context = try JSONDecoder().decode(MessageContext.self, from: Data(json.utf8))
+        #expect(MessageContext.envelope([context]).contains("output:\n  a\n  b"))
+        let excerpt = MessageContext.TerminalExcerpt(
+            terminal: "T", directory: nil, lineStart: Int.max, lineEnd: Int.max, text: "\ntext")
+        #expect(excerpt.lineStart == nil && excerpt.lineEnd == nil)
+    }
+
     @Test func longSelectionsAreCutWithANote() {
         let quote = MessageContext.Quote(text: String(repeating: "a", count: MessageContext.maxQuoteLength + 50), provider: nil)
         #expect(quote.text.count == MessageContext.maxQuoteLength)

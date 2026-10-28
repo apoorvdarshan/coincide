@@ -473,12 +473,14 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     public var branch: String?
     /// Unsent composer text, restored when the thread is reopened.
     public var draft: String?
+    /// Unsent context cards, restored with the draft after switching threads or restarting.
+    public var draftContext: [MessageContext]?
 
     public nonisolated init(
         id: UUID = UUID(), projectID: UUID, title: String = String(localized: "New thread"),
         selection: ModelSelection, accessMode: AccessMode = .fullAccess, interactionMode: InteractionMode = .build,
         items: [TranscriptItem] = [], sessions: [ProviderKind: ProviderSessionRef] = [:], isPinned: Bool = false,
-        isArchived: Bool = false, worktreePath: String? = nil, branch: String? = nil, draft: String? = nil,
+        isArchived: Bool = false, worktreePath: String? = nil, branch: String? = nil, draft: String? = nil, draftContext: [MessageContext]? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -496,6 +498,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         self.worktreePath = worktreePath
         self.branch = branch
         self.draft = draft
+        self.draftContext = draftContext
     }
 
     public nonisolated var hasUserMessages: Bool { items.contains { $0.kind == .user } }
@@ -522,5 +525,6 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         worktreePath = container.lenient(String.self, forKey: .worktreePath)
         branch = container.lenient(String.self, forKey: .branch)
         draft = container.lenient(String.self, forKey: .draft)
+        draftContext = container.contains(.draftContext) ? container.lenientArray(MessageContext.self, forKey: .draftContext) : nil
     }
 }

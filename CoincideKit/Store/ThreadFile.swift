@@ -69,6 +69,7 @@ struct ThreadFile: Decodable {
         case "accessMode": container.reads(AccessMode.self, key)
         case "interactionMode": container.reads(InteractionMode.self, key)
         case "isPinned", "isArchived": container.reads(Bool.self, key)
+        case "draftContext": readsContext(in: container, key, decoded: try? container.decode([MessageContext].self, forKey: key))
         case "selection":
             container.reads(ModelSelection.self, key)
                 && (try? container.nestedContainer(keyedBy: FileKey.self, forKey: key))?.hasOnly(selectionKeys) == true
@@ -130,12 +131,36 @@ struct ThreadFile: Decodable {
                 case "answers": decoded.answers != nil
                 case "attachments": decoded.attachments != nil
                 // Every entry, including any of a kind added later that was left out.
-                case "context": decoded.context?.count == (try? item.nestedUnkeyedContainer(forKey: key))?.count
+                case "context": readsContext(in: item, key, decoded: decoded.context)
                 case "steered": decoded.steered != nil
                 case "completedAt": decoded.completedAt != nil
                 default: false
                 }
             if !read, !item.isNull(key) { return false }
+        }
+        return true
+    }
+
+    /// Every context entry and field must survive a save, including future fields on a known context kind.
+    private nonisolated static func readsContext(
+        in container: Container, _ key: FileKey, decoded: [MessageContext]?
+    ) -> Bool {
+        guard let decoded, var array = try? container.nestedUnkeyedContainer(forKey: key), array.count == decoded.count
+        else { return false }
+        while !array.isAtEnd {
+            guard let entry = try? array.nestedContainer(keyedBy: FileKey.self),
+                let kind = try? entry.decode(String.self, forKey: FileKey("kind"))
+            else { return false }
+            let fields: Set<String>
+            switch kind {
+            case "quote": fields = ["id", "kind", "text", "provider"]
+            case "terminal": fields = ["id", "kind", "terminal", "directory", "lineStart", "lineEnd", "text"]
+            case "diff-comment":
+                fields = ["id", "kind", "path", "lineStart", "lineEnd", "isBeforeChange", "diff", "comment"]
+            case "file": fields = ["id", "kind", "path"]
+            default: return false
+            }
+            guard entry.hasOnly(fields) else { return false }
         }
         return true
     }

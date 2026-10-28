@@ -260,7 +260,8 @@ final class MessageContextPill: NSView {
     /// The pill's width for `context`, at most `maxWidth`.
     static func width(for context: MessageContext, maxWidth: CGFloat) -> CGFloat {
         let text = (context.title as NSString).size(withAttributes: [.font: font]).width
-        return min(maxWidth, ceil(padding * 2 + iconSize + gap + text) + 2)
+        // NSTextField includes cell padding in addition to the measured glyphs.
+        return min(maxWidth, ceil(padding * 2 + iconSize + gap + text) + 10)
     }
 
     override func layout() {

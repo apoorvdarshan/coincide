@@ -47,9 +47,15 @@ public struct MessageContext: Codable, Hashable, Sendable, Identifiable {
             self.text = MessageContext.clamp(lines, to: MessageContext.maxTerminalLength)
             // Numbers only make sense for a whole, ordered range.
             if let lineStart, let lineEnd, lineStart >= 1, lineEnd >= lineStart {
-                let first = lineStart + leadingBlank
-                self.lineStart = first
-                self.lineEnd = first + self.text.split(separator: "\n", omittingEmptySubsequences: false).count - 1
+                let (first, overflow) = lineStart.addingReportingOverflow(leadingBlank)
+                let count = self.text.split(separator: "\n", omittingEmptySubsequences: false).count
+                if !overflow, first <= Int.max - count {
+                    self.lineStart = first
+                    self.lineEnd = first + count - 1
+                } else {
+                    self.lineStart = nil
+                    self.lineEnd = nil
+                }
             } else {
                 self.lineStart = nil
                 self.lineEnd = nil
@@ -272,7 +278,7 @@ extension MessageContext {
             var lines = ["terminal: \(excerpt.terminal)"]
             if let directory = excerpt.directory { lines.append("directory: \(directory)") }
             let output = excerpt.text.split(separator: "\n", omittingEmptySubsequences: false)
-            if let start = excerpt.lineStart {
+            if let start = excerpt.lineStart, start > 0, start <= Int.max - output.count {
                 // Numbered as T3 numbers terminal context; every line of the text gets its number.
                 let end = start + output.count - 1
                 lines.append(start == end ? "line: \(start)" : "lines: \(start)-\(end)")

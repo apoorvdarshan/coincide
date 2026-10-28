@@ -78,6 +78,10 @@ struct ComposerContextTests {
         #expect(pill.accessibilityPerformPress())
         #expect(opened == comment)
         #expect(pill.accessibilityLabel() == comment.accessibilityDescription)
+        pill.frame.size = NSSize(width: MessageContextPill.width(for: comment, maxWidth: 600), height: MessageContextPill.height)
+        pill.layoutSubtreeIfNeeded()
+        let label = pill.subviews.compactMap { $0 as? NSTextField }.first
+        #expect((label?.frame.width ?? 0) >= (label?.intrinsicContentSize.width ?? 0))
     }
 
     @Test func theDetailsShowTheWholeText() throws {
@@ -109,6 +113,39 @@ struct ComposerContextTests {
         #expect(quoted == ["line"])
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         #expect(!textView.canAddSelectionToComposer)
+    }
+
+    @Test func unsentContextSurvivesReopeningTheStoreAndComposer() throws {
+        let folder = TemporaryDirectory("composer-context-draft")
+        let store = AppStore(directory: folder.url)
+        let project = store.addProject(at: folder.url)
+        let id = store.createThread(in: project.id).id
+        let registry = ProviderRegistry(store: store, providers: [])
+        let runner = ThreadRunner(store: store, registry: registry)
+        let composer = ComposerViewController(store: store, registry: registry, runner: runner)
+        _ = composer.view
+        composer.threadID = id
+        composer.addContext(quote)
+        composer.addContext(file)
+        store.flush()
+        #expect(store.summary(id)?.hasDraft == true)
+
+        let reopened = AppStore(directory: folder.url)
+        #expect(reopened.thread(id)?.draftContext == [quote, file])
+        #expect(reopened.summary(id)?.hasDraft == true)
+        let newRegistry = ProviderRegistry(store: reopened, providers: [])
+        let newRunner = ThreadRunner(store: reopened, registry: newRegistry)
+        let restored = ComposerViewController(store: reopened, registry: newRegistry, runner: newRunner)
+        _ = restored.view
+        restored.threadID = id
+        let strip = try #require(Self.findView(ComposerAttachmentStrip.self, in: restored.view))
+        let row = try #require(Self.chipRow(in: strip))
+        #expect(row.arrangedSubviews.compactMap { ($0 as? ComposerContextCard)?.context } == [quote, file])
+    }
+
+    private static func findView<View: NSView>(_ type: View.Type, in root: NSView) -> View? {
+        if let match = root as? View { return match }
+        return root.subviews.lazy.compactMap { findView(type, in: $0) }.first
     }
 
     // MARK: Helpers
