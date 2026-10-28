@@ -969,16 +969,22 @@ final class DiffEmptyStateView: NSView {
         case .failed(let text):
             content = ("exclamationmark.triangle", String(localized: "Couldn't Load the Changes"), text, nil)
         }
-        icon.image = Theme.symbol(content.symbol, size: 28, weight: .light)
-        titleLabel.stringValue = content.title
-        messageLabel.stringValue = content.text
-        messageLabel.isHidden = content.text.isEmpty
-        button.title = content.button ?? ""
-        button.isHidden = content.button == nil || action == nil
+        show(symbol: content.symbol, title: content.title, text: content.text, button: content.button, action: action)
+    }
+
+    /// Shows any symbol, title and message, with a button when both `button` and `action` are given; the pull
+    /// requests panel uses this for its own states.
+    func show(symbol: String, title: String, text: String, button buttonTitle: String? = nil, action: (() -> Void)? = nil) {
+        icon.image = Theme.symbol(symbol, size: 28, weight: .light)
+        titleLabel.stringValue = title
+        messageLabel.stringValue = text
+        messageLabel.isHidden = text.isEmpty
+        button.title = buttonTitle ?? ""
+        button.isHidden = buttonTitle == nil || action == nil
         self.action = action
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityLabel([content.title, content.text].filter { !$0.isEmpty }.joined(separator: ". "))
+        setAccessibilityLabel([title, text].filter { !$0.isEmpty }.joined(separator: ". "))
     }
 
     @objc private func runAction() { action?() }
