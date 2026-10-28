@@ -25,19 +25,27 @@ struct SettingsIconTile: View {
     }
 }
 
-/// A provider's symbol on its brand color.
+/// A provider's logo on a light tile, like an app icon.
 struct SettingsProviderIcon: View {
     let kind: ProviderKind
     var size: CGFloat = 20
 
     var body: some View {
-        SettingsIconTile(symbol: kind.symbolName, color: Self.color(for: kind), size: size)
-    }
-
-    static func color(for kind: ProviderKind) -> Color {
-        let color = Theme.color(for: kind)
-        // Label-colored providers would vanish in dark mode; a fixed graphite works in both.
-        return color == .labelColor ? Color(white: 0.22) : Color(nsColor: color)
+        RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+            .fill(Color(nsColor: .controlBackgroundColor))
+            .overlay {
+                Image(Theme.logoName(for: kind))
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.primary)
+                    .padding(size * 0.18)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+                    .strokeBorder(.separator, lineWidth: 0.5)
+            }
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }
 

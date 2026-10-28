@@ -17,7 +17,9 @@ final class UIState {
     struct Values: Codable {
         var windowFrame: String?
         var selectedThreadID: UUID?
-        var sidebarWidth: Double?
+        /// The thread list's width. (Widths saved as `sidebarWidth`, before the navigation rail, are dropped: the
+        /// list is narrower now.)
+        var threadListWidth: Double?
         var isSidebarCollapsed = false
         var inspectorWidth: Double?
         var isInspectorOpen = false
@@ -43,7 +45,7 @@ final class UIState {
             }
             windowFrame = value(.windowFrame, defaults.windowFrame)
             selectedThreadID = value(.selectedThreadID, defaults.selectedThreadID)
-            sidebarWidth = value(.sidebarWidth, defaults.sidebarWidth)
+            threadListWidth = value(.threadListWidth, defaults.threadListWidth)
             isSidebarCollapsed = value(.isSidebarCollapsed, defaults.isSidebarCollapsed)
             inspectorWidth = value(.inspectorWidth, defaults.inspectorWidth)
             isInspectorOpen = value(.isInspectorOpen, defaults.isInspectorOpen)

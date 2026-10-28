@@ -72,6 +72,10 @@ final class ChatViewController: NSViewController {
     private var pendingFind: DispatchWorkItem?
     private var findRefreshScheduled = false
     private var appliedFontSize = 0.0
+    private var appliedReplyTypeface = ReplyTypeface.newYork
+    private var rails: [TranscriptRowID: TranscriptRail] = [:]
+    private var composerAtBottom: NSLayoutConstraint!
+    private var composerCentered: NSLayoutConstraint!
     private var appliedShowReasoning = true
     private var previewURLs: [URL] = []
     private var previewIndex = 0
@@ -85,7 +89,7 @@ final class ChatViewController: NSViewController {
     // MARK: View
 
     override func loadView() {
-        let root = NSView()
+        let root = SolidBackgroundView(color: Theme.contentBackground)
         view = root
         list.host = self
         list.onPinnedChange = { [weak self] pinned in self?.setJumpButtonVisible(!pinned) }
@@ -102,7 +106,8 @@ final class ChatViewController: NSViewController {
         findBar.isHidden = true
 
         addChild(composer)
-        for subview in [list.scrollView, welcomeView, composerContainer, jumpButton, findBar, noThreadView] as [NSView] {
+        welcomeView.onChooseAgent = { [weak self] kind in self?.switchAgent(to: kind) }
+        for subview in [list.scrollView, welcomeView, welcomeView.setupView, composerContainer, jumpButton, findBar, noThreadView] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(subview)
         }
@@ -111,6 +116,9 @@ final class ChatViewController: NSViewController {
         let composerView = composer.view
         composerView.translatesAutoresizingMaskIntoConstraints = false
         composerContainer.addSubview(composerView)
+        composerAtBottom = composerContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor)
+        // In an empty thread the composer waits a little below the middle, under the headline and agents.
+        composerCentered = composerContainer.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: 48)
         let collapsedComposer = composerContainer.heightAnchor.constraint(equalToConstant: 0)
         collapsedComposer.priority = .defaultLow
         NSLayoutConstraint.activate([
@@ -126,8 +134,14 @@ final class ChatViewController: NSViewController {
 
             composerContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             composerContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            composerContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            composerAtBottom,
             collapsedComposer,
+
+            welcomeView.setupView.topAnchor.constraint(equalTo: composerContainer.bottomAnchor, constant: 18),
+            welcomeView.setupView.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            welcomeView.setupView.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: 24),
+            welcomeView.setupView.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -24),
+            welcomeView.setupView.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -12),
             composerView.topAnchor.constraint(equalTo: composerContainer.topAnchor),
             composerView.leadingAnchor.constraint(equalTo: composerContainer.leadingAnchor),
             composerView.trailingAnchor.constraint(equalTo: composerContainer.trailingAnchor),
@@ -149,6 +163,7 @@ final class ChatViewController: NSViewController {
         jumpButton.isHidden = true
         jumpButton.alphaValue = 0
         appliedFontSize = store.settings.fontSize
+        appliedReplyTypeface = store.settings.replyTypeface
         appliedShowReasoning = store.settings.showReasoning
         observation = store.observe { [weak self] change in self?.handle(change) }
         loadThread()
@@ -249,7 +264,11 @@ final class ChatViewController: NSViewController {
         }
         let rows = builder(for: thread).build(reusing: &settledRows, changed: changedSinceRebuild)
         changedSinceRebuild.removeAll()
+        let items = itemsByID
+        rails = TranscriptRail.rails(
+            for: rows, provider: { items[$0]?.provider }, runningProvider: runner.turn(thread.id)?.provider ?? thread.selection.provider)
         list.update(rows, reload: reload, keeping: anchor)
+        list.refreshRails()
     }
 
     /// Marks an item's rows as changed, for cached heights and the rows kept for finished turns.
@@ -317,7 +336,24 @@ final class ChatViewController: NSViewController {
         list.scrollView.isHidden = false
         let isEmpty = thread.items.isEmpty && !runner.isRunning(threadID)
         welcomeView.isHidden = !isEmpty
+        welcomeView.setupView.isHidden = !isEmpty
+        placeComposer(centered: isEmpty)
         if isEmpty { welcomeView.update(thread: thread, project: store.project(thread.projectID), registry: registry) }
+    }
+
+    /// Moves the composer between the middle of an empty thread and the bottom of a conversation. Sending the first
+    /// message slides it down, unless the user asked for less motion.
+    private func placeComposer(centered: Bool) {
+        guard composerCentered.isActive != centered else { return }
+        let animates = view.window != nil && !centered && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        composerAtBottom.isActive = !centered
+        composerCentered.isActive = centered
+        guard animates else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.25
+            context.allowsImplicitAnimation = true
+            view.layoutSubtreeIfNeeded()
+        }
     }
 
     // MARK: Store changes
@@ -407,8 +443,12 @@ final class ChatViewController: NSViewController {
 
     private func settingsChanged() {
         let settings = store.settings
-        guard settings.fontSize != appliedFontSize || settings.showReasoning != appliedShowReasoning else { return }
+        guard
+            settings.fontSize != appliedFontSize || settings.showReasoning != appliedShowReasoning
+                || settings.replyTypeface != appliedReplyTypeface
+        else { return }
         appliedFontSize = settings.fontSize
+        appliedReplyTypeface = settings.replyTypeface
         appliedShowReasoning = settings.showReasoning
         textCache.removeAll()
         list.invalidateHeights()
@@ -965,9 +1005,17 @@ extension ChatViewController: TranscriptHost {
     }
 
     func modelLabel(for meta: AssistantMeta) -> String {
-        guard let modelID = meta.modelID, !modelID.isEmpty, modelID != "default" else { return meta.provider.displayName }
-        let model = registry.displayName(for: ModelSelection(provider: meta.provider, modelID: modelID))
+        guard let model = modelName(for: meta) else { return meta.provider.displayName }
         return "\(meta.provider.displayName) · \(model)"
+    }
+
+    func modelName(for meta: AssistantMeta) -> String? {
+        guard let modelID = meta.modelID, !modelID.isEmpty, modelID != "default" else { return nil }
+        return registry.displayName(for: ModelSelection(provider: meta.provider, modelID: modelID))
+    }
+
+    func rail(for id: TranscriptRowID) -> TranscriptRail? {
+        rails[id]
     }
 
     func findHighlights(for itemID: UUID) -> TranscriptFindHighlights? {

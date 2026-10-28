@@ -5,6 +5,8 @@ import CoincideKit
 /// line of the work log. As in T3 Code they are answered in the question banner above the composer;
 /// here the line says it is waiting, and once answered it lists the answers under the line.
 final class TranscriptQuestionCell: TranscriptCell {
+    override var railNodeY: CGFloat { 20 }
+
     private static let answerLineHeight: CGFloat = 20
 
     private let summary = TranscriptDisclosureHeader()

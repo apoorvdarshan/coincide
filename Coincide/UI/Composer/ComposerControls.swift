@@ -54,6 +54,18 @@ final class ComposerControlButton: NSButton {
         updateTitle()
     }
 
+    /// Shows the agent's logo in place of a symbol. One-color logos take the title's color.
+    func configure(title: String, agent provider: ProviderKind, chevron: Bool) {
+        let name = "agent." + provider.rawValue
+        guard title != label || name != symbolName || symbolColor != nil || chevron != showsChevron else { return }
+        label = title
+        symbolName = name
+        symbolColor = nil
+        showsChevron = chevron
+        image = Theme.logo(for: provider, size: 13)
+        updateTitle()
+    }
+
     override var intrinsicContentSize: NSSize {
         NSSize(width: width(compact: isCompact), height: 26)
     }
@@ -248,16 +260,10 @@ final class ComposerSendButton: NSButton {
             case .stop: "stop.fill"
             }
         image = Theme.symbol(symbol, size: mode == .stop ? 10 : 12, weight: .bold)
-        let fill: NSColor =
-            if !isEnabled {
-                NSColor.labelColor.withAlphaComponent(0.1)
-            } else if mode == .stop {
-                .labelColor
-            } else {
-                .controlAccentColor
-            }
-        contentTintColor = !isEnabled ? .tertiaryLabelColor : mode == .stop ? .windowBackgroundColor : .white
+        // Monochrome, like the rest of the window: the text color filled, with the arrow cut out of it.
         effectiveAppearance.performAsCurrentDrawingAppearance {
+            let fill = isEnabled ? NSColor.labelColor : NSColor.labelColor.withAlphaComponent(0.12)
+            contentTintColor = isEnabled ? Theme.composerFill : .tertiaryLabelColor
             layer?.backgroundColor = fill.withAlphaComponent(isHighlighted ? fill.alphaComponent * 0.75 : fill.alphaComponent).cgColor
         }
     }

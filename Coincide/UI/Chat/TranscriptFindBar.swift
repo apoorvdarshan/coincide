@@ -12,7 +12,7 @@ final class TranscriptFindBar: NSView {
     static let width: CGFloat = 340
 
     let field = TranscriptFindSearchField()
-    private let glass = NSGlassEffectView()
+    private let glass = FlatSurfaceView()
     private let countLabel = NSTextField(labelWithString: "")
     private lazy var previousButton = Self.button(
         "chevron.up", label: String(localized: "Previous Match"), toolTip: String(localized: "Previous Match (⇧⌘G)"),

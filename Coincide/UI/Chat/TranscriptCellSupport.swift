@@ -25,11 +25,15 @@ protocol TranscriptHost: AnyObject {
     func previewAttachments(_ paths: [String], selected: Int)
     func changedFiles(for turnID: UUID) -> [ChangedFile]
     func modelLabel(for meta: AssistantMeta) -> String
+    /// The model's display name, or nil when the agent's default model answered.
+    func modelName(for meta: AssistantMeta) -> String?
+    /// The row's piece of the agent rail, if the rail runs through it.
+    func rail(for id: TranscriptRowID) -> TranscriptRail?
     /// The find bar's matches in an item, while the find bar shows some.
     func findHighlights(for itemID: UUID) -> TranscriptFindHighlights?
 }
 
-/// Shared transcript geometry. Everything lays out in a centered column.
+/// Shared transcript geometry. Everything lays out in a centered column, with the agent rail in a gutter on its left.
 enum TranscriptMetrics {
     static let edgePadding: CGFloat = 16
     static let messageSpacing: CGFloat = 18
@@ -39,10 +43,22 @@ enum TranscriptMetrics {
     static let nestedIndent: CGFloat = 24
     static let detailMaxHeight: CGFloat = 320
 
+    /// Where rows lay out their content: the centered column, less the rail's gutter.
     static func column(width: CGFloat) -> (x: CGFloat, width: CGFloat) {
-        let available = max(120, width - Theme.horizontalPadding * 2)
+        let frame = self.frame(width: width)
+        return (frame.x + Theme.railGutter, frame.width - Theme.railGutter)
+    }
+
+    /// The centered column with the rail's gutter, which the composer lines up with.
+    static func frame(width: CGFloat) -> (x: CGFloat, width: CGFloat) {
+        let available = max(120 + Theme.railGutter, width - Theme.horizontalPadding * 2)
         let columnWidth = min(Theme.contentMaxWidth, available)
         return (((width - columnWidth) / 2).rounded(.down), columnWidth)
+    }
+
+    /// The center of the rail.
+    static func railX(width: CGFloat) -> CGFloat {
+        frame(width: width).x + 10
     }
 }
 
@@ -51,13 +67,40 @@ enum TranscriptMetrics {
 class TranscriptCell: NSTableCellView {
     weak var host: TranscriptHost?
     private(set) var row: TranscriptRow?
+    private let railView = TranscriptRailView()
 
     override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // First, so it stays behind the row's content.
+        addSubview(railView)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     func configure(_ row: TranscriptRow, host: TranscriptHost) {
         self.row = row
         self.host = host
+        railView.rail = host.rail(for: row.id)
         needsLayout = true
+    }
+
+    /// Picks up the row's rail again, after rows around it came or went.
+    func refreshRail() {
+        guard let row, let host else { return }
+        railView.rail = host.rail(for: row.id)
+    }
+
+    /// Where the rail's node for this row sits, from the row's top: the middle of its first line.
+    var railNodeY: CGFloat { 10 }
+
+    override func layout() {
+        super.layout()
+        railView.frame = NSRect(x: TranscriptMetrics.railX(width: bounds.width) - 12, y: 0, width: 24, height: bounds.height)
+        railView.nodeY = railNodeY
     }
 
     class func height(for row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> CGFloat { 0 }
@@ -104,7 +147,7 @@ class TranscriptCell: NSTableCellView {
     }
 }
 
-/// The user's message bubble. Lays out top-down like the cells; its color follows the appearance.
+/// The user's message card. Lays out top-down like the cells; its color follows the appearance.
 final class TranscriptBubbleView: NSView {
     override var isFlipped: Bool { true }
     override var wantsUpdateLayer: Bool { true }
@@ -193,7 +236,8 @@ final class TranscriptTextCache {
 enum TranscriptText {
     static func style(_ style: TranscriptTextCache.Style) -> ChatMarkdownStyle {
         switch style {
-        case .assistant, .approval, .error, .toolDetail: ChatMarkdownStyle(fontSize: Theme.fontSize)
+        case .assistant: ChatMarkdownStyle(fontSize: Theme.replyFontSize, isSerif: Theme.usesSerifReplies)
+        case .approval, .error, .toolDetail: ChatMarkdownStyle(fontSize: Theme.fontSize)
         case .user: ChatMarkdownStyle(fontSize: Theme.fontSize, preservesLineBreaks: true)
         case .reasoning: ChatMarkdownStyle(fontSize: Theme.fontSize - 1, textColor: .secondaryLabelColor)
         case .plan: ChatMarkdownStyle(fontSize: Theme.fontSize, dimsCompletedTasks: true)

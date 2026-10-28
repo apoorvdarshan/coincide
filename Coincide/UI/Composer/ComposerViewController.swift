@@ -35,7 +35,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private let planBanner = ComposerPlanBanner()
     private let questionBanner = ComposerQuestionBanner()
     private let approvalBanner = ComposerApprovalBanner()
-    private let surface = NSGlassEffectView()
+    private let surface = FlatSurfaceView(style: .composer)
     private let surfaceStack = ComposerDropStack()
     private let attachmentStrip = ComposerAttachmentStrip()
     private let scrollView = NSScrollView()
@@ -156,7 +156,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             footer.widthAnchor.constraint(equalTo: surfaceStack.widthAnchor, constant: -16),
         ])
         surfaceStack.translatesAutoresizingMaskIntoConstraints = false
-        surface.cornerRadius = 18
+        surface.cornerRadius = 22
         surface.contentView = surfaceStack
         NSLayoutConstraint.activate([
             surfaceStack.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
@@ -195,9 +195,10 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         // A glass container would only batch these few glass views, and it can keep hidden ones drawing.
         column.translatesAutoresizingMaskIntoConstraints = false
         rootView.addSubview(column)
-        let fullWidth = column.widthAnchor.constraint(equalTo: rootView.widthAnchor, constant: -2 * Theme.horizontalPadding)
-        // Below the window's own size priority: otherwise the column's 820-point cap also caps how wide the window can
-        // get (zoom and resizing stopped at the sidebar plus 868 points).
+        // The column prefers its full 820 points and gives way to the chat's width. Tying the preference to the chat's
+        // width instead pulled the chat toward 868 points: the split view widened the thread list to its maximum to
+        // get there, and zoom and resizing stopped at the thread list plus 868 points.
+        let fullWidth = column.widthAnchor.constraint(equalToConstant: Theme.contentMaxWidth)
         fullWidth.priority = NSLayoutConstraint.Priority(NSLayoutConstraint.Priority.windowSizeStayPut.rawValue - 1)
         NSLayoutConstraint.activate([
             column.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 8),
@@ -508,8 +509,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             footer.modelButton.configure(
                 title: String(localized: "Set Up a Provider"), symbolName: "exclamationmark.circle", chevron: true)
         } else {
-            footer.modelButton.configure(
-                title: title, symbolName: provider.symbolName, symbolTint: Theme.color(for: provider), chevron: true)
+            footer.modelButton.configure(title: title, agent: provider, chevron: true)
         }
         let keyBindings = KeyBindingsController.shared
         footer.modelButton.toolTip = keyBindings.toolTip(

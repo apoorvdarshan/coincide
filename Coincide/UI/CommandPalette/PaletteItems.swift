@@ -201,7 +201,7 @@ struct PaletteCatalog {
         let id = thread.id
         return PaletteItem(
             id: "thread:\(id)", title: thread.title, subtitle: parts.joined(separator: " · "),
-            icon: symbol(thread.selection.provider.symbolName), iconTint: Theme.color(for: thread.selection.provider),
+            icon: Theme.logo(for: thread.selection.provider, size: 15),
             trailing: Formatting.compactAge(of: thread.updatedAt),
             kind: .thread(title: thread.title, branch: thread.branch, project: project, updatedAt: thread.updatedAt),
             isSecondary: isCurrent, behavior: .run { AppEvents.openThread(id) })
@@ -271,7 +271,7 @@ struct PaletteCatalog {
             items.append(
                 PaletteItem(
                     id: "action:agent:\(kind.rawValue)", title: String(localized: "Switch to \(kind.displayName)"),
-                    icon: symbol(kind.symbolName), iconTint: Theme.color(for: kind),
+                    icon: Theme.logo(for: kind, size: 15),
                     keywords: ["switch", "agent", "provider", "continue", "handoff", kind.rawValue],
                     behavior: .run { window?.splitController.content.chat.switchAgent(to: kind) }))
         }
@@ -296,7 +296,7 @@ struct PaletteCatalog {
                     return PaletteItem(
                         id: "model:\(model.id)", title: model.displayName,
                         subtitle: model.displayName != model.modelID && model.modelID != "default" ? model.modelID : nil,
-                        icon: Theme.symbol(kind.symbolName, size: 15), iconTint: Theme.color(for: kind),
+                        icon: Theme.logo(for: kind, size: 15),
                         trailing: isCurrent ? String(localized: "Current") : nil,
                         keywords: [kind.displayName, kind.rawValue, model.modelID],
                         behavior: .run { window?.splitController.content.chat.chooseModel(selection) })

@@ -27,6 +27,8 @@ final class TranscriptCardView: NSView {
 /// An agent asking permission: what it wants to do and, once answered, the answer. As in T3 Code the
 /// choices themselves are in the approval banner above the composer, so a waiting card only says so.
 final class TranscriptApprovalCell: TranscriptCell {
+    override var railNodeY: CGFloat { 20 }
+
     private static let padding: CGFloat = 12
     private static let detailMaxHeight: CGFloat = 160
     private static let statusHeight: CGFloat = 18
@@ -207,6 +209,8 @@ final class TranscriptApprovalCell: TranscriptCell {
 
 /// The agent's plan or todo list, with progress.
 final class TranscriptPlanCell: TranscriptCell {
+    override var railNodeY: CGFloat { 20 }
+
     private static let padding: CGFloat = 12
 
     private let card = TranscriptCardView()
@@ -316,6 +320,8 @@ final class TranscriptPlanCell: TranscriptCell {
 
 /// Files the turn changed, from its checkpoints; opens the diff panel.
 final class TranscriptChangedFilesCell: TranscriptCell {
+    override var railNodeY: CGFloat { 17 }
+
     private static let padding: CGFloat = 10
     private static let headerHeight: CGFloat = 24
     private static let fileRowHeight: CGFloat = 24
@@ -545,6 +551,8 @@ final class TranscriptFileRow: NSView {
 
 /// A failed turn or provider error, in red with the full message selectable.
 final class TranscriptErrorCell: TranscriptCell {
+    override var railNodeY: CGFloat { 18 }
+
     private static let padding: CGFloat = 10
     private static let textX: CGFloat = 34
 
@@ -621,6 +629,8 @@ final class TranscriptErrorCell: TranscriptCell {
 
 /// A short system note, such as "Interrupted", centered between hairlines.
 final class TranscriptNoticeCell: TranscriptCell {
+    override var railNodeY: CGFloat { 10 }
+
     private let label = NSTextField(labelWithString: "")
     private var item: TranscriptItem?
 

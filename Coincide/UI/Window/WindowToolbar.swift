@@ -3,6 +3,9 @@ import CoincideKit
 
 extension NSToolbarItem.Identifier {
     static let newThread = NSToolbarItem.Identifier("coincide.newThread")
+    /// Coincide's own sidebar button, plain like the other items (the system's always draws a bezel).
+    static let sidebar = NSToolbarItem.Identifier("coincide.sidebar")
+    static let threadTitle = NSToolbarItem.Identifier("coincide.threadTitle")
     static let runStatus = NSToolbarItem.Identifier("coincide.runStatus")
     static let openIn = NSToolbarItem.Identifier("coincide.openIn")
     static let toggleTerminal = NSToolbarItem.Identifier("coincide.toggleTerminal")
@@ -13,7 +16,8 @@ extension NSToolbarItem.Identifier {
 /// "Open in" picker and terminal toggle over the chat; and the diff toggle over the inspector.
 extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMenuDelegate {
     func makeToolbar() -> NSToolbar {
-        let toolbar = NSToolbar(identifier: "MainToolbar")
+        // A new identifier, so toolbars saved before the navigation rail start from the new defaults.
+        let toolbar = NSToolbar(identifier: "MainToolbar3")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -21,15 +25,14 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         return toolbar
     }
 
+    /// The navigation rail has the panel buttons, so by default the toolbar holds only the run status; the buttons
+    /// can still be added with Customize Toolbar.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [
-            .toggleSidebar, .flexibleSpace, .newThread, .sidebarTrackingSeparator, .flexibleSpace, .runStatus, .openIn,
-            .toggleTerminal, .inspectorTrackingSeparator, .flexibleSpace, .toggleDiff,
-        ]
+        [.flexibleSpace, .sidebarTrackingSeparator, .threadTitle, .flexibleSpace, .runStatus, .inspectorTrackingSeparator]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [.space]
+        toolbarDefaultItemIdentifiers(toolbar) + [.sidebar, .newThread, .openIn, .toggleTerminal, .toggleDiff, .flexibleSpace, .space]
     }
 
     /// With `flag` false, AppKit wants an item for the Customize Toolbar palette: a static copy that is
@@ -40,10 +43,22 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
     ) -> NSToolbarItem? {
         let item: NSToolbarItem
         switch itemIdentifier {
+        case .threadTitle:
+            item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.view = flag ? threadTitle : ThreadTitleView()
+            item.label = String(localized: "Thread")
+            item.paletteLabel = String(localized: "Thread")
+            item.isBordered = false
+            item.visibilityPriority = .high
         case .runStatus where !flag:
             item = paletteItem(itemIdentifier, label: String(localized: "Status"), symbol: "clock")
         case .openIn where !flag:
             item = paletteItem(itemIdentifier, label: String(localized: "Open In"), symbol: "arrow.up.forward.app")
+        case .sidebar:
+            item = button(
+                itemIdentifier, label: String(localized: "Sidebar"), symbol: "sidebar.left",
+                toolTip: KeyBindingsController.shared.toolTip(String(localized: "Sidebar"), for: .toggleSidebar),
+                action: #selector(toggleSidebarPanel(_:)))
         case .newThread:
             item = button(
                 itemIdentifier, label: String(localized: "New Thread"), symbol: "square.and.pencil",
@@ -73,7 +88,7 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
             menuItem.showsIndicator = true
             menuItem.target = self
             menuItem.action = #selector(openInPreferred(_:))
-            menuItem.isBordered = true
+            menuItem.isBordered = false
             item = menuItem
         default:
             return nil
@@ -111,13 +126,14 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         item.target = self
         item.action = action
-        item.isBordered = true
+        item.isBordered = false
         return item
     }
 
     /// Keeps toggle labels, tooltips and symbols in step with the panels.
     func updatePanelItems() {
         let keyBindings = KeyBindingsController.shared
+        updateRail()
         if let item = toolbarItems[.toggleTerminal] {
             let open = splitController.content.isTerminalOpen
             item.toolTip = keyBindings.toolTip(
@@ -133,12 +149,21 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
     /// The tooltips name the menu commands' shortcuts, which the user can change.
     @objc func updateToolbarShortcuts() {
         toolbarItems[.newThread]?.toolTip = KeyBindingsController.shared.toolTip(String(localized: "New Thread"), for: .newThread)
+        toolbarItems[.sidebar]?.toolTip = KeyBindingsController.shared.toolTip(String(localized: "Sidebar"), for: .toggleSidebar)
         updatePanelItems()
         updateOpenInItem()
     }
 
+    /// Lights the rail's buttons for the open panels and enables Open In when there is a folder.
+    func updateRail() {
+        rail.update(
+            threadsOpen: splitController.isSidebarOpen, terminalOpen: splitController.content.isTerminalOpen,
+            diffOpen: splitController.isDiffOpen, canOpenFolder: openFolder != nil)
+    }
+
     /// Shows the preferred app's icon and name on the "Open in" button.
     @objc func updateOpenInItem() {
+        updateRail()
         guard let item = toolbarItems[.openIn] else { return }
         let target = OpenTargets.preferred
         let title = target.map { String(localized: "Open in \($0.name)") } ?? String(localized: "Open in Editor")

@@ -128,7 +128,7 @@ final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableVie
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -16),
             emptyLabel.centerYAnchor.constraint(equalTo: content.centerYAnchor),
         ])
-        let glass = NSGlassEffectView()
+        let glass = FlatSurfaceView(style: .floating)
         glass.cornerRadius = 14
         glass.contentView = content
         panel.contentView = glass
@@ -158,11 +158,13 @@ final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableVie
                 icon: icon(for: entry), title: entry.isDirectory ? entry.name + "/" : entry.name,
                 detail: entry.parent, tint: nil)
         case .command(let command):
-            let tint: NSColor =
-                if case .agent(let provider) = command { Theme.color(for: provider) } else { .secondaryLabelColor }
-            cell.show(
-                icon: NSImage(systemSymbolName: command.symbolName, accessibilityDescription: nil), title: command.title,
-                detail: command.summary, tint: tint)
+            let icon =
+                if case .agent(let provider) = command {
+                    Theme.logo(for: provider, size: 14)
+                } else {
+                    NSImage(systemSymbolName: command.symbolName, accessibilityDescription: nil)
+                }
+            cell.show(icon: icon, title: command.title, detail: command.summary, tint: .secondaryLabelColor)
         }
         return cell
     }

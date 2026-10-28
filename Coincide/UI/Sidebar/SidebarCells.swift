@@ -253,7 +253,7 @@ final class ProjectCell: HoverCellView {
         if nameField.currentEditor() == nil { nameField.stringValue = project.name }
         let exists = FileManager.default.fileExists(atPath: project.path)
         icon.image = Theme.symbol(exists ? "folder" : "questionmark.folder", size: 14)
-        icon.contentTintColor = exists ? .controlAccentColor : .secondaryLabelColor
+        icon.contentTintColor = .secondaryLabelColor
         icon.setAccessibilityLabel(exists ? String(localized: "Folder") : String(localized: "Folder not found"))
         let path = Formatting.abbreviatedPath(project.path)
         toolTip = exists ? path : String(localized: "Folder not found: \(path)")
@@ -426,9 +426,9 @@ final class ThreadCell: HoverCellView {
         guard let model else { return }
         let emphasized = backgroundStyle == .emphasized
         let selectedText = NSColor.alternateSelectedControlTextColor
-        var symbol = model.isArchived ? "archivebox" : model.provider.symbolName
-        // Provider colors stay as they are: an alpha variant of a system color stops following the appearance.
-        var tint = model.isArchived ? NSColor.tertiaryLabelColor : Theme.color(for: model.provider)
+        // The agent's logo, unless the thread is archived or waits for an approval.
+        var symbol: String? = model.isArchived ? "archivebox" : nil
+        var tint = model.isArchived ? NSColor.tertiaryLabelColor : NSColor.labelColor
         badge.isHidden = true
         switch model.status {
         case .approval(let count):
@@ -445,7 +445,7 @@ final class ThreadCell: HoverCellView {
             break
         }
         badge.isEmphasized = emphasized
-        icon.image = Theme.symbol(symbol, size: 12, weight: .medium)
+        icon.image = symbol.flatMap { Theme.symbol($0, size: 12, weight: .medium) } ?? Theme.logo(for: model.provider, size: 14)
         icon.setAccessibilityLabel(model.provider.displayName)
         icon.contentTintColor = emphasized ? selectedText : tint
         icon.isHidden = model.status.isRunning

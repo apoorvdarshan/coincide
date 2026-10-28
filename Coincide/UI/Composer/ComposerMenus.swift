@@ -148,11 +148,9 @@ enum ComposerMenus {
         }
     }
 
+    /// The agent's logo, for menus, which tint one-color logos like their text.
     static func providerImage(_ kind: ProviderKind, size: CGFloat = 13) -> NSImage? {
-        NSImage(systemSymbolName: kind.symbolName, accessibilityDescription: kind.displayName)?
-            .withSymbolConfiguration(
-                NSImage.SymbolConfiguration(pointSize: size, weight: .medium)
-                    .applying(NSImage.SymbolConfiguration(paletteColors: [Theme.color(for: kind)])))
+        Theme.logo(for: kind, size: size)
     }
 
     private static func providerHeader(_ kind: ProviderKind) -> NSMenuItem {

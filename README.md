@@ -90,6 +90,8 @@ Data lives in `~/Library/Application Support/Coincide` (set `COINCIDE_DATA_DIR` 
 
 Coincide ports the design and behavior of [T3 Code](https://github.com/pingdotgg/t3code) by T3 Tools Inc., released under the MIT License. The terminal uses [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (MIT). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
+The agents' logos are trademarks of Anthropic, OpenAI, Anysphere, xAI, SST and Google. Coincide shows them only to identify each agent and isn't affiliated with or endorsed by their owners.
+
 ## License
 
 Coincide is released under the [MIT License](LICENSE).

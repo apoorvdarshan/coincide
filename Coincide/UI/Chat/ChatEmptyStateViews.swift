@@ -83,6 +83,11 @@ final class ChatWelcomeView: NSView {
     private lazy var locateButton = NSButton(title: String(localized: "Locate Folder…"), target: self, action: #selector(locateFolder))
     private let missingRow = NSStackView()
     private var projectID: UUID?
+    /// Runs when the user picks an agent from the row of agents.
+    var onChooseAgent: ((ProviderKind) -> Void)?
+    /// How to set up the agents that aren't ready, with buttons to check again and open their settings. The chat
+    /// places it under the composer, which sits in the middle of an empty thread.
+    let setupView = NSStackView()
 
     /// For text that gives way before the chat grows: above a stack view's hugging (250), so it keeps its
     /// size when there is room, and below the sidebar's holding priority (260), so the split view never
@@ -97,7 +102,8 @@ final class ChatWelcomeView: NSView {
         selectionLabel.alignment = .center
         selectionLabel.textColor = .secondaryLabelColor
         providerRow.orientation = .horizontal
-        providerRow.spacing = 6
+        providerRow.alignment = .top
+        providerRow.spacing = 10
         // Chips that do not fit are left out, the least useful first.
         providerRow.setClippingResistancePriority(Self.yieldingPriority, for: .horizontal)
         hintsStack.orientation = .vertical
@@ -128,23 +134,31 @@ final class ChatWelcomeView: NSView {
         missingRow.spacing = 8
         missingRow.setViews([warning, missingLabel, locateButton], in: .center)
         missingRow.isHidden = true
-        let stack = NSStackView(views: [headline, selectionLabel, missingRow, providerRow, hintsStack, footer])
+        let stack = NSStackView(views: [headline, selectionLabel, missingRow, providerRow])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 8
-        stack.setCustomSpacing(18, after: selectionLabel)
+        stack.setCustomSpacing(6, after: headline)
+        stack.setCustomSpacing(26, after: selectionLabel)
         stack.setCustomSpacing(18, after: missingRow)
-        stack.setCustomSpacing(18, after: providerRow)
-        stack.setCustomSpacing(14, after: hintsStack)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        // The headline and agents sit just above the composer; when the window is short they scroll off the top
+        // rather than push it down.
+        let fitsBelowTop = stack.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 12)
+        fitsBelowTop.priority = .defaultLow
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -10),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
+            fitsBelowTop,
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
             stack.widthAnchor.constraint(lessThanOrEqualToConstant: Theme.contentMaxWidth),
         ])
+        setupView.setViews([hintsStack, footer], in: .top)
+        setupView.orientation = .vertical
+        setupView.alignment = .centerX
+        setupView.spacing = 14
     }
 
     required init?(coder: NSCoder) {
@@ -153,14 +167,11 @@ final class ChatWelcomeView: NSView {
 
     func update(thread: ChatThread, project: Project?, registry: ProviderRegistry) {
         let name = project?.name ?? String(localized: "this project")
-        let size: CGFloat = 24
-        // One sentence, so each language can place the project name where it belongs; the name is then set in bold.
+        // One sentence, so each language can place the project name where it belongs. Set in New York, the serif of
+        // the agents' replies.
         let sentence = String(localized: "What should we build in \(name)?")
         let text = NSMutableAttributedString(
-            string: sentence, attributes: [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.labelColor])
-        if let range = sentence.range(of: name) {
-            text.addAttribute(.font, value: NSFont.systemFont(ofSize: size, weight: .semibold), range: NSRange(range, in: sentence))
-        }
+            string: sentence, attributes: [.font: Theme.serifFont(ofSize: 30), .foregroundColor: NSColor.labelColor])
         let centered = NSMutableParagraphStyle()
         centered.alignment = .center
         centered.lineBreakMode = .byTruncatingMiddle
@@ -190,7 +201,9 @@ final class ChatWelcomeView: NSView {
         selectionLabel.font = .systemFont(ofSize: 13)
 
         let chips = registry.orderedKinds.map { kind in
-            ProviderChip(kind: kind, status: registry.status(kind), isSelected: kind == selection.provider)
+            ProviderChip(kind: kind, status: registry.status(kind), isSelected: kind == selection.provider) { [weak self] in
+                self?.onChooseAgent?(kind)
+            }
         }
         providerRow.setViews(chips, in: .center)
         for (kind, chip) in zip(registry.orderedKinds, chips) {
@@ -223,30 +236,59 @@ final class ChatWelcomeView: NSView {
     }
 }
 
-/// A provider's name with a dot for whether it is ready.
-private final class ProviderChip: NSView {
-    init(kind: ProviderKind, status: ProviderStatus, isSelected: Bool) {
+/// An agent to start the thread with: its logo on a tile and its name below. The chosen one is tinted in the agent's
+/// color; agents that are not ready are dimmed and cannot be chosen.
+private final class ProviderChip: NSControl {
+    private static let tileSize: CGFloat = 52
+
+    private let kind: ProviderKind
+    private let isSelected: Bool
+    private let isReady: Bool
+    private let onChoose: () -> Void
+    private let tile = NSView()
+    private var isHovered = false
+    private var isPressed = false
+
+    init(kind: ProviderKind, status: ProviderStatus, isSelected: Bool, onChoose: @escaping () -> Void) {
+        self.kind = kind
+        self.isSelected = isSelected
+        isReady = status.state == .ready
+        self.onChoose = onChoose
         super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 11
-        layer?.cornerCurve = .continuous
-        let isReady = status.state == .ready
-        let icon = NSImageView(image: Theme.symbol(kind.symbolName, size: 10, weight: .semibold) ?? NSImage())
-        icon.contentTintColor = isReady ? Theme.color(for: kind) : .tertiaryLabelColor
+        tile.wantsLayer = true
+        tile.layer?.cornerRadius = 14
+        tile.layer?.cornerCurve = .continuous
+        let logo = NSImageView(image: Theme.logo(for: kind))
+        logo.imageScaling = .scaleProportionallyUpOrDown
+        logo.contentTintColor = .labelColor
+        logo.alphaValue = isReady ? 1 : 0.35
         let label = NSTextField(labelWithString: kind.displayName)
-        label.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .regular)
-        label.textColor = isReady ? .labelColor : .tertiaryLabelColor
-        let stack = NSStackView(views: [icon, label])
-        stack.spacing = 5
-        stack.edgeInsets = NSEdgeInsets(top: 3, left: 9, bottom: 3, right: 10)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        label.font = .systemFont(ofSize: 11, weight: isSelected ? .semibold : .regular)
+        label.textColor = isSelected ? .labelColor : isReady ? .secondaryLabelColor : .tertiaryLabelColor
+        label.alignment = .center
+        for view in [tile, logo, label] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.setAccessibilityElement(false)
+        }
+        addSubview(tile)
+        tile.addSubview(logo)
+        addSubview(label)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            heightAnchor.constraint(equalToConstant: 22),
+            tile.topAnchor.constraint(equalTo: topAnchor),
+            tile.centerXAnchor.constraint(equalTo: centerXAnchor),
+            tile.widthAnchor.constraint(equalToConstant: Self.tileSize),
+            tile.heightAnchor.constraint(equalToConstant: Self.tileSize),
+            logo.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
+            logo.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
+            logo.widthAnchor.constraint(equalToConstant: 24),
+            logo.heightAnchor.constraint(equalToConstant: 24),
+            label.topAnchor.constraint(equalTo: tile.bottomAnchor, constant: 6),
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // One width for every agent, so the row reads as even steps whatever the names.
+            widthAnchor.constraint(equalToConstant: Self.tileSize + 24),
         ])
         let state: String =
             switch status.state {
@@ -258,21 +300,71 @@ private final class ProviderChip: NSView {
             }
         toolTip = [status.version, status.account, status.message].compactMap { $0 }.joined(separator: "\n").nonEmpty
         setAccessibilityElement(true)
-        setAccessibilityRole(.staticText)
+        setAccessibilityRole(isReady ? .button : .staticText)
         setAccessibilityLabel("\(kind.displayName), \(state)")
-        self.isSelected = isSelected
+        if isSelected { setAccessibilitySelected(true) }
+        updateTile()
     }
-
-    private var isSelected = false
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override var wantsUpdateLayer: Bool { true }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+    }
 
-    override func updateLayer() {
-        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(isSelected ? 0.09 : 0.05).cgColor
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateTile()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateTile()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isReady else { return }
+        isPressed = true
+        updateTile()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard isPressed else { return }
+        isPressed = false
+        updateTile()
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { onChoose() }
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard isReady else { return false }
+        onChoose()
+        return true
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateTile()
+    }
+
+    private func updateTile() {
+        guard let layer = tile.layer else { return }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let color = Theme.color(for: kind)
+            if isSelected {
+                layer.backgroundColor = color.withAlphaComponent(isPressed ? 0.22 : 0.14).cgColor
+                layer.borderColor = color.withAlphaComponent(0.7).cgColor
+                layer.borderWidth = 1.5
+            } else {
+                let fill: CGFloat = isPressed ? 0.12 : isHovered && isReady ? 0.08 : 0.045
+                layer.backgroundColor = NSColor.labelColor.withAlphaComponent(fill).cgColor
+                layer.borderColor = NSColor.separatorColor.cgColor
+                layer.borderWidth = 0
+            }
+        }
     }
 }
 
@@ -280,8 +372,9 @@ private final class ProviderChip: NSView {
 private final class SetupHintRow: NSView {
     init(kind: ProviderKind, status: ProviderStatus, registry: ProviderRegistry) {
         super.init(frame: .zero)
-        let icon = NSImageView(image: Theme.symbol(kind.symbolName, size: 11, weight: .semibold) ?? NSImage())
+        let icon = NSImageView(image: Theme.logo(for: kind, size: 12))
         icon.contentTintColor = .tertiaryLabelColor
+        icon.alphaValue = 0.6
         let hint = registry.provider(kind)?.setupHint ?? status.message ?? ""
         let font = NSFont.systemFont(ofSize: 12)
         let text = NSMutableAttributedString(

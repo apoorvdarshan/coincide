@@ -4,7 +4,7 @@ import CoincideKit
 /// A glass card stacked above the composer for approvals, plan follow-ups, agent switches and queued messages.
 class ComposerBanner: NSView {
     let content = NSStackView()
-    private let glass = NSGlassEffectView()
+    private let glass = FlatSurfaceView()
 
     /// Hides the glass itself too, in case an enclosing glass container lifts it out from under this view.
     override var isHidden: Bool {
@@ -40,6 +40,15 @@ class ComposerBanner: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func setTint(_ tint: NSColor?) {
+        glass.tintColor = tint
+    }
+
+    /// Drops the banner's fill and border, for a note that reads as a line of text.
+    func makePlain() {
+        glass.style = .clear
+    }
 
     static func icon(_ symbolName: String, color: NSColor) -> NSImageView {
         let view = NSImageView(image: Theme.symbol(symbolName, size: 13, weight: .semibold) ?? NSImage())
@@ -453,17 +462,24 @@ final class ComposerQuestionBanner: ComposerBanner, NSTextFieldDelegate {
     }
 }
 
-/// Explains what happens when the thread continues on a different agent: it gets a recap of what it missed.
+/// Explains what happens when the thread continues on a different agent: it gets a recap of what it missed. A plain
+/// line with the agent's logo, so it informs without competing with the composer.
 final class ComposerHandoffBanner: ComposerBanner {
     private let message = NSTextField(wrappingLabelWithString: "")
-    private let iconView = ComposerBanner.icon("arrow.triangle.swap", color: .secondaryLabelColor)
+    private let iconView = NSImageView()
 
     init() {
         super.init()
+        makePlain()
         message.font = .systemFont(ofSize: 12)
         message.maximumNumberOfLines = 2
         message.textColor = .secondaryLabelColor
         message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.contentTintColor = .labelColor
+        iconView.widthAnchor.constraint(equalToConstant: 15).isActive = true
+        iconView.heightAnchor.constraint(equalToConstant: 15).isActive = true
+        iconView.setAccessibilityElement(false)
         content.alignment = .centerY
         content.addArrangedSubview(iconView)
         content.addArrangedSubview(message)
@@ -471,7 +487,7 @@ final class ComposerHandoffBanner: ComposerBanner {
 
     func show(provider: ProviderKind, missedMessages: Int, joining: Bool) {
         let name = provider.displayName
-        iconView.contentTintColor = Theme.color(for: provider)
+        iconView.image = Theme.logo(for: provider)
         message.stringValue =
             if joining {
                 String(localized: "\(name) joins this thread and gets a recap of the conversation so far.")

@@ -4,9 +4,9 @@ import QuartzCore
 
 // MARK: - User message
 
-/// The user's message: a right-aligned bubble with image thumbnails, long text folded behind
+/// The user's message: a quiet card on the rail with image thumbnails, long text folded behind
 /// "Show full message", and T3's "Edit from here" and copy actions that appear on hover. A message
-/// steered into a running turn carries T3's "Steer" mark above the bubble.
+/// steered into a running turn carries T3's "Steer" mark above the card.
 final class TranscriptUserCell: TranscriptCell {
     private static let padding: CGFloat = 12
     private static let collapsedTextHeight: CGFloat = 176
@@ -32,7 +32,7 @@ final class TranscriptUserCell: TranscriptCell {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         bubble.wantsLayer = true
-        bubble.layer?.cornerRadius = 16
+        bubble.layer?.cornerRadius = 12
         bubble.layer?.cornerCurve = .continuous
         addSubview(bubble)
         textView.wantsLayer = true
@@ -45,7 +45,6 @@ final class TranscriptUserCell: TranscriptCell {
         toggleButton.action = #selector(toggleExpanded)
         bubble.addSubview(toggleButton)
         timeLabel.textColor = .tertiaryLabelColor
-        timeLabel.alignment = .right
         steerIcon.contentTintColor = .secondaryLabelColor
         steerLabel.textColor = .secondaryLabelColor
         for view in [steerIcon, steerLabel] as [NSView] {
@@ -101,6 +100,12 @@ final class TranscriptUserCell: TranscriptCell {
 
     override class var measuresText: Bool { true }
 
+    /// The middle of the card's first line.
+    override var railNodeY: CGFloat {
+        let lineHeight = Theme.lineHeight(of: Theme.bodyFont)
+        return (item.map(Self.steerMarkSpace) ?? 0) + Self.padding + (lineHeight / 2).rounded()
+    }
+
     override class func height(for row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> CGFloat {
         guard let id = row.itemID, let item = host.item(id) else { return 0 }
         return layout(for: item, row: row, width: width, host: host).height
@@ -111,7 +116,7 @@ final class TranscriptUserCell: TranscriptCell {
         let content = TranscriptMetrics.column(width: width).width * 0.8 - padding * 2
         let text = TranscriptEstimate.textHeight(item.text, width: content)
         let images = (item.attachments ?? []).isEmpty ? 0 : CGFloat(((item.attachments?.count ?? 0) + 1) / 2) * 86
-        return steerMarkSpace(item) + min(text, collapsedTextHeight + 24) + images + padding * 2 + 28 + bottomSpacing(for: row)
+        return steerMarkSpace(item) + min(text, collapsedTextHeight + 24) + images + padding * 2 + 20 + bottomSpacing(for: row)
     }
 
     override var copyText: String? { item?.text }
@@ -180,12 +185,12 @@ final class TranscriptUserCell: TranscriptCell {
         }
         let bubbleWidth = min(maxBubble, ceil(contentWidth) + padding * 2)
         let top = steerMarkSpace(item)
-        let bubble = NSRect(x: column.x + column.width - bubbleWidth, y: top, width: bubbleWidth, height: y + padding)
+        let bubble = NSRect(x: column.x, y: top, width: bubbleWidth, height: y + padding)
         let actionsY = bubble.maxY + 4
         let steerMark = item.isSteered ? NSRect(x: column.x, y: 0, width: column.width, height: steerMarkHeight) : nil
         return Layout(
             steerMark: steerMark, bubble: bubble, thumbnails: thumbnails, text: text, toggle: toggle, actionsY: actionsY,
-            height: actionsY + 20 + bottomSpacing(for: row) - 4, isCollapsed: isCollapsed)
+            height: actionsY + 20 + bottomSpacing(for: row) - 12, isCollapsed: isCollapsed)
     }
 
     override func layout() {
@@ -205,26 +210,23 @@ final class TranscriptUserCell: TranscriptCell {
         }
         updateFade(collapsed: layout.isCollapsed)
         if let mark = layout.steerMark {
-            // Right-aligned over the bubble, as T3 puts it.
+            // Over the card, at its leading edge.
+            let iconSize: CGFloat = 12
+            steerIcon.frame = NSRect(x: mark.minX + 2, y: mark.minY + (mark.height - iconSize) / 2, width: iconSize, height: iconSize)
             steerLabel.sizeToFit()
-            let labelWidth = ceil(steerLabel.frame.width)
             let labelHeight = ceil(steerLabel.frame.height)
             steerLabel.frame = NSRect(
-                x: mark.maxX - 4 - labelWidth, y: mark.minY + ((mark.height - labelHeight) / 2).rounded(), width: labelWidth,
-                height: labelHeight)
-            let iconSize: CGFloat = 12
-            steerIcon.frame = NSRect(
-                x: steerLabel.frame.minX - 3 - iconSize, y: mark.minY + (mark.height - iconSize) / 2, width: iconSize, height: iconSize)
+                x: steerIcon.frame.maxX + 3, y: mark.minY + ((mark.height - labelHeight) / 2).rounded(),
+                width: ceil(steerLabel.frame.width), height: labelHeight)
         }
-        let column = TranscriptMetrics.column(width: bounds.width)
-        var x = column.x + column.width
-        for button in [copyButton, rewindButton] where !button.isHidden {
-            x -= 22
+        // The actions line up under the card's leading edge: edit, copy, then the time.
+        var x = layout.bubble.minX - 3
+        for button in [rewindButton, copyButton] where !button.isHidden {
             button.frame = NSRect(x: x, y: layout.actionsY, width: 22, height: 20)
+            x += 22
         }
         timeLabel.sizeToFit()
-        let timeWidth = ceil(timeLabel.frame.width)
-        timeLabel.frame = NSRect(x: x - timeWidth - 6, y: layout.actionsY + 2, width: timeWidth, height: 16)
+        timeLabel.frame = NSRect(x: x + 4, y: layout.actionsY + 2, width: ceil(timeLabel.frame.width), height: 16)
     }
 
     private func updateFade(collapsed: Bool) {
@@ -308,8 +310,8 @@ final class TranscriptUserCell: TranscriptCell {
 
 // MARK: - Assistant message
 
-/// An agent reply rendered as Markdown. Code blocks get copy buttons; the turn's final reply ends
-/// with which provider and model answered, copy and fork buttons and the time.
+/// An agent reply rendered as Markdown, in New York unless the user chose the system font. Code blocks get copy
+/// buttons; the turn's final reply ends with which agent and model answered, copy and fork buttons and the time.
 final class TranscriptAssistantCell: TranscriptCell {
     private static let textInset: CGFloat = 4
     private static let metaHeight: CGFloat = 20
@@ -317,7 +319,6 @@ final class TranscriptAssistantCell: TranscriptCell {
     private let textView = ChatTextView()
     private var codeButtons: [TranscriptIconButton] = []
     private var rendered = ChatRenderedText.empty
-    private let providerIcon = NSImageView()
     private let modelLabel = NSTextField(labelWithString: "")
     private let timeLabel = NSTextField(labelWithString: "")
     private lazy var copyButton = TranscriptIconButton(
@@ -330,11 +331,10 @@ final class TranscriptAssistantCell: TranscriptCell {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         addSubview(textView)
-        providerIcon.imageScaling = .scaleProportionallyDown
         modelLabel.textColor = .secondaryLabelColor
         modelLabel.lineBreakMode = .byTruncatingTail
         timeLabel.textColor = .tertiaryLabelColor
-        for view in [providerIcon, modelLabel, timeLabel, copyButton, forkButton] as [NSView] { addSubview(view) }
+        for view in [modelLabel, timeLabel, copyButton, forkButton] as [NSView] { addSubview(view) }
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
     }
@@ -363,14 +363,11 @@ final class TranscriptAssistantCell: TranscriptCell {
             button.tag = index
         }
         let showsMeta = meta != nil
-        for view in [providerIcon, modelLabel, timeLabel, copyButton] as [NSView] { view.isHidden = !showsMeta }
+        for view in [modelLabel, timeLabel, copyButton] as [NSView] { view.isHidden = !showsMeta }
         // T3 forks from finished responses only; the meta row ends a turn that is over.
         forkButton.isHidden = !showsMeta || !host.canFork(item.id)
         if let meta {
-            providerIcon.image = Theme.symbol(meta.provider.symbolName, size: 11, weight: .semibold)
-            providerIcon.contentTintColor = Theme.color(for: meta.provider)
-            modelLabel.stringValue = host.modelLabel(for: meta)
-            modelLabel.font = .systemFont(ofSize: Theme.fontSize - 2, weight: .medium)
+            modelLabel.attributedStringValue = Self.signature(meta, host: host)
             let date = item.completedAt ?? item.createdAt
             timeLabel.stringValue = TranscriptFormat.timestamp(date)
             timeLabel.toolTip = TranscriptFormat.fullTimestamp(date)
@@ -380,6 +377,25 @@ final class TranscriptAssistantCell: TranscriptCell {
     }
 
     override class var measuresText: Bool { true }
+
+    /// The middle of the reply's first line.
+    override var railNodeY: CGFloat {
+        (Theme.lineHeight(of: ChatFonts.body(Theme.replyFontSize, serif: Theme.usesSerifReplies)) / 2).rounded()
+    }
+
+    /// The agent's name in its color, then the model.
+    private static func signature(_ meta: AssistantMeta, host: TranscriptHost) -> NSAttributedString {
+        let size = Theme.fontSize - 2
+        let result = NSMutableAttributedString(
+            string: meta.provider.displayName,
+            attributes: [.font: NSFont.systemFont(ofSize: size, weight: .semibold), .foregroundColor: Theme.color(for: meta.provider)])
+        if let model = host.modelName(for: meta) {
+            result.append(
+                NSAttributedString(
+                    string: "  " + model, attributes: [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.secondaryLabelColor]))
+        }
+        return result
+    }
 
     override class func height(for row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> CGFloat {
         guard let id = row.itemID, let item = host.item(id) else { return 0 }
@@ -421,8 +437,6 @@ final class TranscriptAssistantCell: TranscriptCell {
         guard meta != nil else { return }
         let y = textView.frame.maxY + 8
         var x = column.x + Self.textInset
-        providerIcon.frame = NSRect(x: x, y: y + 2, width: 14, height: 16)
-        x += 18
         modelLabel.sizeToFit()
         let labelWidth = min(modelLabel.frame.width, column.width * 0.6)
         modelLabel.frame = NSRect(x: x, y: y + 2, width: labelWidth, height: 16)

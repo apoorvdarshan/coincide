@@ -13,6 +13,7 @@ nonisolated enum SettingsPane: Hashable, Sendable {
 nonisolated enum SettingsRowID: String, Hashable, Sendable {
     case appearance
     case fontSize
+    case replyTypeface
     case sendShortcut
     case followUpBehavior
     case showReasoning
