@@ -68,9 +68,7 @@ private struct ProviderSummaryRow: View {
             Toggle(isOn: enabledBinding(model, kind)) {
                 Text("Use \(kind.displayName)")
             }
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.small)
+            .toggleStyle(ThemedSwitchToggleStyle(showsLabel: false))
             Button {
                 model.navigate(to: .provider(kind))
             } label: {
