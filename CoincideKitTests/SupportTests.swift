@@ -4,6 +4,16 @@ import Testing
 @testable import CoincideKit
 
 struct SupportTests {
+    @Test func pathsSplitOnTheDotScalar() throws {
+        // Found by JSONValueFuzzer: U+0602 is a prepended mark, so as Characters it merges with the dot after it.
+        let value = try #require(JSONValue.parse(#"{"\#u{0602}":{"y":1},"a\#u{0301}":{"b":2},"c":{"d":{"e":true}}}"#))
+        #expect(value.at("\u{0602}.y") == 1)
+        #expect(value.at("a\u{0301}.b") == 2)
+        #expect(value.at("c.d.e") == true)
+        #expect(value.at("c..d.e") == true)
+        #expect(value.at("c.x") == nil)
+    }
+
     @Test func terminalEscapesAreRemoved() {
         let colored = "\u{1B}[1;31mError:\u{1B}[0m bad \u{1B}[?25lthing\u{1B}[K"
         #expect(TerminalText.stripANSI(colored) == "Error: bad thing")

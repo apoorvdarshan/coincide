@@ -49,13 +49,11 @@ enum JSONValueChecks {
             expectEqual(value.object, object, "object accessor")
             for (key, element) in object {
                 expectEqual(value[key], element, "member \(key)")
-                // `at` splits on dots and skips empty parts, so only plain keys address one member.
-                if !key.isEmpty, !key.contains(".") {
+                // `at` splits on the dot scalar and skips empty parts, so only keys without one address one member.
+                if !key.isEmpty, !key.unicodeScalars.contains(".") {
                     expectEqual(value.at(key), element, "at(\(key))")
-                    // Code passes literal paths of protocol field names; a key starting with a combining
-                    // mark would join the dot before it into one Character.
                     for (inner, innerElement) in element.object ?? [:]
-                    where !inner.isEmpty && !inner.contains(".") && inner.unicodeScalars.allSatisfy(\.isASCII) {
+                    where !inner.isEmpty && !inner.unicodeScalars.contains(".") {
                         expectEqual(value.at("\(key).\(inner)"), innerElement, "at(\(key).\(inner))")
                     }
                 }
