@@ -89,6 +89,13 @@ public final class ThreadRunner {
     /// The model of the latest turn, so another model's context window is not kept.
     private var usageModels: [UUID: String] = [:]
     public private(set) var queues: [UUID: [QueuedMessage]] = [:]
+    /// Threads that continue on their own once a usage limit resets, and when (T3 Code's "Resume at reset").
+    public private(set) var scheduledResumes: [UUID: Date] = [:]
+    private var resumeTimers: [UUID: Timer] = [:]
+    /// How long after a reset a thread resumes, so the provider has caught up. Tests shorten it.
+    var resumeDelay: TimeInterval = 30
+    /// What a thread is sent when it resumes after a usage limit, as in T3 Code.
+    nonisolated static let resumePrompt = "Continue where you left off."
     /// The commands and skills each thread's sessions reported for its folder, by provider.
     private var sessionCommands: [UUID: [ProviderKind: [ProviderCommand]]] = [:]
     /// What each thread's agents run in the background, by provider (`AgentEvent.backgroundWork`).
@@ -165,6 +172,40 @@ public final class ThreadRunner {
     public func backgroundTasks(_ threadID: UUID) -> [(provider: ProviderKind, task: BackgroundTask)] {
         (backgroundWork[threadID] ?? [:]).sorted { $0.key.rawValue < $1.key.rawValue }
             .flatMap { provider, tasks in tasks.map { (provider, $0) } }
+    }
+
+    /// The time a usage limit that stops the provider's work resets, when the provider reported one in the future.
+    public func blockingLimitReset(for provider: ProviderKind, now: Date = Date()) -> Date? {
+        guard let warning = usageLimits(for: provider)?.current(at: now).warning, warning.blocksWork,
+            let reset = warning.resetsAt,
+            reset > now
+        else { return nil }
+        return reset
+    }
+
+    /// Continues the thread with `resumePrompt` at `date`, unless a turn runs then or the user cancels first.
+    public func resumeAtReset(_ threadID: UUID, at date: Date) {
+        resumeTimers.removeValue(forKey: threadID)?.invalidate()
+        scheduledResumes[threadID] = date
+        let timer = Timer(fire: date.addingTimeInterval(resumeDelay), interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.resumeNow(threadID) }
+        }
+        timer.tolerance = 10
+        RunLoop.main.add(timer, forMode: .common)
+        resumeTimers[threadID] = timer
+        store.notify(.runState(threadID))
+    }
+
+    public func cancelResume(_ threadID: UUID) {
+        resumeTimers.removeValue(forKey: threadID)?.invalidate()
+        guard scheduledResumes.removeValue(forKey: threadID) != nil else { return }
+        store.notify(.runState(threadID))
+    }
+
+    private func resumeNow(_ threadID: UUID) {
+        cancelResume(threadID)
+        guard store.hasThread(threadID), !isRunning(threadID) else { return }
+        Task { await send(threadID: threadID, text: Self.resumePrompt) }
     }
 
     /// The commands and skills an agent offers in the thread: what its session there reported, else what it offered
@@ -925,6 +966,12 @@ public final class ThreadRunner {
             store.append(TranscriptItem(kind: .notice, text: String(localized: "Interrupted"), provider: provider), to: threadID)
         case .failed(let message):
             store.append(TranscriptItem(kind: .error, text: message, provider: provider), to: threadID)
+            // A turn stopped by a usage limit picks up again once it resets, when the user asked for that.
+            if store.settings.resumesAfterUsageLimit, scheduledResumes[threadID] == nil,
+                let reset = blockingLimitReset(for: provider)
+            {
+                resumeAtReset(threadID, at: reset)
+            }
         }
         // A provider that never got the prompt has not seen the turn, nor what other agents did before it.
         if turn.delivered {

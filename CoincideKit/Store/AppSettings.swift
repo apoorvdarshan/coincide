@@ -91,6 +91,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var confirmBeforeDeletingThreads: Bool
     /// Have the thread's agent name a new thread from its first message (T3 Code's generated titles).
     public var generatesThreadTitles: Bool
+    /// Continue a thread on its own once the usage limit that stopped it resets (T3 Code's auto-resume).
+    public var resumesAfterUsageLimit: Bool
+    /// New Thread (⌘N) starts a chat without a project instead of a thread in the current project.
+    public var newThreadStartsChat: Bool
     /// Provider sessions idle this long are shut down to free memory; their ids are kept for resume.
     public var idleSessionTimeoutMinutes: Int
     /// Post a system notification when a turn finishes or needs approval while Coincide is in the background.
@@ -123,6 +127,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showReasoning = true
         confirmBeforeDeletingThreads = true
         generatesThreadTitles = true
+        resumesAfterUsageLimit = false
+        newThreadStartsChat = false
         idleSessionTimeoutMinutes = 30
         notifyWhenInBackground = true
         checkpointsEnabled = true
@@ -155,6 +161,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showReasoning = value(.showReasoning, defaults.showReasoning)
         confirmBeforeDeletingThreads = value(.confirmBeforeDeletingThreads, defaults.confirmBeforeDeletingThreads)
         generatesThreadTitles = value(.generatesThreadTitles, defaults.generatesThreadTitles)
+        resumesAfterUsageLimit = value(.resumesAfterUsageLimit, defaults.resumesAfterUsageLimit)
+        newThreadStartsChat = value(.newThreadStartsChat, defaults.newThreadStartsChat)
         idleSessionTimeoutMinutes = value(.idleSessionTimeoutMinutes, defaults.idleSessionTimeoutMinutes)
         notifyWhenInBackground = value(.notifyWhenInBackground, defaults.notifyWhenInBackground)
         checkpointsEnabled = value(.checkpointsEnabled, defaults.checkpointsEnabled)

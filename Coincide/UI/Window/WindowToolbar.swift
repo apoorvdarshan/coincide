@@ -7,6 +7,7 @@ extension NSToolbarItem.Identifier {
     static let sidebar = NSToolbarItem.Identifier("coincide.sidebar")
     static let threadTitle = NSToolbarItem.Identifier("coincide.threadTitle")
     static let runStatus = NSToolbarItem.Identifier("coincide.runStatus")
+    static let projectScripts = NSToolbarItem.Identifier("coincide.projectScripts")
     static let openIn = NSToolbarItem.Identifier("coincide.openIn")
     static let toggleTerminal = NSToolbarItem.Identifier("coincide.toggleTerminal")
     static let toggleDiff = NSToolbarItem.Identifier("coincide.toggleDiff")
@@ -16,8 +17,8 @@ extension NSToolbarItem.Identifier {
 /// "Open in" picker and terminal toggle over the chat; and the diff toggle over the inspector.
 extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMenuDelegate {
     func makeToolbar() -> NSToolbar {
-        // A new identifier, so toolbars saved before the navigation rail start from the new defaults.
-        let toolbar = NSToolbar(identifier: "MainToolbar3")
+        // A new identifier, so toolbars saved before the project scripts control start from the new defaults.
+        let toolbar = NSToolbar(identifier: "MainToolbar4")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -28,7 +29,10 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
     /// The navigation rail has the panel buttons, so by default the toolbar holds only the run status; the buttons
     /// can still be added with Customize Toolbar.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, .sidebarTrackingSeparator, .threadTitle, .flexibleSpace, .runStatus, .inspectorTrackingSeparator]
+        [
+            .flexibleSpace, .sidebarTrackingSeparator, .threadTitle, .flexibleSpace, .projectScripts, .runStatus,
+            .inspectorTrackingSeparator,
+        ]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -72,6 +76,16 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
             item = button(
                 itemIdentifier, label: String(localized: "Diff"), symbol: "plus.forwardslash.minus", toolTip: "",
                 action: #selector(toggleDiffPanel(_:)))
+        case .projectScripts where !flag:
+            return paletteItem(itemIdentifier, label: String(localized: "Scripts"), symbol: "play.rectangle")
+        case .projectScripts:
+            item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.view = projectScripts
+            // The control draws its own themed pill, so the toolbar adds no bezel of its own.
+            item.isBordered = false
+            item.label = String(localized: "Scripts")
+            item.visibilityPriority = .high
+            item.isHidden = !projectScripts.isAvailable
         case .runStatus:
             item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.view = runStatus

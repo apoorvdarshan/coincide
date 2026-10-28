@@ -24,6 +24,11 @@ import CoincideKit
 /// - `{"settingsSnapshot": "/path.png"}`: draws the settings window's content into a PNG
 /// - `{"press": "label"}`: presses the first control in the main window with that title, accessibility label or
 ///   tooltip (or one starting with it), as a click would
+/// - `{"scripts": [{"name": "Dev", "command": "npm run dev", "icon": "play", "worktree": false}]}`: sets the open
+///   thread's project scripts; `{"runScript": "Dev"}` runs one; `{"scriptsSnapshot": "/path.png"}` draws the toolbar
+///   control; `{"scriptEditor": "Dev"}` (or `""` to add one) opens the editor and `{"sheetSnapshot": "/path.png"}`
+///   draws the window's sheet
+/// - `{"toolbarLog": true}`: logs the toolbar's items, whether they are hidden and their views' frames
 /// - `{"popupSnapshot": "/path.png"}`: draws the open themed popup into a PNG; `{"closePopup": true}` closes it
 /// - `{"sleep": seconds}`, `{"log": "text"}`, `{"quit": true}`
 enum DebugAutomation {
@@ -163,6 +168,43 @@ enum DebugAutomation {
                     continue
                 }
                 if let control = view as? NSControl { control.performClick(nil) } else { _ = view.accessibilityPerformPress() }
+            case "scripts":
+                guard let id = mainWindow?.selectedThreadID, let project = ProjectScripts.shared.project(ofThread: id) else {
+                    continue
+                }
+                let scripts = (value.array ?? []).compactMap { entry -> ProjectScript? in
+                    guard let name = entry["name"]?.string, let command = entry["command"]?.string else { return nil }
+                    return ProjectScript(
+                        name: name, command: command, icon: entry["icon"]?.string.flatMap(ProjectScript.Icon.init) ?? .play,
+                        runOnWorktreeCreate: entry["worktree"]?.bool ?? false)
+                }
+                store.updateProject(project.id) { $0.scripts = scripts }
+                NotificationCenter.default.post(name: ProjectScripts.didChangeNotification, object: project.id)
+            case "runScript":
+                guard let id = mainWindow?.selectedThreadID, let project = ProjectScripts.shared.project(ofThread: id),
+                    let script = project.scripts.first(where: { $0.name == value.string })
+                else { continue }
+                ProjectScripts.shared.run(script, threadID: id)
+            case "scriptsSnapshot":
+                guard let control = mainWindow?.projectScripts, let file = value.string else { continue }
+                control.frame.size = control.fittingSize
+                draw(control, to: URL(fileURLWithPath: file))
+            case "scriptEditor":
+                guard let host = mainWindow?.window?.contentViewController, let id = mainWindow?.selectedThreadID,
+                    let project = ProjectScripts.shared.project(ofThread: id)
+                else { continue }
+                host.presentAsSheet(ProjectScriptEditor(script: project.scripts.first { $0.name == value.string }))
+            case "sheetSnapshot":
+                guard let sheet = mainWindow?.window?.attachedSheet, let content = sheet.contentView, let file = value.string else {
+                    continue
+                }
+                draw(content, to: URL(fileURLWithPath: file))
+                sheet.contentViewController?.dismiss(nil)
+            case "toolbarLog":
+                for item in mainWindow?.window?.toolbar?.items ?? [] {
+                    let frame = item.view.map { NSStringFromRect($0.frame) } ?? "-"
+                    log("toolbar \(item.itemIdentifier.rawValue) hidden=\(item.isHidden) view=\(frame)")
+                }
             case "popupSnapshot":
                 let popup = NSApp.windows.first { $0 is ThemedPopupPanel && $0.isVisible }
                 guard let content = popup?.contentView, let file = value.string else {

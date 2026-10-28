@@ -334,7 +334,7 @@ final class ChatViewController: NSViewController {
 
     private func updateChrome() {
         guard let threadID, let thread = store.thread(threadID) else {
-            noThreadView.update(hasProjects: !store.projects.isEmpty)
+            noThreadView.update(hasProjects: store.projects.contains { !$0.isChats })
             noThreadView.isHidden = false
             welcomeView.isHidden = true
             list.scrollView.isHidden = true

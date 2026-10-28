@@ -147,6 +147,48 @@ struct ThreadRunnerTests {
         await runner.send(threadID: threadID, text: text)
     }
 
+    // MARK: Usage limits
+
+    private func exhaustLimit(resettingIn seconds: TimeInterval) {
+        let window = UsageLimitWindow(
+            id: "session", kind: .session, label: "Session", usedPercent: 100, resetsAt: Date().addingTimeInterval(seconds))
+        _ = runner.recordUsageLimits([window], for: .claude)
+    }
+
+    @Test func aThreadScheduledToResumeContinuesOnceTheLimitResets() async {
+        await completeTurn("hello", reply: "Hi.")
+        runner.resumeDelay = 0
+        exhaustLimit(resettingIn: 0.2)
+        let reset = try! #require(runner.blockingLimitReset(for: .claude))
+        runner.resumeAtReset(threadID, at: reset)
+        #expect(runner.scheduledResumes[threadID] == reset)
+        #expect(await eventually { items.contains { $0.kind == .user && $0.text == ThreadRunner.resumePrompt } })
+        #expect(runner.scheduledResumes[threadID] == nil)
+    }
+
+    @Test func aCancelledResumeDoesNothing() async throws {
+        await completeTurn("hello", reply: "Hi.")
+        runner.resumeDelay = 0
+        runner.resumeAtReset(threadID, at: Date().addingTimeInterval(0.1))
+        runner.cancelResume(threadID)
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(!items.contains { $0.text == ThreadRunner.resumePrompt })
+    }
+
+    @Test func aTurnStoppedByTheLimitIsScheduledWhenTheSettingIsOn() async {
+        store.updateSettings { $0.resumesAfterUsageLimit = true }
+        exhaustLimit(resettingIn: 3_600)
+        claude.configure = { session in
+            session.onSend = { session, _ in session.emit(.turnCompleted(.failed("You've hit your usage limit."))) }
+        }
+        await runner.send(threadID: threadID, text: "hello")
+        #expect(await eventually { runner.scheduledResumes[threadID] != nil })
+        runner.cancelResume(threadID)
+        // An exhausted window that resets in the past stops nothing.
+        exhaustLimit(resettingIn: -10)
+        #expect(runner.blockingLimitReset(for: .claude) == nil)
+    }
+
     // MARK: Background work
 
     @Test func backgroundWorkOutlastsTheTurnAndEndsWithTheSession() async throws {
@@ -862,5 +904,90 @@ struct ThreadTitleTests {
         let prompt = ThreadTitles.prompt(message: "Make the login screen remember the email")
         #expect(prompt.contains("<message>\nMake the login screen remember the email\n</message>"))
         #expect(prompt.contains("\"title\""))
+    }
+}
+
+struct ProjectScriptTests {
+    @Test func projectsSavedBeforeScriptsHaveNoneAndBadScriptsAreSkipped() throws {
+        let old = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Lumen","path":"/tmp/lumen"}"#
+        #expect(try JSONDecoder().decode(Project.self, from: Data(old.utf8)).scripts.isEmpty)
+        let mixed = #"""
+            {"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Lumen","path":"/tmp/lumen",
+             "scripts":[{"name":"Dev","command":"npm run dev","icon":"rocket"},{"name":"No command"}]}
+            """#
+        let scripts = try JSONDecoder().decode(Project.self, from: Data(mixed.utf8)).scripts
+        #expect(scripts.map(\.name) == ["Dev"])
+        #expect(scripts.first?.icon == .play)
+    }
+
+    @Test func t3FilesBringTheirScripts() {
+        let file = #"""
+            {"$schema":"https://t3.codes/schema/t3.json","scripts":[
+              {"name":"Setup","command":"pnpm install","icon":"configure","runOnWorktreeCreate":true},
+              {"name":"  ","command":"echo nameless"},
+              {"name":"Test","command":"pnpm test","icon":"test"}]}
+            """#
+        let scripts = ProjectScript.scripts(fromT3File: Data(file.utf8))
+        #expect(scripts.map(\.name) == ["Setup", "Test"])
+        #expect(scripts.first?.runOnWorktreeCreate == true && scripts.first?.icon == .configure)
+        #expect(scripts.last?.runOnWorktreeCreate == false)
+    }
+}
+
+@MainActor
+struct ChatsProjectTests {
+    @Test func chatsLiveInCoincidesFolderAndStayBelowProjects() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-chats-\(UUID().uuidString)")
+        let store = AppStore(directory: directory)
+        let first = store.addProject(at: URL(fileURLWithPath: "/tmp/one"))
+        let chats = store.ensureChatsProject()
+        #expect(chats.isChats && chats.path == directory.appendingPathComponent("Chats").path)
+        #expect(FileManager.default.fileExists(atPath: chats.path))
+        #expect(store.ensureChatsProject().id == chats.id)
+
+        store.addProject(at: URL(fileURLWithPath: "/tmp/two"))
+        #expect(store.projects.last?.isChats == true)
+        store.moveProject(from: 0, to: store.projects.count)
+        #expect(store.projects.last?.isChats == true)
+        #expect(store.projects.first?.id != first.id)
+
+        store.flush()
+        let reopened = AppStore(directory: directory)
+        #expect(reopened.chatsProject?.id == chats.id)
+        let old = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Lumen","path":"/tmp/lumen"}"#
+        #expect(try JSONDecoder().decode(Project.self, from: Data(old.utf8)).isChats == false)
+    }
+}
+
+@MainActor
+struct MessageSearchTests {
+    @Test func messagesAreSearchedInMemoryAndOnDiskIgnoringCaseAndAccents() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-search-\(UUID().uuidString)")
+        let store = AppStore(directory: directory)
+        let project = store.addProject(at: URL(fileURLWithPath: "/tmp"))
+        let saved = store.createThread(in: project.id).id
+        store.append(TranscriptItem(kind: .user, text: "Fix the login screen"), to: saved)
+        store.append(
+            TranscriptItem(kind: .assistant, text: "Done.\nThe café email now lives in UserDefaults at /prefs.", provider: .claude),
+            to: saved)
+        let other = store.createThread(in: project.id).id
+        store.append(TranscriptItem(kind: .user, text: "Unrelated"), to: other)
+        store.flush()
+
+        let inMemory = await store.searchMessages("CAFE EMAIL")
+        #expect(inMemory[saved] == "The café email now lives in UserDefaults at /prefs.")
+        #expect(inMemory[other] == nil)
+
+        // A fresh store has nothing in memory, so it reads the files.
+        let reopened = AppStore(directory: directory)
+        #expect(await reopened.searchMessages("café email")[saved] != nil)
+        #expect(await reopened.searchMessages("at /prefs")[saved] != nil)
+        #expect(await reopened.searchMessages("x").isEmpty)
+    }
+
+    @Test func longLinesAreCutAroundTheMatch() {
+        let text = String(repeating: "a", count: 100) + " needle " + String(repeating: "b", count: 200)
+        let snippet = AppStore.messageMatch("needle", in: [TranscriptItem(kind: .user, text: text)])
+        #expect(snippet?.hasPrefix("…") == true && snippet?.hasSuffix("…") == true && snippet?.contains("needle") == true)
     }
 }

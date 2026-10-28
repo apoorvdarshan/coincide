@@ -133,6 +133,7 @@ public final class AppStore {
         if let existing = projects.first(where: { $0.path == path }) { return existing }
         let project = Project(name: url.lastPathComponent, path: path)
         projects.append(project)
+        keepChatsLast()
         saveProjects()
         notify(.projects)
         return project
@@ -160,6 +161,7 @@ public final class AppStore {
         guard projects.indices.contains(source) else { return }
         let project = projects.remove(at: source)
         projects.insert(project, at: min(max(0, destination), projects.count))
+        keepChatsLast()
         saveProjects()
         notify(.projects)
     }
@@ -175,6 +177,28 @@ public final class AppStore {
     }
 
     public func project(_ id: UUID) -> Project? { projects.first { $0.id == id } }
+
+    /// Where chats live, once the first one was started.
+    public var chatsProject: Project? { projects.first(where: \.isChats) }
+
+    /// The home of chats, made with its folder (`Chats` in Coincide's data folder) the first time it is needed.
+    @discardableResult
+    public func ensureChatsProject() -> Project {
+        let folder = directory.appendingPathComponent("Chats", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if let existing = chatsProject { return existing }
+        let project = Project(name: String(localized: "Chats"), path: folder.path, isChats: true)
+        projects.append(project)
+        saveProjects()
+        notify(.projects)
+        return project
+    }
+
+    /// Chats stay below every project, wherever projects are added or moved.
+    private func keepChatsLast() {
+        guard let index = projects.firstIndex(where: \.isChats), index != projects.count - 1 else { return }
+        projects.append(projects.remove(at: index))
+    }
 
     // MARK: Threads
 
@@ -242,14 +266,14 @@ public final class AppStore {
     /// Changes thread metadata. Use `append` / `updateItem` for transcript changes.
     public func updateThread(_ id: UUID, touch: Bool = false, _ mutate: (inout ChatThread) -> Void) {
         guard var thread = thread(id) else { return }
-        let before = (thread.title, thread.isPinned, thread.isArchived, thread.branch, thread.worktreePath)
+        let before = (thread.title, thread.isPinned, thread.isArchived, thread.branch, thread.worktreePath, thread.snoozedUntil)
         mutate(&thread)
         if touch { thread.updatedAt = Date() }
         loadedThreads[id] = thread
         threadSummaries[id] = ThreadSummary(thread)
         scheduleSave(id)
         notify(.thread(id))
-        let after = (thread.title, thread.isPinned, thread.isArchived, thread.branch, thread.worktreePath)
+        let after = (thread.title, thread.isPinned, thread.isArchived, thread.branch, thread.worktreePath, thread.snoozedUntil)
         if touch || before != after { notify(.threadList) }
     }
 
@@ -301,6 +325,61 @@ public final class AppStore {
         scheduleSave(threadID)
         notify(.thread(threadID))
         notify(.items(threadID, changed: [], appended: false))
+    }
+
+    // MARK: Searching messages
+
+    /// Threads whose messages contain `query`, ignoring case and accents, each with the line around its first match,
+    /// so a search finds history beyond titles (T3 Code's message search). Transcripts in memory are searched as they
+    /// are; the rest are read from their files off the main thread without being kept.
+    public func searchMessages(_ query: String) async -> [UUID: String] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard needle.count >= 2 else { return [:] }
+        var results: [UUID: String] = [:]
+        var files: [(id: UUID, url: URL)] = []
+        for id in threadSummaries.keys {
+            if let thread = loadedThreads[id] {
+                if let snippet = Self.messageMatch(needle, in: thread.items) { results[id] = snippet }
+            } else {
+                files.append((id, sourceFiles[id] ?? threadURL(id)))
+            }
+        }
+        let found = await Task.detached(priority: .userInitiated) { Self.searchFiles(files, for: needle) }.value
+        return results.merging(found) { inMemory, _ in inMemory }
+    }
+
+    private nonisolated static func searchFiles(_ files: [(id: UUID, url: URL)], for needle: String) -> [UUID: String] {
+        // The raw file is a quick first check; JSON escapes quotes, slashes and backslashes, so such queries skip it.
+        let rawCheck = !needle.contains(where: { "\"/\\".contains($0) })
+        let decoder = StoreWriter.makeDecoder()
+        var found: [UUID: String] = [:]
+        for file in files {
+            if Task.isCancelled { break }
+            guard let data = try? Data(contentsOf: file.url) else { continue }
+            if rawCheck, String(decoding: data, as: UTF8.self).range(of: needle, options: searchOptions) == nil { continue }
+            guard let thread = try? decoder.decode(ThreadFile.self, from: data).thread,
+                let snippet = messageMatch(needle, in: thread.items)
+            else { continue }
+            found[file.id] = snippet
+        }
+        return found
+    }
+
+    private nonisolated static let searchOptions: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+
+    /// The line around the first match in the user's or agents' messages, shortened to fit a tooltip.
+    nonisolated static func messageMatch(_ needle: String, in items: [TranscriptItem]) -> String? {
+        for item in items where item.kind == .user || item.kind == .assistant {
+            guard let match = item.text.range(of: needle, options: searchOptions) else { continue }
+            let text = item.text
+            let lineStart = text[..<match.lowerBound].lastIndex(where: \.isNewline).map { text.index(after: $0) } ?? text.startIndex
+            let lineEnd = text[match.upperBound...].firstIndex(where: \.isNewline) ?? text.endIndex
+            let start = text.index(match.lowerBound, offsetBy: -40, limitedBy: lineStart) ?? lineStart
+            let end = text.index(match.upperBound, offsetBy: 80, limitedBy: lineEnd) ?? lineEnd
+            let snippet = text[start..<end].trimmingCharacters(in: .whitespaces)
+            return (start > lineStart ? "…" : "") + snippet + (end < lineEnd ? "…" : "")
+        }
+        return nil
     }
 
     // MARK: Transcripts in memory

@@ -28,6 +28,10 @@ final class UIState {
         /// Bundle identifier of the app the toolbar's "Open in" button uses.
         var preferredOpenTarget: String?
         var showsArchivedThreads = false
+        /// List snoozed threads too, marked with when they wake.
+        var showsSnoozedThreads = false
+        /// The project script run last in each project (ids as strings), which the toolbar runs with one click.
+        var lastScripts: [String: String] = [:]
         /// Threads per project before the sidebar shows "Show more"; 0 shows all.
         var sidebarThreadLimit = 6
         /// Keyed by thread id.
@@ -53,6 +57,8 @@ final class UIState {
             isTerminalOpen = value(.isTerminalOpen, defaults.isTerminalOpen)
             preferredOpenTarget = value(.preferredOpenTarget, defaults.preferredOpenTarget)
             showsArchivedThreads = value(.showsArchivedThreads, defaults.showsArchivedThreads)
+            showsSnoozedThreads = value(.showsSnoozedThreads, defaults.showsSnoozedThreads)
+            lastScripts = value(.lastScripts, defaults.lastScripts)
             sidebarThreadLimit = value(.sidebarThreadLimit, defaults.sidebarThreadLimit)
             unseen = value(.unseen, defaults.unseen)
             agentTurns = value(.agentTurns, defaults.agentTurns)

@@ -61,6 +61,7 @@ final class MainMenu: NSObject, NSMenuDelegate {
     private func fileMenu() -> NSMenu {
         let menu = NSMenu(title: String(localized: "File"))
         menu.addItem(item(String(localized: "New Thread"), #selector(MainWindowController.newThread(_:)), .newThread))
+        menu.addItem(item(String(localized: "New Chat"), #selector(MainWindowController.newChat(_:))))
         let newIn = NSMenuItem(title: newThreadInMenu.title, action: nil, keyEquivalent: "")
         newIn.submenu = newThreadInMenu
         menu.addItem(newIn)
