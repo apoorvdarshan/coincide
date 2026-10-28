@@ -154,10 +154,13 @@ final class ChatWelcomeView: NSView {
     func update(thread: ChatThread, project: Project?, registry: ProviderRegistry) {
         let name = project?.name ?? String(localized: "this project")
         let size: CGFloat = 24
+        // One sentence, so each language can place the project name where it belongs; the name is then set in bold.
+        let sentence = String(localized: "What should we build in \(name)?")
         let text = NSMutableAttributedString(
-            string: String(localized: "What should we build in "), attributes: [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.labelColor])
-        text.append(NSAttributedString(string: name, attributes: [.font: NSFont.systemFont(ofSize: size, weight: .semibold), .foregroundColor: NSColor.labelColor]))
-        text.append(NSAttributedString(string: "?", attributes: [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.labelColor]))
+            string: sentence, attributes: [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.labelColor])
+        if let range = sentence.range(of: name) {
+            text.addAttribute(.font, value: NSFont.systemFont(ofSize: size, weight: .semibold), range: NSRange(range, in: sentence))
+        }
         let centered = NSMutableParagraphStyle()
         centered.alignment = .center
         centered.lineBreakMode = .byTruncatingMiddle

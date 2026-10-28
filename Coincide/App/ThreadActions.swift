@@ -85,10 +85,10 @@ enum ThreadActions {
             ? String(localized: "The agent working in it is stopped and the conversation is deleted. Files on disk are not changed.")
             : String(localized: "This permanently deletes the conversation. Files on disk are not changed.")
         if busy.count == 1 {
-            text += " " + String(localized: "“\(busy[0].title)” is still running in its terminal. Deleting the thread stops it.")
+            text += "\n\n" + String(localized: "“\(busy[0].title)” is still running in its terminal. Deleting the thread stops it.")
         } else if busy.count > 1 {
             let names = ListFormatter.localizedString(byJoining: busy.map { "“\($0.title)”" })
-            text += " " + String(localized: "\(names) are still running in its terminals. Deleting the thread stops them.")
+            text += "\n\n" + String(localized: "\(names) are still running in its terminals. Deleting the thread stops them.")
         }
         alert.informativeText = text
         alert.addButton(withTitle: String(localized: "Delete")).hasDestructiveAction = true
@@ -192,10 +192,10 @@ enum ThreadActions {
         // Deleting its threads stops their terminals' shells.
         let busy = busyTerminals(in: threads.map(\.id))
         if busy.count == 1 {
-            text += " " + String(localized: "“\(busy[0].title)” is still running in a terminal. Removing the project stops it.")
+            text += "\n\n" + String(localized: "“\(busy[0].title)” is still running in a terminal. Removing the project stops it.")
         } else if busy.count > 1 {
             let names = ListFormatter.localizedString(byJoining: busy.map { "“\($0.title)”" })
-            text += " " + String(localized: "\(names) are still running in terminals. Removing the project stops them.")
+            text += "\n\n" + String(localized: "\(names) are still running in terminals. Removing the project stops them.")
         }
         alert.informativeText = text
         alert.addButton(withTitle: String(localized: "Remove")).hasDestructiveAction = true
