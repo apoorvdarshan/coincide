@@ -106,7 +106,12 @@ public enum UpdateArchive {
             && path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
     }
 
-    private static func key(_ path: String) -> String { path.precomposedStringWithCanonicalMapping.lowercased() }
+    /// APFS aliases more names than lowercasing does (ß/SS, ligatures, final sigma).
+    /// Fold conservatively: false-positive collisions reject an archive, never weaken a link boundary.
+    private static func key(_ path: String) -> String {
+        path.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .precomposedStringWithCanonicalMapping
+    }
 
     private static func resolvedLink(_ path: String, target: String, entries: [String: Entry], visited: Set<String>) throws -> String {
         guard visited.count < 40, !visited.contains(key(path)) else { throw AppUpdateError.archive }

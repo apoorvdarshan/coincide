@@ -16,7 +16,7 @@ Provide one of these assets:
 
 The architecture-specific asset is preferred over universal. GitHub must return the asset size and its `sha256:` digest. The initial HTTPS asset URL must belong to this repository's release/tag. Redirects are restricted to GitHub's HTTPS API/download hosts.
 
-The ZIP must contain a top-level `Coincide.app`. Stored and Deflate entries and safe relative framework symlinks are supported. ZIP64, encrypted entries, unsupported file types, duplicate/case-colliding paths, path traversal, external/cyclic symlinks, and children nested under a symlink are rejected. Finder's `__MACOSX` metadata is ignored. Limits are 512 MiB compressed, 1 GiB expanded, 256 MiB per entry, and fewer than 50,000 entries.
+The ZIP must contain a top-level `Coincide.app`. Stored and Deflate entries and safe relative framework symlinks are supported. ZIP64, encrypted entries, unsupported file types, duplicate or Unicode-fold-equivalent paths, path traversal, external/cyclic symlinks, and children nested under a symlink are rejected. Finder's `__MACOSX` metadata is ignored. Limits are 512 MiB compressed, 1 GiB expanded, 256 MiB per entry, and fewer than 50,000 entries.
 
 The app must:
 
@@ -34,7 +34,7 @@ Each download uses its own private directory under `~/Library/Caches/com.apoorvd
 
 Install on Quit copies the signed helper into the job directory and waits for it to register its process-exit observer. Normal application termination writes consent only after the existing shutdown/flush sequence. The helper derives the trusted signing team from its own signature, rechecks the installed app, rehashes and re-extracts the archive, and verifies the candidate again. Mutable previously extracted content is never trusted for installation.
 
-The verified candidate is copied beside the destination app and verified again. A same-filesystem atomic exchange replaces the app; failed final verification exchanges it back. The old app remains at `.Coincide-backup-<UUID>.app` beside the installed app. The job's `result.json` records that backup path. Backups are retained for manual recovery, not silently deleted. The installer never reads or changes chat data, projects, provider credentials, or preferences, and never requests elevated permissions.
+The verified candidate is copied beside the destination app and verified again. A same-filesystem atomic exchange replaces the app; failed final verification exchanges it back. The old app remains at `.Coincide-backup-<UUID>.app` beside the installed app. The job's `result.json` records that backup path when writable; failure to write this diagnostic receipt does not change a successful installation into a failure. Backups are retained for manual recovery, not silently deleted. The installer never reads or changes chat data, projects, provider credentials, or preferences, and never requests elevated permissions.
 
 If a filesystem error also prevents rollback, both bundles are retained for recovery. The previous app's backup is not removed. A user who manually relaunches before the installation completes can cause the helper to refuse installation; wait for its confirmation first.
 

@@ -42,6 +42,12 @@ public enum AppUpdateStaging {
 }
 
 public enum AppUpdateInstallation {
+    /// A receipt is diagnostic only. Failure to write it cannot turn a completed exchange into a failed installation.
+    public static func recordSuccess(version: String, backup: URL, job: URL) {
+        try? JSONEncoder().encode(["state": "installed", "version": version, "backup": backup.path])
+            .write(to: job.appendingPathComponent("result.json"), options: .atomic)
+    }
+
     /// Re-extract and verify the immutable release bytes after quit; never trust the previously expanded bundle.
     public static func install(plan: AppUpdatePlan, job: URL, team: String, isRunning: () -> Bool) throws -> URL {
         let target = plan.target.standardizedFileURL

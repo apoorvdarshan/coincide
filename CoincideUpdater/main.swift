@@ -40,8 +40,7 @@ do {
             $0.bundleIdentifier == AppUpdateSecurity.bundleID && !$0.isTerminated
         }
     }
-    try JSONEncoder().encode(["state": "installed", "version": plan.release.version, "backup": backup.path])
-        .write(to: job.appendingPathComponent("result.json"), options: .atomic)
+    AppUpdateInstallation.recordSuccess(version: plan.release.version, backup: backup, job: job)
     showResult(true)
     exit(0)
 } catch {

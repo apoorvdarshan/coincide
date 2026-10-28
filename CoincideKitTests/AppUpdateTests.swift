@@ -12,6 +12,15 @@ struct AppUpdateTests {
         }
     }
 
+    @Test func minimumOSVersionRejectsMissingMalformedAndOverflowingComponents() throws {
+        #expect(try AppUpdateSecurity.minimumOSVersion("14").minorVersion == 0)
+        #expect(try AppUpdateSecurity.minimumOSVersion("14.2").minorVersion == 2)
+        #expect(try AppUpdateSecurity.minimumOSVersion("14.2.1").patchVersion == 1)
+        for value in ["", "14..0", "14.bad.0", "14.0.", "-1.0", "14.0.0.1", "١٤.0", "99999999999999999999.0"] {
+            #expect(throws: AppUpdateError.self) { try AppUpdateSecurity.minimumOSVersion(value) }
+        }
+    }
+
     @Test func releaseRequiresTrustedURLDigestArchitectureAndNewerStableVersion() throws {
         let valid = metadata()
         let release = try #require(try AppUpdateRelease.parse(valid, newerThan: "0.1.0", architecture: "arm64"))
@@ -52,6 +61,15 @@ struct AppUpdateTests {
         for (index, entries) in attacks.enumerated() {
             try zip(entries).write(to: archive)
             #expect(throws: AppUpdateError.self) { try UpdateArchive.extract(archive, to: directory.appendingPathComponent("bad\(index)")) }
+        }
+        for (index, aliases) in [("Straße", "STRASSE"), ("ﬀile", "ffile"), ("Σ", "ς"), ("ß", "SS")].enumerated() {
+            // Two spellings must not materialize as one APFS entry.
+            try zip([("Coincide.app/\(aliases.0)", Data(), 0o100644), ("Coincide.app/\(aliases.1)", Data(), 0o100644)]).write(to: archive)
+            #expect(throws: AppUpdateError.self) { try UpdateArchive.extract(archive, to: directory.appendingPathComponent("unicode-collision\(index)")) }
+            // Resolve the alias before interpreting '..', which would otherwise escape the app root.
+            try zip([("Coincide.app/a/\(aliases.0)", Data("..".utf8), 0o120777),
+                     ("Coincide.app/link", Data("a/\(aliases.1)/../outside".utf8), 0o120777)]).write(to: archive)
+            #expect(throws: AppUpdateError.self) { try UpdateArchive.extract(archive, to: directory.appendingPathComponent("unicode-escape\(index)")) }
         }
         // Mutate each byte of the metadata fixture; malformed headers must throw, never index outside the input.
         let seed = zip([("Coincide.app/file", Data("payload".utf8), 0o100644)])
@@ -102,6 +120,10 @@ struct AppUpdateTests {
         }
         #expect(try String(contentsOf: target.appendingPathComponent("version"), encoding: .utf8) == "old")
         let backup = try AppUpdateInstallation.exchange(candidate: candidate, target: target, isRunning: { false }, verify: { _ in })
+        #expect(try String(contentsOf: target.appendingPathComponent("version"), encoding: .utf8) == "new")
+        #expect(try String(contentsOf: backup.appendingPathComponent("version"), encoding: .utf8) == "old")
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("result.json"), withIntermediateDirectories: false)
+        AppUpdateInstallation.recordSuccess(version: "0.2.0", backup: backup, job: directory)
         #expect(try String(contentsOf: target.appendingPathComponent("version"), encoding: .utf8) == "new")
         #expect(try String(contentsOf: backup.appendingPathComponent("version"), encoding: .utf8) == "old")
     }

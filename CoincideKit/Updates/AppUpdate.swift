@@ -105,16 +105,26 @@ public enum AppUpdateSecurity {
               bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String == release.version,
               let executable = bundle.executableURL,
               executable.standardizedFileURL.path.hasPrefix(url.standardizedFileURL.path + "/Contents/MacOS/") else { throw AppUpdateError.incompatible }
-        if let minimum = bundle.object(forInfoDictionaryKey: "LSMinimumSystemVersion") as? String {
-            let parts = minimum.split(separator: ".").compactMap { Int($0) }
-            guard !parts.isEmpty, parts.count <= 3 else { throw AppUpdateError.incompatible }
-            let version = OperatingSystemVersion(majorVersion: parts[0], minorVersion: parts.count > 1 ? parts[1] : 0, patchVersion: parts.count > 2 ? parts[2] : 0)
+        if let minimum = bundle.object(forInfoDictionaryKey: "LSMinimumSystemVersion") {
+            guard let minimum = minimum as? String else { throw AppUpdateError.incompatible }
+            let version = try minimumOSVersion(minimum)
             guard ProcessInfo.processInfo.isOperatingSystemAtLeast(version) else { throw AppUpdateError.incompatible }
         }
         try validateSignature(at: url, team: team, identifier: bundleID)
         try command("/usr/bin/lipo", ["-verify_arch", AppUpdateRelease.architecture, executable.path])
         // Gatekeeper also assesses Developer ID trust and notarization; a valid ad-hoc signature never qualifies.
         try command("/usr/sbin/spctl", ["--assess", "--type", "execute", url.path])
+    }
+
+    static func minimumOSVersion(_ value: String) throws -> OperatingSystemVersion {
+        let components = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...3).contains(components.count),
+              components.allSatisfy({ !$0.isEmpty && $0.allSatisfy({ $0.isASCII && $0.isNumber }) }) else { throw AppUpdateError.incompatible }
+        let numbers = try components.map { component in
+            guard let number = Int(component) else { throw AppUpdateError.incompatible }
+            return number
+        }
+        return OperatingSystemVersion(majorVersion: numbers[0], minorVersion: numbers.count > 1 ? numbers[1] : 0, patchVersion: numbers.count > 2 ? numbers[2] : 0)
     }
 
     private static func command(_ executable: String, _ arguments: [String]) throws {
