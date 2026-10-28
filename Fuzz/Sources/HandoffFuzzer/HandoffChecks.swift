@@ -7,6 +7,19 @@ enum HandoffChecks {
     private static let budgets = [0, 40, Handoff.defaultBudget]
 
     static func run(_ bytes: [UInt8]) {
+        let data = Data(bytes)
+        if let imported = try? CLISessionImport.parse(data, sourceURL: URL(fileURLWithPath: "/tmp/synthetic.jsonl")) {
+            expectEqual(imported.sourceData, data, "import preserves the original source bytes")
+            expect(UUID(uuidString: imported.sessionID) != nil, "import has a valid native identity")
+            expect(imported.directory.path.hasPrefix("/"), "import has an absolute working directory")
+            expect(imported.items.contains { $0.kind == .user || $0.kind == .assistant }, "import has conversation messages")
+            expect(imported.items.allSatisfy { $0.status != .running && $0.status != .waiting }, "import never starts work")
+            var thread = ChatThread(projectID: UUID(), selection: .init(provider: imported.provider, modelID: imported.modelID),
+                accessMode: .approval, items: imported.items)
+            thread.importedSession = .init(provider: imported.provider, sessionID: imported.sessionID, sourcePath: imported.sourceURL.path)
+            checkRoundTrip(thread)
+            checkHandoff(thread)
+        }
         if bytes.first == UInt8(ascii: "{") {
             guard let thread = try? JSONDecoder().decode(ChatThread.self, from: Data(bytes)) else { return }
             checkRoundTrip(thread)

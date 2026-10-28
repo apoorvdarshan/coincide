@@ -96,4 +96,26 @@ struct ThreadInboxTests {
         store.updateThread(id) { $0.updatedAt = Date().addingTimeInterval(1) }
         #expect(!inbox.isSettled(try #require(store.summary(id))))
     }
+
+    @Test func archiveRedoSkipsNewlyRunningThreadsAndUndoKeepsTheRestOfTheBatch() {
+        let folder = TemporaryDirectory("inbox-running-redo")
+        let store = AppStore(directory: folder.url)
+        var running: Set<UUID> = []
+        let inbox = ThreadInbox(store: store, ui: UIState(directory: folder.url), isRunning: { running.contains($0) })
+        let project = store.addProject(at: folder.url)
+        let ids = (0..<2).map { _ in store.createThread(in: project.id).id }
+        inbox.archive(ids, archived: true)
+        inbox.undo()
+        running.insert(ids[0])
+        inbox.redo()
+        #expect(store.summary(ids[0])?.isArchived == false)
+        #expect(store.summary(ids[1])?.isArchived == true)
+        inbox.undo()
+        #expect(ids.allSatisfy { store.summary($0)?.isArchived == false })
+        inbox.redo()
+        #expect(store.summary(ids[0])?.isArchived == false)
+        #expect(store.summary(ids[1])?.isArchived == true)
+        inbox.undoManager.removeAllActions()
+        store.flush()
+    }
 }

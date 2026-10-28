@@ -168,6 +168,7 @@ final class DiffViewController: NSViewController {
             banner.bottomAnchor.constraint(equalTo: actionsBar.topAnchor, constant: -8),
         ])
         document.bottomInset = 64
+        document.setLayout(UIState.shared.values.diffLayout)
         view = root
         rebuildScopeMenu()
         updateActionsBar()
@@ -817,6 +818,13 @@ extension DiffViewController: NSMenuDelegate {
         menu.removeAllItems()
         let icon = menu.addItem(withTitle: "", action: nil, keyEquivalent: "")
         icon.image = Theme.symbol("ellipsis.circle", size: 14)
+        for layout in DiffLayout.allCases {
+            let item = menu.addItem(withTitle: layout.title, action: #selector(changeLayout(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = layout.rawValue
+            item.state = document.layout == layout ? .on : .off
+        }
+        menu.addItem(.separator())
         let whitespace = menu.addItem(
             withTitle: String(localized: "Ignore Whitespace"), action: #selector(toggleWhitespace), keyEquivalent: "")
         whitespace.target = self
@@ -830,6 +838,12 @@ extension DiffViewController: NSMenuDelegate {
             withTitle: String(localized: "Reveal Folder in Finder"), action: cwd == nil ? nil : #selector(revealFolder),
             keyEquivalent: "")
         reveal.target = self
+    }
+
+    @objc private func changeLayout(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String, let layout = DiffLayout(rawValue: value) else { return }
+        UIState.shared.update { $0.diffLayout = layout }
+        document.setLayout(layout)
     }
 
     @objc private func toggleWhitespace() {

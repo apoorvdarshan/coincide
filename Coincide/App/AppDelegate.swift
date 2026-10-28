@@ -39,10 +39,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationController.shared.start()
         ProjectScripts.shared.start()
         ThreadSnooze.shared.start()
+        PreviewSessions.shared.start()
+        AppUpdates.shared.start()
         // Chats are always listed, so the first one can be started from the sidebar.
         AppStore.shared.ensureChatsProject()
         mainWindow?.showWindow(nil)
-        Task { await ProviderRegistry.shared.refresh() }
+        Task {
+            await ProviderRegistry.shared.refresh()
+            ScheduledTasks.shared.start()
+        }
         #if DEBUG
         DebugAutomation.startIfRequested()
         #endif
@@ -76,10 +81,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         guard !Self.isHostingTests else { return }
+        ScheduledTasks.shared.stop()
+        PreviewSessions.shared.stop()
         ThreadRunner.shared.shutdownAll()
         AppStore.shared.flush()
+        ThreadRunner.shared.usageHistory.flush()
         if mainWindow?.window?.isVisible == true { mainWindow?.saveLayout() }
         UIState.shared.flush()
+        AppUpdates.shared.authorizeCleanQuit()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -113,6 +122,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let id = sender.representedObject as? UUID else { return }
         NSApp.activate()
         AppEvents.openThread(id)
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        AppEvents.showSettings(section: .about)
+        AppUpdates.shared.check()
     }
 
     @objc func showSettings(_ sender: Any?) {

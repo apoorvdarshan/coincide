@@ -214,6 +214,27 @@ public struct ProjectScript: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+/// Defaults captured for newly created threads in one project. Nil on Project inherits the app's defaults.
+public struct ProjectThreadDefaults: Codable, Hashable, Sendable {
+    public var selection: ModelSelection
+    public var accessMode: AccessMode
+    public var interactionMode: InteractionMode
+
+    public nonisolated init(selection: ModelSelection, accessMode: AccessMode, interactionMode: InteractionMode = .build) {
+        self.selection = selection
+        self.accessMode = accessMode
+        self.interactionMode = interactionMode
+    }
+
+    public nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        selection = try container.decode(ModelSelection.self, forKey: .selection)
+        // An unknown future permission mode must not turn into full access.
+        accessMode = container.lenient(AccessMode.self, forKey: .accessMode) ?? .approval
+        interactionMode = container.lenient(InteractionMode.self, forKey: .interactionMode) ?? .build
+    }
+}
+
 public struct Project: Codable, Hashable, Sendable, Identifiable {
     public var id: UUID
     public var name: String
@@ -225,10 +246,11 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
     /// The home of chats: threads started without a project, like a chat app's (T3 Code's scratch project). Its folder
     /// is Coincide's own, and the sidebar lists it last, as Chats.
     public var isChats: Bool
+    public var threadDefaults: ProjectThreadDefaults?
 
     public nonisolated init(
         id: UUID = UUID(), name: String, path: String, createdAt: Date = Date(), isExpanded: Bool = true,
-        scripts: [ProjectScript] = [], isChats: Bool = false
+        scripts: [ProjectScript] = [], isChats: Bool = false, threadDefaults: ProjectThreadDefaults? = nil
     ) {
         self.id = id
         self.name = name
@@ -237,6 +259,7 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
         self.isExpanded = isExpanded
         self.scripts = scripts
         self.isChats = isChats
+        self.threadDefaults = threadDefaults
     }
 
     public nonisolated var url: URL { URL(fileURLWithPath: path) }
@@ -250,6 +273,7 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
         isExpanded = container.lenient(Bool.self, forKey: .isExpanded) ?? true
         scripts = container.lenientArray(ProjectScript.self, forKey: .scripts)
         isChats = container.lenient(Bool.self, forKey: .isChats) ?? false
+        threadDefaults = container.lenient(ProjectThreadDefaults.self, forKey: .threadDefaults)
     }
 }
 
@@ -517,6 +541,21 @@ public struct ProviderSessionRef: Codable, Hashable, Sendable {
     }
 }
 
+/// Import provenance stays with the transcript even when rewinding clears native session references.
+public struct ImportedSession: Codable, Hashable, Sendable {
+    public var provider: ProviderKind
+    public var sessionID: String
+    public var sourcePath: String
+    public var importedAt: Date
+
+    public init(provider: ProviderKind, sessionID: String, sourcePath: String, importedAt: Date = Date()) {
+        self.provider = provider
+        self.sessionID = sessionID
+        self.sourcePath = sourcePath
+        self.importedAt = importedAt
+    }
+}
+
 public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     public var id: UUID
     public var projectID: UUID
@@ -539,6 +578,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     public var draft: String?
     /// Unsent context cards, restored with the draft after switching threads or restarting.
     public var draftContext: [MessageContext]?
+    public var importedSession: ImportedSession?
 
     public nonisolated init(
         id: UUID = UUID(), projectID: UUID, title: String = String(localized: "New thread"),
@@ -590,5 +630,6 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         branch = container.lenient(String.self, forKey: .branch)
         draft = container.lenient(String.self, forKey: .draft)
         draftContext = container.contains(.draftContext) ? container.lenientArray(MessageContext.self, forKey: .draftContext) : nil
+        importedSession = container.lenient(ImportedSession.self, forKey: .importedSession)
     }
 }

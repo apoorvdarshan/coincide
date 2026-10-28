@@ -35,7 +35,7 @@ struct ThreadIndexEntry: Codable, Hashable, Sendable {
 /// quit unexpectedly, or another version writing it) is read again, and an index that is missing, unreadable
 /// or of another version is rebuilt from the files. Versions that do not know the index ignore it.
 struct ThreadIndexFile: Codable {
-    nonisolated static let currentVersion = 1
+    nonisolated static let currentVersion = 2
 
     var version: Int
     var entries: [ThreadIndexEntry]

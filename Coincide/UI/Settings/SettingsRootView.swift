@@ -36,6 +36,7 @@ struct SettingsRootView: View {
         case .section(.general): GeneralSettingsView(model: model)
         case .section(.providers): ProvidersSettingsView(model: model)
         case .section(.models): ModelsSettingsView(model: model)
+        case .section(.usage): UsageSettingsView()
         case .section(.keyboard): KeyboardSettingsView(model: model)
         case .section(.about): AboutSettingsView()
         case .provider(let kind): ProviderSettingsView(model: model, kind: kind).id(kind)
@@ -61,6 +62,7 @@ private struct SettingsSidebar: View {
                 Section {
                     row(.general)
                     row(.models)
+                    row(.usage)
                     row(.keyboard)
                 }
                 Section("Providers") {
@@ -129,6 +131,7 @@ extension SettingsSection {
         case .general: .gray
         case .providers: .indigo
         case .models: .purple
+        case .usage: .green
         case .keyboard: Color(nsColor: .darkGray)
         case .about: .blue
         }
@@ -188,6 +191,8 @@ private struct SettingsSearchResults: View {
     private static func entries(kinds: [ProviderKind]) -> [SettingsSearchEntry] {
         let general = SettingsPane.section(.general)
         var entries: [SettingsSearchEntry] = [
+            SettingsSearchEntry(title: String(localized: "Usage"), pane: .section(.usage),
+                keywords: [String(localized: "Account limits"), String(localized: "Recent turns")]),
             SettingsSearchEntry(
                 title: String(localized: "Appearance"), pane: general, setting: .appearance,
                 keywords: [String(localized: "Dark mode"), String(localized: "Light mode"), String(localized: "Theme")]),

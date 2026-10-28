@@ -147,6 +147,29 @@ struct ThreadRunnerTests {
         await runner.send(threadID: threadID, text: text)
     }
 
+    @Test func runtimeCapabilitiesReachSendAndSteerWithoutBeingSaved() async throws {
+        runner.ephemeralRuntimeContext = { id in id == threadID ? "<ephemeral>preview capability</ephemeral>" : nil }
+        claude.configure = { $0.supportsSteering = true }
+        let context = [MessageContext(.quote(.init(text: "Keep the form label", provider: .codex))),
+            MessageContext(.file(.init(path: "/tmp/preview-spec.pdf")))]
+        await runner.send(threadID: threadID, text: "Inspect the page", context: context)
+        let session = try #require(claude.last)
+        #expect(session.sent.last?.message.contains("preview capability") == true)
+        #expect(session.sent.last?.message.contains("Keep the form label") == true)
+        #expect(session.sent.last?.filePaths == ["/tmp/preview-spec.pdf"])
+        #expect(items.last(where: { $0.kind == .user })?.context == context)
+        #expect(items.last(where: { $0.kind == .user })?.text == "Inspect the page")
+        _ = await runner.steer(threadID: threadID, text: "Click the button", context: context)
+        #expect(session.steered.last?.message.contains("preview capability") == true)
+        #expect(session.steered.last?.message.contains("Keep the form label") == true)
+        #expect(session.steered.last?.filePaths == ["/tmp/preview-spec.pdf"])
+        #expect(items.last(where: { $0.kind == .user })?.context == context)
+        #expect(items.last(where: { $0.kind == .user })?.text == "Click the button")
+        runner.ephemeralRuntimeContext = nil
+        _ = await runner.steer(threadID: threadID, text: "Access is now off")
+        #expect(session.steered.last?.message == "Access is now off")
+    }
+
     // MARK: Usage limits
 
     private func exhaustLimit(resettingIn seconds: TimeInterval) {
@@ -515,6 +538,16 @@ struct ThreadRunnerTests {
         store.updateThread(threadID) { $0.selection = ModelSelection(provider: .claude, modelID: "other") }
         await runner.send(threadID: threadID, text: "two")
         #expect(runner.usage[threadID] == TokenUsage(inputTokens: 150))
+        #expect(runner.usageHistory.records.count == 2)
+        #expect(runner.usageHistory.records[0].usage.outputTokens == 5)
+        #expect(runner.usageHistory.records[1].usage == TokenUsage(inputTokens: 150))
+        #expect(runner.usageHistory.records[1].modelID == "other")
+        claude.last?.onSend = { session, _ in session.emit(.turnCompleted(.interrupted)) }
+        await runner.send(threadID: threadID, text: "three")
+        #expect(runner.usageHistory.records.last?.usage == TokenUsage())
+        #expect(runner.usageHistory.records.last?.outcome == .interrupted)
+        runner.usageHistory.flush()
+        #expect(UsageHistory(directory: store.directory).records.count == 3)
     }
 
     // MARK: Turns the agent starts

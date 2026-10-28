@@ -114,6 +114,9 @@ struct PaletteCatalog {
                     trailing: keys(.openInEditor),
                     keywords: ["open", "editor", "finder", "terminal", "reveal"], behavior: .run { window?.openInPreferred(nil) }))
         }
+        items.append(PaletteItem(id: "action:scheduled-tasks", title: String(localized: "Scheduled Tasks…"),
+            icon: symbol("clock"), keywords: ["schedule", "tasks", "automation", "daily", "weekly"],
+            behavior: .run { window?.showScheduledTasks(nil) }))
         if let split = window?.splitController {
             items.append(
                 PaletteItem(
@@ -134,6 +137,10 @@ struct PaletteCatalog {
                     icon: symbol("arrow.triangle.pull"),
                     keywords: ["pull request", "pr", "github", "review", "checks", "merge", "toggle"],
                     behavior: .run { window?.togglePullRequestsPanel(nil) }))
+            items.append(PaletteItem(
+                id: "action:preview", title: split.isPreviewOpen ? String(localized: "Hide Browser Preview") : String(localized: "Show Browser Preview"),
+                icon: symbol("globe"), keywords: ["preview", "browser", "web", "localhost"],
+                behavior: .run { window?.togglePreviewPanel(nil) }))
         }
         if let thread, ThreadRunner.shared.isRunning(thread.id) {
             items.append(
@@ -151,6 +158,9 @@ struct PaletteCatalog {
         let core = items
         items = []
         if let thread { items += composerActions(for: thread) + searchActions(for: thread) }
+        items.append(PaletteItem(id: "action:scheduled-tasks", title: String(localized: "Scheduled Tasks…"),
+            icon: symbol("clock"), keywords: ["schedule", "tasks", "automation", "daily", "weekly"],
+            behavior: .run { window?.showScheduledTasks(nil) }))
         if let split = window?.splitController {
             items.append(
                 PaletteItem(

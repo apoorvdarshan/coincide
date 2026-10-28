@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Synchronization
 import Observation
 import Security
 
@@ -238,11 +239,12 @@ public final class AntigravityRuntime {
     /// Keeps the downloaded release `executable` runs from until the lease is released. Nil for an
     /// executable outside the downloaded runtime.
     public func lease(for executable: URL) -> ACPLaunchLease? {
-        guard paths.isManaged(executable) else { return nil }
-        let key = (AntigravityPaths.canonicalPath(executable) as NSString).deletingLastPathComponent
+        guard let pinned = installer.pinRelease(for: executable), let directory = pinned.releaseDirectory else { return nil }
+        let key = directory.path
         leases[key, default: 0] += 1
         leaseCount += 1
-        return ACPLaunchLease { [weak self] in
+        return ACPLaunchLease(executable: pinned.executable, environmentOverrides: ["ANTIGRAVITY_HARNESS_PATH": pinned.harness.path]) { [weak self] in
+            AntigravityInstaller.unprotectRelease(key)
             guard let self else { return }
             self.leaseCount -= 1
             let remaining = (self.leases[key] ?? 1) - 1
@@ -301,6 +303,33 @@ public final class AntigravityRuntime {
 /// The installation steps, off the main actor. Every dependency that reaches outside (network, code
 /// signing, starting the agent, free space) is injected so tests can replace it.
 public struct AntigravityInstaller: Sendable {
+    /// Shared across runtime instances: publishing/activating and pruning must never race. Counts
+    /// keep both in-progress installations and acquired launch leases alive across async work.
+    private nonisolated static let releaseAccess = Mutex<[String: Int]>([:])
+
+    nonisolated static func protectRelease(_ path: String) {
+        releaseAccess.withLock { $0[path, default: 0] += 1 }
+    }
+
+    nonisolated static func unprotectRelease(_ path: String) {
+        releaseAccess.withLock { counts in
+            if let count = counts[path], count > 1 { counts[path] = count - 1 } else { counts[path] = nil }
+        }
+    }
+
+    /// Resolve the executable/helper pair and protect its release in the same critical section as
+    /// activation and pruning. Every launch must use these returned paths, never `current` again.
+    nonisolated func pinRelease(for executable: URL) -> AntigravityExecutable? {
+        Self.releaseAccess.withLock { counts in
+            guard paths.isManaged(executable) else { return nil }
+            let executable = URL(fileURLWithPath: AntigravityPaths.canonicalPath(executable))
+            let directory = executable.deletingLastPathComponent()
+            counts[directory.path, default: 0] += 1
+            return AntigravityExecutable(
+                executable: executable, harness: directory.appendingPathComponent(AntigravityRelease.harnessName),
+                version: nil, releaseDirectory: directory)
+        }
+    }
     nonisolated static let recordName = ".install-complete.json"
     private nonisolated static let recordMaxBytes = 8 * 1_024
     private nonisolated static let validationTimeout: TimeInterval = 90
@@ -352,6 +381,9 @@ public struct AntigravityInstaller: Sendable {
             throw AntigravityInstallError("install", String(localized: "Couldn’t create Antigravity’s folder in Coincide’s data folder."))
         }
         let destination = paths.versionsDirectory.appendingPathComponent(asset.sha256, isDirectory: true)
+        let protectedPath = AntigravityPaths.canonicalPath(destination)
+        Self.protectRelease(protectedPath)
+        defer { Self.unprotectRelease(protectedPath) }
         if manager.fileExists(atPath: destination.path) {
             // The release was unpacked before (a reinstall, or an install another window finished).
             let existing = try completedRelease(asset.sha256)
@@ -518,6 +550,10 @@ public struct AntigravityInstaller: Sendable {
 
     /// Points `current` at a release in one step, so a launch always sees a complete one.
     nonisolated func activate(_ releaseID: String) throws {
+        try Self.releaseAccess.withLock { _ in try activateLocked(releaseID) }
+    }
+
+    private nonisolated func activateLocked(_ releaseID: String) throws {
         let temporary = paths.managedDirectory.appendingPathComponent(".current-\(UUID().uuidString)")
         do {
             try FileManager.default.createSymbolicLink(atPath: temporary.path, withDestinationPath: "versions/" + releaseID)
@@ -569,13 +605,18 @@ public struct AntigravityInstaller: Sendable {
 
     /// Removes releases other than `releaseID` that no launch uses.
     nonisolated func pruneReleases(keeping releaseID: String, inUse: Set<String>) {
-        let manager = FileManager.default
-        let inUse = Set(inUse.map { AntigravityPaths.canonicalPath(URL(fileURLWithPath: $0)) })
-        for name in (try? manager.contentsOfDirectory(atPath: paths.versionsDirectory.path)) ?? []
-        where Self.isReleaseID(name) && name != releaseID {
-            let directory = paths.versionsDirectory.appendingPathComponent(name, isDirectory: true)
-            guard !inUse.contains(AntigravityPaths.canonicalPath(directory)) else { continue }
-            try? manager.removeItem(at: directory)
+        Self.releaseAccess.withLock { protected in
+            let manager = FileManager.default
+            // A newer installation may have activated while this utility-queue operation waited.
+            guard (try? manager.destinationOfSymbolicLink(atPath: paths.currentLink.path)) == "versions/" + releaseID else { return }
+            let inUse = Set(inUse.map { AntigravityPaths.canonicalPath(URL(fileURLWithPath: $0)) })
+            for name in (try? manager.contentsOfDirectory(atPath: paths.versionsDirectory.path)) ?? []
+            where Self.isReleaseID(name) && name != releaseID {
+                let directory = paths.versionsDirectory.appendingPathComponent(name, isDirectory: true)
+                let path = AntigravityPaths.canonicalPath(directory)
+                guard !inUse.contains(path), protected[path] == nil else { continue }
+                try? manager.removeItem(at: directory)
+            }
         }
     }
 

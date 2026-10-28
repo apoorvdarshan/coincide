@@ -27,6 +27,8 @@ struct AboutSettingsView: View {
                 .padding(.vertical, 12)
             }
 
+            AppUpdateSettingsView()
+
             Section {
                 AboutLink(
                     symbol: "chevron.left.forwardslash.chevron.right", color: .gray, title: String(localized: "Source Code"),

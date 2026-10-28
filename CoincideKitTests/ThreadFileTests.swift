@@ -220,6 +220,7 @@ struct ThreadFileTests {
             $0.draft = "unsent"
             $0.draftContext = full.context
             $0.snoozedUntil = Date()
+            $0.importedSession = ImportedSession(provider: .codex, sessionID: "native", sourcePath: "/tmp/session.jsonl")
         }
         store.flush()
         // Every field holds a value, so a field added to the model later must be added here (and to ThreadFile).

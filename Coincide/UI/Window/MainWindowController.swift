@@ -90,6 +90,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         updatePanelItems()
     }
 
+    @objc func importCLISession(_ sender: Any?) {
+        showWindow(nil)
+        let sheet = CLISessionImportController(store: store)
+        sheet.onImport = { [weak self] id in self?.open(id) }
+        root.presentAsSheet(sheet)
+    }
+
+    @objc func revealImportedSource(_ sender: Any?) {
+        guard let id = selectedThreadID, let url = store.importedSourceURL(for: id) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
     // MARK: Selection
 
     /// Shows a thread in the chat, terminal and diff panes, and highlights it in the sidebar.
@@ -248,6 +260,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     @objc func toggleDiffPanel(_ sender: Any?) {
         showWindow(nil)
         splitController.toggleDiffPanel()
+    }
+
+    @objc func showScheduledTasks(_ sender: Any?) { ScheduledTasksWindowController.shared.show() }
+
+    @objc func togglePreviewPanel(_ sender: Any?) {
+        showWindow(nil)
+        splitController.togglePreviewPanel()
     }
 
     @objc func togglePullRequestsPanel(_ sender: Any?) {
@@ -479,6 +498,8 @@ extension MainWindowController: NSMenuItemValidation {
                 splitController.content.isTerminalOpen ? String(localized: "Hide Terminal") : String(localized: "Show Terminal")
         case #selector(toggleDiffPanel(_:)):
             menuItem.title = splitController.isDiffOpen ? String(localized: "Hide Diff") : String(localized: "Show Diff")
+        case #selector(togglePreviewPanel(_:)):
+            menuItem.title = splitController.isPreviewOpen ? String(localized: "Hide Browser Preview") : String(localized: "Show Browser Preview")
         case #selector(addSelectionToComposer(_:)):
             let source = window?.firstResponder as? ComposerSelectionSource
             // Named for what it does to the focused view's selection: quote, add output or comment.
@@ -488,6 +509,10 @@ extension MainWindowController: NSMenuItemValidation {
             menuItem.title =
                 splitController.isPullRequestsOpen
                 ? String(localized: "Hide Pull Requests") : String(localized: "Show Pull Requests")
+        case #selector(importCLISession(_:)):
+            return window?.attachedSheet == nil
+        case #selector(revealImportedSource(_:)):
+            return selectedThreadID.flatMap { store.importedSourceURL(for: $0) } != nil
         case #selector(stopTurn(_:)):
             return thread.map { ThreadRunner.shared.isRunning($0.id) } ?? false
         case #selector(previousThread(_:)), #selector(nextThread(_:)):

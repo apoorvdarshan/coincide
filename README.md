@@ -16,22 +16,36 @@ T3 Code is an Electron app with a Node server behind a web UI. Coincide is built
 
 ## Features
 
-- **Every agent, one picker.** Models from all installed and signed-in agents appear in one menu, grouped by agent, with reasoning effort where the model has it.
+- **Every agent, one picker.** Models from all installed and signed-in agents appear in one menu, grouped by agent, with favorites, hidden models, reasoning effort and fast mode where the provider supports them.
 - **Switch mid-thread.** Each agent keeps its own native session for the thread. When you switch, the next agent gets a recap of the turns it missed and continues in the same working directory. Switch back and the earlier agent resumes its own session.
 - **Projects and threads** in a sidebar with search, pinning and archiving, plus a ⌘K command palette.
+- **Chats without a project** have their own sidebar heading. Each project can set defaults for the model, effort, speed, permissions and plan/build mode of new threads.
+- **Inbox actions:** select several threads to archive, unarchive or delete together. Settle quiet conversations until new activity arrives. Undo and redo apply to whole batches during the current app session.
 - **Snooze threads** until later today, tomorrow or next week. They return automatically; running agents and requests for input stay visible. Find hidden conversations through search or Show Snoozed Threads.
 - **Full access or approvals.** Let agents run freely, or approve each command and file edit. Agents can also ask you questions, which you answer inline.
-- **Plan mode**, image attachments, `@` file mentions, `/` commands (including `/claude`, `/codex`, … to switch agents), queued follow-up messages and per-thread drafts.
+- **Plan mode**, image and file attachments, `@` file mentions, `/` commands (including `/claude`, `/codex`, … to switch agents), queued follow-up messages and per-thread drafts. Quotes, terminal selections and diff comments stay attached through drafts, sending and provider handoffs.
 - **A native transcript** with Markdown, syntax-highlighted code, collapsible work logs per turn, and each reply labelled with the agent and model that wrote it.
-- **Git built in:** a diff inspector for uncommitted changes, the branch and each turn; checkpoints to revert a turn; per-thread worktrees; commit, push and pull requests with agent-written messages.
+- **Git built in:** unified or side-by-side diffs for uncommitted changes, the branch and each turn; checkpoints to revert a turn; per-thread worktrees; commit, push and pull requests with agent-written messages.
 - **Steer or queue.** While an agent works, steer the running turn (Claude Code, Codex, OpenCode) or queue a follow-up; Settings picks which one sending does. The composer shows your plan's usage limits for Claude Code, Codex, Cursor, OpenCode Go, Grok Build and Antigravity.
 - **Fork and rewind.** Fork a thread from any turn, or edit an earlier message and continue from there.
 - **Pull and merge requests** on GitHub, GitLab, Bitbucket, Azure DevOps and Forgejo/Codeberg, through each host's CLI or its web page.
+- **A native GitHub PR workspace** lists requests, checks and reviews, and supports reviewing, merging the reviewed revision, checking out a PR in its own thread, and `#` mentions in messages.
+- **Scheduled tasks** create fresh threads once, daily or weekly using project defaults and a chosen time zone. They run while Coincide is open, skip missed runs after quitting or sleep, and never overlap a previous run of the same task.
 - **Integrated terminal** per thread, with tabs and splits.
+- **Native browser preview** per thread, with a WebKit page beside the conversation. Enable Agent Control to let an agent with local shell tools navigate, read, click, fill inputs and take screenshots through a private local connection. Browser storage is isolated from your usual browser; control turns off when Coincide quits.
+- **Usage dashboard** in Settings, with provider account limits, activity charts and local history of the latest 10,000 finished turns. Provider token snapshots and reported session costs are shown with their scope; they are not added together as billing totals.
 - **Custom keyboard shortcuts** for every menu command, with conflict warnings.
 - Fast with long histories: thread lists load from a small index and transcripts load only when opened.
 - Notifications when a turn finishes or needs you while Coincide is in the background.
 - **19 languages:** English, Chinese (Simplified and Traditional), Dutch, French, German, Hindi, Indonesian, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Spanish (Spain and Latin America), Turkish, Ukrainian and Vietnamese. The translations are machine-made and marked for review; corrections are welcome.
+
+### Import earlier CLI conversations
+
+Choose **File → Import CLI Session…** to browse local Claude Code and Codex histories, search by title or folder, and preview a conversation before importing it. **Choose File…** also accepts a specific session JSONL file. Importing never starts an agent; imported threads begin in approval mode. Their provider session IDs allow normal native resume, and switching agents uses Coincide's conversation handoff. Existing sessions open their existing Coincide thread instead of creating duplicates.
+
+The original CLI file stays untouched. Coincide keeps an exact private copy alongside its app data; **File → Reveal Imported Source** reveals that copy. Unsupported records, attachments, excluded conversation branches, and text beyond the transcript limit stay in this source copy. The readable transcript follows Claude's latest main conversation branch and Codex rollback events. Deleting an imported thread also deletes its saved source copy; Undo restores both.
+
+Imports accept up to 32 MB per file, 4 MB per record, and 100,000 records. Individual displayed transcript fields are capped at 100,000 characters, and the preview at 200,000. The scanner respects `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, lists up to 2,000 files, and offers manual selection when a history cannot be listed. It does not scan Claude subagent histories automatically. If a CLI changes a file after preview, refresh the preview before importing.
 
 ## Agents
 
