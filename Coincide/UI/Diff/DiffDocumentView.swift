@@ -9,6 +9,13 @@ nonisolated struct DiffPresentation: Sendable {
         var line: Int
     }
 
+    struct HunkKey: Hashable, Sendable {
+        var file: Int
+        var hunk: Int
+    }
+
+    var splitLines: [HunkKey: [SplitDiffLine]] = [:]
+
     /// The changed part of a line paired with its replacement, in UTF-16 offsets.
     var highlights: [LineKey: Range<Int>] = [:]
     /// The widest line, in character cells (a tab counts as four).
@@ -24,33 +31,19 @@ nonisolated struct DiffPresentation: Sendable {
                 presentation.maxLineNumber = max(
                     presentation.maxLineNumber, hunk.oldStart + hunk.oldCount, hunk.newStart + hunk.newCount)
                 let lines = hunk.lines
+                presentation.splitLines[HunkKey(file: fileIndex, hunk: hunkIndex)] = SplitDiffLine.align(lines)
                 for line in lines {
                     let tabs = line.text.utf8.reduce(0) { $0 + ($1 == 0x09 ? 1 : 0) }
                     presentation.maxColumns = max(
                         presentation.maxColumns, min(line.text.utf16.count, DiffLineView.maxDrawnLength) + tabs * 3)
                 }
-                // Pair a run of deletions with the run of additions that replaces it.
-                var index = 0
-                while index < lines.count {
-                    guard lines[index].kind == .deletion else {
-                        index += 1
-                        continue
-                    }
-                    var additionsStart = index
-                    while additionsStart < lines.count, lines[additionsStart].kind == .deletion { additionsStart += 1 }
-                    var additionsEnd = additionsStart
-                    while additionsEnd < lines.count, lines[additionsEnd].kind == .addition { additionsEnd += 1 }
-                    let pairs = min(additionsStart - index, additionsEnd - additionsStart)
-                    for offset in 0..<pairs {
-                        guard
-                            let ranges = changedRanges(
-                                lines[index + offset].text, lines[additionsStart + offset].text)
-                        else { continue }
-                        presentation.highlights[LineKey(file: fileIndex, hunk: hunkIndex, line: index + offset)] = ranges.0
-                        presentation.highlights[LineKey(file: fileIndex, hunk: hunkIndex, line: additionsStart + offset)] =
-                            ranges.1
-                    }
-                    index = max(additionsEnd, index + 1)
+                for pair in presentation.splitLines[HunkKey(file: fileIndex, hunk: hunkIndex)] ?? [] {
+                    guard let old = pair.before, let new = pair.after,
+                        lines[old].kind == .deletion, lines[new].kind == .addition,
+                        let ranges = changedRanges(lines[old].text, lines[new].text)
+                    else { continue }
+                    presentation.highlights[LineKey(file: fileIndex, hunk: hunkIndex, line: old)] = ranges.0
+                    presentation.highlights[LineKey(file: fileIndex, hunk: hunkIndex, line: new)] = ranges.1
                 }
             }
         }
@@ -88,11 +81,12 @@ nonisolated enum DiffRow: Hashable, Sendable {
     case file(Int)
     case hunk(file: Int, hunk: Int)
     case line(file: Int, hunk: Int, line: Int)
+    case splitLine(file: Int, hunk: Int, pair: SplitDiffLine)
     case note(file: Int, Note)
 
     var file: Int {
         switch self {
-        case .file(let file), .hunk(let file, _), .line(let file, _, _), .note(let file, _): file
+        case .file(let file), .hunk(let file, _), .line(let file, _, _), .splitLine(let file, _, _), .note(let file, _): file
         }
     }
 }
@@ -120,6 +114,7 @@ struct DiffMetrics {
     }
 
     var gutterWidth: CGFloat { numberColumnWidth * 2 + markerWidth }
+    var singleGutterWidth: CGFloat { numberColumnWidth + markerWidth }
     var textOrigin: CGFloat { gutterWidth + 4 }
     var fileHeaderHeight: CGFloat { max(30, textHeight + 14) }
     var hunkHeight: CGFloat { lineHeight + 6 }
@@ -172,7 +167,21 @@ enum DiffColors {
     }
 }
 
-/// A scrolling, line-numbered unified diff of several files. Only visible rows exist as views,
+enum DiffLayout: String, Codable, CaseIterable {
+    case unified
+    case sideBySide
+
+    var title: String {
+        switch self {
+        case .unified: String(localized: "Unified Diff")
+        case .sideBySide: String(localized: "Side-by-Side Diff")
+        }
+    }
+}
+
+enum DiffSide { case before, after }
+
+/// A scrolling, line-numbered diff of several files. Only visible rows exist as views,
 /// so diffs with tens of thousands of lines stay fast; file headers float while their file scrolls.
 final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
     /// Called with the index of the file at the top of the view as the user scrolls.
@@ -186,6 +195,10 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
     private(set) var collapsedPaths: Set<String> = []
 
     private let scrollView = NSScrollView()
+    private let sideLabels = DiffSideLabels(frame: .zero)
+    private var sideLabelsHeight: NSLayoutConstraint!
+    private(set) var layout: DiffLayout = .unified
+    private(set) var selectedSide: DiffSide = .after
     private let tableView = DiffTableView()
     private var diff = GitDiff.empty
     private var presentation = DiffPresentation.empty
@@ -225,6 +238,18 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
         tableView.copyHandler = { [weak self] in self?.copySelection() }
         tableView.commentHandler = { [weak self] in self?.commentOnSelection() }
         tableView.canComment = { [weak self] in self?.commentTarget() != nil }
+        tableView.onMoveSide = { [weak self] side in
+            guard let self, self.layout == .sideBySide else { return false }
+            self.selectedSide = side
+            self.refreshSelectionSide()
+            return true
+        }
+        tableView.onSelectPosition = { [weak self] point in
+            guard let self, self.layout == .sideBySide else { return }
+            let bounds = self.scrollView.contentView.bounds
+            self.selectedSide = point.x < bounds.midX ? .before : .after
+            self.refreshSelectionSide()
+        }
         tableView.setAccessibilityLabel(String(localized: "Diff"))
         let menu = NSMenu()
         menu.delegate = self
@@ -239,10 +264,18 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
+        sideLabels.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(sideLabels)
+        sideLabelsHeight = sideLabels.heightAnchor.constraint(equalToConstant: 0)
+        sideLabels.isHidden = true
         NSLayoutConstraint.activate([
+            sideLabels.leadingAnchor.constraint(equalTo: leadingAnchor),
+            sideLabels.trailingAnchor.constraint(equalTo: trailingAnchor),
+            sideLabels.topAnchor.constraint(equalTo: topAnchor),
+            sideLabelsHeight,
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.topAnchor.constraint(equalTo: sideLabels.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         scrollView.contentView.postsBoundsChangedNotifications = true
@@ -261,6 +294,26 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
 
     var fileCount: Int { diff.files.count }
 
+    func setLayout(_ layout: DiffLayout) {
+        guard layout != self.layout else { return }
+        let anchor = currentAnchor()
+        self.layout = layout
+        sideLabels.isHidden = layout != .sideBySide
+        sideLabelsHeight.constant = layout == .sideBySide ? metrics.hunkHeight : 0
+        tableView.deselectAll(nil)
+        rebuildRows()
+        layoutSubtreeIfNeeded()
+        if let anchor { restore(anchor) }
+        refreshSelectionSide()
+    }
+
+    private func refreshSelectionSide() {
+        tableView.enumerateAvailableRowViews { view, _ in
+            (view as? DiffRowView)?.selectedSide = self.layout == .sideBySide ? self.selectedSide : nil
+            view.needsDisplay = true
+        }
+    }
+
     // MARK: Content
 
     /// Shows a new diff. With `keepPosition`, the file at the top stays where it was.
@@ -271,6 +324,7 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
         let paths = Set(diff.files.map(\.path))
         collapsedPaths.formIntersection(paths)
         metrics = DiffMetrics(fontSize: Theme.fontSize, maxLineNumber: presentation.maxLineNumber)
+        sideLabelsHeight.constant = layout == .sideBySide ? metrics.hunkHeight : 0
         rebuildRows()
         if let anchor {
             restore(anchor)
@@ -330,8 +384,15 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
             } else {
                 for (hunkIndex, hunk) in file.hunks.enumerated() {
                     rows.append(.hunk(file: fileIndex, hunk: hunkIndex))
-                    for lineIndex in hunk.lines.indices {
-                        rows.append(.line(file: fileIndex, hunk: hunkIndex, line: lineIndex))
+                    if layout == .sideBySide {
+                        let key = DiffPresentation.HunkKey(file: fileIndex, hunk: hunkIndex)
+                        for pair in presentation.splitLines[key] ?? SplitDiffLine.align(hunk.lines) {
+                            rows.append(.splitLine(file: fileIndex, hunk: hunkIndex, pair: pair))
+                        }
+                    } else {
+                        for lineIndex in hunk.lines.indices {
+                            rows.append(.line(file: fileIndex, hunk: hunkIndex, line: lineIndex))
+                        }
                     }
                 }
             }
@@ -342,7 +403,13 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
 
     private func updateColumnWidth() {
         guard let column = tableView.tableColumns.first else { return }
-        let width = max(metrics.contentWidth(columns: presentation.maxColumns), scrollView.contentView.bounds.width)
+        let viewport = scrollView.contentView.bounds.width
+        let content = metrics.contentWidth(columns: presentation.maxColumns)
+        // One scroller controls both columns. Additional width represents the common text offset;
+        // each half remains pinned within the viewport instead of moving the other half offscreen.
+        let width = layout == .sideBySide
+            ? viewport + max(0, content - metrics.numberColumnWidth - viewport / 2)
+            : max(content, viewport)
         if abs(column.width - width) > 0.5 { column.width = width }
     }
 
@@ -352,16 +419,21 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
         var path: String
         var offset: CGFloat
         var x: CGFloat
+        var row: DiffRow
+        var rowOffset: CGFloat
     }
 
     private func currentAnchor() -> Anchor? {
         let clip = scrollView.contentView.bounds
-        let row = tableView.row(at: NSPoint(x: 0, y: clip.minY + 1))
+        // Hit testing at the top finds the floating file header. Anchor the first unobscured
+        // source row instead, preserving its offset when replacement rows become paired.
+        let row = tableView.row(at: NSPoint(x: clip.minX, y: clip.minY + metrics.fileHeaderHeight + 1))
         guard rows.indices.contains(row) else { return nil }
         let file = rows[row].file
         guard diff.files.indices.contains(file) else { return nil }
         return Anchor(
-            path: diff.files[file].path, offset: clip.minY - tableView.rect(ofRow: fileRows[file]).minY, x: clip.minX)
+            path: diff.files[file].path, offset: clip.minY - tableView.rect(ofRow: fileRows[file]).minY, x: clip.minX,
+            row: rows[row], rowOffset: clip.minY - tableView.rect(ofRow: row).minY)
     }
 
     private func restore(_ anchor: Anchor) {
@@ -371,17 +443,32 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
         }
         let clip = scrollView.contentView
         clip.scroll(to: NSPoint(x: anchor.x, y: clip.bounds.minY))
-        scrollTo(y: tableView.rect(ofRow: fileRows[index]).minY + anchor.offset)
+        let target = rows.firstIndex { candidate in
+            guard candidate.file == index else { return false }
+            switch (anchor.row, candidate) {
+            case (.file, .file): return true
+            case (.hunk(_, let a), .hunk(_, let b)): return a == b
+            case (.line(_, let a, let line), .splitLine(_, let b, let pair)):
+                return a == b && (pair.before == line || pair.after == line)
+            case (.splitLine(_, let a, let pair), .line(_, let b, let line)):
+                return a == b && line == (selectedSide == .before ? pair.before ?? pair.after : pair.after ?? pair.before)
+            default: return candidate == anchor.row
+            }
+        }
+        let y = target.map { tableView.rect(ofRow: $0).minY + anchor.rowOffset }
+            ?? (tableView.rect(ofRow: fileRows[index]).minY + anchor.offset)
+        scrollTo(y: y)
     }
 
     @objc private func clipViewChanged() {
         updateColumnWidth()
         let bounds = scrollView.contentView.bounds
-        if abs(bounds.minX - lastPinnedX) > 0.1 {
+        if layout == .sideBySide || abs(bounds.minX - lastPinnedX) > 0.1 {
             lastPinnedX = bounds.minX
             // Gutters and headers stay put while the text scrolls sideways.
             tableView.enumerateAvailableRowViews { rowView, _ in
-                rowView.subviews.forEach { $0.needsDisplay = true }
+                rowView.subviews.forEach { $0.needsDisplay = true; $0.needsLayout = true }
+                rowView.needsDisplay = true
             }
         }
         guard !rows.isEmpty else { return }
@@ -402,7 +489,7 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
         switch rows[row] {
         case .file: metrics.fileHeaderHeight
         case .hunk: metrics.hunkHeight
-        case .line: metrics.lineHeight
+        case .line, .splitLine: metrics.lineHeight
         case .note: metrics.noteHeight
         }
     }
@@ -413,14 +500,18 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        if case .line = rows[row] { return true }
-        return false
+        switch rows[row] {
+        case .line, .splitLine: return true
+        default: return false
+        }
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         let identifier = NSUserInterfaceItemIdentifier("diffRow")
         let view = tableView.makeView(withIdentifier: identifier, owner: nil) as? DiffRowView ?? DiffRowView()
         view.identifier = identifier
+        view.clipView = scrollView.contentView
+        view.selectedSide = layout == .sideBySide ? selectedSide : nil
         return view
     }
 
@@ -445,6 +536,11 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
             view.configure(
                 line: diff.files[fileIndex].hunks[hunkIndex].lines[lineIndex], highlight: presentation.highlights[key],
                 metrics: metrics)
+            return view
+        case .splitLine(let file, let hunk, let pair):
+            let view = reuse(DiffSplitLineView.self, "splitLine")
+            let lines = diff.files[file].hunks[hunk].lines
+            view.configure(pair: pair, lines: lines, file: file, hunk: hunk, presentation: presentation, metrics: metrics)
             return view
         case .note(let fileIndex, let note):
             let view = reuse(DiffNoteView.self, "note")
@@ -475,12 +571,23 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
 
     // MARK: Copy and context menu
 
-    private func selectedText() -> String {
+    func selectedText() -> String {
         tableView.selectedRowIndexes.compactMap { row -> String? in
-            guard case .line(let file, let hunk, let line) = rows[row] else { return nil }
-            let diffLine = diff.files[file].hunks[hunk].lines[line]
-            return diffLine.kind == .noNewline ? nil : diffLine.text
+            guard let source = sourceLine(at: row) else { return nil }
+            let line = diff.files[source.file].hunks[source.hunk].lines[source.line]
+            return line.kind == .noNewline ? nil : line.text
         }.joined(separator: "\n")
+    }
+
+    private func sourceLine(at row: Int) -> (file: Int, hunk: Int, line: Int)? {
+        guard rows.indices.contains(row) else { return nil }
+        switch rows[row] {
+        case .line(let file, let hunk, let line): return (file, hunk, line)
+        case .splitLine(let file, let hunk, let pair):
+            guard let line = selectedSide == .before ? pair.before : pair.after else { return nil }
+            return (file, hunk, line)
+        default: return nil
+        }
     }
 
     private func copySelection() {
@@ -493,7 +600,7 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
         menu.removeAllItems()
         let row = tableView.clickedRow
         guard rows.indices.contains(row) else { return }
-        if case .line = rows[row] {
+        if sourceLine(at: row) != nil {
             if !tableView.selectedRowIndexes.contains(row) {
                 tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             }
@@ -518,7 +625,7 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
 
     /// The selected lines to comment on: those in the file of the line clicked or, from the keyboard, of the first
     /// selected line, as indexes into the file's hunks.
-    private func commentTarget() -> (file: Int, lines: [(hunk: Int, line: Int)], rows: [Int])? {
+    func commentTarget() -> (file: Int, lines: [(hunk: Int, line: Int)], rows: [Int])? {
         let selected = tableView.selectedRowIndexes.filter { rows.indices.contains($0) }
         let anchor = tableView.clickedRow >= 0 && selected.contains(tableView.clickedRow) ? tableView.clickedRow : selected.first
         guard let anchor else { return nil }
@@ -526,8 +633,8 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
         var lines: [(hunk: Int, line: Int)] = []
         var lineRows: [Int] = []
         for row in selected {
-            guard case .line(let file, let hunk, let line) = rows[row], file == fileIndex else { continue }
-            lines.append((hunk, line))
+            guard let source = sourceLine(at: row), source.file == fileIndex else { continue }
+            lines.append((source.hunk, source.line))
             lineRows.append(row)
         }
         guard !lines.isEmpty, diff.files.indices.contains(fileIndex) else { return nil }
@@ -548,8 +655,11 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
         let visible = tableView.visibleRect
         var anchor = tableView.rect(ofRow: target.rows.max() ?? 0).intersection(visible)
         if anchor.isEmpty { anchor = NSRect(x: visible.minX, y: visible.minY, width: visible.width, height: metrics.lineHeight) }
-        anchor.origin.x = visible.minX + metrics.textOrigin
-        anchor.size.width = max(1, anchor.width - metrics.textOrigin)
+        let textOrigin = layout == .sideBySide ? metrics.singleGutterWidth + 4 : metrics.textOrigin
+        let paneWidth = layout == .sideBySide ? visible.width / 2 : visible.width
+        let paneX = layout == .sideBySide && selectedSide == .after ? paneWidth : 0
+        anchor.origin.x = visible.minX + paneX + textOrigin
+        anchor.size.width = max(1, paneWidth - textOrigin)
         ThemedPopup.show(editor, from: tableView, rect: anchor, preferAbove: false)
     }
 }
@@ -559,9 +669,25 @@ final class DiffTableView: NSTableView, ComposerSelectionSource {
     var copyHandler: (() -> Void)?
     var commentHandler: (() -> Void)?
     var canComment: (() -> Bool)?
+    var onSelectPosition: ((NSPoint) -> Void)?
+    var onMoveSide: ((DiffSide) -> Bool)?
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function])
+        if modifiers.isEmpty, let key = event.charactersIgnoringModifiers,
+            key == "\u{F702}" || key == "\u{F703}",
+            onMoveSide?(key == "\u{F702}" ? .before : .after) == true { return }
+        super.keyDown(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onSelectPosition?(convert(event.locationInWindow, from: nil))
+        super.mouseDown(with: event)
+    }
 
     override func menu(for event: NSEvent) -> NSMenu? {
-        ThemedContextMenu.show(super.menu(for: event), for: event, in: window)
+        onSelectPosition?(convert(event.locationInWindow, from: nil))
+        return ThemedContextMenu.show(super.menu(for: event), for: event, in: window)
     }
 
     var addToComposerTitle: String { String(localized: "Comment on Selected Lines…") }
@@ -580,9 +706,18 @@ final class DiffTableView: NSTableView, ComposerSelectionSource {
 
 /// Row background that keeps diff colors visible under the selection.
 final class DiffRowView: NSTableRowView {
+    weak var clipView: NSClipView?
+    var selectedSide: DiffSide?
+
     override func drawSelection(in dirtyRect: NSRect) {
         Theme.sidebarSelection.setFill()
-        bounds.fill()
+        if let selectedSide, let clipView {
+            let viewport = clipView.bounds
+            let x = viewport.minX + (selectedSide == .after ? viewport.width / 2 : 0)
+            NSRect(x: x, y: 0, width: viewport.width / 2, height: bounds.height).fill()
+        } else {
+            bounds.fill()
+        }
     }
 
     override func drawBackground(in dirtyRect: NSRect) {
@@ -602,6 +737,7 @@ class DiffRowContentView: NSView {
 
     required override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        clipsToBounds = true
     }
 
     @available(*, unavailable)
@@ -618,13 +754,15 @@ final class DiffLineView: DiffRowContentView {
     /// Longer lines are cut, so a minified file can't stall drawing.
     nonisolated static let maxDrawnLength = 3_000
 
-    private var line = DiffLine(kind: .context, text: "")
+    private var line: DiffLine?
+    var side: DiffSide?
+    var horizontalOffset: CGFloat = 0 { didSet { needsDisplay = true } }
     private var highlight: Range<Int>?
     private var metrics = DiffMetrics(fontSize: 13, maxLineNumber: 1)
 
     override var isOpaque: Bool { false }
 
-    func configure(line: DiffLine, highlight: Range<Int>?, metrics: DiffMetrics) {
+    func configure(line: DiffLine?, highlight: Range<Int>?, metrics: DiffMetrics) {
         self.line = line
         self.highlight = highlight
         self.metrics = metrics
@@ -632,6 +770,11 @@ final class DiffLineView: DiffRowContentView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        guard let line else {
+            DiffColors.headerTint.setFill()
+            dirtyRect.fill()
+            return
+        }
         let background: NSColor?
         let gutter: NSColor
         let marker: (String, NSColor)?
@@ -657,12 +800,13 @@ final class DiffLineView: DiffRowContentView {
         let pinned = pinnedX
         let textY = (bounds.height - metrics.textHeight) / 2
         NSGraphicsContext.saveGraphicsState()
-        NSRect(x: pinned + metrics.gutterWidth, y: 0, width: max(0, bounds.width - pinned), height: bounds.height).clip()
-        drawText(at: NSPoint(x: metrics.textOrigin, y: textY))
+        let gutterWidth = side == nil ? metrics.gutterWidth : metrics.singleGutterWidth
+        NSRect(x: pinned + gutterWidth, y: 0, width: max(0, bounds.width - pinned - gutterWidth), height: bounds.height).clip()
+        drawText(line, at: NSPoint(x: gutterWidth + 4 - horizontalOffset, y: textY))
         NSGraphicsContext.restoreGraphicsState()
 
         // The gutter is drawn last, pinned to the visible left edge.
-        let gutterRect = NSRect(x: pinned, y: 0, width: metrics.gutterWidth, height: bounds.height)
+        let gutterRect = NSRect(x: pinned, y: 0, width: gutterWidth, height: bounds.height)
         NSColor.textBackgroundColor.setFill()
         gutterRect.fill()
         gutter.setFill()
@@ -671,7 +815,9 @@ final class DiffLineView: DiffRowContentView {
             .font: metrics.numberFont, .foregroundColor: NSColor.tertiaryLabelColor,
         ]
         let numberY = (bounds.height - (metrics.numberFont.ascender - metrics.numberFont.descender)) / 2
-        for (number, column) in [(line.oldLine, 0), (line.newLine, 1)] {
+        let numbers = side.map { [($0 == .before ? line.oldLine : line.newLine, 0)] }
+            ?? [(line.oldLine, 0), (line.newLine, 1)]
+        for (number, column) in numbers {
             guard let number else { continue }
             let text = String(number) as NSString
             let width = text.size(withAttributes: numberAttributes).width
@@ -680,12 +826,12 @@ final class DiffLineView: DiffRowContentView {
         }
         if let marker {
             (marker.0 as NSString).draw(
-                at: NSPoint(x: pinned + metrics.numberColumnWidth * 2 + 5, y: textY),
+                at: NSPoint(x: pinned + gutterWidth - metrics.markerWidth + 5, y: textY),
                 withAttributes: [.font: metrics.font, .foregroundColor: marker.1])
         }
     }
 
-    private func drawText(at point: NSPoint) {
+    private func drawText(_ line: DiffLine, at point: NSPoint) {
         var text = line.text
         if line.kind == .noNewline {
             text = String(localized: "No newline at end of file")
@@ -707,14 +853,15 @@ final class DiffLineView: DiffRowContentView {
         string.draw(at: point)
     }
 
-    override func isAccessibilityElement() -> Bool { true }
+    override func isAccessibilityElement() -> Bool { line != nil }
     override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
 
     override func accessibilityLabel() -> String? {
-        switch line.kind {
+        guard let line else { return nil }
+        return switch line.kind {
         case .addition: String(localized: "Added line \(line.newLine ?? 0): \(line.text)")
         case .deletion: String(localized: "Removed line \(line.oldLine ?? 0): \(line.text)")
-        case .context: String(localized: "Line \(line.newLine ?? 0): \(line.text)")
+        case .context: String(localized: "Line \((side == .before ? line.oldLine : line.newLine) ?? 0): \(line.text)")
         case .noNewline: String(localized: "No newline at end of file")
         }
     }
