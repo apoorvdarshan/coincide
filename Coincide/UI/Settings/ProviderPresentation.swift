@@ -58,6 +58,7 @@ nonisolated enum SettingsFormat {
     static func effort(_ effort: String) -> String {
         switch effort.lowercased() {
         case "none": String(localized: "None")
+        case "auto": String(localized: "Auto")
         case "minimal": String(localized: "Minimal")
         case "low": String(localized: "Low")
         case "medium": String(localized: "Medium")
@@ -152,6 +153,8 @@ struct ProviderSetupGuide {
         case .antigravity:
             (nil, nil, URL(string: "https://antigravity.google"),
              String(localized: "Install Antigravity, open it once and sign in with your Google account."))
+        case .fx:
+            ("curl -fsSL https://fx.sh/setup.sh | bash", "fx login", URL(string: "https://fx.sh"), nil)
         }
     }
 

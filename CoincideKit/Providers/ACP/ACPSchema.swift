@@ -287,8 +287,11 @@ public struct ACPSessionSetup: Sendable, Hashable {
         configOptions[index].value = .select(current: value, choices: choices)
     }
 
+    /// The option of `category`, preferring the one whose id is `fallbackID`: fx lists its backend (`provider`) in
+    /// the `model` category ahead of the `model` option itself.
     private nonisolated func option(category: String, fallbackID: String) -> ACPConfigOption? {
-        configOptions.first { $0.category == category && $0.currentValue != nil }
+        configOptions.first { $0.category == category && $0.id == fallbackID && $0.currentValue != nil }
+            ?? configOptions.first { $0.category == category && $0.currentValue != nil }
             ?? configOptions.first { $0.id == fallbackID && $0.currentValue != nil }
     }
 }
@@ -402,6 +405,8 @@ public enum ACPToolCallContent: Sendable, Hashable {
 /// The fields of a `tool_call` or `tool_call_update`. Only fields present on the wire are set.
 public struct ACPToolCallUpdate: Sendable, Hashable {
     public var id: String
+    /// The agent's name for the tool, which fx sends beside the title (`subagent`, `write_file`).
+    public var name: String?
     public var title: String?
     public var kind: String?
     public var status: String?
@@ -412,11 +417,12 @@ public struct ACPToolCallUpdate: Sendable, Hashable {
     public var meta: JSONValue?
 
     public nonisolated init(
-        id: String, title: String? = nil, kind: String? = nil, status: String? = nil,
+        id: String, name: String? = nil, title: String? = nil, kind: String? = nil, status: String? = nil,
         content: [ACPToolCallContent]? = nil, locations: [String]? = nil, rawInput: JSONValue? = nil,
         rawOutput: JSONValue? = nil, meta: JSONValue? = nil
     ) {
         self.id = id
+        self.name = name
         self.title = title
         self.kind = kind
         self.status = status
@@ -430,8 +436,8 @@ public struct ACPToolCallUpdate: Sendable, Hashable {
     public nonisolated init?(json: JSONValue) {
         guard let id = json["toolCallId"]?.string, !id.isEmpty else { return nil }
         self.init(
-            id: id, title: json["title"]?.string, kind: json["kind"]?.string, status: json["status"]?.string,
-            content: json["content"]?.array?.map(ACPToolCallContent.init(json:)),
+            id: id, name: json["name"]?.string, title: json["title"]?.string, kind: json["kind"]?.string,
+            status: json["status"]?.string, content: json["content"]?.array?.map(ACPToolCallContent.init(json:)),
             locations: json["locations"]?.array?.compactMap { $0["path"]?.string },
             rawInput: json["rawInput"].flatMap { $0.isNull ? nil : $0 },
             rawOutput: json["rawOutput"].flatMap { $0.isNull ? nil : $0 },

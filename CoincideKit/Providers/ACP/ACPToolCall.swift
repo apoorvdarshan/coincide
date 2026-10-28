@@ -20,6 +20,8 @@ public struct ACPToolCallState: Sendable, Hashable {
     public var content: [ACPToolCallContent]
     public var locations: [String]
     public var meta: JSONValue?
+    /// The tool name the agent sent beside the title (fx).
+    public var name: String?
     /// The agent's own name for the tool, e.g. `read_file`.
     public var toolName: String?
     public var command: String?
@@ -29,6 +31,7 @@ public struct ACPToolCallState: Sendable, Hashable {
 
     public nonisolated init(_ update: ACPToolCallUpdate) {
         id = update.id
+        name = update.name
         kind = update.kind
         title = update.title
         status = Self.status(update.status) ?? .pending
@@ -43,6 +46,7 @@ public struct ACPToolCallState: Sendable, Hashable {
     /// Applies an update; fields the update leaves out keep their value. Agents often resend
     /// an empty `rawInput`, which must not erase the first one.
     public nonisolated mutating func merge(_ update: ACPToolCallUpdate) {
+        name = update.name ?? name
         kind = update.kind ?? kind
         title = update.title ?? title
         status = Self.status(update.status) ?? status
@@ -65,7 +69,9 @@ public struct ACPToolCallState: Sendable, Hashable {
     public nonisolated var isFinished: Bool { status == .completed || status == .failed }
 
     private nonisolated mutating func deriveDefaults() {
-        toolName = meta?["x.ai/tool"]?["name"]?.string ?? meta?["toolName"]?.string ?? meta?.at("claudeCode.toolName")?.string
+        toolName =
+            meta?["x.ai/tool"]?["name"]?.string ?? meta?["toolName"]?.string ?? meta?.at("claudeCode.toolName")?.string
+            ?? name.flatMap(Self.nonEmpty)
         command = Self.commandText(rawInput?["command"]) ?? rawInput?["cmd"]?.string.flatMap(Self.nonEmpty)
         if command == nil, let executable = rawInput?["executable"]?.string.flatMap(Self.nonEmpty) {
             command = ([executable] + (rawInput?["args"]?.array?.compactMap(\.string) ?? [])).joined(separator: " ")

@@ -56,6 +56,8 @@ enum Theme {
         case .opencode: NSColor.systemTeal
         case .pi: NSColor.systemPurple
         case .antigravity: NSColor.systemBlue
+        // fx's glyph is near-black in light mode and near-white in dark.
+        case .fx: NSColor.labelColor
         }
     }
 

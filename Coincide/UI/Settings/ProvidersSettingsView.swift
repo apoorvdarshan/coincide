@@ -431,6 +431,7 @@ private struct ProviderModelsSection: View {
         case .opencode: "openai/gpt-5"
         case .pi: "anthropic/claude-sonnet-5"
         case .antigravity: "gemini-3-pro"
+        case .fx: "anthropic/claude-sonnet-5.5"
         }
     }
 }

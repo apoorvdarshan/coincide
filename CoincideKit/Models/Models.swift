@@ -10,6 +10,8 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Hashable {
     case opencode
     case pi
     case antigravity
+    /// Vercel's fx (`fx acp`).
+    case fx
 
     public nonisolated var displayName: String {
         switch self {
@@ -20,6 +22,7 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Hashable {
         case .opencode: "OpenCode"
         case .pi: "Pi"
         case .antigravity: "Antigravity"
+        case .fx: "fx"
         }
     }
 
@@ -33,8 +36,34 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Hashable {
         case .opencode: "terminal"
         case .pi: "p.circle"
         case .antigravity: "arrow.up.and.down.and.sparkles"
+        case .fx: "fx"
         }
     }
+
+    /// The access modes the agent can run in, in menu order (T3 Code's `supportedRuntimeModes`). fx asks before it
+    /// changes anything and has no full access.
+    public nonisolated var accessModes: [AccessMode] {
+        self == .fx ? [.approval] : AccessMode.allCases
+    }
+
+    /// The access mode a thread set to `mode` runs in: one the agent does not offer runs as Ask for approval, as T3
+    /// Code runs it Supervised.
+    public nonisolated func accessMode(for mode: AccessMode) -> AccessMode {
+        accessModes.contains(mode) ? mode : .approval
+    }
+
+    /// Whether the agent has a plan mode (T3 Code's `showInteractionModeToggle`). fx has none.
+    public nonisolated var supportsPlanMode: Bool { self != .fx }
+
+    /// The interaction mode a thread set to `mode` runs in: without a plan mode, the agent builds.
+    public nonisolated func interactionMode(for mode: InteractionMode) -> InteractionMode {
+        supportsPlanMode ? mode : .build
+    }
+
+    /// Whether Coincide may ask the agent for commit messages, branch names and pull request text (T3 Code's
+    /// `supportsTextGeneration`). fx saves every `fx acp` session under `~/.fx` and ACP cannot delete one, so each
+    /// request would leave a session behind.
+    public nonisolated var supportsTextGeneration: Bool { self != .fx }
 }
 
 public struct ModelOption: Codable, Hashable, Sendable, Identifiable {

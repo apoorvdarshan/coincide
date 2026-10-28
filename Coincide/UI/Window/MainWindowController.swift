@@ -296,7 +296,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc func togglePlanMode(_ sender: Any?) {
-        guard let thread = selectedThread else { return }
+        guard let thread = selectedThread, thread.selection.provider.supportsPlanMode else { return }
         store.updateThread(thread.id) { $0.interactionMode = thread.interactionMode == .plan ? .build : .plan }
     }
 
@@ -440,8 +440,10 @@ extension MainWindowController: NSMenuItemValidation {
         case #selector(showAccessPicker(_:)):
             return window?.isVisible == true && splitController.content.chat.canShowComposerPicker(.access)
         case #selector(togglePlanMode(_:)):
-            menuItem.state = thread?.interactionMode == .plan ? .on : .off
-            return thread != nil
+            // fx has no plan mode, so its threads build (T3 Code hides the toggle).
+            let supportsPlanMode = thread?.selection.provider.supportsPlanMode == true
+            menuItem.state = supportsPlanMode && thread?.interactionMode == .plan ? .on : .off
+            return supportsPlanMode
         case #selector(openInPreferred(_:)):
             let target = OpenTargets.preferred
             menuItem.title = target.map { String(localized: "Open in \($0.name)") } ?? String(localized: "Open in Editor")
