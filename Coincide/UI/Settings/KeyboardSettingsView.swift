@@ -390,7 +390,7 @@ private struct ShortcutGroup: Identifiable {
     static func spoken(_ keys: [String]) -> String {
         keys.map { key in
             switch key {
-            case "⌘": String(localized: "Command")
+            case "⌘": String(localized: "key.command", defaultValue: "Command", comment: "Spoken name of the ⌘ key")
             case "⇧": String(localized: "Shift")
             case "⌥": String(localized: "Option")
             case "⌃": String(localized: "Control")
@@ -398,7 +398,7 @@ private struct ShortcutGroup: Identifiable {
             case "⌤": String(localized: "Enter")
             case "⎋": String(localized: "Escape")
             case "⇥": String(localized: "Tab")
-            case "⌫": String(localized: "Delete")
+            case "⌫": String(localized: "key.delete", defaultValue: "Delete", comment: "Spoken name of the ⌫ key")
             case "⌦": String(localized: "Forward Delete")
             case "↑": String(localized: "Up Arrow")
             case "↓": String(localized: "Down Arrow")

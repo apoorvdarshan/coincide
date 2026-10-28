@@ -74,6 +74,17 @@ scripts/sync-strings.sh
 
 It builds the app and syncs `Coincide/Resources/Localizable.xcstrings` with every string in use.
 
+Coincide ships in 18 languages besides English. New or changed strings fall back to English until they are translated, so translate them for every language in the same pull request:
+
+```sh
+scripts/translations.py missing de > de.json   # the strings German lacks, with their English text
+# translate de.json into {"key": "translation"}; give counted strings plural forms (see the script's help)
+scripts/translations.py check de de-translated.json
+scripts/translations.py import de de-translated.json
+```
+
+`check` refuses a translation whose placeholders don't match the English, or whose plural forms aren't the language's own. Imported strings are marked "needs review" in the catalog. Write whole sentences with placeholders rather than joining pieces in code, so each language can order the words its own way.
+
 ## Fuzzing
 
 `Fuzz/` is a separate Swift package with one libFuzzer target per area. Each target compiles the real CoincideKit files through symlinks, so it always tests the current code, and checks invariants as well as memory safety:

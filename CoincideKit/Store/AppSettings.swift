@@ -303,7 +303,9 @@ public struct KeyShortcut: Hashable, Sendable, CustomStringConvertible {
         if modifiers.contains(.control) { words.append(String(localized: "Control")) }
         if modifiers.contains(.option) { words.append(String(localized: "Option")) }
         if modifiers.contains(.shift) { words.append(String(localized: "Shift")) }
-        if modifiers.contains(.command) { words.append(String(localized: "Command")) }
+        if modifiers.contains(.command) {
+            words.append(String(localized: "key.command", defaultValue: "Command", comment: "Spoken name of the ⌘ key"))
+        }
         words.append(spokenKey)
         return words.joined(separator: " ")
     }
@@ -387,7 +389,7 @@ public struct KeyShortcut: Hashable, Sendable, CustomStringConvertible {
         case "tab": String(localized: "Tab")
         case "space": String(localized: "Space")
         case "esc": String(localized: "Escape")
-        case "backspace": String(localized: "Delete")
+        case "backspace": String(localized: "key.delete", defaultValue: "Delete", comment: "Spoken name of the ⌫ key")
         case "delete": String(localized: "Forward Delete")
         case "arrowup": String(localized: "Up Arrow")
         case "arrowdown": String(localized: "Down Arrow")
