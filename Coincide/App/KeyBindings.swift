@@ -55,6 +55,12 @@ final class KeyBindingsController {
         return String(localized: "\(text) (\(keys))")
     }
 
+    /// Whether a menu item has `shortcut`: a command or one of the fixed items. The menu bar sees keys first, so a key
+    /// the composer handles itself (`composerKeys`) never reaches it then.
+    func menuBarHas(_ shortcut: KeyShortcut) -> Bool {
+        fixed.contains(shortcut) || bindings.command(runBy: shortcut) != nil
+    }
+
     /// The modifiers of the Go to Thread shortcuts, each once (`KeyBindings.threadJumpModifiers(keeping:)`).
     var threadJumpModifiers: [KeyModifiers] {
         bindings.threadJumpModifiers(keeping: fixed)
@@ -166,7 +172,10 @@ final class KeyBindingsController {
 
     /// Keys the composer handles itself. The menu bar sees keys first, so a command given one takes it from the composer.
     static let composerKeys: [(title: String, shortcut: KeyShortcut)] = [
-        (String(localized: "Send message"), shortcut("mod+enter"))
+        (String(localized: "Send message"), shortcut("mod+enter")),
+        // The alternate send when ⌘↩ sends. When Return sends, it sends the oldest queued message into the running
+        // turn, or with none queued is the alternate send too (`ComposerSendKeys`).
+        (String(localized: "Queue or steer instead"), shortcut("mod+shift+enter")),
     ]
 
     private static func shortcut(_ text: String) -> KeyShortcut {

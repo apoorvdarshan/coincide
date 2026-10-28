@@ -190,6 +190,9 @@ private struct SettingsSearchResults: View {
                 title: String(localized: "Send messages with"), pane: general, setting: .sendShortcut,
                 keywords: [String(localized: "Return"), String(localized: "Enter"), String(localized: "New line")]),
             SettingsSearchEntry(
+                title: String(localized: "Follow-up behavior"), pane: general, setting: .followUpBehavior,
+                keywords: [String(localized: "Steer"), String(localized: "Queue"), String(localized: "Follow-ups")]),
+            SettingsSearchEntry(
                 title: String(localized: "Show reasoning"), pane: general, setting: .showReasoning,
                 keywords: [String(localized: "Thinking")]),
             SettingsSearchEntry(

@@ -245,3 +245,113 @@ struct ComposerLabelTests {
         #expect(ComposerMenus.summary(for: .fullAccess) != ComposerMenus.summary(for: .approval))
     }
 }
+
+/// What a send does while a turn runs, with the cases of T3 Code's `composerDispatch` tests: the follow-up behavior
+/// picks steer or queue, and the alternate send does the other.
+struct ComposerDispatchTests {
+    @Test(arguments: FollowUpBehavior.allCases, [false, true])
+    func withNoTurnRunningEverySendStartsOne(behavior: FollowUpBehavior, alternate: Bool) {
+        for canSteer in [false, true] {
+            #expect(ComposerDispatch.resolve(running: false, canSteer: canSteer, alternate: alternate, behavior: behavior) == .send)
+        }
+    }
+
+    @Test func theMainSendFollowsTheBehaviorAndTheAlternateDoesTheOther() {
+        #expect(ComposerDispatch.resolve(running: true, canSteer: true, alternate: false, behavior: .steer) == .steer)
+        #expect(ComposerDispatch.resolve(running: true, canSteer: true, alternate: true, behavior: .steer) == .queue)
+        #expect(ComposerDispatch.resolve(running: true, canSteer: true, alternate: false, behavior: .queue) == .queue)
+        #expect(ComposerDispatch.resolve(running: true, canSteer: true, alternate: true, behavior: .queue) == .steer)
+    }
+
+    @Test(arguments: FollowUpBehavior.allCases, [false, true])
+    func aTurnThatCantTakeAMessageGetsItQueued(behavior: FollowUpBehavior, alternate: Bool) {
+        #expect(ComposerDispatch.resolve(running: true, canSteer: false, alternate: alternate, behavior: behavior) == .queue)
+    }
+
+    @Test func aShownApprovalMakesTheMainSendSteer() {
+        #expect(ComposerDispatch.followUpBehavior(.queue, approvalShown: true) == .steer)
+        #expect(ComposerDispatch.followUpBehavior(.steer, approvalShown: true) == .steer)
+        #expect(ComposerDispatch.followUpBehavior(.queue, approvalShown: false) == .queue)
+        #expect(ComposerDispatch.followUpBehavior(.steer, approvalShown: false) == .steer)
+        // The alternate send then queues, and an agent that can't take the message still gets it queued.
+        let behavior = ComposerDispatch.followUpBehavior(.queue, approvalShown: true)
+        #expect(ComposerDispatch.resolve(running: true, canSteer: true, alternate: false, behavior: behavior) == .steer)
+        #expect(ComposerDispatch.resolve(running: true, canSteer: true, alternate: true, behavior: behavior) == .queue)
+        #expect(ComposerDispatch.resolve(running: true, canSteer: false, alternate: false, behavior: behavior) == .queue)
+    }
+}
+
+/// The composer's send keys and the send button's tooltip, for both "Send messages with" settings and both follow-up
+/// behaviors.
+struct ComposerSendKeysTests {
+    private let commandReturn = KeyShortcut("mod+enter")
+    private let shiftCommandReturn = KeyShortcut("mod+shift+enter")
+
+    @Test func theKeysFollowTheSendSetting() {
+        let returnSends = ComposerSendKeys(sendOnReturn: true)
+        #expect(returnSends.send?.displayString == "↩")
+        #expect(returnSends.alternate == commandReturn)
+        #expect(returnSends.steerQueued == shiftCommandReturn)
+        let commandReturnSends = ComposerSendKeys(sendOnReturn: false)
+        #expect(commandReturnSends.send == commandReturn)
+        #expect(commandReturnSends.alternate == shiftCommandReturn)
+        // ⇧⌘↩ is the alternate send then.
+        #expect(commandReturnSends.steerQueued == nil)
+    }
+
+    @Test func aKeyAMenuItemHasIsLeftOut() {
+        let returnSends = ComposerSendKeys(sendOnReturn: true) { $0 == commandReturn }
+        #expect(returnSends.send?.displayString == "↩")
+        #expect(returnSends.alternate == nil)
+        #expect(returnSends.steerQueued == shiftCommandReturn)
+        let commandReturnSends = ComposerSendKeys(sendOnReturn: false) { $0 == commandReturn || $0 == shiftCommandReturn }
+        #expect(commandReturnSends.send == nil && commandReturnSends.alternate == nil)
+        #expect(ComposerSendKeys(sendOnReturn: true) { $0 == shiftCommandReturn }.steerQueued == nil)
+    }
+
+    @Test(arguments: FollowUpBehavior.allCases)
+    func idleSendNamesItsKey(behavior: FollowUpBehavior) {
+        #expect(ComposerSendKeys(sendOnReturn: true).sendToolTip(running: false, canSteer: false, behavior: behavior) == "Send (↩)")
+        #expect(ComposerSendKeys(sendOnReturn: false).sendToolTip(running: false, canSteer: true, behavior: behavior) == "Send (⌘↩)")
+        let taken = ComposerSendKeys(sendOnReturn: false) { _ in true }
+        #expect(taken.sendToolTip(running: false, canSteer: false, behavior: behavior) == "Send")
+    }
+
+    @Test func whileATurnRunsTheTooltipSaysWhatEachKeyDoes() {
+        let returnSends = ComposerSendKeys(sendOnReturn: true)
+        let commandReturnSends = ComposerSendKeys(sendOnReturn: false)
+        #expect(
+            returnSends.sendToolTip(running: true, canSteer: true, behavior: .steer)
+                == "Steer: send into the current turn (↩). ⌘↩ or ⌘-click queues it for after the turn.")
+        #expect(
+            commandReturnSends.sendToolTip(running: true, canSteer: true, behavior: .steer)
+                == "Steer: send into the current turn (⌘↩). ⇧⌘↩ or ⌘-click queues it for after the turn.")
+        #expect(
+            returnSends.sendToolTip(running: true, canSteer: true, behavior: .queue)
+                == "Queue: send when the current turn finishes (↩). ⌘↩ or ⌘-click sends it into the current turn instead.")
+        #expect(
+            commandReturnSends.sendToolTip(running: true, canSteer: true, behavior: .queue)
+                == "Queue: send when the current turn finishes (⌘↩). ⇧⌘↩ or ⌘-click sends it into the current turn instead.")
+    }
+
+    @Test(arguments: [false, true], FollowUpBehavior.allCases)
+    func aTurnThatCantTakeMessagesOnlyQueues(sendOnReturn: Bool, behavior: FollowUpBehavior) {
+        #expect(
+            ComposerSendKeys(sendOnReturn: sendOnReturn).sendToolTip(running: true, canSteer: false, behavior: behavior)
+                == "Queue message. It is sent when the current turn finishes.")
+    }
+
+    @Test func keysAMenuCommandTookAreNotOffered() {
+        let returnSends = ComposerSendKeys(sendOnReturn: true) { $0 == commandReturn }
+        #expect(
+            returnSends.sendToolTip(running: true, canSteer: true, behavior: .steer)
+                == "Steer: send into the current turn (↩). ⌘-click queues it for after the turn.")
+        let commandReturnSends = ComposerSendKeys(sendOnReturn: false) { $0 == commandReturn }
+        #expect(
+            commandReturnSends.sendToolTip(running: true, canSteer: true, behavior: .steer)
+                == "Steer: send into the current turn. ⇧⌘↩ or ⌘-click queues it for after the turn.")
+        #expect(
+            commandReturnSends.sendToolTip(running: true, canSteer: true, behavior: .queue)
+                == "Queue: send when the current turn finishes. ⇧⌘↩ or ⌘-click sends it into the current turn instead.")
+    }
+}
