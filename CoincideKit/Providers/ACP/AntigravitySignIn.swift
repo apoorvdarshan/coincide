@@ -51,6 +51,9 @@ public final class AntigravitySignIn {
     @ObservationIgnored private let noResponseHint: TimeInterval
     @ObservationIgnored private var flow: Flow?
 
+    /// How much longer than the sign-in itself the agent's `authenticate` request may wait.
+    private static let requestTimeoutMargin: TimeInterval = 60
+
     /// `runtime` leases the downloaded release the agent runs from; `transport` and `forward` replace
     /// the real process and HTTP delivery in tests.
     public init(
@@ -162,7 +165,11 @@ public final class AntigravitySignIn {
             let initialized = try await process.client.initialize(
                 capabilities: ACPClientCapabilities(), clientInfo: ACPSession.clientInfo, timeout: 180)
             flow.stage = "authenticate"
-            try await process.client.authenticate(methodID: AntigravityFlavor.authMethodID, timeout: timeout)
+            // The flow's timer ends the wait with the right explanation (Google unreachable, or the link expired) and
+            // stops the agent, which fails this request. The request's own timeout only backs that up, so it must
+            // not run out first: it starts later and would report a bare "sign-in failed".
+            try await process.client.authenticate(
+                methodID: AntigravityFlavor.authMethodID, timeout: timeout + Self.requestTimeoutMargin)
             guard self.flow === flow else { return cleanUp(flow, workspace: workspace, sessionID: nil) }
             flow.pending = nil
             phase = .verifying
