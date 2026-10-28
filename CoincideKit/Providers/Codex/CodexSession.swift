@@ -274,6 +274,10 @@ final class CodexSession: AgentSession {
         sessionID = id
         threadLoaded = true
         threadModel = result["model"]?.string ?? threadModel
+        // A resumed thread may already have a faster tier from a previous app run. Standard must clear that too.
+        if let tier = result["serviceTier"]?.string, !tier.isEmpty, tier != CodexProtocol.standardServiceTier {
+            askedForServiceTier = true
+        }
         emit(.sessionStarted(id: id))
         if let threadModel { emit(.modelResolved(threadModel)) }
         reportModels(on: connection)

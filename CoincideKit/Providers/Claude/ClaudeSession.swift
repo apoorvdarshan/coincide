@@ -553,8 +553,8 @@ final class ClaudeSession: AgentSession {
                 let owned = ownsResult(frame)
                 if owned { turn?.settled.formUnion(Self.answeredMessages(frame)) }
                 emit(mapper.map(frame))
-                noteFastMode(in: frame)
                 if owned {
+                    noteFastMode(in: frame)
                     if !endsSegment(frame) { finishTurn(withResult: frame) }
                 } else if turn == nil {
                     finishAgentTurn(withResult: frame)

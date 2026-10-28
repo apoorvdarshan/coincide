@@ -1214,7 +1214,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     /// Runs the model at a faster speed it offers, or at standard speed for nil.
     func setSpeed(_ speed: String?) {
-        guard let threadID, thread?.selection.speed != speed else { return }
+        guard let threadID, let thread, thread.selection.speed != speed else { return }
+        guard speed == nil || registry.model(for: thread.selection)?.speed(speed) != nil else { return }
         store.updateThread(threadID) { $0.selection.speed = speed }
     }
 

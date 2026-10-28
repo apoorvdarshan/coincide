@@ -144,17 +144,17 @@ enum ClaudeModelCatalog {
     /// Why fast mode could not run a turn, from the `fast_mode_disabled_reason` of its result, in Claude Code's words;
     /// nil when nothing stopped it or the reason passes on its own (still checking, or a network error).
     static func fastModeUnavailableMessage(reason: String?) -> String? {
-        let why: String
         switch reason {
         case nil, "pending"?, "network_error"?: return nil
-        case "free"?: why = String(localized: "Fast mode requires a paid subscription")
-        case "preference"?: why = String(localized: "Fast mode has been disabled by your organization")
-        case "extra_usage_disabled"?: why = String(localized: "Fast mode requires usage credits")
-        case "not_first_party"?: why = String(localized: "Fast mode is only available when using the Anthropic API directly")
-        case "model_not_allowed"?: why = String(localized: "Fast mode isn't available for this model")
-        default: why = String(localized: "Fast mode is currently unavailable")
+        case "free"?: return String(localized: "Fast mode requires a paid subscription, so Claude Code ran at standard speed.")
+        case "preference"?: return String(localized: "Your organization disabled fast mode, so Claude Code ran at standard speed.")
+        case "extra_usage_disabled"?: return String(localized: "Fast mode requires usage credits, so Claude Code ran at standard speed.")
+        case "not_first_party"?:
+            return String(localized: "Fast mode requires a direct Anthropic API connection, so Claude Code ran at standard speed.")
+        case "model_not_allowed"?:
+            return String(localized: "Fast mode isn't available for this model, so Claude Code ran at standard speed.")
+        default: return String(localized: "Fast mode is currently unavailable, so Claude Code ran at standard speed.")
         }
-        return String(localized: "\(why), so Claude Code ran at standard speed.")
     }
 
     private static func displayName(row: JSONValue, value: String, entry: Entry?) -> String {

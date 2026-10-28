@@ -147,6 +147,19 @@ struct CodexProtocolTests {
         ]
     }
 
+    @Test func fastDisplayNamesKeepTheCatalogsActualServiceTierID() throws {
+        // Recorded from codex-cli 0.165.0: the displayed Fast choice has the wire id priority.
+        let tiers = CodexProtocol.speeds(from: ["serviceTiers": [
+            ["id": "priority", "name": "Fast", "description": "2x speed, increased usage"]
+        ]])
+        let speed = try #require(tiers.first)
+        #expect(speed.id == "priority" && speed.name == "Fast")
+        #expect(speed.detail == "2x speed, increased usage")
+        var chosen = selection()
+        chosen.speed = speed.id
+        #expect(CodexProtocol.serviceTier(for: chosen, explicit: false) == "priority")
+    }
+
     @Test func catalogPutsT3PreferredDefaultFirstAndDropsHiddenModels() {
         let all = ["low", "medium", "high", "xhigh", "max", "ultra"]
         let models = CodexProtocol.models(fromEntries: [
@@ -1334,6 +1347,17 @@ struct CodexSessionTests {
         // Codex keeps the tier for the thread, so going back to standard says so.
         #expect(try await send(speed: nil) == "default")
         #expect(try await send(speed: "ultrafast") == "ultrafast")
+    }
+
+    @Test func standardSpeedClearsAFastTierRestoredWithTheThread() async throws {
+        let transport = FakeCodexTransport()
+        transport.handlers["thread/resume"] = { _ in
+            .result(["thread": ["id": "T"], "model": "gpt-6-luna", "serviceTier": "priority"])
+        }
+        let (session, _) = makeSession(resume: "T", transports: [transport])
+        try await session.start()
+        try await session.send(input())
+        #expect(transport.requests("turn/start").last?.at("params.serviceTier") == "default")
     }
 
     @Test func failedTurnsReportCodexDetails() async throws {

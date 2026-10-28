@@ -68,6 +68,18 @@ public struct ModelOption: Codable, Hashable, Sendable, Identifiable {
         self.speeds = speeds
     }
 
+    public nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decode(ProviderKind.self, forKey: .provider)
+        modelID = try container.decode(String.self, forKey: .modelID)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        efforts = try container.decode([String].self, forKey: .efforts)
+        defaultEffort = try container.decodeIfPresent(String.self, forKey: .defaultEffort)
+        contextWindow = try container.decodeIfPresent(Int.self, forKey: .contextWindow)
+        supportsImages = try container.decode(Bool.self, forKey: .supportsImages)
+        speeds = try container.decodeIfPresent([ModelSpeed].self, forKey: .speeds) ?? []
+    }
+
     /// The speed with id `speed`, when the model offers it.
     public nonisolated func speed(_ speed: String?) -> ModelSpeed? {
         speed.flatMap { id in speeds.first { $0.id == id } }
@@ -76,7 +88,7 @@ public struct ModelOption: Codable, Hashable, Sendable, Identifiable {
 
 /// A faster speed a model offers (T3 Code's fast mode and service tiers). Its id is what the agent is sent.
 public struct ModelSpeed: Codable, Hashable, Sendable {
-    /// `fast` for Claude's fast mode; for Codex, the service tier's id, such as `fast` or `ultrafast`.
+    /// `fast` for Claude's fast mode; for Codex, the catalog service tier id, such as `priority`.
     public var id: String
     public var name: String
     /// What the speed costs or changes, when the agent says.
@@ -88,7 +100,7 @@ public struct ModelSpeed: Codable, Hashable, Sendable {
         self.detail = detail
     }
 
-    /// Claude's fast mode, and Codex's Fast tier.
+    /// Claude's fast mode, also used by older Codex catalogs. New Codex catalogs supply their own tier id.
     public nonisolated static let fast = ModelSpeed(id: "fast", name: String(localized: "Fast"))
 }
 

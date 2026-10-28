@@ -137,6 +137,13 @@ struct ModelPreferencesTests {
         #expect(!String(decoding: data, as: UTF8.self).contains("speed"))
     }
 
+    @Test func aCatalogFromBeforeSpeedControlsStillDecodes() throws {
+        let model = try decode(ModelOption.self,
+            #"{"provider":"claude","modelID":"opus","displayName":"Opus","efforts":["high"],"supportsImages":true}"#)
+        #expect(model.speeds.isEmpty)
+        #expect(model.modelID == "opus" && model.efforts == ["high"])
+    }
+
     @Test func aModelFindsTheSpeedsItOffers() {
         let ultrafast = ModelSpeed(id: "ultrafast", name: "Ultrafast")
         let model = ModelOption(provider: .codex, modelID: "gpt-6-astra", displayName: "GPT-6 Astra", speeds: [.fast, ultrafast])
