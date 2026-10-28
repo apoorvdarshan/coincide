@@ -4,13 +4,14 @@ import QuartzCore
 
 // MARK: - User message
 
-/// The user's message: a quiet card on the rail with image thumbnails, long text folded behind
-/// "Show full message", and T3's "Edit from here" and copy actions that appear on hover. A message
-/// steered into a running turn carries T3's "Steer" mark above the card.
+/// The user's message: a quiet card on the rail with image thumbnails, pills for the context attached to it (quotes,
+/// terminal output, diff comments, files), long text folded behind "Show full message", and T3's "Edit from here" and
+/// copy actions that appear on hover. A message steered into a running turn carries T3's "Steer" mark above the card.
 final class TranscriptUserCell: TranscriptCell {
     private static let padding: CGFloat = 12
     private static let collapsedTextHeight: CGFloat = 176
     private static let thumbnailGap: CGFloat = 8
+    private static let pillGap: CGFloat = 6
     /// The "Steer" mark's line and the gap below it.
     private static let steerMarkHeight: CGFloat = 14
     private static let steerMarkGap: CGFloat = 4
@@ -18,6 +19,7 @@ final class TranscriptUserCell: TranscriptCell {
     private let bubble = TranscriptBubbleView()
     private let textView = ChatTextView()
     private var thumbnails: [TranscriptThumbnailView] = []
+    private var pills: [MessageContextPill] = []
     private let toggleButton = NSButton(title: "", target: nil, action: nil)
     private let timeLabel = NSTextField(labelWithString: "")
     private let steerIcon = NSImageView()
@@ -83,6 +85,17 @@ final class TranscriptUserCell: TranscriptCell {
             thumbnail.isHidden = index >= attachments.count
             if index < attachments.count { thumbnail.configure(path: attachments[index], index: index) }
         }
+        let context = item.context ?? []
+        while pills.count < context.count {
+            let pill = MessageContextPill()
+            pill.onOpen = { [weak self] context, anchor in self?.host?.openContext(context, from: anchor) }
+            bubble.addSubview(pill)
+            pills.append(pill)
+        }
+        for (index, pill) in pills.enumerated() {
+            pill.isHidden = index >= context.count
+            if index < context.count { pill.configure(context[index]) }
+        }
         timeLabel.stringValue = TranscriptFormat.timestamp(item.createdAt)
         timeLabel.font = .monospacedDigitSystemFont(ofSize: Theme.fontSize - 2, weight: .regular)
         timeLabel.toolTip = TranscriptFormat.fullTimestamp(item.createdAt)
@@ -116,7 +129,9 @@ final class TranscriptUserCell: TranscriptCell {
         let content = TranscriptMetrics.column(width: width).width * 0.8 - padding * 2
         let text = TranscriptEstimate.textHeight(item.text, width: content)
         let images = (item.attachments ?? []).isEmpty ? 0 : CGFloat(((item.attachments?.count ?? 0) + 1) / 2) * 86
-        return steerMarkSpace(item) + min(text, collapsedTextHeight + 24) + images + padding * 2 + 20 + bottomSpacing(for: row)
+        let context = (item.context ?? []).isEmpty ? 0 : MessageContextPill.height + pillGap
+        return steerMarkSpace(item) + min(text, collapsedTextHeight + 24) + images + context + padding * 2 + 20
+            + bottomSpacing(for: row)
     }
 
     override var copyText: String? { item?.text }
@@ -130,6 +145,7 @@ final class TranscriptUserCell: TranscriptCell {
         var steerMark: NSRect?
         var bubble: NSRect
         var thumbnails: [NSRect]
+        var pills: [NSRect]
         var text: NSRect
         var toggle: NSRect?
         var actionsY: CGFloat
@@ -171,13 +187,16 @@ final class TranscriptUserCell: TranscriptCell {
         let textSize = hasText ? TranscriptText.markdownSize(item, .user, width: maxContent, cache: host.textCache) : .zero
         let canCollapse = hasText && shouldCollapse(item.text) && textSize.height > collapsedTextHeight + 20
         let isCollapsed = canCollapse && !host.isExpanded(row.id)
+        let context = item.context ?? []
         var y = padding
-        if let last = thumbnails.last { y = last.maxY + (hasText ? thumbnailGap : 0) }
+        if let last = thumbnails.last { y = last.maxY + (hasText || !context.isEmpty ? thumbnailGap : 0) }
+        let pills = pillFrames(for: context, x: padding, y: y, maxWidth: maxContent)
+        if let bottom = pills.map(\.maxY).max() { y = bottom + (hasText ? thumbnailGap : 0) }
         let textHeight = isCollapsed ? collapsedTextHeight : textSize.height
         let text = NSRect(x: padding, y: y, width: min(maxContent, textSize.width + 1), height: textHeight)
         y += hasText ? textHeight : 0
         var toggle: NSRect?
-        var contentWidth = max(text.width, thumbnails.map { $0.maxX - padding }.max() ?? 0)
+        var contentWidth = max(text.width, (thumbnails + pills).map { $0.maxX - padding }.max() ?? 0)
         if canCollapse {
             toggle = NSRect(x: padding - 4, y: y + 6, width: 130, height: 18)
             y += 24
@@ -189,8 +208,23 @@ final class TranscriptUserCell: TranscriptCell {
         let actionsY = bubble.maxY + 4
         let steerMark = item.isSteered ? NSRect(x: column.x, y: 0, width: column.width, height: steerMarkHeight) : nil
         return Layout(
-            steerMark: steerMark, bubble: bubble, thumbnails: thumbnails, text: text, toggle: toggle, actionsY: actionsY,
-            height: actionsY + 20 + bottomSpacing(for: row) - 12, isCollapsed: isCollapsed)
+            steerMark: steerMark, bubble: bubble, thumbnails: thumbnails, pills: pills, text: text, toggle: toggle,
+            actionsY: actionsY, height: actionsY + 20 + bottomSpacing(for: row) - 12, isCollapsed: isCollapsed)
+    }
+
+    /// The context pills, left to right from (`x`, `y`), wrapping to a new line at `maxWidth`.
+    private static func pillFrames(for context: [MessageContext], x: CGFloat, y: CGFloat, maxWidth: CGFloat) -> [NSRect] {
+        var frames: [NSRect] = []
+        var cursor = NSPoint(x: x, y: y)
+        for item in context {
+            let width = MessageContextPill.width(for: item, maxWidth: maxWidth)
+            if cursor.x > x, cursor.x + width > x + maxWidth {
+                cursor = NSPoint(x: x, y: cursor.y + MessageContextPill.height + pillGap)
+            }
+            frames.append(NSRect(x: cursor.x, y: cursor.y, width: width, height: MessageContextPill.height))
+            cursor.x += width + pillGap
+        }
+        return frames
     }
 
     override func layout() {
@@ -201,6 +235,9 @@ final class TranscriptUserCell: TranscriptCell {
         textView.frame = layout.text
         for (index, frame) in layout.thumbnails.enumerated() where index < thumbnails.count {
             thumbnails[index].frame = frame
+        }
+        for (index, frame) in layout.pills.enumerated() where index < pills.count {
+            pills[index].frame = frame
         }
         toggleButton.isHidden = layout.toggle == nil
         if let toggle = layout.toggle {
@@ -351,6 +388,7 @@ final class TranscriptAssistantCell: TranscriptCell {
         rendered = TranscriptText.markdown(item, .assistant, cache: host.textCache)
         textView.setText(rendered)
         textView.onOpenLink = { [weak host] link in host?.openLink(link) ?? false }
+        textView.onQuote = { [weak host] text in host?.quote(text, from: id) }
         let highlights = findHighlights
         textView.setFindHighlights(highlights.ranges(in: .body), current: highlights.currentRange(in: .body))
         while codeButtons.count < rendered.codeBlocks.count {

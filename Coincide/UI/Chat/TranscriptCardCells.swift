@@ -245,6 +245,7 @@ final class TranscriptPlanCell: TranscriptCell {
         progressLabel.stringValue = progress.total > 0 ? String(localized: "\(progress.done) of \(progress.total) done") : ""
         textView.setText(TranscriptText.markdown(item, .plan, cache: host.textCache))
         textView.onOpenLink = { [weak host] link in host?.openLink(link) ?? false }
+        textView.onQuote = { [weak host] text in host?.quote(text, from: id) }
         let highlights = findHighlights
         textView.setFindHighlights(highlights.ranges(in: .body), current: highlights.currentRange(in: .body))
         setAccessibilityLabel(String(localized: "Plan") + (progressLabel.stringValue.isEmpty ? "" : ", \(progressLabel.stringValue)"))

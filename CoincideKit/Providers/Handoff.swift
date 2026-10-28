@@ -99,7 +99,8 @@ public enum Handoff {
     private nonisolated static func render(_ item: TranscriptItem) -> String? {
         switch item.kind {
         case .user:
-            var text = "User:\n\(item.text)"
+            // With what the user attached, as the agent that answered read it.
+            var text = "User:\n" + MessageContext.prompt(message: item.text, context: item.context ?? [])
             if let attachments = item.attachments, !attachments.isEmpty {
                 text += "\n[attached: \(attachments.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))]"
             }

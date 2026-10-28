@@ -428,6 +428,8 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
     public var questions: UserInputRequest?
     public var answers: [String: [String]]?
     public var attachments: [String]?
+    /// What the user attached to a message besides images: quotes, terminal excerpts, diff comments and files.
+    public var context: [MessageContext]?
     /// True for a message the user sent into a running turn (T3 Code's steer), which belongs to that turn rather
     /// than opening one of its own. Nil for everything else, so other items are written as before.
     public var steered: Bool?
@@ -439,7 +441,7 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
         category: ToolCategory? = nil, status: ItemStatus? = nil, provider: ProviderKind? = nil,
         modelID: String? = nil, externalID: String? = nil, approval: ApprovalInfo? = nil,
         questions: UserInputRequest? = nil, answers: [String: [String]]? = nil, attachments: [String]? = nil,
-        steered: Bool? = nil, createdAt: Date = Date(), completedAt: Date? = nil
+        context: [MessageContext]? = nil, steered: Bool? = nil, createdAt: Date = Date(), completedAt: Date? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -455,6 +457,7 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
         self.questions = questions
         self.answers = answers
         self.attachments = attachments
+        self.context = context
         self.steered = steered
         self.createdAt = createdAt
         self.completedAt = completedAt
@@ -485,6 +488,10 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
         questions = container.lenient(UserInputRequest.self, forKey: .questions)
         answers = container.lenient([String: [String]].self, forKey: .answers)
         attachments = container.lenient([String].self, forKey: .attachments)
+        // Context of a kind added later is left out; the rest of the message's context stays.
+        context =
+            container.contains(.context) && (try? container.decodeNil(forKey: .context)) != true
+            ? container.lenientArray(MessageContext.self, forKey: .context) : nil
         steered = container.lenient(Bool.self, forKey: .steered)
         createdAt = container.lenient(Date.self, forKey: .createdAt) ?? .distantPast
         completedAt = container.lenient(Date.self, forKey: .completedAt)
@@ -530,12 +537,14 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     public var branch: String?
     /// Unsent composer text, restored when the thread is reopened.
     public var draft: String?
+    /// Unsent context cards, restored with the draft after switching threads or restarting.
+    public var draftContext: [MessageContext]?
 
     public nonisolated init(
         id: UUID = UUID(), projectID: UUID, title: String = String(localized: "New thread"),
         selection: ModelSelection, accessMode: AccessMode = .fullAccess, interactionMode: InteractionMode = .build,
         items: [TranscriptItem] = [], sessions: [ProviderKind: ProviderSessionRef] = [:], isPinned: Bool = false,
-        isArchived: Bool = false, worktreePath: String? = nil, branch: String? = nil, draft: String? = nil,
+        isArchived: Bool = false, worktreePath: String? = nil, branch: String? = nil, draft: String? = nil, draftContext: [MessageContext]? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -553,6 +562,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         self.worktreePath = worktreePath
         self.branch = branch
         self.draft = draft
+        self.draftContext = draftContext
     }
 
     public nonisolated var hasUserMessages: Bool { items.contains { $0.kind == .user } }
@@ -579,5 +589,6 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         worktreePath = container.lenient(String.self, forKey: .worktreePath)
         branch = container.lenient(String.self, forKey: .branch)
         draft = container.lenient(String.self, forKey: .draft)
+        draftContext = container.contains(.draftContext) ? container.lenientArray(MessageContext.self, forKey: .draftContext) : nil
     }
 }

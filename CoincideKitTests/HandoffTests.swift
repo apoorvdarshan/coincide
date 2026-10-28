@@ -16,6 +16,19 @@ struct HandoffTests {
         #expect(Handoff.prompt(for: "hi", thread: empty, provider: .claude) == "hi")
     }
 
+    @Test func aRecapShowsWhatTheUserAttached() {
+        let comment = MessageContext(
+            .diffComment(.init(path: "App.swift", lineStart: 3, lineEnd: 3, isBeforeChange: false, diff: "+x", comment: "Rename x")))
+        let items = [
+            TranscriptItem(kind: .user, text: "fix this", provider: .claude, context: [comment]),
+            TranscriptItem(kind: .assistant, text: "Renamed.", provider: .claude),
+        ]
+        let switched = thread(items, sessions: [.claude: ProviderSessionRef(sessionID: "a", seenItemCount: 2)])
+        let recap = Handoff.recap(thread: switched, provider: .codex) ?? ""
+        #expect(recap.contains("User:\nfix this\n\n<coincide_context version=\"1\">"))
+        #expect(recap.contains("file: App.swift\nlines: 3\ncomment:\n  Rename x"))
+    }
+
     @Test func currentSessionNeedsNoRecap() {
         let items = [
             TranscriptItem(kind: .user, text: "fix the bug", provider: .claude),

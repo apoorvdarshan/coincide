@@ -508,6 +508,8 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
     case addProject = "project.add"
     case openInEditor = "editor.openFavorite"
     case revealInFinder = "project.revealInFinder"
+    // Edit
+    case addToComposer = "composer.addSelection"
     // Edit › Find
     case searchThreads = "sidebar.search"
     // View
@@ -574,7 +576,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
     public nonisolated var menu: Menu {
         switch self {
         case .newThread, .addProject, .openInEditor, .revealInFinder: .file
-        case .searchThreads: .edit
+        case .addToComposer, .searchThreads: .edit
         case .toggleSidebar, .toggleTerminal, .toggleDiff, .commandPalette, .increaseFontSize, .decreaseFontSize,
             .resetFontSize:
             .view
@@ -591,6 +593,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
         case .addProject: return String(localized: "Add Project…")
         case .openInEditor: return String(localized: "Open in Editor")
         case .revealInFinder: return String(localized: "Reveal in Finder")
+        case .addToComposer: return String(localized: "Add Selection to Composer")
         case .searchThreads: return String(localized: "Search Threads")
         case .toggleSidebar: return String(localized: "Show or Hide Sidebar")
         case .toggleTerminal: return String(localized: "Show or Hide Terminal")
@@ -621,6 +624,8 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
     private nonisolated static let defaults: [KeyCommand: KeyShortcut] = {
         var defaults: [KeyCommand: String] = [
             .newThread: "mod+n", .addProject: "mod+shift+o", .openInEditor: "mod+o", .searchThreads: "mod+alt+f",
+            // As in Cursor and VS Code, which add the selection to the chat with Command-L.
+            .addToComposer: "mod+l",
             .toggleSidebar: "mod+b", .toggleTerminal: "mod+j", .toggleDiff: "mod+d", .commandPalette: "mod+k",
             .increaseFontSize: "mod++", .decreaseFontSize: "mod+-", .resetFontSize: "mod+0", .stopTurn: "mod+.",
             .previousThread: "mod+shift+[", .nextThread: "mod+shift+]", .chooseModel: "mod+shift+m",

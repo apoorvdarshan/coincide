@@ -150,12 +150,20 @@ struct ThreadRunnerTests {
     @Test func runtimeCapabilitiesReachSendAndSteerWithoutBeingSaved() async throws {
         runner.ephemeralRuntimeContext = { id in id == threadID ? "<ephemeral>preview capability</ephemeral>" : nil }
         claude.configure = { $0.supportsSteering = true }
-        await runner.send(threadID: threadID, text: "Inspect the page")
+        let context = [MessageContext(.quote(.init(text: "Keep the form label", provider: .codex))),
+            MessageContext(.file(.init(path: "/tmp/preview-spec.pdf")))]
+        await runner.send(threadID: threadID, text: "Inspect the page", context: context)
         let session = try #require(claude.last)
         #expect(session.sent.last?.message.contains("preview capability") == true)
+        #expect(session.sent.last?.message.contains("Keep the form label") == true)
+        #expect(session.sent.last?.filePaths == ["/tmp/preview-spec.pdf"])
+        #expect(items.last(where: { $0.kind == .user })?.context == context)
         #expect(items.last(where: { $0.kind == .user })?.text == "Inspect the page")
-        _ = await runner.steer(threadID: threadID, text: "Click the button")
+        _ = await runner.steer(threadID: threadID, text: "Click the button", context: context)
         #expect(session.steered.last?.message.contains("preview capability") == true)
+        #expect(session.steered.last?.message.contains("Keep the form label") == true)
+        #expect(session.steered.last?.filePaths == ["/tmp/preview-spec.pdf"])
+        #expect(items.last(where: { $0.kind == .user })?.context == context)
         #expect(items.last(where: { $0.kind == .user })?.text == "Click the button")
         runner.ephemeralRuntimeContext = nil
         _ = await runner.steer(threadID: threadID, text: "Access is now off")
@@ -641,6 +649,48 @@ struct ThreadRunnerTests {
         #expect(session.sent.last?.message == "two")
         // Sent after the turn, it opens a turn of its own.
         #expect(items.last { $0.kind == .user }?.opensUserTurn == true)
+    }
+
+    // MARK: Context
+
+    @Test func contextTravelsWithTheMessageAndReachesTheAgentAsItsPrompt() async {
+        let quote = MessageContext(.quote(.init(text: "Use a lock", provider: .codex)))
+        let file = MessageContext(.file(.init(path: "/tmp/docs/spec.pdf")))
+        await runner.send(threadID: threadID, text: " Why? ", context: [quote, file])
+        let input = claude.last?.sent.last
+        // Files are mentioned relative to the thread's folder, the rest follows in a block.
+        #expect(input?.message.hasPrefix("Why?\n\n@docs/spec.pdf\n\n<coincide_context version=\"1\">") == true)
+        #expect(input?.message.contains("source: an earlier reply by Codex\ntext:\n  Use a lock") == true)
+        #expect(input?.filePaths == ["/tmp/docs/spec.pdf"])
+        // The transcript keeps what the user typed, with the context beside it.
+        let user = items.first { $0.kind == .user }
+        #expect(user?.text == "Why?" && user?.context == [quote, file])
+    }
+
+    @Test func aMessageOfContextAloneIsSentAndNamesTheThread() async {
+        let excerpt = MessageContext(
+            .terminal(.init(terminal: "Terminal 1", directory: "/tmp", lineStart: nil, lineEnd: nil, text: "error: build failed\nmore")))
+        await runner.send(threadID: threadID, text: "  ", context: [excerpt])
+        #expect(store.thread(threadID)?.title == "error: build failed")
+        #expect(claude.last?.sent.last?.message.hasPrefix("<coincide_context") == true)
+        #expect(items.first { $0.kind == .user }?.context == [excerpt])
+    }
+
+    @Test func steeredAndQueuedMessagesKeepTheirContext() async {
+        let session = await startRunningTurn()
+        let quote = MessageContext(.quote(.init(text: "Use a lock", provider: .claude)))
+        #expect(await runner.steer(threadID: threadID, text: "", context: [quote]) == .steered)
+        #expect(session.steered.last?.message.contains("<context kind=\"quote\" id=\"quote-1\">") == true)
+        #expect(items.last?.context == [quote] && items.last?.isSteered == true)
+
+        let file = MessageContext(.file(.init(path: "/tmp/a.txt")))
+        runner.enqueue(threadID: threadID, text: "later", context: [file])
+        #expect(runner.queuedMessages(threadID).last?.context == [file])
+        session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) }
+        session.emit(.turnCompleted(.completed))
+        #expect(await eventually { session.sent.count == 2 })
+        #expect(session.sent.last?.message == "later\n\n@a.txt")
+        #expect(session.sent.last?.filePaths == ["/tmp/a.txt"])
     }
 
     @Test func aMessageTheTurnRefusesWaitsForIt() async {
