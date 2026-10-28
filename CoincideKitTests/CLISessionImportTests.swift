@@ -189,6 +189,43 @@ struct CLISessionImportStoreTests {
         #expect(store.projects.isEmpty && store.threadSummaries.isEmpty)
     }
 
+    @Test func undoPreservesArchiveEvenWhenFutureProvenanceCannotBeDecoded() throws {
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let data = try codexFixture()
+        let store = AppStore(directory: directory)
+        let id = try store.importSession(CLISessionImport.parse(data, sourceURL: importSource))
+        let archive = try #require(store.importedSourceURL(for: id))
+        store.flush()
+        let url = directory.appendingPathComponent("threads/\(id.uuidString).json")
+        var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        object["importedSession"] = ["provider": "future-provider", "futureData": ["keep": "original"]]
+        let future = try JSONSerialization.data(withJSONObject: object)
+        try future.write(to: url)
+        let reopened = AppStore(directory: directory)
+        #expect(reopened.summary(id)?.importedSession == nil)
+        let snapshot = try #require(try reopened.deleteThreadForUndo(id))
+        reopened.flush()
+        #expect(!FileManager.default.fileExists(atPath: archive.path))
+        #expect(try reopened.restoreDeletedThread(snapshot))
+        #expect(try Data(contentsOf: archive) == data)
+        #expect(try Data(contentsOf: url) == future)
+    }
+
+    @Test func undoDoesNotOverwriteAnExternallyRecreatedThreadFile() throws {
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AppStore(directory: directory)
+        let id = try store.importSession(CLISessionImport.parse(codexFixture(), sourceURL: importSource))
+        let snapshot = try #require(try store.deleteThreadForUndo(id))
+        store.flush()
+        let url = directory.appendingPathComponent("threads/\(id.uuidString).json")
+        let recreated = Data("externally recreated contents".utf8)
+        try recreated.write(to: url)
+        #expect(throws: CocoaError.self) { try store.restoreDeletedThread(snapshot) }
+        #expect(try Data(contentsOf: url) == recreated)
+        try FileManager.default.removeItem(at: url)
+        #expect(try store.restoreDeletedThread(snapshot))
+    }
+
     @Test func unknownProvenanceFieldsTriggerPreservationWhileKnownFieldsRoundTrip() throws {
         let store = AppStore(directory: directory)
         defer { try? FileManager.default.removeItem(at: directory) }
