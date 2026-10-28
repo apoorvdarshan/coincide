@@ -55,9 +55,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     /// A trigger dismissed with Escape stays hidden until the caret leaves its word.
     private var dismissedTrigger: ComposerTrigger?
     private var suggestionSearch: Task<Void, Never>?
-    /// Pull requests picked from the `#` list, by thread and number. A message that still mentions one sends the agent
-    /// its details; they are kept after sending, so a message edited or queued again keeps them too.
-    private var pullRequestMentions: [UUID: [Int: PullRequestSummary]] = [:]
     /// Approvals and questions the agent is waiting on, refreshed when one of them changes.
     private var pendingRequestIDs: Set<UUID> = []
     private var hasPendingApproval = false
@@ -331,16 +328,15 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         focus()
     }
 
-    /// Writes `#123` at the caret for a pull request chosen in the pull requests panel (after a space when it would
-    /// otherwise join the word before), so the agent gets the pull request's details as from the `#` list.
+    /// Inserts a PR link into the draft itself so its repository survives saving, queueing and agent handoff.
     @objc private func mentionPullRequest(_ notification: Notification) {
-        guard let threadID, let pullRequest = notification.userInfo?["pullRequest"] as? PullRequestSummary else { return }
-        pullRequestMentions[threadID, default: [:]][pullRequest.number] = pullRequest
+        guard threadID != nil, let pullRequest = notification.userInfo?["pullRequest"] as? PullRequestSummary else { return }
+        guard let mention = PullRequestMention.markdown(pullRequest) else { return }
         let text = textView.string as NSString
         var range = textView.selectedRange()
         if range.location > text.length { range = NSRange(location: text.length, length: 0) }
         let before = range.location > 0 && !ComposerTrigger.isWhitespace(text.character(at: range.location - 1))
-        textView.insertText((before ? " " : "") + "#\(pullRequest.number) ", replacementRange: range)
+        textView.insertText((before ? " " : "") + mention + " ", replacementRange: range)
         focus()
     }
 
@@ -1132,16 +1128,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         case .agentCommand(let command, _, let token):
             replace(trigger.range, with: token + command.name + " ")
         case .pullRequest(let pullRequest):
-            replace(trigger.range, with: "#\(pullRequest.number) ")
-            if let threadID { pullRequestMentions[threadID, default: [:]][pullRequest.number] = pullRequest }
+            guard let mention = PullRequestMention.markdown(pullRequest) else { return }
+            replace(trigger.range, with: mention + " ")
         }
-    }
-
-    /// What the agent is told about the pull requests the message mentions that were picked from the `#` list, as
-    /// T3 Code sends a pull request reference along with the message.
-    private func pullRequestContext(for text: String) -> String? {
-        guard let threadID, let picked = pullRequestMentions[threadID] else { return nil }
-        return PullRequestMention.context(for: PullRequestMention.numbers(in: text).compactMap { picked[$0] })
     }
 
     /// The selected agent's own commands (or with `skillsOnly`, its skills) matching `query`, as completions written
@@ -1328,19 +1317,18 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             behavior: followUpBehavior)
         declinePendingRequests(threadID)
         let imagePaths = attachments.map(\.path)
-        let context = pullRequestContext(for: text)
         clearComposer()
         switch dispatch {
         case .steer:
             Task {
-                let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths, context: context)
+                let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths)
                 announce(delivery)
             }
         case .send, .queue:
             Task {
                 // `send` queues the message while a turn runs.
                 let queues = runner.isRunning(threadID)
-                await runner.send(threadID: threadID, text: text, imagePaths: imagePaths, context: context)
+                await runner.send(threadID: threadID, text: text, imagePaths: imagePaths)
                 if queues { announce(.queued) }
             }
         }

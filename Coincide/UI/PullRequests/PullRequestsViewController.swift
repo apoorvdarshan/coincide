@@ -116,6 +116,7 @@ final class PullRequestsViewController: NSViewController, NSTableViewDataSource,
         detailView.onMerge = { [weak self] anchor in self?.chooseMergeMethod(from: anchor) }
         detailView.onMarkReady = { [weak self] in self?.markReady() }
         detailView.onCheckOut = { [weak self] in self?.checkOutShown() }
+        detailView.onReview = { [weak self] in self?.reviewShown() }
         detailView.isHidden = true
         emptyState.isHidden = true
 
@@ -488,14 +489,14 @@ final class PullRequestsViewController: NSViewController, NSTableViewDataSource,
 
     /// Offers the merge methods the repository allows, as GitHub's merge button does.
     private func chooseMergeMethod(from anchor: NSView) {
-        guard let shown, let cwd = folder else { return }
+        guard let shown, let detail, detail.canMerge, let cwd = folder else { return }
         Task { [weak self] in
             guard let methods = await self?.service.mergeMethods(in: cwd), self?.shown?.number == shown.number,
-                anchor.window != nil
+                self?.folder == cwd, anchor.window != nil
             else { return }
             let menu = NSMenu()
             for method in methods {
-                let action = PullRequestMenuAction { [weak self] in self?.confirmMerge(shown, method: method) }
+                let action = PullRequestMenuAction { [weak self] in self?.confirmMerge(detail, method: method, in: cwd) }
                 let item = menu.addItem(
                     withTitle: method.title, action: #selector(PullRequestMenuAction.run(_:)), keyEquivalent: "")
                 item.target = action
@@ -505,8 +506,9 @@ final class PullRequestsViewController: NSViewController, NSTableViewDataSource,
         }
     }
 
-    private func confirmMerge(_ pullRequest: PullRequestSummary, method: PullRequestMergeMethod) {
+    private func confirmMerge(_ detail: PullRequestDetail, method: PullRequestMergeMethod, in cwd: URL) {
         guard let window = view.window else { return }
+        let pullRequest = detail.summary
         let alert = ThemedAlert()
         alert.alertStyle = .warning
         alert.messageText = method.question(pullRequest.number)
@@ -515,11 +517,25 @@ final class PullRequestsViewController: NSViewController, NSTableViewDataSource,
         alert.addButton(withTitle: String(localized: "Merge"))
         alert.addButton(withTitle: String(localized: "Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn, let self, let cwd = self.folder else { return }
+            guard response == .alertFirstButtonReturn, let self else { return }
             self.run(String(localized: "Merged pull request #\(pullRequest.number).")) {
-                try await self.service.merge(pullRequest.number, method: method, in: cwd)
+                try await self.service.merge(detail, method: method, in: cwd)
             }
         }
+    }
+
+    private func reviewShown() {
+        guard let detail, let cwd = folder, !isBusy else { return }
+        let sheet = PullRequestReviewSheet(number: detail.summary.number)
+        sheet.onSubmit = { [weak self] event, body in
+            guard let self else { return }
+            self.setBusy(true)
+            defer { self.setBusy(false) }
+            try await self.service.review(detail, event: event, body: body, in: cwd)
+            self.banner.show(title: String(localized: "Review submitted."), detail: nil, isError: false)
+            self.reload(force: true)
+        }
+        presentAsSheet(sheet)
     }
 
     private func markReady() {

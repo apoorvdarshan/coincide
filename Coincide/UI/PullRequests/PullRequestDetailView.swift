@@ -9,6 +9,7 @@ final class PullRequestDetailView: NSView {
     var onMerge: ((NSView) -> Void)?
     var onMarkReady: (() -> Void)?
     var onCheckOut: (() -> Void)?
+    var onReview: (() -> Void)?
 
     private let scrollView = NSScrollView()
     private let stack = NSStackView()
@@ -32,6 +33,9 @@ final class PullRequestDetailView: NSView {
         title: String(localized: "Mark Ready for Review"), style: .primary, target: nil, action: nil)
     private let checkOutButton = ThemedButton(
         title: String(localized: "Check Out in New Thread"), style: .secondary, target: nil, action: nil)
+    private let reviewButton = ThemedButton(title: String(localized: "Review…"), style: .secondary, target: nil, action: nil)
+    private let reviewsHeader = NSTextField(labelWithString: String(localized: "Reviews"))
+    private let reviewsList = NSStackView()
     private let checksHeader = NSTextField(labelWithString: "")
     private let checksList = NSStackView()
     private let checksNote = NSTextField(labelWithString: "")
@@ -70,16 +74,21 @@ final class PullRequestDetailView: NSView {
         readyButton.action = #selector(markReady(_:))
         checkOutButton.target = self
         checkOutButton.action = #selector(checkOut(_:))
+        reviewButton.target = self
+        reviewButton.action = #selector(review(_:))
         checkOutButton.toolTip = String(localized: "Creates a worktree on this pull request’s branch and opens a new thread in it")
-        actions.buttons = [mergeButton, readyButton, checkOutButton]
+        actions.buttons = [mergeButton, readyButton, checkOutButton, reviewButton]
 
-        for header in [checksHeader, descriptionHeader] {
+        for header in [checksHeader, descriptionHeader, reviewsHeader] {
             header.textColor = .secondaryLabelColor
             header.setAccessibilityRole(.staticText)
         }
         checksList.orientation = .vertical
         checksList.alignment = .leading
         checksList.spacing = 0
+        reviewsList.orientation = .vertical
+        reviewsList.alignment = .leading
+        reviewsList.spacing = 12
         for note in [checksNote, descriptionNote] { note.textColor = .tertiaryLabelColor }
 
         let stateLine = line(stateIcon, stateLabel)
@@ -89,7 +98,7 @@ final class PullRequestDetailView: NSView {
             [
                 titleLabel, stateLine, branchLabel, statsLabel, reviewLine, checksLine, conflictLine, actions,
                 checksDivider, checksHeader, checksList, checksNote, descriptionDivider, descriptionHeader, markdown,
-                descriptionNote,
+                descriptionNote, reviewsHeader, reviewsList,
             ], in: .top)
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -106,7 +115,7 @@ final class PullRequestDetailView: NSView {
         // Rows that span the column; the rest keep their own width.
         let fullWidth: [NSView] = [
             titleLabel, stateLine, branchLabel, reviewLine, checksLine, conflictLine, actions, checksDivider, checksList,
-            descriptionDivider, markdown,
+            descriptionDivider, markdown, reviewsList,
         ]
 
         let document = FlippedDocumentView()
@@ -163,7 +172,7 @@ final class PullRequestDetailView: NSView {
         }
         branchLabel.font = .monospacedSystemFont(ofSize: size - 2, weight: .regular)
         statsLabel.font = .monospacedDigitSystemFont(ofSize: size - 2, weight: .regular)
-        for header in [checksHeader, descriptionHeader] { header.font = .systemFont(ofSize: size - 2, weight: .semibold) }
+        for header in [checksHeader, descriptionHeader, reviewsHeader] { header.font = .systemFont(ofSize: size - 2, weight: .semibold) }
     }
 
     /// Shows `summary`, and once it has loaded, `detail`. While `isBusy` an action runs and the buttons wait.
@@ -218,12 +227,41 @@ final class PullRequestDetailView: NSView {
         mergeButton.isHidden = !isOpen || summary.isDraft
         readyButton.isHidden = !isOpen || !summary.isDraft
         checkOutButton.isHidden = !isOpen
+        reviewButton.isHidden = !isOpen
         actions.isHidden = !isOpen
-        for button in [mergeButton, readyButton, checkOutButton] { button.isEnabled = !isBusy }
+        for button in [readyButton, checkOutButton] { button.isEnabled = !isBusy }
+        mergeButton.isEnabled = !isBusy && detail?.canMerge == true
+        reviewButton.isEnabled = !isBusy && detail.map { !$0.headCommit.isEmpty } == true
         actions.buttonsChanged()
 
         showChecks(detail?.checks)
         showDescription(detail?.body)
+        showReviews(detail?.reviews ?? [])
+    }
+
+    private func showReviews(_ reviews: [PullRequestReview]) {
+        reviewsList.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        reviewsHeader.isHidden = reviews.isEmpty
+        reviewsList.isHidden = reviews.isEmpty
+        for review in reviews {
+            let state: String = switch review.state {
+            case "APPROVED": String(localized: "Approved")
+            case "CHANGES_REQUESTED": String(localized: "Changes requested")
+            case "DISMISSED": String(localized: "Dismissed")
+            default: String(localized: "Commented")
+            }
+            let label = NSTextField(labelWithString: "\(review.author) · \(state)")
+            label.font = .systemFont(ofSize: Theme.fontSize - 1, weight: .medium)
+            let body = PullRequestMarkdownView(frame: .zero)
+            body.setMarkdown(review.body)
+            body.isHidden = review.body.isEmpty
+            let row = NSStackView(views: [label, body])
+            row.orientation = .vertical
+            row.alignment = .leading
+            reviewsList.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: reviewsList.widthAnchor).isActive = true
+            body.widthAnchor.constraint(equalTo: row.widthAnchor).isActive = true
+        }
     }
 
     private func showChecks(_ checks: [PullRequestCheck]?) {
@@ -267,6 +305,8 @@ final class PullRequestDetailView: NSView {
     @objc private func markReady(_ sender: Any?) { onMarkReady?() }
 
     @objc private func checkOut(_ sender: Any?) { onCheckOut?() }
+
+    @objc private func review(_ sender: Any?) { onReview?() }
 }
 
 /// The scrolling content, laid out from the top.

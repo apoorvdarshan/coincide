@@ -98,11 +98,24 @@ public final class PullRequestService {
     }
 
     /// Merges the pull request on GitHub with `method`. Its branch stays, local and remote.
-    public func merge(_ number: Int, method: PullRequestMergeMethod, in cwd: URL) async throws {
+    public func merge(_ detail: PullRequestDetail, method: PullRequestMergeMethod, in cwd: URL) async throws {
+        guard detail.canMerge else { throw GitError(String(localized: "This pull request is not ready to merge.")) }
         defer { forgetLists() }
         try await Self.run(
-            PullRequestCommands.merge(number, method: method), in: cwd,
-            failure: String(localized: "Could not merge pull request #\(number)."), timeout: 120)
+            PullRequestCommands.merge(detail.summary.number, method: method, headCommit: detail.headCommit), in: cwd,
+            failure: String(localized: "Could not merge pull request #\(detail.summary.number)."), timeout: 120)
+    }
+
+    /// Posts exactly the review the user confirmed, attached to the revision they reviewed.
+    public func review(_ detail: PullRequestDetail, event: PullRequestReviewEvent, body: String, in cwd: URL) async throws {
+        guard detail.summary.state == .open, !detail.headCommit.isEmpty, event.accepts(body: body) else {
+            throw GitError(String(localized: "Add a review message before submitting."))
+        }
+        defer { forgetLists() }
+        let input = try PullRequestCommands.reviewBody(event, body: body, headCommit: detail.headCommit)
+        try await Self.run(
+            PullRequestCommands.review(detail.summary.number), in: cwd,
+            failure: String(localized: "Could not submit the review."), input: input)
     }
 
     /// Takes a draft pull request out of draft, asking for reviews.
@@ -184,9 +197,9 @@ public final class PullRequestService {
     /// Runs `gh`, returning what it printed, or throwing `failure` with `gh`'s own explanation.
     @discardableResult
     @concurrent private nonisolated static func run(
-        _ arguments: [String], in cwd: URL, failure: String, timeout: TimeInterval = 60
+        _ arguments: [String], in cwd: URL, failure: String, timeout: TimeInterval = 60, input: String? = nil
     ) async throws -> String {
-        guard let result = await GitCLI.gh(arguments, in: cwd, timeout: timeout) else { throw GitError(setupMessage) }
+        guard let result = await GitCLI.gh(arguments, in: cwd, input: input, timeout: timeout) else { throw GitError(setupMessage) }
         guard result.succeeded else { throw GitError.failed(failure, result) }
         return result.stdout
     }
