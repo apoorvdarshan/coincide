@@ -14,6 +14,9 @@ enum CodexUsageLimits {
         guard let snapshot, snapshot.object != nil else { return [] }
         if let limitID = snapshot["limitId"]?.string, limitID != "codex" { return [] }
         let monthlyPlan = ["free", "go"].contains(snapshot["planType"]?.string ?? "")
+        // With credits on the account, Codex keeps working past the plan's windows and spends credits.
+        let credits = snapshot["credits"]
+        let continuesOnCredits = credits?["unlimited"]?.bool == true || credits?["hasCredits"]?.bool == true
         var windows: [UsageLimitWindow] = []
         for (id, fallback) in [("primary", monthlyPlan ? monthMinutes : sessionMinutes), ("secondary", weekMinutes)] {
             guard let window = snapshot[id], let used = window["usedPercent"]?.number, used.isFinite else { continue }
@@ -22,7 +25,8 @@ enum CodexUsageLimits {
             windows.append(
                 UsageLimitWindow(
                     id: id, kind: kind, label: label(for: kind), usedPercent: used,
-                    resetsAt: date(fromEpochSeconds: window["resetsAt"]?.number), durationMinutes: minutes))
+                    resetsAt: date(fromEpochSeconds: window["resetsAt"]?.number), durationMinutes: minutes,
+                    continuesOnCredits: continuesOnCredits))
         }
         if let individual = snapshot["individualLimit"], let remaining = individual["remainingPercent"]?.number,
             remaining.isFinite

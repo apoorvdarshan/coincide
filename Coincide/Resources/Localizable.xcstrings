@@ -1,6 +1,26 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ %@ limit reached. Using credits until it resets in %@." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@ limit reached. Using credits until it resets in %3$@."
+          }
+        }
+      }
+    },
+    "%@ %@ limit reached. Using credits." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@ limit reached. Using credits."
+          }
+        }
+      }
+    },
     "%@ (%@)" : {
       "localizations" : {
         "en" : {
@@ -106,7 +126,13 @@
     "%@ is not installed or could not be found on PATH." : {
 
     },
+    "%@ is taking a while to start. macOS may be waiting for you to let Coincide access a folder such as Documents, where agent settings often live, and it asks only while Coincide is the active app. You can also grant access in System Settings › Privacy & Security › Files and Folders." : {
+
+    },
     "%@ is turned off. Turn it on in Providers or pick another model." : {
+
+    },
+    "%@ is waiting to start" : {
 
     },
     "%@ isn't available. Choose another agent below." : {
@@ -4312,6 +4338,9 @@
 
     },
     "Switch to Build Mode" : {
+
+    },
+    "Switch to Coincide in case macOS is asking for permission to access a folder." : {
 
     },
     "Switch to Plan Mode" : {

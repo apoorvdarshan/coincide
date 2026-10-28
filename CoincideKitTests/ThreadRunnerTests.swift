@@ -769,6 +769,8 @@ struct SlowStartNoticeTests {
         let store = AppStore(directory: dir)
         let runner = ThreadRunner(store: store, registry: ProviderRegistry(store: store, providers: [StalledProvider()]))
         runner.slowStartNoticeDelay = .milliseconds(100)
+        var slowStarts: [ProviderKind] = []
+        runner.onSlowStart = { _, provider in slowStarts.append(provider) }
         store.updateSettings { $0.checkpointsEnabled = false }
         let project = store.addProject(at: FileManager.default.temporaryDirectory)
         let thread = store.createThread(in: project.id, selection: ModelSelection(provider: .claude, modelID: "m"))
@@ -776,6 +778,7 @@ struct SlowStartNoticeTests {
         try await Task.sleep(for: .milliseconds(600))
         let notice = store.thread(thread.id)?.items.last { $0.kind == .notice }
         #expect(notice?.text.contains("Files and Folders") == true)
+        #expect(slowStarts == [.claude])
         runner.stop(threadID: thread.id)
         sending.cancel()
     }

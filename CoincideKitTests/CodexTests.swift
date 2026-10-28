@@ -1621,6 +1621,24 @@ struct CodexUsageLimitsTests {
         #expect(windows[1].durationMinutes == 10_080)
     }
 
+    @Test func creditsLetCodexWorkPastAnExhaustedWindow() throws {
+        // Shape of a real Pro account over its weekly allowance with credits left.
+        let read = try #require(
+            JSONValue.parse(
+                #"""
+                {"ordinaryUsageAllowed":false,"rateLimitsByLimitId":{"codex":{"limitId":"codex","planType":"pro",
+                  "primary":{"usedPercent":100,"windowDurationMins":10080,"resetsAt":1800000000},"secondary":null,
+                  "credits":{"hasCredits":true,"unlimited":false,"balance":"120.5"},
+                  "rateLimitReachedType":"rate_limit_reached"}}}
+                """#))
+        let window = try #require(CodexUsageLimits.windows(fromRead: read).first)
+        #expect(window.kind == .weekly && window.isExhausted)
+        #expect(window.continuesOnCredits && !window.blocksWork)
+        let noCredits = try #require(
+            JSONValue.parse(#"{"primary":{"usedPercent":100},"credits":{"hasCredits":false,"unlimited":false}}"#))
+        #expect(CodexUsageLimits.windows(from: noCredits).first?.blocksWork == true)
+    }
+
     @Test func positionsWithoutLengthsUseThePlansWindows() throws {
         let paid = try #require(JSONValue.parse(#"{"primary":{"usedPercent":5},"secondary":{"usedPercent":6,"resetsAt":null}}"#))
         #expect(CodexUsageLimits.windows(from: paid).map(\.kind) == [.session, .weekly])

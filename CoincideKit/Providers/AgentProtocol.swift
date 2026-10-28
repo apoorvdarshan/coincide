@@ -193,9 +193,12 @@ public struct UsageLimitWindow: Sendable, Hashable, Codable, Identifiable {
     public var resetsAt: Date?
     /// The window's length, when known; it tells how far through the window the user is.
     public var durationMinutes: Int?
+    /// Once the window is used up, the agent keeps working on the account's paid credits instead of stopping.
+    public var continuesOnCredits: Bool
 
     public nonisolated init(
-        id: String, kind: Kind, label: String, usedPercent: Double, resetsAt: Date? = nil, durationMinutes: Int? = nil
+        id: String, kind: Kind, label: String, usedPercent: Double, resetsAt: Date? = nil, durationMinutes: Int? = nil,
+        continuesOnCredits: Bool = false
     ) {
         self.id = id
         self.kind = kind
@@ -203,6 +206,18 @@ public struct UsageLimitWindow: Sendable, Hashable, Codable, Identifiable {
         self.usedPercent = usedPercent.isFinite ? min(100, max(0, usedPercent)) : 0
         self.resetsAt = resetsAt
         self.durationMinutes = durationMinutes
+        self.continuesOnCredits = continuesOnCredits
+    }
+
+    public nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(String.self, forKey: .id), kind: try container.decode(Kind.self, forKey: .kind),
+            label: try container.decode(String.self, forKey: .label),
+            usedPercent: try container.decode(Double.self, forKey: .usedPercent),
+            resetsAt: try container.decodeIfPresent(Date.self, forKey: .resetsAt),
+            durationMinutes: try container.decodeIfPresent(Int.self, forKey: .durationMinutes),
+            continuesOnCredits: try container.decodeIfPresent(Bool.self, forKey: .continuesOnCredits) ?? false)
     }
 }
 
