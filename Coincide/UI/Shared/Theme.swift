@@ -86,6 +86,26 @@ enum Theme {
     static let dropTint = ThemeSelection.color { theme in
         (theme.isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.06 * theme.emphasis)
     }
+    /// Selected text: the theme's text color laid thinly over whatever is behind it, in place of the system accent.
+    nonisolated static let textSelection = ThemeSelection.color { theme in
+        (theme.ink ?? (theme.isDark ? .white : .black)).withAlphaComponent(theme.isDark ? 0.24 : 0.16)
+    }
+    /// Selected text in a view that isn't taking keystrokes.
+    nonisolated static let inactiveTextSelection = ThemeSelection.color { theme in
+        (theme.ink ?? (theme.isDark ? .white : .black)).withAlphaComponent(theme.isDark ? 0.14 : 0.09)
+    }
+    /// The selection drawn opaque over `background`, for views that can't blend a translucent one.
+    static func opaqueTextSelection(over background: NSColor) -> NSColor {
+        ThemeSelection.color { theme in
+            let ink = theme.ink ?? (theme.isDark ? .white : .black)
+            let base = background
+            var color = base
+            NSAppearance(named: theme.isDark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
+                color = base.usingColorSpace(.sRGB)?.blended(withFraction: theme.isDark ? 0.24 : 0.16, of: ink) ?? base
+            }
+            return color
+        }
+    }
     /// @-mentions of files in the composer: the text color, a step quieter than the words around them.
     static let mention = ThemeSelection.color { theme in
         (theme.ink ?? .labelColor).withAlphaComponent(0.7)
