@@ -291,3 +291,59 @@ struct ACPAntigravityReleaseLiveTests {
         #expect(FileManager.default.isExecutableFile(atPath: active.harness.path))
     }
 }
+
+/// Installs Antigravity with the real downloader, signs in with Google and runs two turns, as Settings and
+/// a thread do. The sign-in link is printed and written to `COINCIDE_ANTIGRAVITY_LINK_FILE`; open it in a
+/// browser on this Mac within five minutes, before Antigravity stops waiting. Everything lives in a scratch
+/// data folder.
+///
+/// `COINCIDE_LIVE_ANTIGRAVITY_SIGNIN=1` runs it (pass variables to xcodebuild as `TEST_RUNNER_<NAME>=…`).
+@MainActor
+@Suite(.serialized, .timeLimit(.minutes(20)))
+struct ACPAntigravitySignInLiveTests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_ANTIGRAVITY_SIGNIN"] == "1"))
+    func installsSignsInAndAnswers() async throws {
+        let folder = try LiveRun.folder("antigravity-signin")
+        let paths = AntigravityPaths(dataDirectory: folder)
+        let runtime = AntigravityRuntime(paths: paths)
+        runtime.install()
+        await acpWaitUntil("the installation", timeout: .seconds(540)) { !runtime.state.isRunning }
+        try #require(runtime.state.phase == .succeeded, "\(runtime.state.message ?? "")")
+
+        let environment = await ShellEnvironment.shared.environment()
+        let profile = AntigravityProfile(geminiHome: paths.profileDirectory)
+        let signIn = AntigravitySignIn(profile: profile, runtime: runtime, timeout: 600)
+        signIn.start(executable: paths.managedExecutable, environment: environment)
+        await acpWaitUntil("the sign-in link", timeout: .seconds(120)) { signIn.authorization != nil || !signIn.isActive }
+        let link = try #require(signIn.authorization?.url, "\(signIn.message ?? "")")
+        print("ANTIGRAVITY-SIGN-IN-LINK \(link.absoluteString)")
+        if let file = ProcessInfo.processInfo.environment["COINCIDE_ANTIGRAVITY_LINK_FILE"] {
+            try link.absoluteString.write(toFile: file, atomically: true, encoding: .utf8)
+        }
+        await acpWaitUntil("Google sign-in", timeout: .seconds(600)) { !signIn.isActive }
+        try #require(signIn.phase == .succeeded, "\(signIn.message ?? "")")
+        let option = try #require(signIn.models.first, "Sign-in found no models")
+        let model = ModelSelection(provider: .antigravity, modelID: option.modelID, effort: option.defaultEffort)
+
+        let launch = AgentLaunch(
+            provider: .antigravity, executable: paths.managedExecutable, environment: environment,
+            workingDirectory: try LiveRun.folder("antigravity-work"), resumeSessionID: nil, selection: model,
+            accessMode: .fullAccess, interactionMode: .build)
+        let session = ACPSession(launch: launch, flavor: AntigravityFlavor(paths: paths, profile: profile, runtime: runtime))
+        let log = ACPEventLog()
+        log.attach(session)
+        try await session.start()
+        defer { session.shutdown() }
+        for (text, expected) in [
+            ("Remember the word walnut. Reply with exactly: pong", "pong"),
+            ("Which word did I ask you to remember? Reply with that word only.", "walnut"),
+        ] {
+            let finished = log.completions.count
+            try await session.send(AgentTurnInput(text: text, selection: model, accessMode: .fullAccess, interactionMode: .build))
+            await acpWaitUntil("the turn to finish", timeout: .seconds(180)) { log.completions.count > finished }
+            #expect(log.completions.last == .completed)
+            #expect(LiveRun.replyText(log.events).lowercased().contains(expected))
+            log.removeAll()
+        }
+    }
+}
