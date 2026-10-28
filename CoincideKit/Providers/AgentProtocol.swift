@@ -447,6 +447,9 @@ public protocol AgentProvider: AnyObject {
     /// Setup hint shown when the provider is missing, e.g. "Install Claude Code and run `claude auth login`".
     var setupHint: String { get }
 
+    /// The login shell's environment as this provider's process should inherit it, before the user's own variables
+    /// for the provider are added. Most providers take it as it is.
+    func inheritedEnvironment(_ environment: [String: String]) -> [String: String]
     /// Checks installation and sign-in. `executable` is nil when nothing was found on PATH.
     func detect(executable: URL?, environment: [String: String]) async -> ProviderStatus
     /// Models to offer in the picker. May run the CLI to discover them; fall back to a built-in list.
@@ -458,6 +461,8 @@ public protocol AgentProvider: AnyObject {
 
 extension AgentProvider {
     public func skills(workingDirectory: URL, environment: [String: String]) async -> [ProviderSkill] { [] }
+
+    public func inheritedEnvironment(_ environment: [String: String]) -> [String: String] { environment }
 }
 
 public enum AgentError: LocalizedError, Sendable {

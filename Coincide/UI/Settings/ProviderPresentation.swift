@@ -155,6 +155,10 @@ struct ProviderSetupGuide {
              String(localized: "Install Antigravity, open it once and sign in with your Google account."))
         case .fx:
             ("curl -fsSL https://fx.sh/setup.sh | bash", "fx login", URL(string: "https://fx.sh"), nil)
+        case .muse:
+            (nil, "muse login", URL(string: "https://dev.meta.ai/docs/muse-code"),
+             String(
+                 localized: "Muse Code uses the sign-in `muse login` saves. To use an API key instead, add META_API_KEY under Environment Variables; one set in your login shell is ignored."))
         }
     }
 

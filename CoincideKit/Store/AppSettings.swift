@@ -110,8 +110,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
         cursorKeychainUsageEnabled = false
     }
 
+    /// A provider's settings; one the user never changed is on unless the provider starts off (Muse Code).
     public nonisolated func settings(for provider: ProviderKind) -> ProviderSettings {
-        providers[provider] ?? ProviderSettings()
+        providers[provider] ?? ProviderSettings(isEnabled: provider.isEnabledByDefault)
     }
 
     public nonisolated init(from decoder: Decoder) throws {

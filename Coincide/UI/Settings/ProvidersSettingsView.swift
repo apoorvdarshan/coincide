@@ -432,6 +432,7 @@ private struct ProviderModelsSection: View {
         case .pi: "anthropic/claude-sonnet-5"
         case .antigravity: "gemini-3-pro"
         case .fx: "anthropic/claude-sonnet-5.5"
+        case .muse: "muse-spark-1.3-contributor"
         }
     }
 }

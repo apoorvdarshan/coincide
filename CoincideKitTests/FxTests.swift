@@ -294,7 +294,8 @@ struct FxTests {
         for kind in ProviderKind.allCases where kind != .fx {
             #expect(kind.accessModes == AccessMode.allCases)
             #expect(kind.accessMode(for: .fullAccess) == .fullAccess)
-            #expect(kind.interactionMode(for: .plan) == .plan)
+            // Muse Code has no plan mode either (see MuseSessionTests).
+            #expect(kind.interactionMode(for: .plan) == (kind == .muse ? .build : .plan))
             #expect(kind.supportsTextGeneration)
         }
     }
