@@ -53,4 +53,52 @@ struct UsageHistoryTests {
             .first { $0.lastPathComponent.contains("unreadable-") })
         #expect(try Data(contentsOf: backup) == original)
     }
+
+    @Test func transientWriteFailureRetainsLaterRecordsAndClearsAfterRetry() async throws {
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let history = UsageHistory(directory: directory)
+        let file = directory.appendingPathComponent("usage-history.json")
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+        let first = record(), second = record()
+        history.record(first)
+        history.flush()
+        try await waitForError(history, present: true)
+        #expect(history.records.map(\.id) == [first.id])
+
+        try FileManager.default.removeItem(at: file)
+        history.record(second)
+        history.flush()
+        try await waitForError(history, present: false)
+        #expect(history.records.map(\.id) == [first.id, second.id])
+        #expect(UsageHistory(directory: directory).records.map(\.id) == [first.id, second.id])
+    }
+
+    @Test func failedPreservationStillBlocksReplacingAnUnreadableOriginal() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let file = directory.appendingPathComponent("usage-history.json")
+        let original = Data("{not readable".utf8)
+        try original.write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        let history = UsageHistory(directory: directory)
+        try #require(history.error != nil)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+
+        history.record(record())
+        history.flush()
+        #expect(history.records.isEmpty)
+        #expect(history.error != nil)
+        #expect(try Data(contentsOf: file) == original)
+    }
+
+    private func waitForError(_ history: UsageHistory, present: Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while (history.error != nil) != present && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require((history.error != nil) == present)
+    }
 }
