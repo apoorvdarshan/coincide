@@ -22,6 +22,9 @@ import CoincideKit
 ///   query (optionally running the chosen result, which opens a nested list) and draws it into a PNG, offscreen
 /// - `{"snapshot": "/path.png"}`: draws the main window's content into a PNG
 /// - `{"settingsSnapshot": "/path.png"}`: draws the settings window's content into a PNG
+/// - `{"press": "label"}`: presses the first control in the main window with that title, accessibility label or
+///   tooltip (or one starting with it), as a click would
+/// - `{"popupSnapshot": "/path.png"}`: draws the open themed popup into a PNG; `{"closePopup": true}` closes it
 /// - `{"sleep": seconds}`, `{"log": "text"}`, `{"quit": true}`
 enum DebugAutomation {
     static func startIfRequested() {
@@ -153,6 +156,22 @@ enum DebugAutomation {
                 let settings = NSApp.windows.first { $0.identifier?.rawValue == "settings" }
                 guard let content = settings?.contentView, let file = value.string else { continue }
                 draw(content, to: URL(fileURLWithPath: file))
+            case "press":
+                guard let content = mainWindow?.window?.contentView, let label = value.string else { continue }
+                guard let view = control(labeled: label, in: content) else {
+                    log("press: no control \(label)")
+                    continue
+                }
+                if let control = view as? NSControl { control.performClick(nil) } else { _ = view.accessibilityPerformPress() }
+            case "popupSnapshot":
+                let popup = NSApp.windows.first { $0 is ThemedPopupPanel && $0.isVisible }
+                guard let content = popup?.contentView, let file = value.string else {
+                    log("popupSnapshot: no popup")
+                    continue
+                }
+                draw(content, to: URL(fileURLWithPath: file))
+            case "closePopup":
+                NSApp.windows.first { $0 is ThemedPopupPanel && $0.isVisible }?.cancelOperation(nil)
             case "zoom":
                 guard let window = mainWindow?.window else { continue }
                 window.zoom(nil)
@@ -176,6 +195,20 @@ enum DebugAutomation {
 
     private static var mainWindow: MainWindowController? {
         NSApp.windows.compactMap { $0.windowController as? MainWindowController }.first
+    }
+
+    /// The first visible view under `view` whose title, accessibility label or tooltip is `label`.
+    private static func control(labeled label: String, in view: NSView) -> NSView? {
+        if !view.isHiddenOrHasHiddenAncestor,
+            (view as? NSButton)?.title == label || view.accessibilityLabel()?.hasPrefix(label) == true
+                || view.toolTip?.hasPrefix(label) == true
+        {
+            return view
+        }
+        for subview in view.subviews {
+            if let match = control(labeled: label, in: subview) { return match }
+        }
+        return nil
     }
 
     /// Draws a view hierarchy into a PNG, as it would look on screen (glass is left out).

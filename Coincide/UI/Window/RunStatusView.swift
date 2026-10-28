@@ -54,9 +54,21 @@ final class RunStatusView: NSView {
             spinner.widthAnchor.constraint(equalToConstant: 14),
             spinner.heightAnchor.constraint(equalToConstant: 14),
         ])
+        wantsLayer = true
+        layer?.cornerRadius = 14
+        layer?.cornerCurve = .continuous
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         apply()
+    }
+
+    /// A flat pill in the theme, in place of the toolbar's glass.
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = Theme.raisedFill.cgColor
+        layer?.borderColor = Theme.surfaceBorder.cgColor
+        layer?.borderWidth = 1
     }
 
     @available(*, unavailable)

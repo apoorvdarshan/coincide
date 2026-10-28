@@ -69,7 +69,9 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
-        scrollView.automaticallyAdjustsContentInsets = true
+        // The conversation starts below the title bar rather than scrolling under it: the title bar is transparent, so
+        // text scrolled beneath would run into the thread's title.
+        scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentView.postsBoundsChangedNotifications = true
         scrollView.onReaderScroll = { [weak self] upward in self?.readerScrolled(upward: upward) }
         tableView.onReaderScroll = { [weak self] in self?.readerScrolledAndSettled() }

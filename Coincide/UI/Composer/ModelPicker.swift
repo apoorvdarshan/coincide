@@ -86,7 +86,8 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.scrollerStyle = .overlay
-        scrollView.contentInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
 
         statusLabel.font = .systemFont(ofSize: 12)
         statusLabel.textColor = .secondaryLabelColor
@@ -162,13 +163,10 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         preferredContentSize = root.fittingSize
     }
 
+    /// Shows the current model, marked by its check, without highlighting it; the arrows start from there.
     func popupDidOpen() {
         view.window?.makeFirstResponder(searchField)
-        if let index = models.firstIndex(where: { isCurrent($0) }) {
-            select(index)
-        } else {
-            moveSelection(1)
-        }
+        if let index = models.firstIndex(where: { isCurrent($0) }) { tableView.scrollRowToVisible(index) }
     }
 
     // MARK: Content
@@ -260,7 +258,9 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
 
     private func moveSelection(_ delta: Int) {
         guard !models.isEmpty else { return }
-        let index = tableView.selectedRow
+        var index = tableView.selectedRow
+        // With nothing highlighted yet, the arrows start from the current model.
+        if index < 0, let current = models.firstIndex(where: { isCurrent($0) }) { index = current - (delta > 0 ? 1 : -1) }
         select(index < 0 ? 0 : min(max(index + delta, 0), models.count - 1))
     }
 

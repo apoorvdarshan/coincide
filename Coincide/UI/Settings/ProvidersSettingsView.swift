@@ -443,7 +443,7 @@ struct SettingsModelRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(option.displayName)
-                    if isDefault { SettingsTag(text: String(localized: "Default"), tint: .accentColor) }
+                    if isDefault { SettingsTag(text: String(localized: "Default"), tint: Color(nsColor: Theme.ink)) }
                     if isCustom { SettingsTag(text: String(localized: "Custom"), tint: .secondary) }
                 }
                 if option.displayName != option.modelID {

@@ -14,7 +14,9 @@ struct GeneralSettingsView: View {
             Form {
                 Section {
                     LabeledContent("Appearance") {
-                        AppearancePicker(selection: model.binding(\.appearance))
+                        AppearancePicker(
+                            selection: model.binding(\.appearance), dark: AppTheme.dark(model.settings.darkTheme),
+                            light: AppTheme.light(model.settings.lightTheme))
                     }
                     .settingsRevealable(.appearance, highlighted: highlighted)
                     FontSizeRow(size: model.binding(\.fontSize))
@@ -187,6 +189,8 @@ struct GeneralSettingsView: View {
 
 private struct AppearancePicker: View {
     @Binding var selection: AppearanceMode
+    let dark: AppTheme
+    let light: AppTheme
 
     var body: some View {
         HStack(spacing: 14) {
@@ -196,12 +200,12 @@ private struct AppearancePicker: View {
                     selection = mode
                 } label: {
                     VStack(spacing: 5) {
-                        AppearanceThumbnail(mode: mode)
+                        AppearanceThumbnail(mode: mode, dark: dark, light: light)
                             .frame(width: 68, height: 46)
                             .overlay {
                                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                                     .strokeBorder(
-                                        isSelected ? Color.accentColor : Color(nsColor: .separatorColor),
+                                        isSelected ? Color(nsColor: Theme.ink) : Color(nsColor: Theme.surfaceBorder),
                                         lineWidth: isSelected ? 2.5 : 1)
                             }
                         Text(mode.displayName)
@@ -219,62 +223,53 @@ private struct AppearancePicker: View {
     }
 }
 
-/// A miniature window on a wallpaper, in light, dark, or split for "follow the system".
+/// A miniature window in the chosen dark or light theme, or split between them for "follow the system".
 private struct AppearanceThumbnail: View {
     let mode: AppearanceMode
+    let dark: AppTheme
+    let light: AppTheme
 
     var body: some View {
         switch mode {
-        case .light: MiniWindow(dark: false)
-        case .dark: MiniWindow(dark: true)
+        case .light: MiniWindow(theme: light)
+        case .dark: MiniWindow(theme: dark)
         case .system:
             ZStack {
-                MiniWindow(dark: false)
-                MiniWindow(dark: true).mask(DiagonalHalf())
+                MiniWindow(theme: light)
+                MiniWindow(theme: dark).mask(DiagonalHalf())
             }
         }
     }
 }
 
 private struct MiniWindow: View {
-    let dark: Bool
+    let theme: AppTheme
 
     var body: some View {
-        let wallpaper: [Color] =
-            dark
-            ? [Color(red: 0.20, green: 0.22, blue: 0.48), Color(red: 0.07, green: 0.08, blue: 0.20)]
-            : [Color(red: 0.55, green: 0.72, blue: 0.99), Color(red: 0.93, green: 0.78, blue: 0.94)]
-        let window = dark ? Color(white: 0.17) : Color(white: 0.98)
-        let sidebar = dark ? Color(white: 0.25) : Color(white: 0.89)
-        let line = dark ? Color(white: 0.42) : Color(white: 0.80)
-        ZStack(alignment: .topLeading) {
-            LinearGradient(colors: wallpaper, startPoint: .topLeading, endPoint: .bottomTrailing)
-            HStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 2) {
-                        ForEach([Color.red, .yellow, .green], id: \.self) { Circle().fill($0).frame(width: 3, height: 3) }
-                    }
-                    .padding(.bottom, 2)
-                    ForEach(0..<3, id: \.self) { _ in Capsule().fill(line).frame(width: 12, height: 2) }
+        let ink = Color(nsColor: theme.ink ?? (theme.isDark ? .white : .black))
+        let line = ink.opacity(0.3)
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(0..<4, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 1.5).fill(ink.opacity(index == 0 ? 0.55 : 0.22)).frame(width: 7, height: 7)
                 }
-                .padding(4)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .background(sidebar)
-                VStack(alignment: .trailing, spacing: 4) {
-                    Capsule().fill(Color.accentColor).frame(width: 20, height: 5)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Capsule().fill(line).frame(width: 26, height: 2)
-                        Capsule().fill(line).frame(width: 20, height: 2)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(5)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .background(window)
             }
-            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-            .padding(.top, 8)
-            .padding(.leading, 9)
+            .padding(4)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color(nsColor: theme.sidebar))
+            VStack(alignment: .leading, spacing: 3) {
+                Capsule().fill(ink.opacity(0.75)).frame(width: 26, height: 2)
+                Capsule().fill(line).frame(width: 34, height: 2)
+                Capsule().fill(line).frame(width: 22, height: 2)
+                Spacer(minLength: 0)
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(Color(nsColor: theme.surface))
+                    .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Color(nsColor: theme.border), lineWidth: 0.5))
+                    .frame(height: 9)
+            }
+            .padding(5)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(nsColor: theme.content))
         }
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }

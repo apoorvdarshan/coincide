@@ -8,7 +8,7 @@ final class ComposerUsageMeter: NSButton {
     private var limits: UsageLimits?
     private var bars: [CALayer] = []
     private var tracks: [CALayer] = []
-    private weak var popover: NSPopover?
+    private weak var details: ThemedPopupViewHost?
 
     /// Windows drawn in the footer: the two most important.
     private var shownWindows: [UsageLimitWindow] { Array(limits?.windows.prefix(2) ?? []) }
@@ -36,21 +36,15 @@ final class ComposerUsageMeter: NSButton {
         toolTip = summary
         setAccessibilityLabel(summary)
         rebuildLayers()
-        if let popover, popover.isShown, let controller = popover.contentViewController {
-            controller.view = ComposerUsageDetails.view(provider: provider, limits: limits, now: now)
-        }
+        details?.setContent(ComposerUsageDetails.view(provider: provider, limits: limits, now: now))
     }
 
     /// Opens the list of windows, as `/usage-limits` does.
     @objc func showDetails() {
         guard let limits, window != nil else { return }
-        let popover = NSPopover()
-        popover.behavior = .transient
-        let controller = NSViewController()
-        controller.view = ComposerUsageDetails.view(provider: provider, limits: limits, now: Date())
-        popover.contentViewController = controller
-        popover.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
-        self.popover = popover
+        let details = ThemedPopupViewHost(ComposerUsageDetails.view(provider: provider, limits: limits, now: Date()))
+        ThemedPopup.show(details, from: self)
+        self.details = details
     }
 
     private func rebuildLayers() {
@@ -106,7 +100,7 @@ final class ComposerUsageMeter: NSButton {
     }
 }
 
-/// The popover listing a provider's usage windows.
+/// The popup listing a provider's usage windows.
 enum ComposerUsageDetails {
     static func color(for window: UsageLimitWindow, provider: ProviderKind) -> NSColor {
         if window.isExhausted || window.usedPercent >= 95 { return .systemRed }

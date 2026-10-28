@@ -114,20 +114,18 @@ final class ComposerControlButton: NSButton {
 
     private func updateAppearance() {
         let emphasized = isHovered || isMenuOpen || isHighlighted
-        let textColor: NSColor = isActive ? .controlAccentColor : emphasized ? .labelColor : .secondaryLabelColor
+        let textColor: NSColor = isActive ? Theme.ink : emphasized ? .labelColor : .secondaryLabelColor
         if attributedTitle.length > 0 {
             let text = NSMutableAttributedString(attributedString: attributedTitle)
             text.addAttribute(.foregroundColor, value: textColor, range: NSRange(location: 0, length: text.length))
             super.attributedTitle = text
         }
-        contentTintColor = isActive ? .controlAccentColor : symbolColor ?? textColor
+        contentTintColor = isActive ? Theme.ink : symbolColor ?? textColor
         let background: NSColor? =
-            if isMenuOpen || isHighlighted {
-                NSColor.labelColor.withAlphaComponent(0.12)
-            } else if isActive {
-                NSColor.controlAccentColor.withAlphaComponent(isHovered ? 0.2 : 0.14)
+            if isMenuOpen || isHighlighted || isActive {
+                Theme.sidebarSelection
             } else if isHovered, isEnabled {
-                NSColor.labelColor.withAlphaComponent(0.07)
+                Theme.sidebarHover
             } else {
                 nil
             }
@@ -366,12 +364,7 @@ final class ComposerContextMeter: NSButton {
     }
 
     @objc private func showDetails() {
-        let popover = NSPopover()
-        popover.behavior = .transient
-        let controller = NSViewController()
-        controller.view = detailsView()
-        popover.contentViewController = controller
-        popover.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
+        ThemedPopup.show(ThemedPopupViewHost(detailsView()), from: self)
     }
 
     private func detailsView() -> NSView {
@@ -384,14 +377,8 @@ final class ComposerContextMeter: NSButton {
         header.orientation = .horizontal
         var rows: [NSView] = [header]
         if let fraction {
-            let bar = NSProgressIndicator()
-            bar.style = .bar
-            bar.isIndeterminate = false
-            bar.controlSize = .small
-            bar.minValue = 0
-            bar.maxValue = 1
-            bar.doubleValue = fraction
-            rows.append(bar)
+            let color: NSColor = fraction > 0.9 ? .systemRed : fraction > 0.75 ? .systemOrange : Theme.ink
+            rows.append(ThemedProgressBar(fraction: CGFloat(fraction), color: color))
         }
         let details: [(String, String?)] = [
             (String(localized: "Output tokens"), usage.outputTokens.map(Self.formatTokens)),

@@ -30,7 +30,7 @@ final class BranchToolbarView: NSView {
     private var statusFolder: URL?
     private var observation: ObservationToken?
     private var refreshTask: Task<Void, Never>?
-    private var popover: NSPopover?
+    private weak var branchPopup: ThemedPopup?
     /// Whether the thread's turn was running at the last run-state change.
     private var wasRunning = false
 
@@ -268,23 +268,17 @@ final class BranchToolbarView: NSView {
     // MARK: Branches
 
     @objc private func showBranchPicker() {
-        guard let threadID, let thread, let cwd, popover == nil else { return }
+        guard let threadID, let thread, let cwd, branchPopup == nil else { return }
         let base = thread.hasUserMessages ? nil : worktrees.baseBranch(for: threadID)
         guard base != nil || thread.worktreePath == nil else { return }
         let mode: BranchPickerController.Mode = base != nil ? .base : .checkout
         // A new worktree's base comes from the project's branches, not the worktree's.
         let folder = base != nil ? store.project(thread.projectID)?.url ?? cwd : cwd
         let picker = BranchPickerController(mode: mode, cwd: folder, selected: base ?? status?.branch)
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.contentViewController = picker
-        popover.delegate = self
-        picker.popover = popover
         picker.onPick = { [weak self] pick in
             Task { await self?.handle(pick, mode: mode, threadID: threadID, cwd: cwd) }
         }
-        self.popover = popover
-        popover.show(relativeTo: branchButton.bounds, of: branchButton, preferredEdge: .maxY)
+        branchPopup = ThemedPopup.show(picker, from: branchButton)
     }
 
     private func handle(_ pick: BranchPickerController.Pick, mode: BranchPickerController.Mode, threadID: UUID, cwd: URL)
@@ -340,8 +334,3 @@ final class BranchToolbarView: NSView {
     }
 }
 
-extension BranchToolbarView: NSPopoverDelegate {
-    func popoverDidClose(_ notification: Notification) {
-        popover = nil
-    }
-}

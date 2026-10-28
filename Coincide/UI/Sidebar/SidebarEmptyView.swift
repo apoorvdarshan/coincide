@@ -70,10 +70,11 @@ final class SidebarEmptyView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard isDropTarget else { return }
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: 8), xRadius: Theme.cornerRadius, yRadius: Theme.cornerRadius)
-        NSColor.controlAccentColor.withAlphaComponent(0.08).setFill()
+        Theme.sidebarHover.setFill()
         path.fill()
-        NSColor.controlAccentColor.setStroke()
-        path.lineWidth = 2
+        Theme.ink.withAlphaComponent(0.5).setStroke()
+        path.lineWidth = 1.5
+        path.setLineDash([5, 4], count: 2, phase: 0)
         path.stroke()
     }
 

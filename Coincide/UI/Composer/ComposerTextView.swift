@@ -131,7 +131,7 @@ final class ComposerTextView: NSTextView {
                 let end = content.location(start, offsetBy: match.range.length),
                 let range = NSTextRange(location: start, end: end)
             else { continue }
-            layoutManager.addRenderingAttribute(.foregroundColor, value: NSColor.controlAccentColor, for: range)
+            layoutManager.addRenderingAttribute(.foregroundColor, value: Theme.mention, for: range)
         }
     }
 

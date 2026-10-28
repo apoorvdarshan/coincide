@@ -80,8 +80,16 @@ enum Theme {
     static let failureStroke = dynamic(.systemRed, alpha: 0.3)
     /// Glass tints of the banners above the composer.
     static let approvalTint = dynamic(.systemOrange, alpha: 0.1)
-    static let questionTint = dynamic(.controlAccentColor, alpha: 0.08)
-    static let dropTint = dynamic(.controlAccentColor, alpha: 0.12)
+    static let questionTint = ThemeSelection.color { theme in
+        (theme.isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.03 * theme.emphasis)
+    }
+    static let dropTint = ThemeSelection.color { theme in
+        (theme.isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.06 * theme.emphasis)
+    }
+    /// @-mentions of files in the composer: the text color, a step quieter than the words around them.
+    static let mention = ThemeSelection.color { theme in
+        (theme.ink ?? .labelColor).withAlphaComponent(0.7)
+    }
     static let tableHeaderFill = dynamic(.labelColor, alpha: 0.04)
 
     /// `withAlphaComponent` resolves a dynamic color once, for whatever appearance is current, so colors

@@ -106,7 +106,7 @@ struct ModelsSettingsView: View {
             TableColumn("Model", value: \.name) { row in
                 HStack(spacing: 6) {
                     Text(row.name)
-                    if row.isDefault { SettingsTag(text: String(localized: "Default"), tint: .accentColor) }
+                    if row.isDefault { SettingsTag(text: String(localized: "Default"), tint: Color(nsColor: Theme.ink)) }
                     if row.isCustom { SettingsTag(text: String(localized: "Custom"), tint: .secondary) }
                 }
                 .help(Text("Model ID: \(row.modelID)"))
@@ -200,6 +200,7 @@ struct ModelsSettingsView: View {
                 AddCustomModelForm(model: model, provider: provider ?? model.kinds.first { model.isEnabled($0) } ?? .claude) {
                     isAdding = false
                 }
+                .presentationBackground(Color(nsColor: Theme.floatingFill))
             }
             Text("^[\(rows.count) model](inflect: true)")
                 .font(.callout)
