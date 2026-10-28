@@ -24,6 +24,10 @@ final class ComposerControlButton: NSButton {
     var isActive = false {
         didSet { updateAppearance() }
     }
+    /// A small mark after the title in the theme's accent, such as the bolt of a model running fast.
+    var accentSymbol: String? {
+        didSet { if accentSymbol != oldValue { updateTitle() } }
+    }
 
     private var label = ""
     private var symbolName = ""
@@ -94,6 +98,19 @@ final class ComposerControlButton: NSButton {
         let text = NSMutableAttributedString()
         if !compact, !label.isEmpty {
             text.append(NSAttributedString(string: label, attributes: [.font: font ?? .systemFont(ofSize: 12)]))
+        }
+        if let accentSymbol, let symbol = Theme.symbol(accentSymbol, size: 10, weight: .semibold) {
+            // Painted in the accent when drawn, so it follows the theme; the title's color does not tint it.
+            let mark = NSImage(size: symbol.size, flipped: false) { rect in
+                symbol.draw(in: rect)
+                Theme.accent.set()
+                rect.fill(using: .sourceAtop)
+                return true
+            }
+            let attachment = NSTextAttachment()
+            attachment.image = mark
+            if text.length > 0 { text.append(NSAttributedString(string: " ")) }
+            text.append(NSAttributedString(attachment: attachment))
         }
         if showsChevron {
             let chevron = NSTextAttachment()

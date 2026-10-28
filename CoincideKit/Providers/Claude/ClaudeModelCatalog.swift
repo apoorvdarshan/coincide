@@ -135,9 +135,26 @@ enum ClaudeModelCatalog {
             models.append(
                 ModelOption(
                     provider: .claude, modelID: value, displayName: displayName(row: row, value: value, entry: entry),
-                    efforts: efforts, defaultEffort: defaultEffort, contextWindow: entry?.profile.contextWindow))
+                    efforts: efforts, defaultEffort: defaultEffort, contextWindow: entry?.profile.contextWindow,
+                    speeds: row["supportsFastMode"]?.bool == true ? [.fast] : []))
         }
         return models
+    }
+
+    /// Why fast mode could not run a turn, from the `fast_mode_disabled_reason` of its result, in Claude Code's words;
+    /// nil when nothing stopped it or the reason passes on its own (still checking, or a network error).
+    static func fastModeUnavailableMessage(reason: String?) -> String? {
+        switch reason {
+        case nil, "pending"?, "network_error"?: return nil
+        case "free"?: return String(localized: "Fast mode requires a paid subscription, so Claude Code ran at standard speed.")
+        case "preference"?: return String(localized: "Your organization disabled fast mode, so Claude Code ran at standard speed.")
+        case "extra_usage_disabled"?: return String(localized: "Fast mode requires usage credits, so Claude Code ran at standard speed.")
+        case "not_first_party"?:
+            return String(localized: "Fast mode requires a direct Anthropic API connection, so Claude Code ran at standard speed.")
+        case "model_not_allowed"?:
+            return String(localized: "Fast mode isn't available for this model, so Claude Code ran at standard speed.")
+        default: return String(localized: "Fast mode is currently unavailable, so Claude Code ran at standard speed.")
+        }
     }
 
     private static func displayName(row: JSONValue, value: String, entry: Entry?) -> String {

@@ -507,16 +507,21 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         let noneReady = noProviderReady
         let modelName = registry.displayName(for: selection)
         let title = selection.modelID == "default" ? provider.displayName : modelName
+        // A faster speed shows as a bolt on the control and is named with the model.
+        let speedName = selection.speed.map { model?.speed($0)?.name ?? $0 }
+        let modelDescription = speedName.map { String(localized: "\(modelName), \($0)") } ?? modelName
         if noneReady {
             footer.modelButton.configure(
                 title: String(localized: "Set Up a Provider"), symbolName: "exclamationmark.circle", chevron: true)
         } else {
             footer.modelButton.configure(title: title, agent: provider, chevron: true)
         }
+        footer.modelButton.accentSymbol = noneReady || speedName == nil ? nil : "bolt.fill"
         let keyBindings = KeyBindingsController.shared
         footer.modelButton.toolTip = keyBindings.toolTip(
-            String(localized: "\(provider.displayName) · \(modelName). Choose the agent and model"), for: .chooseModel)
-        footer.modelButton.setAccessibilityLabel(String(localized: "Agent and model: \(provider.displayName), \(modelName)"))
+            String(localized: "\(provider.displayName) · \(modelDescription). Choose the agent and model"), for: .chooseModel)
+        footer.modelButton.setAccessibilityLabel(
+            String(localized: "Agent and model: \(provider.displayName), \(modelDescription)"))
 
         if let model, !model.efforts.isEmpty {
             let effort = selection.effort ?? model.defaultEffort
@@ -1138,9 +1143,10 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     private func modelPicker() -> ModelPickerViewController? {
         guard let thread else { return nil }
-        let picker = ModelPickerViewController(current: thread.selection, registry: registry)
+        let picker = ModelPickerViewController(current: thread.selection, registry: registry, store: store)
         picker.onSelect = { [weak self] selection in self?.select(selection) }
         picker.onEffort = { [weak self] effort in self?.setEffort(effort) }
+        picker.onSpeed = { [weak self] speed in self?.setSpeed(speed) }
         picker.onRefresh = { [weak self] in self?.refreshProviders() }
         picker.onSettings = { [weak self] in self?.openProviderSettings() }
         return picker
@@ -1158,8 +1164,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     /// Picking a model from another provider switches the thread's agent; that agent's native session
-    /// continues and it gets a recap of the turns it missed (see `Handoff`). The effort carries over
-    /// when the new model supports it.
+    /// continues and it gets a recap of the turns it missed (see `Handoff`). The effort and speed carry
+    /// over when the new model supports them.
     func select(_ selection: ModelSelection) {
         guard let threadID, let thread else { return }
         var selection = selection
@@ -1169,6 +1175,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         } else {
             selection.effort = model?.defaultEffort
         }
+        selection.speed = model?.speed(thread.selection.speed)?.id
         let switched = selection.provider != thread.selection.provider
         store.updateThread(threadID) { $0.selection = selection }
         if switched {
@@ -1203,6 +1210,13 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     func setEffort(_ effort: String) {
         guard let threadID, thread?.selection.effort != effort else { return }
         store.updateThread(threadID) { $0.selection.effort = effort }
+    }
+
+    /// Runs the model at a faster speed it offers, or at standard speed for nil.
+    func setSpeed(_ speed: String?) {
+        guard let threadID, let thread, thread.selection.speed != speed else { return }
+        guard speed == nil || registry.model(for: thread.selection)?.speed(speed) != nil else { return }
+        store.updateThread(threadID) { $0.selection.speed = speed }
     }
 
     func setAccessMode(_ mode: AccessMode) {

@@ -130,6 +130,10 @@ struct ThreadFileTests {
             ("{\(base),\"items\":[{\(bare),\"text\":\"\"}]}", false),
             ("{\(base),\"accessMode\":\"readOnly\"}", true),
             ("{\(base),\"selection\":{\"provider\":\"claude\",\"modelID\":\"m\",\"variant\":\"fast\"}}", true),
+            ("{\(base),\"selection\":{\"provider\":\"claude\",\"modelID\":\"m\",\"speed\":\"fast\",\"effort\":null}}", false),
+            // The selection loads without an effort or speed it cannot read, which saving would drop.
+            ("{\(base),\"selection\":{\"provider\":\"claude\",\"modelID\":\"m\",\"speed\":{\"tier\":\"fast\"}}}", true),
+            ("{\(base),\"selection\":{\"provider\":\"claude\",\"modelID\":\"m\",\"effort\":3}}", true),
             ("{\(base),\"folder\":\"later\"}", true),
             ("{\(base),\"sessions\":[\"future\",{\"sessionID\":\"f\",\"seenItemCount\":1}]}", true),
             ("{\(base),\"sessions\":[\"claude\",{\"sessionID\":\"c\",\"seenItemCount\":1,\"cost\":3}]}", true),
@@ -167,7 +171,8 @@ struct ThreadFileTests {
     @Test func aThreadThisVersionWroteIsNeverCopied() throws {
         let store = AppStore(directory: directory)
         let project = store.addProject(at: URL(fileURLWithPath: "/tmp"))
-        let thread = store.createThread(in: project.id, selection: ModelSelection(provider: .codex, modelID: "gpt", effort: "high"))
+        let thread = store.createThread(
+            in: project.id, selection: ModelSelection(provider: .codex, modelID: "gpt", effort: "high", speed: "fast"))
         let full = TranscriptItem(
             kind: .approval, text: "body", title: "Run", detail: "ls", category: .command, status: .completed,
             provider: .codex, modelID: "gpt", externalID: "call-1",
