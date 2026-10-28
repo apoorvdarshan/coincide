@@ -20,6 +20,7 @@ on:
       - "CoincideKit/Git/GitModels.swift"
       - "CoincideKit/Git/GitParsing.swift"
       - "CoincideKit/Models/LenientDecoding.swift"
+      - "CoincideKit/Models/MessageContext.swift"
       - "CoincideKit/Models/Models.swift"
       - "CoincideKit/Providers/ACP/UnifiedDiff.swift"
       - "CoincideKit/Providers/Cursor/CursorDiff.swift"

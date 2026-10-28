@@ -301,6 +301,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         splitController.content.chat.showFindBar()
     }
 
+    /// Attaches the focused view's selection to the composer: a quote from a reply, terminal output, or a comment on
+    /// lines of the diff (`ComposerSelectionSource`).
+    @objc func addSelectionToComposer(_ sender: Any?) {
+        guard let source = window?.firstResponder as? ComposerSelectionSource, source.canAddSelectionToComposer else {
+            return
+        }
+        source.addSelectionToComposer()
+    }
+
     @objc func stopTurn(_ sender: Any?) {
         guard let id = selectedThreadID else { return }
         ThreadRunner.shared.stop(threadID: id)
@@ -477,6 +486,11 @@ extension MainWindowController: NSMenuItemValidation {
             menuItem.title = splitController.isDiffOpen ? String(localized: "Hide Diff") : String(localized: "Show Diff")
         case #selector(togglePreviewPanel(_:)):
             menuItem.title = splitController.isPreviewOpen ? String(localized: "Hide Browser Preview") : String(localized: "Show Browser Preview")
+        case #selector(addSelectionToComposer(_:)):
+            let source = window?.firstResponder as? ComposerSelectionSource
+            // Named for what it does to the focused view's selection: quote, add output or comment.
+            menuItem.title = source?.addToComposerTitle ?? String(localized: "Add Selection to Composer")
+            return thread != nil && source?.canAddSelectionToComposer == true
         case #selector(togglePullRequestsPanel(_:)):
             menuItem.title =
                 splitController.isPullRequestsOpen

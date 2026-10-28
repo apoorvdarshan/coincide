@@ -36,7 +36,8 @@ public struct AgentLaunch: Sendable {
 /// `.sessionStarted` with a new id) must use `prompt(forNewSession: true)` / `recap(forNewSession: true)`:
 /// the new native session has seen nothing of the thread.
 public struct AgentTurnInput: Sendable {
-    /// The user's message as typed, for example a slash command.
+    /// The user's message as typed, for example a slash command, followed by what they attached to it
+    /// (`MessageContext.prompt(message:context:workingDirectory:)`).
     public var message: String
     /// What the provider's current native session missed: a `<conversation_handoff>` block and a line
     /// introducing the message. Nil when the session is current.
@@ -49,23 +50,27 @@ public struct AgentTurnInput: Sendable {
     public var text: String
     /// Absolute paths of attached images.
     public var imagePaths: [String]
+    /// Absolute paths of other attached files. `message` already mentions each by path, which is all most agents get;
+    /// a session whose agent reads a kind of file natively sends its content too (Claude Code takes PDFs as documents).
+    public var filePaths: [String]
     public var selection: ModelSelection
     public var accessMode: AccessMode
     public var interactionMode: InteractionMode
 
     /// A turn whose message needs no recap.
     public nonisolated init(
-        text: String, imagePaths: [String] = [], selection: ModelSelection, accessMode: AccessMode,
-        interactionMode: InteractionMode
+        text: String, imagePaths: [String] = [], filePaths: [String] = [], selection: ModelSelection,
+        accessMode: AccessMode, interactionMode: InteractionMode
     ) {
         self.init(
             message: text, handoffRecap: nil, newSessionRecap: nil, threadTitle: nil, imagePaths: imagePaths,
-            selection: selection, accessMode: accessMode, interactionMode: interactionMode)
+            filePaths: filePaths, selection: selection, accessMode: accessMode, interactionMode: interactionMode)
     }
 
     public nonisolated init(
         message: String, handoffRecap: String?, newSessionRecap: String?, threadTitle: String? = nil,
-        imagePaths: [String] = [], selection: ModelSelection, accessMode: AccessMode, interactionMode: InteractionMode
+        imagePaths: [String] = [], filePaths: [String] = [], selection: ModelSelection, accessMode: AccessMode,
+        interactionMode: InteractionMode
     ) {
         self.message = message
         self.handoffRecap = handoffRecap
@@ -73,6 +78,7 @@ public struct AgentTurnInput: Sendable {
         self.threadTitle = threadTitle
         self.text = Handoff.compose(message: message, recap: handoffRecap)
         self.imagePaths = imagePaths
+        self.filePaths = filePaths
         self.selection = selection
         self.accessMode = accessMode
         self.interactionMode = interactionMode
