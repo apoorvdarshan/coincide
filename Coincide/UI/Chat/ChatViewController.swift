@@ -128,7 +128,7 @@ final class ChatViewController: NSViewController {
         let collapsedComposer = composerContainer.heightAnchor.constraint(equalToConstant: 0)
         collapsedComposer.priority = .defaultLow
         NSLayoutConstraint.activate([
-            list.scrollView.topAnchor.constraint(equalTo: root.topAnchor),
+            list.scrollView.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
             list.scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             list.scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             list.scrollView.bottomAnchor.constraint(equalTo: composerContainer.topAnchor),

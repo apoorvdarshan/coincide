@@ -268,3 +268,28 @@ final class ThreadIDRecorder {
         if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 }
+
+@Suite struct NotificationExcerptTests {
+    @Test func takesTheFirstLineOfProseWithoutMarkup() {
+        let reply = """
+            ## Summary
+
+            **Saved:** the address, under `login.lastEmail`. See [the docs](https://example.com) for more.
+            """
+        #expect(
+            NotificationController.excerpt(reply) == "Saved: the address, under login.lastEmail. See the docs for more.")
+    }
+
+    @Test func skipsCodeBlocksAndRulesAndListMarkers() {
+        let reply = "```swift\nlet x = 1\n```\n---\n1. Fixed the flaky upload test"
+        #expect(NotificationController.excerpt(reply) == "Fixed the flaky upload test")
+        #expect(NotificationController.excerpt("- [x] Ran the tests") == "Ran the tests")
+    }
+
+    @Test func longLinesAreCutWithAnEllipsis() {
+        let excerpt = NotificationController.excerpt(String(repeating: "word ", count: 60), limit: 40)
+        #expect(excerpt?.count ?? 0 <= 40)
+        #expect(excerpt?.hasSuffix("…") == true)
+        #expect(NotificationController.excerpt("```\ncode only\n```") == nil)
+    }
+}

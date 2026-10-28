@@ -385,3 +385,41 @@ final class ThemedTableRowView: NSTableRowView {
         NSBezierPath(roundedRect: bounds.insetBy(dx: inset, dy: 1), xRadius: 7, yRadius: 7).fill()
     }
 }
+
+/// A thin bar showing how full something is, on a quiet track, in place of the system's accent-colored progress bar.
+final class ThemedProgressBar: NSView {
+    var fraction: CGFloat {
+        didSet { needsDisplay = true }
+    }
+
+    var color: NSColor {
+        didSet { needsDisplay = true }
+    }
+
+    init(fraction: CGFloat, color: NSColor) {
+        self.fraction = fraction
+        self.color = color
+        super.init(frame: .zero)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.progressIndicator)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 4) }
+
+    override func accessibilityValue() -> Any? { NSNumber(value: Double(fraction)) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let radius = bounds.height / 2
+        Theme.sidebarSelection.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+        let width = bounds.width * min(max(fraction, 0), 1)
+        guard width > 0 else { return }
+        color.setFill()
+        NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: max(width, bounds.height), height: bounds.height), xRadius: radius, yRadius: radius)
+            .fill()
+    }
+}

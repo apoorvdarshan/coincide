@@ -3,7 +3,9 @@ import CoincideKit
 
 /// The branch list behind the branch toolbar: a search field over local and remote branches, and
 /// "Create branch" from the search text. Arrow keys move, Return picks, Escape closes.
-final class BranchPickerController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+final class BranchPickerController: NSViewController, ThemedPopupContent, NSTableViewDataSource, NSTableViewDelegate,
+    NSSearchFieldDelegate
+{
     enum Mode {
         /// Check out the picked branch (or create one) in the thread's folder.
         case checkout
@@ -23,14 +25,14 @@ final class BranchPickerController: NSViewController, NSTableViewDataSource, NST
     }
 
     var onPick: ((Pick) -> Void)?
-    /// The popover showing the picker, closed after a pick.
-    weak var popover: NSPopover?
+    var close: (() -> Void)?
+    var onSizeChange: (() -> Void)?
 
     private let mode: Mode
     private let cwd: URL
     private let selectedName: String?
     private let searchField = NSSearchField()
-    private let tableView = NSTableView()
+    private let tableView = ThemedPopupTableView()
     private let footer = NSTextField(labelWithString: "")
     private var list: GitBranchList?
     private var rows: [Row] = []
@@ -46,48 +48,96 @@ final class BranchPickerController: NSViewController, NSTableViewDataSource, NST
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func loadView() {
+        let root = NSView()
+        let searchIcon = NSImageView(image: Theme.symbol("magnifyingglass", size: 12) ?? NSImage())
+        searchIcon.contentTintColor = .secondaryLabelColor
         searchField.placeholderString =
             mode == .checkout ? String(localized: "Search or create a branch") : String(localized: "Search branches")
         searchField.delegate = self
         searchField.sendsSearchStringImmediately = true
+        searchField.isBezeled = false
+        searchField.isBordered = false
+        searchField.drawsBackground = false
+        searchField.focusRingType = .none
+        searchField.font = .systemFont(ofSize: 13)
+        (searchField.cell as? NSSearchFieldCell)?.searchButtonCell = nil
         searchField.setAccessibilityLabel(String(localized: "Branch name"))
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("branch"))
         tableView.addTableColumn(column)
         tableView.headerView = nil
-        tableView.style = .inset
+        tableView.style = .plain
         tableView.rowSizeStyle = .custom
-        tableView.rowHeight = 26
+        tableView.rowHeight = 28
+        tableView.intercellSpacing = .zero
         tableView.backgroundColor = .clear
         tableView.dataSource = self
         tableView.delegate = self
         tableView.target = self
         tableView.action = #selector(pickClicked)
+        tableView.onActivate = { [weak self] in self.map { $0.pick($0.tableView.selectedRow) } }
+        tableView.onMove = { [weak self] offset in self?.move(by: offset) }
         tableView.setAccessibilityLabel(String(localized: "Branches"))
         let scroll = NSScrollView()
         scroll.documentView = tableView
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
         scroll.drawsBackground = false
-        scroll.heightAnchor.constraint(equalToConstant: 280).isActive = true
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
 
-        footer.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        footer.textColor = .secondaryLabelColor
+        footer.font = .systemFont(ofSize: 11)
+        footer.textColor = .tertiaryLabelColor
+        footer.lineBreakMode = .byTruncatingTail
         footer.stringValue = String(localized: "Loading branches…")
 
-        let stack = NSStackView(views: [searchField, scroll, footer])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 10, right: 12)
-        for view in [searchField, scroll] {
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+        let topDivider = ThemedDivider()
+        let bottomDivider = ThemedDivider()
+        for view in [searchIcon, searchField, topDivider, scroll, bottomDivider, footer] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(view)
         }
-        stack.widthAnchor.constraint(equalToConstant: 340).isActive = true
-        view = stack
+        NSLayoutConstraint.activate([
+            root.widthAnchor.constraint(equalToConstant: 340),
+            searchIcon.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
+            searchIcon.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
+            searchField.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
+            searchField.leadingAnchor.constraint(equalTo: searchIcon.trailingAnchor, constant: 6),
+            searchField.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            topDivider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
+            topDivider.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            topDivider.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            topDivider.heightAnchor.constraint(equalToConstant: 1),
+            scroll.topAnchor.constraint(equalTo: topDivider.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            listHeight,
+            bottomDivider.topAnchor.constraint(equalTo: scroll.bottomAnchor),
+            bottomDivider.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            bottomDivider.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            bottomDivider.heightAnchor.constraint(equalToConstant: 1),
+            footer.topAnchor.constraint(equalTo: bottomDivider.bottomAnchor, constant: 7),
+            footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            footer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
+        ])
+        view = root
+        updateSize()
     }
 
-    override func viewDidAppear() {
-        super.viewDidAppear()
+    private lazy var listHeight = tableView.enclosingScrollView!.heightAnchor.constraint(equalToConstant: 0)
+
+    /// Fits the list to its rows, up to ten, so a folder with one branch gets a small popup.
+    private func updateSize() {
+        let visibleRows = min(max(rows.count, 3), 10)
+        listHeight.constant = CGFloat(visibleRows) * tableView.rowHeight + 12
+        view.layoutSubtreeIfNeeded()
+        preferredContentSize = view.fittingSize
+        onSizeChange?()
+    }
+
+    func popupDidOpen() {
         view.window?.makeFirstResponder(searchField)
         guard list == nil else { return }
         Task { [weak self] in
@@ -131,7 +181,8 @@ final class BranchPickerController: NSViewController, NSTableViewDataSource, NST
             rows += remote.map(Row.branch)
         }
         tableView.reloadData()
-        if let first = rows.firstIndex(where: { if case .header = $0 { false } else { true } }) {
+        updateSize()
+        if !query.isEmpty, let first = rows.firstIndex(where: { if case .header = $0 { false } else { true } }) {
             tableView.selectRowIndexes(IndexSet(integer: first), byExtendingSelection: false)
         }
         if list != nil, rows.isEmpty {
@@ -150,7 +201,7 @@ final class BranchPickerController: NSViewController, NSTableViewDataSource, NST
         case #selector(NSResponder.insertNewline(_:)):
             pick(tableView.selectedRow)
         case #selector(NSResponder.cancelOperation(_:)):
-            close()
+            dismissPicker()
         default:
             return false
         }
@@ -179,21 +230,20 @@ final class BranchPickerController: NSViewController, NSTableViewDataSource, NST
             guard !name.isEmpty else { return }
             pick = .create(name)
         }
-        close()
+        dismissPicker()
         onPick?(pick)
     }
 
-    private func close() {
-        if let popover { popover.close() } else { dismiss(nil) }
+    private func dismissPicker() {
+        if let close { close() } else { dismiss(nil) }
     }
 
     // MARK: Table
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
-    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
-        if case .header = rows[row] { return true }
-        return false
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        ThemedTableRowView()
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
@@ -205,9 +255,16 @@ final class BranchPickerController: NSViewController, NSTableViewDataSource, NST
         switch rows[row] {
         case .header(let title):
             let label = NSTextField(labelWithString: title)
-            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+            label.font = .systemFont(ofSize: 11, weight: .semibold)
             label.textColor = .secondaryLabelColor
-            return label
+            label.translatesAutoresizingMaskIntoConstraints = false
+            let cell = NSView()
+            cell.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 14),
+                label.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -4),
+            ])
+            return cell
         case .branch(let branch):
             let cell = tableView.makeView(withIdentifier: BranchCell.identifier, owner: nil) as? BranchCell ?? BranchCell()
             cell.configure(branch, isSelected: branch.name == selectedName || (selectedName == nil && branch.isCurrent))
@@ -241,8 +298,8 @@ private final class BranchCell: NSTableCellView {
         addSubview(row)
         NSLayoutConstraint.activate([
             icon.widthAnchor.constraint(equalToConstant: 16),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             row.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
@@ -252,7 +309,7 @@ private final class BranchCell: NSTableCellView {
 
     func configure(_ branch: GitBranch, isSelected: Bool) {
         icon.image = Theme.symbol(isSelected ? "checkmark" : branch.isRemote ? "globe" : "arrow.triangle.branch", size: 11)
-        icon.contentTintColor = isSelected ? .controlAccentColor : .secondaryLabelColor
+        icon.contentTintColor = isSelected ? Theme.ink : .secondaryLabelColor
         nameLabel.stringValue = branch.name
         nameLabel.font = .systemFont(ofSize: NSFont.systemFontSize, weight: isSelected ? .semibold : .regular)
         var tags: [String] = []
@@ -266,7 +323,7 @@ private final class BranchCell: NSTableCellView {
 
     func configureCreate(_ name: String) {
         icon.image = Theme.symbol("plus", size: 11, weight: .semibold)
-        icon.contentTintColor = .controlAccentColor
+        icon.contentTintColor = Theme.ink
         nameLabel.stringValue = String(localized: "Create branch “\(name)”")
         nameLabel.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .medium)
         tagLabel.stringValue = ""

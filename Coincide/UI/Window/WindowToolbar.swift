@@ -75,6 +75,8 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         case .runStatus:
             item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.view = runStatus
+            // The status draws its own themed pill, so the toolbar adds no bezel of its own.
+            item.isBordered = false
             item.label = String(localized: "Status")
             item.visibilityPriority = .high
             item.isHidden = runStatus.state == .idle

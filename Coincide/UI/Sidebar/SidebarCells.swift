@@ -33,7 +33,7 @@ struct ThreadRowModel: Equatable {
         var color: NSColor? {
             switch self {
             case .approval: .systemOrange
-            case .starting, .running: .systemBlue
+            case .starting, .running: Theme.ink
             case .failed: .systemRed
             case .completed: .systemGreen
             case .idle: nil
@@ -453,7 +453,7 @@ final class ThreadCell: HoverCellView {
         titleField.textColor = model.isArchived ? .secondaryLabelColor : .labelColor
         unseenDot.color = emphasized ? selectedText : .systemGreen
         let timeColor: NSColor =
-            model.jumpHint != nil ? .labelColor : model.status.isRunning ? .controlAccentColor : .secondaryLabelColor
+            model.jumpHint != nil ? .labelColor : model.status.isRunning ? Theme.color(for: model.provider) : .secondaryLabelColor
         timeField.textColor = emphasized ? selectedText : timeColor
         updateAccessories()
     }

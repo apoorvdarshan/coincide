@@ -20,14 +20,14 @@ final class MainSplitViewController: NSSplitViewController {
     /// Called after the sidebar, terminal or diff opens or closes, so the toolbar and menus can follow.
     var onPanelsChanged: (() -> Void)?
 
-    private static let defaultSidebarWidth: CGFloat = 252
+    private static let defaultSidebarWidth: CGFloat = 288
     private static let defaultInspectorWidth: CGFloat = 480
 
     override func viewDidLoad() {
         let state = UIState.shared.values
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-        sidebarItem.minimumThickness = 200
-        sidebarItem.maximumThickness = 340
+        sidebarItem.minimumThickness = 240
+        sidebarItem.maximumThickness = 400
         sidebarItem.canCollapse = true
         sidebarItem.isCollapsed = state.isSidebarCollapsed
 
@@ -72,7 +72,7 @@ final class MainSplitViewController: NSSplitViewController {
         // Positions are set once the window has its real size, so they are not scaled away.
         let state = UIState.shared.values
         if !sidebarItem.isCollapsed {
-            splitView.setPosition(state.threadListWidth.map { CGFloat($0) } ?? Self.defaultSidebarWidth, ofDividerAt: 0)
+            splitView.setPosition(state.listWidth.map { CGFloat($0) } ?? Self.defaultSidebarWidth, ofDividerAt: 0)
         }
         if !inspectorItem.isCollapsed { sizeInspector() }
     }
@@ -113,7 +113,7 @@ final class MainSplitViewController: NSSplitViewController {
         let sidebarWidth = sidebarItem.isCollapsed ? nil : Double(sidebar.view.frame.width)
         let inspectorWidth = inspectorItem.isCollapsed ? nil : Double(diff.view.frame.width)
         UIState.shared.update { state in
-            if let sidebarWidth { state.threadListWidth = sidebarWidth }
+            if let sidebarWidth { state.listWidth = sidebarWidth }
             if let inspectorWidth { state.inspectorWidth = inspectorWidth }
         }
         content.saveLayout()

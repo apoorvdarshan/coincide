@@ -67,8 +67,17 @@ final class ThemedPopup: NSObject {
         opensAbove = frame.minY >= anchorRect.maxY
         panel.setFrame(frame, display: false)
         parent?.addChildWindow(panel, ordered: .above)
+        // A quick fade, as menus open, unless the user asked for less motion.
+        let fades = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if fades { panel.alphaValue = 0 }
         panel.makeKeyAndOrderFront(nil)
         content.popupDidOpen()
+        if fades {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
+                panel.animator().alphaValue = 1
+            }
+        }
     }
 
     /// Keeps the edge nearest the anchor in place when the content's size changes, as a search narrows a list.
@@ -194,6 +203,9 @@ final class ThemedMenuViewController: NSViewController, ThemedPopupContent, NSTa
 
     override func loadView() {
         let root = NSView()
+        let searchIcon = NSImageView(image: Theme.symbol("magnifyingglass", size: 12) ?? NSImage())
+        searchIcon.contentTintColor = .secondaryLabelColor
+        searchIcon.translatesAutoresizingMaskIntoConstraints = false
         searchField.placeholderString = String(localized: "Search")
         searchField.delegate = self
         searchField.isBezeled = false
@@ -201,6 +213,8 @@ final class ThemedMenuViewController: NSViewController, ThemedPopupContent, NSTa
         searchField.drawsBackground = false
         searchField.focusRingType = .none
         searchField.font = .systemFont(ofSize: 13)
+        // The icon sits beside the field; the cell's own would overlap the text once the bezel is gone.
+        (searchField.cell as? NSSearchFieldCell)?.searchButtonCell = nil
         searchField.translatesAutoresizingMaskIntoConstraints = false
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("row"))
         tableView.addTableColumn(column)
@@ -220,17 +234,23 @@ final class ThemedMenuViewController: NSViewController, ThemedPopupContent, NSTa
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
+        // Room above the first row and below the last, so their highlights never touch the edges. The scroll view
+        // would otherwise set its own insets.
+        scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         let divider = ThemedDivider()
         divider.translatesAutoresizingMaskIntoConstraints = false
-        for view in [searchField, divider, scrollView] as [NSView] { root.addSubview(view) }
+        for view in [searchIcon, searchField, divider, scrollView] as [NSView] { root.addSubview(view) }
         showsSearch = Self.itemCount(rootMenu) > Self.searchThreshold
         searchField.isHidden = !showsSearch
+        searchIcon.isHidden = !showsSearch
         divider.isHidden = !showsSearch
         NSLayoutConstraint.activate([
+            searchIcon.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
+            searchIcon.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
             searchField.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
-            searchField.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            searchField.leadingAnchor.constraint(equalTo: searchIcon.trailingAnchor, constant: 6),
             searchField.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             divider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
             divider.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -245,9 +265,9 @@ final class ThemedMenuViewController: NSViewController, ThemedPopupContent, NSTa
         rebuild()
     }
 
+    /// Nothing is highlighted until the pointer moves over a row or an arrow key picks one, as in a menu.
     func popupDidOpen() {
         view.window?.makeFirstResponder(showsSearch ? searchField : tableView)
-        moveSelection(1)
     }
 
     // MARK: Rows
@@ -381,14 +401,12 @@ final class ThemedMenuViewController: NSViewController, ThemedPopupContent, NSTa
         case .back:
             stack.removeLast()
             rebuild()
-            moveSelection(1)
         case .item(let item):
             if let submenu = item.submenu {
                 submenu.delegate?.menuNeedsUpdate?(submenu)
                 stack.append(submenu)
                 searchField.stringValue = ""
                 rebuild()
-                moveSelection(1)
                 return
             }
             close?()
@@ -440,10 +458,17 @@ final class ThemedPopupTableView: NSTableView {
         }
     }
 
+    /// The pointer leaving the list clears the highlight, as in a menu.
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        deselectAll(nil)
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for area in trackingAreas where area.owner === self { removeTrackingArea(area) }
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
+        addTrackingArea(
+            NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
     }
 }
 
@@ -676,4 +701,51 @@ extension ThemedPopup {
         let point = window.convertPoint(toScreen: event.locationInWindow)
         return show(ThemedMenuViewController(menu: menu), at: point, in: window)
     }
+}
+
+// MARK: - Details
+
+/// A themed popup showing one view at its fitting size, for details such as usage limits that need no list. The
+/// content can be swapped while the popup is up, as the numbers behind it change.
+final class ThemedPopupViewHost: NSViewController, ThemedPopupContent {
+    var close: (() -> Void)?
+    var onSizeChange: (() -> Void)?
+
+    private var content: NSView
+
+    init(_ content: NSView) {
+        self.content = content
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func loadView() {
+        view = NSView()
+        install(content)
+    }
+
+    func setContent(_ newContent: NSView) {
+        content.removeFromSuperview()
+        content = newContent
+        guard isViewLoaded else { return }
+        install(newContent)
+        onSizeChange?()
+    }
+
+    private func install(_ content: NSView) {
+        content.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            content.topAnchor.constraint(equalTo: view.topAnchor),
+            content.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        preferredContentSize = content.fittingSize
+    }
+
+    func popupDidOpen() {}
 }

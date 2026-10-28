@@ -80,8 +80,37 @@ enum Theme {
     static let failureStroke = dynamic(.systemRed, alpha: 0.3)
     /// Glass tints of the banners above the composer.
     static let approvalTint = dynamic(.systemOrange, alpha: 0.1)
-    static let questionTint = dynamic(.controlAccentColor, alpha: 0.08)
-    static let dropTint = dynamic(.controlAccentColor, alpha: 0.12)
+    static let questionTint = ThemeSelection.color { theme in
+        (theme.isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.03 * theme.emphasis)
+    }
+    static let dropTint = ThemeSelection.color { theme in
+        (theme.isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.06 * theme.emphasis)
+    }
+    /// Selected text: the theme's accent laid over whatever is behind it, in place of the system's blue.
+    nonisolated static let textSelection = ThemeSelection.color { theme in
+        theme.accent.withAlphaComponent(theme.isDark ? 0.38 : 0.26)
+    }
+    /// Selected text in a view that isn't taking keystrokes.
+    nonisolated static let inactiveTextSelection = ThemeSelection.color { theme in
+        theme.accent.withAlphaComponent(theme.isDark ? 0.2 : 0.14)
+    }
+    /// The theme's accent, for the caret.
+    static let accent = ThemeSelection.color { $0.accent }
+    /// The selection drawn opaque over `background`, for views that can't blend a translucent one.
+    static func opaqueTextSelection(over background: NSColor) -> NSColor {
+        ThemeSelection.color { theme in
+            let base = background
+            var color = base
+            NSAppearance(named: theme.isDark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
+                color = base.usingColorSpace(.sRGB)?.blended(withFraction: theme.isDark ? 0.38 : 0.26, of: theme.accent) ?? base
+            }
+            return color
+        }
+    }
+    /// @-mentions of files in the composer: the text color, a step quieter than the words around them.
+    static let mention = ThemeSelection.color { theme in
+        (theme.ink ?? .labelColor).withAlphaComponent(0.7)
+    }
     static let tableHeaderFill = dynamic(.labelColor, alpha: 0.04)
 
     /// `withAlphaComponent` resolves a dynamic color once, for whatever appearance is current, so colors

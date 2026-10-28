@@ -21,7 +21,6 @@ struct AboutSettingsView: View {
                         .frame(maxWidth: 400)
                         .padding(.top, 4)
                     SettingsCopyButton(text: Self.versionReport, label: "Copy Version Info")
-                        .buttonStyle(.glass)
                         .padding(.top, 8)
                 }
                 .frame(maxWidth: .infinity)

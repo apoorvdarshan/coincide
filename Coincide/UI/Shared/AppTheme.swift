@@ -23,6 +23,8 @@ nonisolated struct AppTheme: Identifiable, @unchecked Sendable {
     var ink: NSColor?
     /// How strongly hovered and selected rows are filled.
     var emphasis: CGFloat = 1
+    /// The theme's one color, for selected text and the caret: Carbon's orange, Forest's green.
+    var accent: NSColor = .controlAccentColor
 
     static let defaultDarkID = "carbon"
     static let defaultLightID = "carbon-light"
@@ -30,65 +32,65 @@ nonisolated struct AppTheme: Identifiable, @unchecked Sendable {
     static let dark: [AppTheme] = [
         AppTheme(
             id: "carbon", name: "Carbon", isDark: true, sidebar: hex(0x0B0B0B), content: hex(0x000000), surface: hex(0x161616),
-            raised: hex(0x141414), border: hex(0x2A2A2A)),
+            raised: hex(0x141414), border: hex(0x2A2A2A), accent: hex(0xFF8A3D)),
         AppTheme(
             id: "graphite", name: "Graphite", isDark: true, sidebar: hex(0x181818), content: hex(0x212121),
-            surface: hex(0x2B2B2B), raised: hex(0x282828), border: NSColor(white: 1, alpha: 0.08)),
+            surface: hex(0x2B2B2B), raised: hex(0x282828), border: NSColor(white: 1, alpha: 0.08), accent: hex(0x9DB4FF)),
         AppTheme(
             id: "midnight", name: "Midnight", isDark: true, sidebar: hex(0x0E1320), content: hex(0x141A28),
-            surface: hex(0x1C2333), raised: hex(0x1A2130), border: hex(0x2A3347), ink: hex(0xDCE3F0)),
+            surface: hex(0x1C2333), raised: hex(0x1A2130), border: hex(0x2A3347), ink: hex(0xDCE3F0), accent: hex(0x6FA8FF)),
         AppTheme(
             id: "slate", name: "Slate", isDark: true, sidebar: hex(0x23262B), content: hex(0x2A2E34), surface: hex(0x333840),
-            raised: hex(0x31353C), border: hex(0x40464F), ink: hex(0xD8DCE2)),
+            raised: hex(0x31353C), border: hex(0x40464F), ink: hex(0xD8DCE2), accent: hex(0x7FB8C9)),
         AppTheme(
             id: "forest", name: "Forest", isDark: true, sidebar: hex(0x0D1410), content: hex(0x111A15), surface: hex(0x18241D),
-            raised: hex(0x16211A), border: hex(0x26362C), ink: hex(0xD4E2D8)),
+            raised: hex(0x16211A), border: hex(0x26362C), ink: hex(0xD4E2D8), accent: hex(0x6FD08C)),
         AppTheme(
             id: "plum", name: "Plum", isDark: true, sidebar: hex(0x140F18), content: hex(0x1A1420), surface: hex(0x241B2C),
-            raised: hex(0x211928), border: hex(0x352841), ink: hex(0xE6DDF0)),
+            raised: hex(0x211928), border: hex(0x352841), ink: hex(0xE6DDF0), accent: hex(0xC58BF2)),
         AppTheme(
             id: "ocean", name: "Ocean", isDark: true, sidebar: hex(0x08161B), content: hex(0x0C1D23), surface: hex(0x12292F),
-            raised: hex(0x10252B), border: hex(0x1E3B43), ink: hex(0xD3EBEF)),
+            raised: hex(0x10252B), border: hex(0x1E3B43), ink: hex(0xD3EBEF), accent: hex(0x3FC5D6)),
         AppTheme(
             id: "ember", name: "Ember", isDark: true, sidebar: hex(0x15100D), content: hex(0x1B1512), surface: hex(0x261D18),
-            raised: hex(0x231B16), border: hex(0x3A2C24), ink: hex(0xEDE2D6)),
+            raised: hex(0x231B16), border: hex(0x3A2C24), ink: hex(0xEDE2D6), accent: hex(0xFF7A45)),
         AppTheme(
             id: "dusk", name: "Dusk", isDark: true, sidebar: hex(0x12111F), content: hex(0x171627), surface: hex(0x201F35),
-            raised: hex(0x1D1C31), border: hex(0x2F2D4A), ink: hex(0xDEDCF5)),
+            raised: hex(0x1D1C31), border: hex(0x2F2D4A), ink: hex(0xDEDCF5), accent: hex(0xA08CFF)),
         AppTheme(
             id: "phosphor", name: "Phosphor", isDark: true, sidebar: hex(0x040805), content: hex(0x060B07),
-            surface: hex(0x0D150F), raised: hex(0x0B130D), border: hex(0x1C2B1F), ink: hex(0xB7F5C2)),
+            surface: hex(0x0D150F), raised: hex(0x0B130D), border: hex(0x1C2B1F), ink: hex(0xB7F5C2), accent: hex(0x5CF07A)),
         AppTheme(
             id: "high-contrast", name: "High Contrast", isDark: true, sidebar: hex(0x000000), content: hex(0x000000),
             surface: hex(0x000000), raised: hex(0x000000), border: hex(0xFFFFFF), borderWidth: 2, ink: hex(0xFFFFFF),
-            emphasis: 2.5),
+            emphasis: 2.5, accent: hex(0xFFD400)),
     ]
 
     static let light: [AppTheme] = [
         AppTheme(
             id: "carbon-light", name: "Carbon Light", isDark: false, sidebar: hex(0xF5F5F5), content: hex(0xFFFFFF),
-            surface: hex(0xFFFFFF), raised: hex(0xF5F5F5), border: hex(0xE1E1E1), ink: hex(0x111111)),
+            surface: hex(0xFFFFFF), raised: hex(0xF5F5F5), border: hex(0xE1E1E1), ink: hex(0x111111), accent: hex(0xE8660F)),
         AppTheme(
             id: "paper", name: "Paper", isDark: false, sidebar: hex(0xF2F0EC), content: hex(0xFBFAF8), surface: hex(0xFFFFFF),
-            raised: hex(0xF2F0EC), border: hex(0xE4E0D8)),
+            raised: hex(0xF2F0EC), border: hex(0xE4E0D8), accent: hex(0xC26A2E)),
         AppTheme(
             id: "arctic", name: "Arctic", isDark: false, sidebar: hex(0xEDF2F6), content: hex(0xF7FAFC), surface: hex(0xFFFFFF),
-            raised: hex(0xEDF2F6), border: hex(0xD9E2EA), ink: hex(0x1E2A36)),
+            raised: hex(0xEDF2F6), border: hex(0xD9E2EA), ink: hex(0x1E2A36), accent: hex(0x2F7FD6)),
         AppTheme(
             id: "sepia", name: "Sepia", isDark: false, sidebar: hex(0xEEE5D3), content: hex(0xF6EFE1), surface: hex(0xFBF6EC),
-            raised: hex(0xEEE5D3), border: hex(0xDDD0B8), ink: hex(0x3B2F22)),
+            raised: hex(0xEEE5D3), border: hex(0xDDD0B8), ink: hex(0x3B2F22), accent: hex(0xA0602A)),
         AppTheme(
             id: "rose", name: "Rose", isDark: false, sidebar: hex(0xF5EBED), content: hex(0xFCF6F7), surface: hex(0xFFFFFF),
-            raised: hex(0xF5EBED), border: hex(0xEBD8DC), ink: hex(0x2E1D24)),
+            raised: hex(0xF5EBED), border: hex(0xEBD8DC), ink: hex(0x2E1D24), accent: hex(0xD14D72)),
         AppTheme(
             id: "lavender", name: "Lavender", isDark: false, sidebar: hex(0xEFEBF8), content: hex(0xF8F6FC),
-            surface: hex(0xFFFFFF), raised: hex(0xEFEBF8), border: hex(0xDDD6EE), ink: hex(0x241F33)),
+            surface: hex(0xFFFFFF), raised: hex(0xEFEBF8), border: hex(0xDDD6EE), ink: hex(0x241F33), accent: hex(0x7A5AE0)),
         AppTheme(
             id: "sand", name: "Sand", isDark: false, sidebar: hex(0xEDE9E1), content: hex(0xF7F5F0), surface: hex(0xFFFFFF),
-            raised: hex(0xEDE9E1), border: hex(0xDDD7CB), ink: hex(0x2B2A24)),
+            raised: hex(0xEDE9E1), border: hex(0xDDD7CB), ink: hex(0x2B2A24), accent: hex(0xB8862E)),
         AppTheme(
             id: "mint", name: "Mint", isDark: false, sidebar: hex(0xEAF4EE), content: hex(0xF5FAF7), surface: hex(0xFFFFFF),
-            raised: hex(0xEAF4EE), border: hex(0xD3E6DA), ink: hex(0x1C2A22)),
+            raised: hex(0xEAF4EE), border: hex(0xD3E6DA), ink: hex(0x1C2A22), accent: hex(0x1F9D6A)),
     ]
 
     static func dark(_ id: String) -> AppTheme {

@@ -2,7 +2,7 @@ import AppKit
 import SwiftTerm
 
 /// Terminal colors for light and dark appearance. The ANSI palettes and caret colors are T3 Code's; the background and
-/// text are the theme's conversation colors, and selection the system's.
+/// text are the theme's conversation colors, and so is the selection.
 enum TerminalTheme {
     /// Behind the terminal and its header, so they read as one surface.
     static var background: NSColor { Theme.contentBackground }
@@ -15,8 +15,8 @@ enum TerminalTheme {
         appearance.performAsCurrentDrawingAppearance {
             view.nativeForegroundColor = resolved(Theme.ink)
             view.nativeBackgroundColor = resolved(background)
-            view.selectedTextBackgroundColor = resolved(.selectedTextBackgroundColor)
-            view.selectedTextForegroundColor = resolved(.selectedTextColor)
+            view.selectedTextBackgroundColor = resolved(Theme.opaqueTextSelection(over: background))
+            view.selectedTextForegroundColor = resolved(Theme.ink)
         }
         view.caretColor = isDark ? rgb(0xB4CBFF) : rgb(0x26384E)
         view.installColors((isDark ? darkPalette : lightPalette).map(terminalColor))

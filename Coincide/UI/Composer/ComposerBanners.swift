@@ -215,7 +215,7 @@ final class ComposerPlanBanner: ComposerBanner {
         let heading = ComposerBanner.label(String(localized: "Plan ready"), weight: .semibold, color: .secondaryLabelColor)
         heading.setContentCompressionResistancePriority(.required, for: .horizontal)
         content.alignment = .centerY
-        content.addArrangedSubview(ComposerBanner.icon("checklist", color: .controlAccentColor))
+        content.addArrangedSubview(ComposerBanner.icon("checklist", color: Theme.ink))
         content.addArrangedSubview(heading)
         content.addArrangedSubview(title)
     }
@@ -234,7 +234,7 @@ final class ComposerQuestionBanner: ComposerBanner, NSTextFieldDelegate {
     var onAnswer: ((_ itemID: UUID, _ answers: [String: [String]]) -> Void)?
     var onDismiss: ((UUID) -> Void)?
 
-    private let heading = ComposerBanner.label(size: 11, weight: .semibold, color: .controlAccentColor)
+    private let heading = ComposerBanner.label(size: 11, weight: .semibold, color: .secondaryLabelColor)
     private let agent = ComposerBanner.label(size: 11, color: .secondaryLabelColor)
     private let counter = ComposerBanner.label(size: 11, color: .secondaryLabelColor)
     private let prompt = NSTextField(wrappingLabelWithString: "")
@@ -301,7 +301,7 @@ final class ComposerQuestionBanner: ComposerBanner, NSTextFieldDelegate {
         for row in [titleRow, prompt, options, answerField, secretField, actionRow] {
             row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
         }
-        content.addArrangedSubview(ComposerBanner.icon("questionmark.bubble.fill", color: .controlAccentColor))
+        content.addArrangedSubview(ComposerBanner.icon("questionmark.bubble.fill", color: Theme.ink))
         content.addArrangedSubview(column)
     }
 

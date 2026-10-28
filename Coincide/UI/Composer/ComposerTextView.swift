@@ -38,6 +38,8 @@ final class ComposerTextView: NSTextView {
         smartInsertDeleteEnabled = false
         isContinuousSpellCheckingEnabled = true
         textContainerInset = NSSize(width: 0, height: 3)
+        selectedTextAttributes = [.backgroundColor: Theme.opaqueTextSelection(over: Theme.composerFill)]
+        insertionPointColor = Theme.accent
         textContainer?.lineFragmentPadding = 0
         textContainer?.widthTracksTextView = true
         isVerticallyResizable = true
@@ -131,7 +133,7 @@ final class ComposerTextView: NSTextView {
                 let end = content.location(start, offsetBy: match.range.length),
                 let range = NSTextRange(location: start, end: end)
             else { continue }
-            layoutManager.addRenderingAttribute(.foregroundColor, value: NSColor.controlAccentColor, for: range)
+            layoutManager.addRenderingAttribute(.foregroundColor, value: Theme.mention, for: range)
         }
     }
 

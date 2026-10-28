@@ -330,7 +330,7 @@ struct ChatMarkdownRenderer {
 
     private func taskMarker(checked: Bool, font: NSFont) -> NSAttributedString {
         let name = checked ? "checkmark.square.fill" : "square"
-        let color: NSColor = checked ? .controlAccentColor : .tertiaryLabelColor
+        let color: NSColor = checked ? Theme.ink : .tertiaryLabelColor
         let size = (font.pointSize * 1.05).rounded()
         let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
             .applying(NSImage.SymbolConfiguration(paletteColors: checked ? [.white, color] : [color]))

@@ -73,9 +73,9 @@ final class ShortcutRecorderView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
-        (isRecording ? NSColor.controlAccentColor.withAlphaComponent(0.14) : NSColor.controlBackgroundColor).setFill()
+        (isRecording ? Theme.sidebarSelection : Theme.raisedFill).setFill()
         path.fill()
-        (isRecording ? NSColor.controlAccentColor : NSColor.separatorColor).setStroke()
+        (isRecording ? Theme.ink : Theme.surfaceBorder).setStroke()
         path.lineWidth = 1
         path.stroke()
     }

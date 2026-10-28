@@ -131,7 +131,7 @@ extension View {
         id(setting)
             .background {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.accentColor.opacity(highlighted == setting ? 0.16 : 0))
+                    .fill(Color(nsColor: Theme.sidebarSelection).opacity(highlighted == setting ? 1 : 0))
                     .padding(-6)
                     .animation(.easeOut(duration: 0.35), value: highlighted)
             }

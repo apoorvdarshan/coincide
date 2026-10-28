@@ -212,7 +212,7 @@ struct PaletteCatalog {
             let id = project.id
             return PaletteItem(
                 id: "project:\(id)", title: project.name, subtitle: Formatting.abbreviatedPath(project.path),
-                icon: symbol("folder"), iconTint: .controlAccentColor, keywords: [project.path], kind: .project,
+                icon: symbol("folder"), iconTint: .secondaryLabelColor, keywords: [project.path], kind: .project,
                 behavior: .run { ThreadActions.addProjects([project.url]) })
         }
     }
@@ -348,7 +348,7 @@ struct PaletteCatalog {
                 let id = project.id
                 return PaletteItem(
                     id: "new-thread-in:\(id)", title: project.name, subtitle: Formatting.abbreviatedPath(project.path),
-                    icon: Theme.symbol("folder", size: 15), iconTint: .controlAccentColor, keywords: [project.path],
+                    icon: Theme.symbol("folder", size: 15), iconTint: .secondaryLabelColor, keywords: [project.path],
                     kind: .project, behavior: .run { window?.newThread(in: id) })
             }
             return [PaletteGroup(id: "projects", title: String(localized: "Projects"), items: items)]
@@ -406,7 +406,7 @@ struct PaletteCatalog {
         let path = usesTilde ? Formatting.abbreviatedPath(url.path) : url.path
         return PaletteItem(
             id: "folder:\(url.path)", title: title, subtitle: Formatting.abbreviatedPath(url.path),
-            icon: Theme.symbol("folder.badge.plus", size: 15), iconTint: .controlAccentColor, kind: .project,
+            icon: Theme.symbol("folder.badge.plus", size: 15), iconTint: .secondaryLabelColor, kind: .project,
             completion: path.hasSuffix("/") ? path : path + "/", behavior: .run { ThreadActions.addProjects([url]) })
     }
 

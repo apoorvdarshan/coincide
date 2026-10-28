@@ -122,6 +122,23 @@ nonisolated final class ChatRuleTextBlock: NSTextBlock {
 
 /// Draws rounded inline-code backgrounds and full-width line backgrounds.
 nonisolated final class ChatLayoutManager: NSLayoutManager {
+    /// Selections in the theme's colors, blended over code panels and bubbles rather than painted over them.
+    override func fillBackgroundRectArray(
+        _ rectArray: UnsafePointer<NSRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: NSColor
+    ) {
+        let selection: NSColor? =
+            switch color {
+            case Theme.textSelection, .selectedTextBackgroundColor: Theme.textSelection
+            case .unemphasizedSelectedTextBackgroundColor: Theme.inactiveTextSelection
+            default: nil
+            }
+        guard let selection else {
+            return super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: color)
+        }
+        selection.setFill()
+        for index in 0..<rectCount { rectArray[index].fill(using: .sourceOver) }
+    }
+
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, let container = textContainers.first else { return }
@@ -190,6 +207,7 @@ final class ChatTextView: NSTextView {
         isGrammarCheckingEnabled = false
         smartInsertDeleteEnabled = false
         linkTextAttributes = [.foregroundColor: NSColor.linkColor, .cursor: NSCursor.pointingHand]
+        selectedTextAttributes = [.backgroundColor: Theme.textSelection]
         focusRingType = .none
         setAccessibilityRole(.staticText)
     }

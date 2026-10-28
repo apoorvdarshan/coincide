@@ -289,7 +289,6 @@ private struct AntigravityAccountSection: View {
             HStack(spacing: 6) {
                 TextField("Address", text: $callback, prompt: Text(verbatim: "http://127.0.0.1:…/?state=…&code=…"))
                     .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
                     .font(.callout.monospaced())
                     .onSubmit(sendCallback)
                 Button("Send", action: sendCallback)
