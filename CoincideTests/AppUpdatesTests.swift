@@ -1,5 +1,5 @@
 import AppKit
-import CoincideKit
+@testable import CoincideKit
 import Testing
 @testable import Coincide
 
@@ -42,5 +42,22 @@ struct AppUpdatesTests {
         for _ in 0..<200 where updates.busy { try await Task.sleep(for: .milliseconds(5)) }
         guard case .failed = updates.state else { Issue.record("An HTTP error must stay an error"); return }
         #expect(updates.release == nil)
+    }
+
+    @Test func delayedTerminationOfCancelledHelperCannotClearTheSuccessor() {
+        let folder = TemporaryDirectory("app-updates-helper-lifetime")
+        let updates = AppUpdates(store: AppStore(directory: folder.url), bundleURL: folder.url)
+        let release = AppUpdateRelease(version: "0.2.0", url: AppUpdateRelease.feed, sha256: String(repeating: "a", count: 64), size: 1)
+        let old = Process(), successor = Process()
+        updates.armHelper(old, plan: AppUpdatePlan(release: release, target: folder.url, processID: 123))
+        updates.cancelInstallation()
+        #expect(old.terminationHandler == nil)
+        #expect(updates.state == .ready)
+        updates.armHelper(successor, plan: AppUpdatePlan(release: release, target: folder.url, processID: 123))
+        // Model a main-actor callback already queued before cancellation detached the old handler.
+        updates.helperTerminated(old)
+        #expect(updates.state == .armed)
+        updates.helperTerminated(successor)
+        guard case .failed = updates.state else { Issue.record("The current helper's exit must be reported"); return }
     }
 }
