@@ -21,6 +21,7 @@ import CoincideKit
 /// - `{"palette": {"query": "model", "enter": true, "file": "/path.png"}}`: lays out the command palette for a
 ///   query (optionally running the chosen result, which opens a nested list) and draws it into a PNG, offscreen
 /// - `{"snapshot": "/path.png"}`: draws the main window's content into a PNG
+/// - `{"settingsSnapshot": "/path.png"}`: draws the settings window's content into a PNG
 /// - `{"sleep": seconds}`, `{"log": "text"}`, `{"quit": true}`
 enum DebugAutomation {
     static func startIfRequested() {
@@ -147,6 +148,10 @@ enum DebugAutomation {
                 drawPalette(for: window, query: query, enter: value["enter"]?.bool ?? false, to: URL(fileURLWithPath: file))
             case "snapshot":
                 guard let content = mainWindow?.window?.contentView, let file = value.string else { continue }
+                draw(content, to: URL(fileURLWithPath: file))
+            case "settingsSnapshot":
+                let settings = NSApp.windows.first { $0.identifier?.rawValue == "settings" }
+                guard let content = settings?.contentView, let file = value.string else { continue }
                 draw(content, to: URL(fileURLWithPath: file))
             case "zoom":
                 guard let window = mainWindow?.window else { continue }

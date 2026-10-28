@@ -27,12 +27,19 @@ struct GeneralSettingsView: View {
                         Text("The typeface of agents’ replies in the conversation.")
                     }
                     .settingsRevealable(.replyTypeface, highlighted: highlighted)
-                    ThemeGridRow(
-                        title: String(localized: "Dark theme"), themes: AppTheme.dark, selection: model.binding(\.darkTheme))
-                        .settingsRevealable(.darkTheme, highlighted: highlighted)
-                    ThemeGridRow(
-                        title: String(localized: "Light theme"), themes: AppTheme.light, selection: model.binding(\.lightTheme))
-                        .settingsRevealable(.lightTheme, highlighted: highlighted)
+                    // Only the themes the chosen appearance can show: both with System. A search still reaches either.
+                    if model.settings.appearance != .light || highlighted == .darkTheme {
+                        ThemeGridRow(
+                            title: String(localized: "Dark theme"), themes: AppTheme.dark, selection: model.binding(\.darkTheme),
+                            isRevealed: highlighted == .darkTheme, onPick: showMode(of:))
+                            .settingsRevealable(.darkTheme, highlighted: highlighted)
+                    }
+                    if model.settings.appearance != .dark || highlighted == .lightTheme {
+                        ThemeGridRow(
+                            title: String(localized: "Light theme"), themes: AppTheme.light, selection: model.binding(\.lightTheme),
+                            isRevealed: highlighted == .lightTheme, onPick: showMode(of:))
+                            .settingsRevealable(.lightTheme, highlighted: highlighted)
+                    }
                 }
 
                 Section("Chat") {
@@ -147,6 +154,12 @@ struct GeneralSettingsView: View {
 
     private var idleTimeoutOptions: [Int] {
         Array(Set([5, 10, 15, 30, 60, 120, 240, model.settings.idleSessionTimeoutMinutes])).sorted()
+    }
+
+    /// Picking a theme of the mode the app isn't showing switches to that mode, so the choice shows right away.
+    private func showMode(of theme: AppTheme) {
+        guard theme.isDark != NSApp.effectiveAppearance.isDark else { return }
+        model.update { $0.appearance = theme.isDark ? .dark : .light }
     }
 
     private func restoreDefaults() {
@@ -506,22 +519,53 @@ private struct BranchPrefixRow: View {
 
 // MARK: Themes
 
-/// The themes of one appearance as a grid of small window pictures; clicking one uses it.
+/// One appearance's theme: a row with the current theme's picture and name that opens a grid of all of them.
 private struct ThemeGridRow: View {
     let title: String
     let themes: [AppTheme]
     @Binding var selection: String
+    /// A settings search led here, so the grid opens.
+    var isRevealed = false
+    /// Runs after a theme is picked.
+    var onPick: (AppTheme) -> Void = { _ in }
+    @State private var isExpanded = false
+
+    private var current: AppTheme { themes.first { $0.id == selection } ?? themes[0] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 10)], alignment: .leading, spacing: 10) {
-                ForEach(themes) { theme in
-                    ThemeTile(theme: theme, isSelected: theme.id == selection) { selection = theme.id }
+            Button {
+                withAnimation(.easeOut(duration: 0.15)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 10) {
+                    Text(title)
+                    Spacer(minLength: 12)
+                    Image(nsImage: current.swatch(size: NSSize(width: 34, height: 22)))
+                    Text(verbatim: current.name)
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(Text(verbatim: current.name))
+            if isExpanded {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 10)], alignment: .leading, spacing: 10) {
+                    ForEach(themes) { theme in
+                        ThemeTile(theme: theme, isSelected: theme.id == selection) {
+                            selection = theme.id
+                            onPick(theme)
+                        }
+                    }
                 }
             }
         }
         .padding(.vertical, 4)
+        .onAppear { if isRevealed { isExpanded = true } }
+        .onChange(of: isRevealed) { if isRevealed { isExpanded = true } }
     }
 }
 
