@@ -28,6 +28,12 @@ struct GeneralSettingsView: View {
                         Text("The typeface of agents’ replies in the conversation.")
                     }
                     .settingsRevealable(.replyTypeface, highlighted: highlighted)
+                    ThemeGridRow(
+                        title: String(localized: "Dark theme"), themes: AppTheme.dark, selection: model.binding(\.darkTheme))
+                        .settingsRevealable(.darkTheme, highlighted: highlighted)
+                    ThemeGridRow(
+                        title: String(localized: "Light theme"), themes: AppTheme.light, selection: model.binding(\.lightTheme))
+                        .settingsRevealable(.lightTheme, highlighted: highlighted)
                 }
 
                 Section("Chat") {
@@ -153,6 +159,8 @@ struct GeneralSettingsView: View {
             settings.appearance = defaults.appearance
             settings.fontSize = defaults.fontSize
             settings.replyTypeface = defaults.replyTypeface
+            settings.darkTheme = defaults.darkTheme
+            settings.lightTheme = defaults.lightTheme
             settings.sendOnReturn = defaults.sendOnReturn
             settings.followUpBehavior = defaults.followUpBehavior
             settings.showReasoning = defaults.showReasoning
@@ -500,5 +508,60 @@ private struct BranchPrefixRow: View {
             return String(localized: "Parts of a branch name can’t start with “.” or end with “.lock”.")
         }
         return nil
+    }
+}
+
+// MARK: Themes
+
+/// The themes of one appearance as a grid of small window pictures; clicking one uses it.
+private struct ThemeGridRow: View {
+    let title: String
+    let themes: [AppTheme]
+    @Binding var selection: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 10)], alignment: .leading, spacing: 10) {
+                ForEach(themes) { theme in
+                    ThemeTile(theme: theme, isSelected: theme.id == selection) { selection = theme.id }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct ThemeTile: View {
+    let theme: AppTheme
+    let isSelected: Bool
+    let choose: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: choose) {
+            VStack(spacing: 6) {
+                Image(nsImage: theme.swatch(size: NSSize(width: 84, height: 52)))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2)
+                            .padding(-3)
+                    }
+                Text(verbatim: theme.name)
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                    .lineLimit(1)
+            }
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isHovered ? Color.primary.opacity(0.05) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(Text(verbatim: theme.name))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

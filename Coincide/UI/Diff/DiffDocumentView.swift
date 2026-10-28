@@ -509,6 +509,10 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
 final class DiffTableView: NSTableView {
     var copyHandler: (() -> Void)?
 
+    override func menu(for event: NSEvent) -> NSMenu? {
+        ThemedContextMenu.show(super.menu(for: event), for: event, in: window)
+    }
+
     @objc func copy(_ sender: Any?) { copyHandler?() }
 
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {

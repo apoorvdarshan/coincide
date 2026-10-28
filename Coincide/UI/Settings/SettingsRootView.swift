@@ -187,6 +187,12 @@ private struct SettingsSearchResults: View {
                 title: String(localized: "Font size"), pane: general, setting: .fontSize,
                 keywords: [String(localized: "Text size"), String(localized: "Zoom")]),
             SettingsSearchEntry(
+                title: String(localized: "Dark theme"), pane: general, setting: .darkTheme,
+                keywords: [String(localized: "Theme"), String(localized: "Colors"), String(localized: "Dark mode")]),
+            SettingsSearchEntry(
+                title: String(localized: "Light theme"), pane: general, setting: .lightTheme,
+                keywords: [String(localized: "Theme"), String(localized: "Colors"), String(localized: "Light mode")]),
+            SettingsSearchEntry(
                 title: String(localized: "Reply font"), pane: general, setting: .replyTypeface,
                 keywords: [String(localized: "Serif"), String(localized: "Typeface"), String(localized: "New York")]),
             SettingsSearchEntry(

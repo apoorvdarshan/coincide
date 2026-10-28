@@ -155,7 +155,7 @@ final class GitActionsBar: NSView {
 
     @objc private func showMenu() {
         guard let menu = menuProvider?() else { return }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: menuButton.bounds.height + 4), in: menuButton)
+        ThemedPopup.show(menu: menu, from: menuButton)
     }
 }
 

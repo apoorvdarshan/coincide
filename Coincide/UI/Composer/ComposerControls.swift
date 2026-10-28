@@ -6,8 +6,16 @@ import CoincideKit
 final class ComposerControlButton: NSButton {
     /// Builds the menu to show when pressed. Nil for plain buttons, which send their action.
     var menuProvider: (() -> NSMenu?)? {
-        didSet { setAccessibilityRole(menuProvider == nil ? .button : .menuButton) }
+        didSet { setAccessibilityRole(opensPopup ? .menuButton : .button) }
     }
+    /// Builds a richer themed popup to show instead of a menu, such as the model picker.
+    var popupProvider: (() -> (NSViewController & ThemedPopupContent)?)? {
+        didSet { setAccessibilityRole(opensPopup ? .menuButton : .button) }
+    }
+
+    private var opensPopup: Bool { menuProvider != nil || popupProvider != nil }
+    /// A view the popup opens clear of, such as the composer around the control.
+    weak var popupClearance: NSView?
     /// Shows only the symbol, for narrow composers.
     var isCompact = false {
         didSet { if isCompact != oldValue { updateTitle() } }
@@ -153,12 +161,12 @@ final class ComposerControlButton: NSButton {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard menuProvider != nil, isEnabled else { return super.mouseDown(with: event) }
+        guard opensPopup, isEnabled else { return super.mouseDown(with: event) }
         showMenu()
     }
 
     override func performClick(_ sender: Any?) {
-        guard menuProvider != nil else { return super.performClick(sender) }
+        guard opensPopup else { return super.performClick(sender) }
         showMenu()
     }
 
@@ -180,17 +188,23 @@ final class ComposerControlButton: NSButton {
         layer.add(animation, forKey: "flash")
     }
 
-    /// Opens the control's menu just above it.
+    /// Opens the control's menu just above it, as a themed popup.
     func showMenu() {
-        guard let menu = menuProvider?(), let window else { return }
-        let frame = window.convertToScreen(convert(bounds, to: nil))
+        let content = popupProvider?() ?? menuProvider?().map { ThemedMenuViewController(menu: $0, minimumWidth: max(200, bounds.width)) }
+        guard let content else { return }
         isMenuOpen = true
         updateAppearance()
-        let origin = Self.menuOrigin(above: frame, menuHeight: menu.size.height, screen: window.screen?.visibleFrame)
-        menu.popUp(positioning: nil, at: origin, in: nil)
-        isMenuOpen = false
-        isHovered = false
-        updateAppearance()
+        var anchor = bounds
+        if let clearance = popupClearance {
+            // Above or below the whole composer, lined up with this control.
+            let frame = convert(clearance.bounds, from: clearance)
+            anchor = NSRect(x: bounds.minX, y: frame.minY, width: bounds.width, height: frame.height)
+        }
+        ThemedPopup.show(content, from: self, rect: anchor) { [weak self] in
+            self?.isMenuOpen = false
+            self?.isHovered = false
+            self?.updateAppearance()
+        }
     }
 
     /// Where a menu opening above `frame` (screen coordinates) puts its top-left corner. A menu taller than the room

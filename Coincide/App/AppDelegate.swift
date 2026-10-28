@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !Self.isHostingTests else { return }
+        ThemeController.shared.start()
         AppearanceController.shared.start()
         SettingsWindowController.shared.startHandlingRequests()
         ThreadActivity.shared.start()

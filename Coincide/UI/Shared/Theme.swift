@@ -42,20 +42,28 @@ enum Theme {
     static var secondaryText: NSColor { .secondaryLabelColor }
     static var tertiaryText: NSColor { .tertiaryLabelColor }
     static var separator: NSColor { .separatorColor }
-    /// The window's surfaces, flat and opaque: the sidebar a step darker than the conversation, and the composer
-    /// and bars a step lighter.
-    static let sidebarBackground = color(light: 0xF7F7F6, dark: 0x181818)
-    static let contentBackground = color(light: 0xFFFFFF, dark: 0x212121)
-    static let composerFill = color(light: 0xFFFFFF, dark: 0x2B2B2B)
-    static let raisedFill = color(light: 0xF4F4F3, dark: 0x282828)
-    static let floatingFill = color(light: 0xFFFFFF, dark: 0x262626)
-    static let surfaceBorder = NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(white: 1, alpha: 0.08) : NSColor(white: 0, alpha: 0.1)
+    /// The window's surfaces, flat and opaque, from the dark or light theme in use (`AppTheme`): the rail and thread
+    /// list, the conversation, the composer and panels, and the bars over the conversation.
+    static let sidebarBackground = ThemeSelection.color { $0.sidebar }
+    static let contentBackground = ThemeSelection.color { $0.content }
+    static let composerFill = ThemeSelection.color { $0.surface }
+    static let raisedFill = ThemeSelection.color { $0.raised }
+    static let floatingFill = ThemeSelection.color { $0.surface }
+    static let surfaceBorder = ThemeSelection.color { $0.border }
+    /// The conversation's text.
+    static let ink = ThemeSelection.color { $0.ink ?? .labelColor }
+    /// Rows and buttons while hovered and while selected or pressed.
+    static let sidebarHover = ThemeSelection.color { theme in
+        (theme.isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.05 * theme.emphasis)
     }
-    /// Rows in the sidebar while hovered and while selected.
-    static let sidebarHover = dynamic(.labelColor, alpha: 0.05)
-    static let sidebarSelection = dynamic(.labelColor, alpha: 0.09)
+    static let sidebarSelection = ThemeSelection.color { theme in
+        (theme.isDark ? NSColor.white : NSColor.black).withAlphaComponent(0.09 * theme.emphasis)
+    }
+
+    /// The width of surface borders: wider in the High Contrast theme.
+    static func borderWidth(for appearance: NSAppearance) -> CGFloat {
+        ThemeSelection.shared.theme(for: appearance).borderWidth
+    }
 
     /// The user's messages sit on a quiet card, so the agents' replies carry the color.
     static let userBubble = dynamic(.labelColor, alpha: 0.06)

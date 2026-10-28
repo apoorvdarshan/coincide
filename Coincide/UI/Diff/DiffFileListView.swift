@@ -7,7 +7,7 @@ final class DiffFileListView: NSView, NSTableViewDataSource, NSTableViewDelegate
     var rootURL: URL?
 
     private let scrollView = NSScrollView()
-    private let tableView = NSTableView()
+    private let tableView = ThemedMenuTableView()
     private var files: [FileDiff] = []
     private var isSyncingSelection = false
 

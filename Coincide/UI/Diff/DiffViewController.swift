@@ -32,11 +32,11 @@ final class DiffViewController: NSViewController {
     private let checkpoints = CheckpointService.shared
     private let runner = ThreadRunner.shared
 
-    private let scopeButton = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let scopeButton = ThemedPopUpButton(frame: .zero, pullsDown: true)
     private let summaryLabel = NSTextField(labelWithString: "")
     private let spinner = NSProgressIndicator()
     private let refreshButton = NSButton(title: "", target: nil, action: nil)
-    private let optionsButton = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let optionsButton = ThemedPopUpButton(frame: .zero, pullsDown: true)
     private let splitView = NSSplitView()
     private let fileList = DiffFileListView(frame: .zero)
     private let document = DiffDocumentView(frame: .zero)
@@ -86,10 +86,11 @@ final class DiffViewController: NSViewController {
     // MARK: View
 
     override func loadView() {
-        let root = NSView()
+        let root = SolidBackgroundView(color: Theme.contentBackground)
         root.setAccessibilityLabel(String(localized: "Diff"))
 
         scopeButton.controlSize = .regular
+        scopeButton.isBordered = false
         scopeButton.target = self
         scopeButton.setAccessibilityLabel(String(localized: "Changes to show"))
         scopeButton.setContentCompressionResistancePriority(.init(200), for: .horizontal)
