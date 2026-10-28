@@ -65,7 +65,7 @@ struct ThreadFile: Decodable {
         switch key.stringValue {
         case "id", "projectID": container.reads(UUID.self, key)
         case "title", "worktreePath", "branch", "draft": container.reads(String.self, key)
-        case "createdAt", "updatedAt": container.reads(Date.self, key)
+        case "createdAt", "updatedAt", "snoozedUntil": container.reads(Date.self, key)
         case "accessMode": container.reads(AccessMode.self, key)
         case "interactionMode": container.reads(InteractionMode.self, key)
         case "isPinned", "isArchived": container.reads(Bool.self, key)

@@ -43,7 +43,8 @@ enum ThreadActions {
     }
 
     private static func isUntouched(_ thread: ThreadSummary, matching source: ThreadSummary?) -> Bool {
-        thread.itemCount == 0 && !thread.hasDraft && !thread.isArchived && thread.worktreePath == source?.worktreePath
+        thread.itemCount == 0 && !thread.hasDraft && !thread.isArchived
+            && (thread.snoozedUntil ?? .distantPast) <= Date() && thread.worktreePath == source?.worktreePath
     }
 
     static func rename(_ threadID: UUID, to title: String) {

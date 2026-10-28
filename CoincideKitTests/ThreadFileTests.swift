@@ -190,6 +190,7 @@ struct ThreadFileTests {
             $0.worktreePath = "/tmp/worktree"
             $0.branch = "feature"
             $0.draft = "unsent"
+            $0.snoozedUntil = Date()
         }
         store.flush()
         // Every field holds a value, so a field added to the model later must be added here (and to ThreadFile).
