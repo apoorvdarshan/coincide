@@ -181,6 +181,8 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
     var onCollapseChange: (() -> Void)?
     /// Repository root, used to open and reveal files.
     var rootURL: URL?
+    /// Attaches a comment on selected lines to the composer's message. Commenting is offered while it is set.
+    var onAddComment: ((MessageContext) -> Void)?
     private(set) var collapsedPaths: Set<String> = []
 
     private let scrollView = NSScrollView()
@@ -221,6 +223,8 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
         tableView.dataSource = self
         tableView.delegate = self
         tableView.copyHandler = { [weak self] in self?.copySelection() }
+        tableView.commentHandler = { [weak self] in self?.commentOnSelection() }
+        tableView.canComment = { [weak self] in self?.commentTarget() != nil }
         tableView.setAccessibilityLabel(String(localized: "Diff"))
         let menu = NSMenu()
         menu.delegate = self
@@ -496,6 +500,10 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
             let title =
                 tableView.selectedRowIndexes.count > 1 ? String(localized: "Copy Lines") : String(localized: "Copy Line")
             menu.addItem(withTitle: title, action: #selector(copyLines), keyEquivalent: "").target = self
+            if onAddComment != nil {
+                menu.addItem(withTitle: String(localized: "Comment…"), action: #selector(commentOnLines), keyEquivalent: "").target =
+                    self
+            }
             menu.addItem(.separator())
         }
         let file = diff.files[rows[row].file]
@@ -503,15 +511,64 @@ final class DiffDocumentView: NSView, NSTableViewDataSource, NSTableViewDelegate
     }
 
     @objc private func copyLines() { copySelection() }
+
+    @objc private func commentOnLines() { commentOnSelection() }
+
+    // MARK: Comments
+
+    /// The selected lines to comment on: those in the file of the line clicked or, from the keyboard, of the first
+    /// selected line, as indexes into the file's hunks.
+    private func commentTarget() -> (file: Int, lines: [(hunk: Int, line: Int)], rows: [Int])? {
+        let selected = tableView.selectedRowIndexes.filter { rows.indices.contains($0) }
+        let anchor = tableView.clickedRow >= 0 && selected.contains(tableView.clickedRow) ? tableView.clickedRow : selected.first
+        guard let anchor else { return nil }
+        let fileIndex = rows[anchor].file
+        var lines: [(hunk: Int, line: Int)] = []
+        var lineRows: [Int] = []
+        for row in selected {
+            guard case .line(let file, let hunk, let line) = rows[row], file == fileIndex else { continue }
+            lines.append((hunk, line))
+            lineRows.append(row)
+        }
+        guard !lines.isEmpty, diff.files.indices.contains(fileIndex) else { return nil }
+        return (fileIndex, lines, lineRows)
+    }
+
+    /// Opens the comment field under the selected lines; what the user writes goes to the composer with the lines.
+    private func commentOnSelection() {
+        guard let onAddComment, let target = commentTarget() else { return }
+        let file = diff.files[target.file]
+        guard let draft = MessageContext.DiffComment(file: file, lines: target.lines, comment: "") else { return }
+        let editor = DiffCommentEditor(draft: draft)
+        editor.onAdd = { text in
+            guard let comment = MessageContext.DiffComment(file: file, lines: target.lines, comment: text) else { return }
+            onAddComment(MessageContext(.diffComment(comment)))
+        }
+        // Under the last selected line where the text starts, or at the top when the lines scrolled away.
+        let visible = tableView.visibleRect
+        var anchor = tableView.rect(ofRow: target.rows.max() ?? 0).intersection(visible)
+        if anchor.isEmpty { anchor = NSRect(x: visible.minX, y: visible.minY, width: visible.width, height: metrics.lineHeight) }
+        anchor.origin.x = visible.minX + metrics.textOrigin
+        anchor.size.width = max(1, anchor.width - metrics.textOrigin)
+        ThemedPopup.show(editor, from: tableView, rect: anchor, preferAbove: false)
+    }
 }
 
-/// Lets ⌘C copy the selected lines.
-final class DiffTableView: NSTableView {
+/// Lets ⌘C copy the selected lines and Add Selection to Composer (⌘L) comment on them.
+final class DiffTableView: NSTableView, ComposerSelectionSource {
     var copyHandler: (() -> Void)?
+    var commentHandler: (() -> Void)?
+    var canComment: (() -> Bool)?
 
     override func menu(for event: NSEvent) -> NSMenu? {
         ThemedContextMenu.show(super.menu(for: event), for: event, in: window)
     }
+
+    var addToComposerTitle: String { String(localized: "Comment on Selected Lines…") }
+
+    var canAddSelectionToComposer: Bool { canComment?() ?? false }
+
+    func addSelectionToComposer() { commentHandler?() }
 
     @objc func copy(_ sender: Any?) { copyHandler?() }
 

@@ -1106,6 +1106,40 @@ struct ClaudeToolPresentationTests {
         let properties = try #require(CGImageSourceCopyPropertiesAtIndex(scaledSource, 0, nil) as? [CFString: Any])
         #expect((properties[kCGImagePropertyPixelWidth] as? Int) == ClaudeAttachments.maxPixelSize)
     }
+
+    /// A blank PDF with `pages` pages.
+    static func writePDF(pages: Int, to url: URL) throws -> URL {
+        var box = CGRect(x: 0, y: 0, width: 200, height: 200)
+        let context = try #require(CGContext(url as CFURL, mediaBox: &box, nil))
+        for _ in 0..<pages {
+            context.beginPDFPage(nil)
+            context.endPDFPage()
+        }
+        context.closePDF()
+        return url
+    }
+
+    @Test func pdfsBecomeDocumentsWithinThePageLimit() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-claude-pdf-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let small = try Self.writePDF(pages: 3, to: folder.appendingPathComponent("small.pdf"))
+        let large = try Self.writePDF(pages: ClaudeAttachments.maxDocumentPages - 2, to: folder.appendingPathComponent("large.pdf"))
+        let fake = folder.appendingPathComponent("fake.pdf")
+        try Data("not a pdf".utf8).write(to: fake)
+        let source = folder.appendingPathComponent("main.swift")
+        try Data("print(1)".utf8).write(to: source)
+
+        let blocks = ClaudeAttachments.documentBlocks(for: [small.path, fake.path, source.path, "/nonexistent.pdf"])
+        #expect(blocks.map { $0["title"] } == ["small.pdf"])
+        let data = try #require(blocks.first?.at("source.data")?.string.flatMap { Data(base64Encoded: $0) })
+        let written = try Data(contentsOf: small)
+        #expect(data == written)
+        #expect(blocks.first?.at("source.type") == "base64")
+        // The pages of all documents count together; one that would pass the limit is left to its path.
+        #expect(ClaudeAttachments.documentBlocks(for: [small.path, large.path]).map { $0["title"] } == ["small.pdf"])
+        #expect(ClaudeAttachments.documentBlocks(for: [large.path]).count == 1)
+    }
 }
 
 @MainActor
@@ -1279,12 +1313,14 @@ struct ClaudeSessionTests {
 
     private func input(
         _ text: String = "Reply with exactly: pong", model: String = "haiku", effort: String? = "low", speed: String? = nil,
-        access: AccessMode = .approval, interaction: InteractionMode = .build, images: [String] = [], recap: String? = nil,
+        access: AccessMode = .approval, interaction: InteractionMode = .build, images: [String] = [], files: [String] = [],
+        recap: String? = nil,
         newSessionRecap: String? = nil, title: String? = nil
     ) -> AgentTurnInput {
         AgentTurnInput(
             message: text, handoffRecap: recap, newSessionRecap: newSessionRecap ?? recap, threadTitle: title, imagePaths: images,
-            selection: ModelSelection(provider: .claude, modelID: model, effort: effort, speed: speed), accessMode: access,
+            filePaths: files, selection: ModelSelection(provider: .claude, modelID: model, effort: effort, speed: speed),
+            accessMode: access,
             interactionMode: interaction)
     }
 
@@ -1992,6 +2028,24 @@ struct ClaudeSessionTests {
         transport.emit([ClaudeFixture.lifecycle(uuid, "started"), ClaudeFixture.pongResult])
         try await session.send(input("", images: [path.path]))
         #expect(transport.userMessages.last?.at("message.content")?.array?.map { $0["type"] } == ["image"])
+    }
+
+    @Test func attachedPDFsAreSentAsDocumentsAndOtherFilesOnlyByPath() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-claude-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let pdf = try ClaudeToolPresentationTests.writePDF(pages: 2, to: folder.appendingPathComponent("spec.pdf"))
+        let notes = folder.appendingPathComponent("notes.txt")
+        try Data("plain".utf8).write(to: notes)
+        let session = makeSession()
+        try await session.start()
+        let text = "Summarize @\(pdf.path) @\(notes.path)"
+        try await session.send(input(text, files: [pdf.path, notes.path]))
+        let content = try #require(transport.userMessages.last?.at("message.content")?.array)
+        #expect(content.map { $0["type"] } == ["document", "text"])
+        #expect(content.first?.at("source.media_type") == "application/pdf")
+        #expect(content.first?["title"] == "spec.pdf")
+        #expect(content.last == ["type": "text", "text": .string(text)])
     }
 
     @Test func aCommandAfterARecapStartsTheLastTextBlock() async throws {

@@ -44,7 +44,7 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
         snoozedUntil = thread.snoozedUntil
         worktreePath = thread.worktreePath
         branch = thread.branch
-        hasDraft = !(thread.draft ?? "").isEmpty
+        hasDraft = !(thread.draft ?? "").isEmpty || !(thread.draftContext ?? []).isEmpty
         itemCount = thread.items.count
         hasUserMessages = thread.hasUserMessages
         sessionProviders = Self.ordered(thread.sessions.keys)
@@ -90,7 +90,8 @@ struct ThreadSummaryFile: Decodable {
             isArchived: container.lenient(Bool.self, forKey: key("isArchived")) ?? false,
             worktreePath: container.lenient(String.self, forKey: key("worktreePath")),
             branch: container.lenient(String.self, forKey: key("branch")),
-            draft: container.lenient(String.self, forKey: key("draft")), createdAt: createdAt)
+            draft: container.lenient(String.self, forKey: key("draft")),
+            draftContext: container.lenientArray(MessageContext.self, forKey: key("draftContext")), createdAt: createdAt)
         thread.updatedAt = container.lenient(Date.self, forKey: key("updatedAt")) ?? createdAt
         thread.snoozedUntil = container.lenient(Date.self, forKey: key("snoozedUntil"))
         summary = ThreadSummary(thread)

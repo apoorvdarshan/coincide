@@ -196,6 +196,25 @@ final class TerminalViewController: NSViewController {
             guard let self, let session else { return nil }
             return self.contextMenu(for: session)
         }
+        terminal.onAddSelection = { [weak self, weak session] in
+            guard let self, let session else { return }
+            self.addSelectionToComposer(from: session)
+        }
+    }
+
+    /// Attaches the selected output to the thread's message, naming the terminal and the folder its shell is in, as
+    /// T3 Code's terminal context does.
+    private func addSelectionToComposer(from session: TerminalSession) {
+        guard let threadID, let selected = session.terminalView.selectedLines() else { return }
+        let excerpt = MessageContext.TerminalExcerpt(
+            terminal: String(localized: "Terminal \(session.number)"), directory: session.directory.path,
+            lineStart: selected.first, lineEnd: selected.last, text: selected.text)
+        AppEvents.addToComposer(MessageContext(.terminal(excerpt)), threadID: threadID)
+    }
+
+    @objc private func addTerminalSelectionToComposer(_ sender: NSMenuItem) {
+        guard let session = sender.representedObject as? TerminalSession else { return }
+        addSelectionToComposer(from: session)
     }
 
     // MARK: Actions
@@ -298,6 +317,11 @@ final class TerminalViewController: NSViewController {
                 enabled: terminal.selectionActive))
         menu.addItem(item(String(localized: "Paste"), #selector(ShellTerminalView.paste(_:)), "v", target: terminal, enabled: running))
         menu.addItem(item(String(localized: "Select All"), #selector(ShellTerminalView.selectAll(_:)), "a", target: terminal))
+        menu.addItem(.separator())
+        menu.addItem(
+            item(
+                terminal.addToComposerTitle, #selector(addTerminalSelectionToComposer(_:)), "", session: session,
+                enabled: threadID != nil && terminal.selectedLines() != nil))
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Clear"), #selector(clearTerminal(_:)), "k", session: session))
         if terminal.isScrolledUp {

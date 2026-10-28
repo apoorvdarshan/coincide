@@ -1,8 +1,9 @@
+import CoreGraphics
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Image attachments as Messages API image blocks.
+/// Image attachments as Messages API image blocks, and attached PDFs as document blocks.
 enum ClaudeAttachments {
     /// The API accepts up to 5 MB of base64 per image, which is 3.75 MB of raw bytes.
     static let maxImageBytes = 3_750_000
@@ -25,6 +26,36 @@ enum ClaudeAttachments {
             ])
         }
         return (blocks, skipped)
+    }
+
+    /// PDFs the API takes per request, as T3 Code sends them: at most 100 pages and 20 MB in all, which leaves room
+    /// below the 32 MB request limit once base64 adds its third.
+    static let maxDocumentPages = 100
+    static let maxDocumentBytes = 20 * 1024 * 1024
+
+    /// Document blocks for the attached files that are PDFs, while they fit the limits above. Claude reads the others,
+    /// and any PDF left out, from the path the message mentions.
+    static func documentBlocks(for paths: [String]) -> [JSONValue] {
+        var blocks: [JSONValue] = []
+        var pages = 0
+        var bytes = 0
+        for path in paths {
+            let url = URL(fileURLWithPath: path)
+            guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > 0,
+                bytes + size <= maxDocumentBytes,
+                let data = try? Data(contentsOf: url), data.count == size, data.starts(with: Array("%PDF-".utf8)),
+                let provider = CGDataProvider(data: data as CFData), let document = CGPDFDocument(provider),
+                document.numberOfPages > 0, pages + document.numberOfPages <= maxDocumentPages
+            else { continue }
+            pages += document.numberOfPages
+            bytes += size
+            blocks.append([
+                "type": "document",
+                "source": ["type": "base64", "media_type": "application/pdf", "data": .string(data.base64EncodedString())],
+                "title": .string(url.lastPathComponent),
+            ])
+        }
+        return blocks
     }
 
     /// The image as-is when Claude accepts it, otherwise re-encoded (and downscaled) as PNG or JPEG.
