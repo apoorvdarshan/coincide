@@ -161,8 +161,8 @@ enum ClaudeFixture {
     /// The `models` of an `initialize` response from 2.1.308 on a Max plan (abridged).
     static let initializeModels: JSONValue = JSONValue.parse(
         #"""
-        [{"value":"default","resolvedModel":"claude-opus-5-5","displayName":"Default (recommended)","description":"Opus 5.5 · Best for everyday, complex tasks","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"],"supportsAdaptiveThinking":true},
-         {"value":"opus","resolvedModel":"claude-opus-5-5","displayName":"Opus 5.5","description":"For complex work and everyday tasks","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"]},
+        [{"value":"default","resolvedModel":"claude-opus-5-5","displayName":"Default (recommended)","description":"Opus 5.5 · Best for everyday, complex tasks","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"],"supportsAdaptiveThinking":true,"supportsFastMode":true},
+         {"value":"opus","resolvedModel":"claude-opus-5-5","displayName":"Opus 5.5","description":"For complex work and everyday tasks","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"],"supportsFastMode":true},
          {"value":"haiku","resolvedModel":"claude-haiku-5-5","displayName":"Haiku 5.5","description":"Fastest for quick answers","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"]},
          {"value":"claude-haiku-4-5-20251001","resolvedModel":"claude-haiku-4-5-20251001","displayName":"Haiku 4.5","description":"Fastest for quick answers","supportsThinkingOff":true},
          {"value":"claude-opus-4-6","resolvedModel":"claude-opus-4-6","displayName":"Opus 4.6","description":"Best for everyday, complex tasks","supportsEffort":true,"supportedEffortLevels":["low","medium","high","max"]},
@@ -733,6 +733,28 @@ struct ClaudeCatalogTests {
         #expect(models.allSatisfy { $0.provider == .claude && $0.supportsImages })
     }
 
+    @Test func fastModeIsOfferedWhereTheCLISaysSo() throws {
+        let models = ClaudeModelCatalog.models(fromInitialize: try #require(ClaudeFixture.initializeModels.array))
+        #expect(models.map(\.speeds) == [[.fast], [.fast], [], [], [], []])
+        // The built-in list cannot know, so it offers none.
+        #expect(ClaudeModelCatalog.fallbackModels(version: "2.1.308").allSatisfy { $0.speeds.isEmpty })
+    }
+
+    @Test func fastModeReasonsReadLikeClaudeCodes() {
+        #expect(
+            ClaudeModelCatalog.fastModeUnavailableMessage(reason: "extra_usage_disabled")
+                == "Fast mode requires usage credits, so Claude Code ran at standard speed.")
+        #expect(
+            ClaudeModelCatalog.fastModeUnavailableMessage(reason: "free")
+                == "Fast mode requires a paid subscription, so Claude Code ran at standard speed.")
+        #expect(
+            ClaudeModelCatalog.fastModeUnavailableMessage(reason: "something_new")
+                == "Fast mode is currently unavailable, so Claude Code ran at standard speed.")
+        for passing in [nil, "pending", "network_error"] {
+            #expect(ClaudeModelCatalog.fastModeUnavailableMessage(reason: passing) == nil)
+        }
+    }
+
     @Test func fallbackListFollowsTheInstalledVersion() {
         let current = ClaudeModelCatalog.fallbackModels(version: "2.1.308").map(\.modelID)
         #expect(current.prefix(5) == ["default", "opus", "sonnet", "fable", "haiku"])
@@ -1264,14 +1286,14 @@ struct ClaudeSessionTests {
     private let transports = Box<[FakeClaudeTransport]>([])
 
     private func makeSession(
-        model: String = "haiku", effort: String? = "low", access: AccessMode = .approval, interaction: InteractionMode = .build,
-        resume: String? = nil, overageIncludedName: String? = nil,
+        model: String = "haiku", effort: String? = "low", speed: String? = nil, access: AccessMode = .approval,
+        interaction: InteractionMode = .build, resume: String? = nil, overageIncludedName: String? = nil,
         replies: (@MainActor (Int, FakeClaudeTransport, JSONValue) -> FakeClaudeTransport.Reply?)? = nil
     ) -> ClaudeSession {
         let launch = AgentLaunch(
             provider: .claude, executable: URL(fileURLWithPath: "/usr/bin/false"), environment: [:],
             workingDirectory: URL(fileURLWithPath: ClaudeFixture.cwd), resumeSessionID: resume,
-            selection: ModelSelection(provider: .claude, modelID: model, effort: effort), accessMode: access,
+            selection: ModelSelection(provider: .claude, modelID: model, effort: effort, speed: speed), accessMode: access,
             interactionMode: interaction)
         let transports = self.transports
         let session = ClaudeSession(launch: launch, overageIncludedName: overageIncludedName) { config in
@@ -1290,14 +1312,23 @@ struct ClaudeSessionTests {
     private var transport: FakeClaudeTransport { transports.value.last! }
 
     private func input(
-        _ text: String = "Reply with exactly: pong", model: String = "haiku", effort: String? = "low", access: AccessMode = .approval,
-        interaction: InteractionMode = .build, images: [String] = [], files: [String] = [], recap: String? = nil,
+        _ text: String = "Reply with exactly: pong", model: String = "haiku", effort: String? = "low", speed: String? = nil,
+        access: AccessMode = .approval, interaction: InteractionMode = .build, images: [String] = [], files: [String] = [],
+        recap: String? = nil,
         newSessionRecap: String? = nil, title: String? = nil
     ) -> AgentTurnInput {
         AgentTurnInput(
             message: text, handoffRecap: recap, newSessionRecap: newSessionRecap ?? recap, threadTitle: title, imagePaths: images,
-            filePaths: files, selection: ModelSelection(provider: .claude, modelID: model, effort: effort), accessMode: access,
+            filePaths: files, selection: ModelSelection(provider: .claude, modelID: model, effort: effort, speed: speed),
+            accessMode: access,
             interactionMode: interaction)
+    }
+
+    /// The `--settings` JSON a process was started with.
+    private func launchSettings(_ config: ClaudeLaunchConfig) throws -> JSONValue {
+        let arguments = config.arguments
+        let index = try #require(arguments.firstIndex(of: "--settings"))
+        return try #require(JSONValue.parse(arguments[index + 1]))
     }
 
     private var notices: [String] {
@@ -1669,6 +1700,70 @@ struct ClaudeSessionTests {
         try await session.send(input(model: "default", effort: "ultracode", access: .fullAccess, interaction: .plan))
         #expect(transport.controlRequests.suffix(2) == [["subtype": "set_model", "model": "default"], ["subtype": "set_permission_mode", "mode": "plan"]])
         #expect(transports.value.count == 1)
+    }
+
+    @Test func fastModeOptsInWithAFlagSettingAtLaunchAndChangesLive() async throws {
+        let session = makeSession(model: "opus", effort: "high", speed: "fast")
+        try await session.start()
+        #expect(try launchSettings(transport.config)["fastMode"] == true)
+        let first = try await startTurn(session, input(model: "opus", effort: "high", speed: "fast"))
+        #expect(!transport.controlRequests.contains { $0["subtype"] == "apply_flag_settings" })
+        transport.emit([ClaudeFixture.pongResult, ClaudeFixture.lifecycle(first, "completed")])
+
+        // Back to standard speed drops the setting, and fast mode comes back the same way.
+        let second = try await startTurn(session, input(model: "opus", effort: "high"))
+        #expect(transport.controlRequests.last == ["subtype": "apply_flag_settings", "settings": ["fastMode": .null]])
+        transport.emit([ClaudeFixture.pongResult, ClaudeFixture.lifecycle(second, "completed")])
+        try await session.send(input(model: "opus", effort: "high", speed: "fast"))
+        #expect(transport.controlRequests.last == ["subtype": "apply_flag_settings", "settings": ["fastMode": true]])
+        #expect(transports.value.count == 1)
+    }
+
+    @Test func standardSpeedLaunchesWithoutFastMode() async throws {
+        let session = makeSession(model: "opus")
+        try await session.start()
+        #expect(try launchSettings(transport.config) == ["showThinkingSummaries": true])
+    }
+
+    @Test func refusedFastModeRelaunchesWithIt() async throws {
+        let session = makeSession(model: "opus", effort: "high") { _, _, request in
+            request["subtype"] == "apply_flag_settings" ? .error("Unknown setting") : nil
+        }
+        try await session.start()
+        let id = try #require(session.sessionID)
+        try await session.send(input(model: "opus", effort: "high", speed: "fast"))
+        #expect(transports.value.count == 2)
+        #expect(transport.config.fastMode)
+        #expect(try launchSettings(transport.config)["fastMode"] == true)
+        #expect(transport.config.identity == .fresh(id))
+        #expect(transport.userMessages.count == 1)
+    }
+
+    @Test func fastModeThatCannotRunIsPointedOutOnce() async throws {
+        let session = makeSession(model: "opus", effort: "high", speed: "fast")
+        try await session.start()
+        let notice = "Fast mode requires usage credits, so Claude Code ran at standard speed."
+        func result(_ state: String, reason: String?) throws -> String {
+            var fields = try #require(JSONValue.parse(ClaudeFixture.pongResult)?.object)
+            fields["fast_mode_state"] = .string(state)
+            if let reason { fields["fast_mode_disabled_reason"] = .string(reason) }
+            return JSONValue.object(fields).compactJSON
+        }
+        for _ in 0..<2 {
+            let uuid = try await startTurn(session, input(model: "opus", effort: "high", speed: "fast"))
+            transport.emit([try result("off", reason: "extra_usage_disabled"), ClaudeFixture.lifecycle(uuid, "completed")])
+        }
+        #expect(notices == [notice])
+        // Once fast mode runs again, a later refusal is pointed out again.
+        var uuid = try await startTurn(session, input(model: "opus", effort: "high", speed: "fast"))
+        transport.emit([try result("on", reason: nil), ClaudeFixture.lifecycle(uuid, "completed")])
+        uuid = try await startTurn(session, input(model: "opus", effort: "high", speed: "fast"))
+        transport.emit([try result("off", reason: "extra_usage_disabled"), ClaudeFixture.lifecycle(uuid, "completed")])
+        #expect(notices == [notice, notice])
+        // Turns at standard speed never mention it.
+        uuid = try await startTurn(session, input(model: "opus", effort: "high"))
+        transport.emit([try result("off", reason: "sdk_opt_in_required"), ClaudeFixture.lifecycle(uuid, "completed")])
+        #expect(notices.count == 2)
     }
 
     @Test func fullAccessComesOnlyWithAProcessStartedForIt() async throws {

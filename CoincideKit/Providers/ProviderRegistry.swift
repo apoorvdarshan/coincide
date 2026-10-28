@@ -80,6 +80,16 @@ public final class ProviderRegistry {
         return models
     }
 
+    /// An agent's models as the picker lists them: favorites first, hidden ones left out (`AppSettings.pickerModels`).
+    public func pickerModels(for kind: ProviderKind, current: ModelSelection?) -> [ModelOption] {
+        store.settings.pickerModels(models(for: kind), current: current)
+    }
+
+    /// The ready agents' favorite models, in display order.
+    public var favoriteModels: [ModelOption] {
+        store.settings.favorites(in: readyKinds.flatMap { models(for: $0) })
+    }
+
     public func model(for selection: ModelSelection) -> ModelOption? {
         models(for: selection.provider).first { $0.modelID == selection.modelID }
     }

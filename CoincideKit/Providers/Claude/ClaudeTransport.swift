@@ -46,6 +46,8 @@ struct ClaudeLaunchConfig: Sendable, Hashable {
     /// Whether the process may switch into full access (bypassPermissions) later. Only processes started
     /// while the user picked full access get it, so a session in approval mode can never skip prompts.
     var allowsBypass: Bool
+    /// Fast mode, which Claude Code only runs for an SDK client that opts in with the `fastMode` flag setting.
+    var fastMode = false
 
     var sessionID: String {
         switch identity {
@@ -56,6 +58,7 @@ struct ClaudeLaunchConfig: Sendable, Hashable {
     var arguments: [String] {
         var settings: [String: JSONValue] = ["showThinkingSummaries": true]
         if effort.ultracode { settings["ultracode"] = true }
+        if fastMode { settings["fastMode"] = true }
         var arguments = [
             "--output-format", "stream-json", "--verbose", "--input-format", "stream-json", "--include-partial-messages",
             // Permission prompts come back over stdio as `can_use_tool` control requests.

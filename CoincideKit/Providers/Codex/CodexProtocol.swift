@@ -44,9 +44,11 @@ enum CodexProtocol {
         return .object(params)
     }
 
-    /// `turn/start` carries the model, effort, permissions and mode, so every turn applies the latest selection.
+    /// `turn/start` carries the model, effort, speed, permissions and mode, so every turn applies the latest selection.
+    /// `serviceTier` is the speed to ask for (`serviceTier(for:explicit:)`), or nil to leave the thread's as it is.
     static func turnStartParams(
-        threadID: String, cwd: String, input: AgentTurnInput, fallbackModel: String?, skills: [String: String] = [:]
+        threadID: String, cwd: String, input: AgentTurnInput, fallbackModel: String?, skills: [String: String] = [:],
+        serviceTier: String? = nil
     ) -> JSONValue {
         let model = modelID(input.selection) ?? fallbackModel
         let effort = reasoningEffort(input.selection)
@@ -61,6 +63,7 @@ enum CodexProtocol {
             "sandboxPolicy": sandboxPolicy(for: input.accessMode),
         ]
         if let effort { params["effort"] = .string(effort) }
+        if let serviceTier { params["serviceTier"] = .string(serviceTier) }
         if let model {
             params["model"] = .string(model)
             // Sent in both modes so leaving Plan mode clears it. Null instructions select Codex's own.
@@ -139,6 +142,16 @@ enum CodexProtocol {
         return modelID(selection).flatMap(defaultEffortOverride(for:))
     }
 
+    /// Codex's id for standard speed.
+    static let standardServiceTier = "default"
+
+    /// The service tier a turn asks for: the selection's speed, or else nil to leave the thread's as it is. Codex keeps a
+    /// tier for the thread's later turns, so once one was asked for, `explicit` asks for standard speed by name.
+    static func serviceTier(for selection: ModelSelection, explicit: Bool) -> String? {
+        if let speed = selection.speed?.trimmingCharacters(in: .whitespaces), !speed.isEmpty { return speed }
+        return explicit ? standardServiceTier : nil
+    }
+
     /// Effort T3 Code uses instead of the catalog default for some models.
     static func defaultEffortOverride(for model: String) -> String? {
         modelFamily(model) == "gpt-6-astra" ? "medium" : nil
@@ -201,7 +214,27 @@ enum CodexProtocol {
         let modalities = entry["inputModalities"]?.array?.compactMap(\.string)
         return ModelOption(
             provider: .codex, modelID: slug, displayName: displayName(entry["displayName"]?.string ?? slug),
-            efforts: efforts, defaultEffort: defaultEffort, supportsImages: modalities?.contains("image") ?? true)
+            efforts: efforts, defaultEffort: defaultEffort, supportsImages: modalities?.contains("image") ?? true,
+            speeds: speeds(from: entry))
+    }
+
+    /// T3 Code's notes for tiers, used before the catalog's own.
+    private static let serviceTierDetails = ["ultrafast": String(localized: "Even faster, more expensive")]
+
+    /// The faster service tiers a `model/list` entry offers, from `serviceTiers` or, in older catalogs, the ids in
+    /// `additionalSpeedTiers`.
+    static func speeds(from entry: JSONValue) -> [ModelSpeed] {
+        if let tiers = entry["serviceTiers"]?.array, !tiers.isEmpty {
+            return tiers.compactMap { tier in
+                guard let id = tier["id"]?.string, !id.isEmpty, id != standardServiceTier else { return nil }
+                let name = tier["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? id
+                let description = tier["description"]?.string.flatMap { $0.isEmpty ? nil : $0 }
+                return ModelSpeed(id: id, name: name, detail: serviceTierDetails[id] ?? description)
+            }
+        }
+        return (entry["additionalSpeedTiers"]?.array ?? []).compactMap(\.string)
+            .filter { !$0.isEmpty && $0 != standardServiceTier }
+            .map { id in ModelSpeed(id: id, name: id == ModelSpeed.fast.id ? ModelSpeed.fast.name : id, detail: serviceTierDetails[id]) }
     }
 
     /// `gpt-6-luna` → `GPT-6-Luna`; names that are already formatted stay as they are.

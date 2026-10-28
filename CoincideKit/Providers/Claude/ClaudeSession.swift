@@ -42,6 +42,7 @@ final class ClaudeSession: AgentSession {
         var effort: ClaudeModelCatalog.EffortPlan
         var permissionMode: String
         var allowsBypass: Bool
+        var fastMode: Bool
     }
 
     /// What the running process was told.
@@ -50,6 +51,7 @@ final class ClaudeSession: AgentSession {
         var effort: ClaudeModelCatalog.EffortPlan
         var requestedMode: String
         var allowsBypass: Bool
+        var fastMode: Bool
 
         func effortMatches(_ other: ClaudeModelCatalog.EffortPlan) -> Bool {
             effort.cliEffort == other.cliEffort && effort.ultracode == other.ultracode
@@ -96,6 +98,8 @@ final class ClaudeSession: AgentSession {
     private var prompts: [String: PendingPrompt] = [:]
     private var tails: [String: ClaudeTaskOutputTail] = [:]
     private var noticedFullAccessFallback = false
+    /// Why fast mode last could not run, so a run of turns at standard speed is pointed out once.
+    private var noticedFastModeReason: String?
     private var isShutDown = false
 
     init(
@@ -291,7 +295,7 @@ final class ClaudeSession: AgentSession {
             model: ClaudeModelCatalog.launchModel(for: selection.modelID),
             effort: ClaudeModelCatalog.effortPlan(modelID: selection.modelID, resolvedModel: resolved, effort: selection.effort),
             permissionMode: ClaudeLaunchConfig.permissionMode(access: access, interaction: interaction),
-            allowsBypass: ClaudeLaunchConfig.allowsBypass(access: access))
+            allowsBypass: ClaudeLaunchConfig.allowsBypass(access: access), fastMode: selection.speed == ModelSpeed.fast.id)
     }
 
     /// Starts a process. When the saved conversation is gone it starts a fresh one; when a fresh id turns out to be
@@ -300,7 +304,7 @@ final class ClaudeSession: AgentSession {
         func config(_ identity: ClaudeLaunchConfig.Identity) -> ClaudeLaunchConfig {
             ClaudeLaunchConfig(
                 identity: identity, model: settings.model, effort: settings.effort, permissionMode: settings.permissionMode,
-                allowsBypass: settings.allowsBypass)
+                allowsBypass: settings.allowsBypass, fastMode: settings.fastMode)
         }
         do {
             try await spawn(config(identity))
@@ -368,7 +372,8 @@ final class ClaudeSession: AgentSession {
         commandNames = Set(info.commands.map(\.name))
         if !info.commands.isEmpty { emit(.commandsDiscovered(info.commands)) }
         live = LiveSettings(
-            model: config.model, effort: config.effort, requestedMode: config.permissionMode, allowsBypass: config.allowsBypass)
+            model: config.model, effort: config.effort, requestedMode: config.permissionMode, allowsBypass: config.allowsBypass,
+            fastMode: config.fastMode)
         mapper.notePermissionMode(info.permissionMode)
         if case .resume = config.identity { conversationExists = true }
         if sessionID != config.sessionID {
@@ -436,7 +441,7 @@ final class ClaudeSession: AgentSession {
 
     // MARK: Per-turn changes
 
-    /// Applies the turn's model, effort and permission mode, live when the protocol allows it.
+    /// Applies the turn's model, effort, speed and permission mode, live when the protocol allows it.
     private func apply(_ settings: TurnSettings) async throws {
         guard var live else { throw AgentError.notRunning }
         // Full access needs a process started for it, and leaving full access drops that process.
@@ -462,6 +467,15 @@ final class ClaudeSession: AgentSession {
                 } else {
                     needsRelaunch = true
                 }
+            }
+        }
+        // Fast mode is a flag setting too (as in T3); null drops it, leaving the process at standard speed.
+        if !needsRelaunch, settings.fastMode != live.fastMode {
+            let flags: JSONValue = ["fastMode": settings.fastMode ? true : .null]
+            if (try? await control(["subtype": "apply_flag_settings", "settings": flags])) != nil {
+                live.fastMode = settings.fastMode
+            } else {
+                needsRelaunch = true
             }
         }
         self.live = live
@@ -504,6 +518,21 @@ final class ClaudeSession: AgentSession {
         }
     }
 
+    /// Says once, when fast mode was asked for, that Claude Code ran at standard speed and why (no paid plan, say). A
+    /// result names the reason until fast mode runs again.
+    private func noteFastMode(in result: JSONValue) {
+        guard live?.fastMode == true else { return }
+        if result["fast_mode_state"]?.string == "on" {
+            noticedFastModeReason = nil
+            return
+        }
+        guard let reason = result["fast_mode_disabled_reason"]?.string, reason != noticedFastModeReason,
+            let message = ClaudeModelCatalog.fastModeUnavailableMessage(reason: reason)
+        else { return }
+        noticedFastModeReason = reason
+        emit(.notice(message))
+    }
+
     // MARK: Frames
 
     private func receive(_ line: String) {
@@ -528,6 +557,7 @@ final class ClaudeSession: AgentSession {
                 if owned { turn?.settled.formUnion(Self.answeredMessages(frame)) }
                 emit(mapper.map(frame))
                 if owned {
+                    noteFastMode(in: frame)
                     if !endsSegment(frame) { finishTurn(withResult: frame) }
                 } else if turn == nil {
                     finishAgentTurn(withResult: frame)

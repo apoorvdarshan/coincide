@@ -1,9 +1,11 @@
 import AppKit
 import CoincideKit
 
-/// The composer's agent and model picker, a themed popup in place of the long system menu: a search field, a tab per
-/// agent with its logo, the chosen agent's models in a short scrolling list with their context sizes, and the
-/// current model's reasoning efforts as chips. A search looks through every ready agent's models.
+/// The composer's agent and model picker, a themed popup in place of the long system menu: a search field, a Favorites
+/// tab and a tab per agent with its logo, the chosen tab's models in a short scrolling list with their context sizes,
+/// and the current model's reasoning efforts and speeds as chips. A search looks through every ready agent's models.
+/// As in T3 Code, a model's star (shown on hover, or from its context menu) makes it a favorite, listed first; models
+/// hidden in Settings › Models are left out.
 final class ModelPickerViewController: NSViewController, ThemedPopupContent, NSTableViewDataSource, NSTableViewDelegate,
     NSSearchFieldDelegate
 {
@@ -11,34 +13,51 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
     var onSizeChange: (() -> Void)?
     var onSelect: ((ModelSelection) -> Void)?
     var onEffort: ((String) -> Void)?
+    /// The speed chosen for the current model; nil for standard.
+    var onSpeed: ((String?) -> Void)?
     var onRefresh: (() -> Void)?
     var onSettings: (() -> Void)?
 
+    /// What a tab lists: the favorites of every agent, or one agent's models.
+    private enum Tab: Hashable {
+        case favorites
+        case agent(ProviderKind)
+    }
+
     private let registry: ProviderRegistry
+    private let store: AppStore
     private var current: ModelSelection
-    private var shownKind: ProviderKind
+    private var shownTab: Tab
     private var models: [ModelOption] = []
 
     private let searchField = NSSearchField()
     private let tabs = NSStackView()
-    private var tabButtons: [ProviderKind: PickerTabButton] = [:]
+    private var tabButtons: [Tab: PickerTabButton] = [:]
     private let tableView = ThemedPopupTableView()
     private let scrollView = NSScrollView()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    private let traits = NSStackView()
     private let effortRow = NSStackView()
     private let effortLabel = NSTextField(labelWithString: String(localized: "Reasoning"))
     private let effortChips = NSStackView()
+    private let speedRow = NSStackView()
+    private let speedLabel = NSTextField(labelWithString: String(localized: "Speed"))
+    private let speedChips = NSStackView()
 
     static let width: CGFloat = 340
     private static let rowHeight: CGFloat = 30
     private static let visibleRows = 9
 
-    init(current: ModelSelection, registry: ProviderRegistry) {
+    /// Opens on the favorites when there are any, as T3 Code's picker does, else on the current agent.
+    init(current: ModelSelection, registry: ProviderRegistry, store: AppStore) {
         self.current = current
         self.registry = registry
-        shownKind = current.provider
+        self.store = store
+        shownTab = registry.favoriteModels.isEmpty ? .agent(current.provider) : .favorites
         super.init(nibName: nil, bundle: nil)
     }
+
+    private var tabOrder: [Tab] { [.favorites] + registry.orderedKinds.map { .agent($0) } }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
@@ -60,11 +79,19 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         tabs.orientation = .horizontal
         tabs.distribution = .fillEqually
         tabs.spacing = 4
-        for kind in registry.orderedKinds {
-            let button = PickerTabButton(kind: kind, isReady: registry.status(kind).state == .ready) { [weak self] in
-                self?.show(kind)
+        for tab in tabOrder {
+            let button: PickerTabButton
+            switch tab {
+            case .favorites:
+                button = PickerTabButton(image: Theme.symbol("star.fill", size: 15) ?? NSImage(), label: String(localized: "Favorites")) {
+                    [weak self] in self?.show(tab)
+                }
+            case .agent(let kind):
+                button = PickerTabButton(kind: kind, isReady: registry.status(kind).state == .ready) { [weak self] in
+                    self?.show(tab)
+                }
             }
-            tabButtons[kind] = button
+            tabButtons[tab] = button
             tabs.addArrangedSubview(button)
         }
 
@@ -82,6 +109,7 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         tableView.action = #selector(rowClicked)
         tableView.onActivate = { [weak self] in self?.chooseSelection() }
         tableView.onMove = { [weak self] delta in self?.moveSelection(delta) }
+        tableView.rowMenu = { [weak self] row in self?.menu(forRow: row) }
         scrollView.documentView = tableView
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
@@ -93,13 +121,24 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.isSelectable = true
 
-        effortLabel.font = .systemFont(ofSize: 11)
-        effortLabel.textColor = .secondaryLabelColor
-        effortChips.orientation = .horizontal
-        effortChips.spacing = 4
-        effortRow.orientation = .horizontal
-        effortRow.spacing = 8
-        effortRow.setViews([effortLabel, effortChips], in: .leading)
+        for label in [effortLabel, speedLabel] {
+            label.font = .systemFont(ofSize: 11)
+            label.textColor = .secondaryLabelColor
+        }
+        // The chips of both rows start in one column.
+        let labelWidth = ceil(max(effortLabel.fittingSize.width, speedLabel.fittingSize.width))
+        for (row, label, chips) in [(effortRow, effortLabel, effortChips), (speedRow, speedLabel, speedChips)] {
+            label.widthAnchor.constraint(equalToConstant: labelWidth).isActive = true
+            chips.orientation = .horizontal
+            chips.spacing = 4
+            row.orientation = .horizontal
+            row.spacing = 8
+            row.setViews([label, chips], in: .leading)
+        }
+        traits.orientation = .vertical
+        traits.alignment = .leading
+        traits.spacing = 8
+        traits.setViews([effortRow, speedRow], in: .top)
 
         let refresh = PickerTextButton(title: String(localized: "Refresh"), symbol: "arrow.clockwise") { [weak self] in
             self?.onRefresh?()
@@ -114,7 +153,7 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         footer.setViews([settings], in: .trailing)
 
         let dividers = (0..<3).map { _ in ThemedDivider() }
-        let views: [NSView] = [searchIcon, searchField, tabs, scrollView, statusLabel, effortRow, footer] + dividers
+        let views: [NSView] = [searchIcon, searchField, tabs, scrollView, statusLabel, traits, footer] + dividers
         for view in views {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
@@ -142,10 +181,10 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
             statusLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
             statusLabel.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
             dividers[2].topAnchor.constraint(equalTo: scrollView.bottomAnchor),
-            effortRow.topAnchor.constraint(equalTo: dividers[2].bottomAnchor, constant: 10),
-            effortRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
-            effortRow.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -12),
-            footer.topAnchor.constraint(equalTo: effortRow.bottomAnchor, constant: 8),
+            traits.topAnchor.constraint(equalTo: dividers[2].bottomAnchor, constant: 10),
+            traits.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
+            traits.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -12),
+            footer.topAnchor.constraint(equalTo: traits.bottomAnchor, constant: 8),
             footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             footer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
             footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
@@ -160,6 +199,7 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         view = root
         reload()
         updateEfforts()
+        updateSpeeds()
         preferredContentSize = root.fittingSize
     }
 
@@ -173,46 +213,124 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
 
     private var query: String { searchField.stringValue.trimmingCharacters(in: .whitespaces).lowercased() }
 
-    private func show(_ kind: ProviderKind) {
-        shownKind = kind
+    private func show(_ tab: Tab) {
+        shownTab = tab
         searchField.stringValue = ""
         reload()
         moveSelection(1)
     }
 
+    /// Whether the rows mix agents, so each shows its agent's logo.
+    private var mixesAgents: Bool { !query.isEmpty || shownTab == .favorites }
+
     private func reload() {
         let isSearching = !query.isEmpty
+        var unavailable: ProviderKind?
+        var hidesAll = false
         if isSearching {
             models = registry.readyKinds.flatMap { kind in
-                registry.models(for: kind).filter {
+                registry.pickerModels(for: kind, current: current).filter {
                     $0.displayName.lowercased().contains(query) || $0.modelID.lowercased().contains(query)
                         || kind.displayName.lowercased().contains(query)
                 }
             }
-        } else if registry.status(shownKind).state == .ready {
-            var list = registry.models(for: shownKind)
-            if shownKind == current.provider, !list.contains(where: { $0.modelID == current.modelID }) {
-                list.insert(ModelOption(provider: shownKind, modelID: current.modelID, displayName: current.modelID), at: 0)
-            }
-            models = list
         } else {
-            models = []
+            switch shownTab {
+            case .favorites:
+                models = registry.favoriteModels
+            case .agent(let kind) where registry.status(kind).state == .ready:
+                var list = registry.pickerModels(for: kind, current: current)
+                if kind == current.provider, !list.contains(where: { $0.modelID == current.modelID }) {
+                    list.insert(ModelOption(provider: kind, modelID: current.modelID, displayName: current.modelID), at: 0)
+                }
+                models = list
+                hidesAll = list.isEmpty && store.settings.hiddenModels.contains { $0.provider == kind }
+            case .agent(let kind):
+                models = []
+                unavailable = kind
+            }
         }
-        for (kind, button) in tabButtons { button.isSelected = !isSearching && kind == shownKind }
-        let unavailable = !isSearching && registry.status(shownKind).state != .ready
-        statusLabel.isHidden = !unavailable
-        statusLabel.stringValue =
-            unavailable ? "\(shownKind.displayName): \(ComposerMenus.statusText(shownKind, registry: registry))" : ""
-        scrollView.isHidden = unavailable
-        if isSearching, models.isEmpty {
-            statusLabel.isHidden = false
-            statusLabel.stringValue = String(localized: "No models match.")
-        }
+        for (tab, button) in tabButtons { button.isSelected = !isSearching && tab == shownTab }
+        let status: String? =
+            if let unavailable {
+                "\(unavailable.displayName): \(ComposerMenus.statusText(unavailable, registry: registry))"
+            } else if !models.isEmpty {
+                nil
+            } else if isSearching {
+                String(localized: "No models match.")
+            } else if shownTab == .favorites {
+                String(localized: "No favorites yet. Star a model to keep it here.")
+            } else if hidesAll {
+                String(localized: "Every model is hidden. Settings › Models shows them again.")
+            } else {
+                String(localized: "No models yet.")
+            }
+        statusLabel.isHidden = status == nil
+        statusLabel.stringValue = status ?? ""
+        scrollView.isHidden = unavailable != nil
         tableView.reloadData()
     }
 
     private func isCurrent(_ model: ModelOption) -> Bool {
         model.provider == current.provider && model.modelID == current.modelID
+    }
+
+    // MARK: Favorites
+
+    /// Stars or unstars a model and lists it again in its new place, keeping it highlighted if it was.
+    private func toggleFavorite(_ model: ModelOption) {
+        let isFavorite = store.settings.isFavorite(model.reference)
+        let highlighted = models.indices.contains(tableView.selectedRow) ? models[tableView.selectedRow].id : nil
+        store.updateSettings { $0.setFavorite(!isFavorite, model.reference) }
+        reload()
+        if let highlighted, let index = models.firstIndex(where: { $0.id == highlighted }) {
+            select(index)
+        } else {
+            tableView.deselectAll(nil)
+        }
+    }
+
+    /// A row's context menu: star or unstar the model, or hide it (Settings › Models shows it again).
+    private func menu(forRow row: Int) -> NSMenu? {
+        guard models.indices.contains(row) else { return nil }
+        let model = models[row]
+        let isFavorite = store.settings.isFavorite(model.reference)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let favorite = menu.addItem(
+            withTitle: isFavorite ? String(localized: "Remove from Favorites") : String(localized: "Add to Favorites"),
+            action: #selector(toggleFavoriteItem(_:)), keyEquivalent: "")
+        favorite.image = Theme.symbol(isFavorite ? "star.slash" : "star")
+        let hide = menu.addItem(withTitle: String(localized: "Hide Model"), action: #selector(hideItem(_:)), keyEquivalent: "")
+        hide.image = Theme.symbol("eye.slash")
+        // The current model always shows, so hiding it would change nothing yet.
+        hide.isEnabled = !isCurrent(model)
+        menu.addItem(.separator())
+        let manage = menu.addItem(
+            withTitle: String(localized: "Manage Models…"), action: #selector(manageModels(_:)), keyEquivalent: "")
+        manage.image = Theme.symbol("slider.horizontal.3")
+        for item in menu.items {
+            item.target = self
+            item.representedObject = model
+        }
+        return menu
+    }
+
+    @objc private func toggleFavoriteItem(_ sender: NSMenuItem) {
+        guard let model = sender.representedObject as? ModelOption else { return }
+        toggleFavorite(model)
+    }
+
+    @objc private func hideItem(_ sender: NSMenuItem) {
+        guard let model = sender.representedObject as? ModelOption else { return }
+        store.updateSettings { $0.setHidden(true, model.reference) }
+        reload()
+        tableView.deselectAll(nil)
+    }
+
+    @objc private func manageModels(_ sender: NSMenuItem) {
+        close?()
+        AppEvents.showSettings(section: .models)
     }
 
     /// Chips for the current model's reasoning efforts; hidden when it has none.
@@ -231,6 +349,32 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
             }, in: .leading)
     }
 
+    /// Chips for the current model's speeds, standard first; hidden when it runs at one speed.
+    private func updateSpeeds() {
+        let model = registry.model(for: current)
+        let speeds = model?.speeds ?? []
+        speedRow.isHidden = speeds.isEmpty
+        let selected = model?.speed(current.speed)
+        let standard = PickerChip(title: String(localized: "Standard"), isSelected: selected == nil) { [weak self] in
+            self?.chooseSpeed(nil)
+        }
+        speedChips.setViews(
+            [standard]
+                + speeds.map { speed in
+                    let chip = PickerChip(title: speed.name, isSelected: speed == selected) { [weak self] in
+                        self?.chooseSpeed(speed.id)
+                    }
+                    chip.toolTip = speed.detail
+                    return chip
+                }, in: .leading)
+    }
+
+    private func chooseSpeed(_ speed: String?) {
+        current.speed = speed
+        onSpeed?(speed)
+        updateSpeeds()
+    }
+
     // MARK: Table
 
     func numberOfRows(in tableView: NSTableView) -> Int { models.count }
@@ -238,7 +382,9 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let view = ModelPickerRowView()
         let model = models[row]
-        view.configure(model, isCurrent: isCurrent(model), showsAgent: !query.isEmpty)
+        view.configure(
+            model, isCurrent: isCurrent(model), showsAgent: mixesAgents, isFavorite: store.settings.isFavorite(model.reference))
+        view.onToggleFavorite = { [weak self] in self?.toggleFavorite(model) }
         view.isHighlighted = row == tableView.selectedRow
         return view
     }
@@ -264,9 +410,16 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         select(index < 0 ? 0 : min(max(index + delta, 0), models.count - 1))
     }
 
+    /// A click on a row's star stars or unstars the model; anywhere else chooses it.
     @objc private func rowClicked() {
-        guard models.indices.contains(tableView.clickedRow) else { return }
-        choose(models[tableView.clickedRow])
+        let row = tableView.clickedRow
+        guard models.indices.contains(row) else { return }
+        if let view = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ModelPickerRowView,
+            let event = NSApp.currentEvent, view.starContains(view.convert(event.locationInWindow, from: nil))
+        {
+            return toggleFavorite(models[row])
+        }
+        choose(models[row])
     }
 
     private func chooseSelection() {
@@ -290,33 +443,43 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         case #selector(NSResponder.moveUp(_:)): moveSelection(-1)
         case #selector(NSResponder.insertNewline(_:)): chooseSelection()
         case #selector(NSResponder.cancelOperation(_:)): close?()
-        case #selector(NSResponder.insertTab(_:)): cycleAgent(1)
-        case #selector(NSResponder.insertBacktab(_:)): cycleAgent(-1)
+        case #selector(NSResponder.insertTab(_:)): cycleTab(1)
+        case #selector(NSResponder.insertBacktab(_:)): cycleTab(-1)
         default: return false
         }
         return true
     }
 
-    /// Tab and Shift-Tab step through the agents.
-    private func cycleAgent(_ delta: Int) {
-        let kinds = registry.orderedKinds
-        guard let index = kinds.firstIndex(of: shownKind), !kinds.isEmpty else { return }
-        show(kinds[(index + delta + kinds.count) % kinds.count])
+    /// Tab and Shift-Tab step through Favorites and the agents.
+    private func cycleTab(_ delta: Int) {
+        let tabs = tabOrder
+        guard let index = tabs.firstIndex(of: shownTab) else { return }
+        show(tabs[(index + delta + tabs.count) % tabs.count])
     }
 }
 
-/// A model in the picker: a check for the current one, its name (with the agent's logo while searching), a Default tag,
-/// and its context size.
+/// A model in the picker: a check for the current one, its name (with the agent's logo when the list mixes agents), a
+/// Default tag, its context size and its star: filled in the accent for a favorite, otherwise shown on hover and while
+/// highlighted, in a column kept for it.
 final class ModelPickerRowView: NSView {
     var isHighlighted = false {
-        didSet { if isHighlighted != oldValue { needsDisplay = true } }
+        didSet {
+            guard isHighlighted != oldValue else { return }
+            needsDisplay = true
+            updateStar()
+        }
     }
+    /// Stars or unstars the model, for VoiceOver's action on the row.
+    var onToggleFavorite: (() -> Void)?
 
     private let check = NSImageView()
     private let logo = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
     private let defaultTag = PickerTag()
     private let contextLabel = NSTextField(labelWithString: "")
+    private let star = NSImageView()
+    private var isFavorite = false
+    private var isHovered = false
 
     override var isFlipped: Bool { true }
 
@@ -332,14 +495,17 @@ final class ModelPickerRowView: NSView {
         contextLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         contextLabel.textColor = .secondaryLabelColor
         contextLabel.alignment = .right
-        for view in [check, logo, nameLabel, defaultTag, contextLabel] as [NSView] { addSubview(view) }
+        star.imageScaling = .scaleNone
+        // VoiceOver stars the model with the row's own action.
+        star.setAccessibilityElement(false)
+        for view in [check, logo, nameLabel, defaultTag, contextLabel, star] as [NSView] { addSubview(view) }
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(_ model: ModelOption, isCurrent: Bool, showsAgent: Bool) {
+    func configure(_ model: ModelOption, isCurrent: Bool, showsAgent: Bool, isFavorite: Bool) {
         check.isHidden = !isCurrent
         logo.isHidden = !showsAgent
         logo.image = Theme.logo(for: model.provider)
@@ -348,14 +514,61 @@ final class ModelPickerRowView: NSView {
         defaultTag.isHidden = model.modelID != "default"
         defaultTag.title = String(localized: "Default")
         contextLabel.stringValue = SettingsFormat.contextWindow(model.contextWindow) ?? ""
+        self.isFavorite = isFavorite
+        updateStar()
         toolTip = model.modelID == "default" || model.displayName == model.modelID ? nil : model.modelID
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel(
-            [showsAgent ? model.provider.displayName : nil, model.displayName, contextLabel.stringValue.nonEmpty]
-                .compactMap { $0 }.joined(separator: ", "))
+            [
+                showsAgent ? model.provider.displayName : nil, model.displayName, contextLabel.stringValue.nonEmpty,
+                isFavorite ? String(localized: "Favorite") : nil,
+            ]
+            .compactMap { $0 }.joined(separator: ", "))
         setAccessibilitySelected(isCurrent)
+        setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(
+                name: isFavorite ? String(localized: "Remove from Favorites") : String(localized: "Add to Favorites")
+            ) { [weak self] in
+                self?.onToggleFavorite?()
+                return true
+            }
+        ])
         needsLayout = true
+    }
+
+    /// Whether a point (in the row's coordinates) hits the star, with some room around it.
+    func starContains(_ point: NSPoint) -> Bool {
+        star.frame.insetBy(dx: -6, dy: -7).contains(point)
+    }
+
+    private func updateStar() {
+        let shown = isFavorite || isHovered || isHighlighted
+        star.isHidden = !shown
+        guard shown else { return }
+        star.image = Theme.symbol(isFavorite ? "star.fill" : "star", size: 11, weight: .medium)
+        star.contentTintColor = isFavorite ? Theme.accent : .tertiaryLabelColor
+        star.toolTip = isFavorite ? String(localized: "Remove from Favorites") : String(localized: "Add to Favorites")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas where area.owner === self { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        // A row listed again under the pointer (after a star was clicked) gets no entered event until the pointer moves.
+        if let window {
+            setHovered(bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)))
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) { setHovered(true) }
+
+    override func mouseExited(with event: NSEvent) { setHovered(false) }
+
+    private func setHovered(_ hovered: Bool) {
+        guard hovered != isHovered else { return }
+        isHovered = hovered
+        updateStar()
     }
 
     override func layout() {
@@ -367,9 +580,10 @@ final class ModelPickerRowView: NSView {
             logo.frame = NSRect(x: x, y: midY - 7, width: 14, height: 14)
             x += 20
         }
+        star.frame = NSRect(x: bounds.width - 30, y: midY - 8, width: 16, height: 16)
         contextLabel.sizeToFit()
         let contextWidth = ceil(contextLabel.frame.width)
-        contextLabel.frame = NSRect(x: bounds.width - 16 - contextWidth, y: midY - 8, width: contextWidth, height: 16)
+        contextLabel.frame = NSRect(x: star.frame.minX - 6 - contextWidth, y: midY - 8, width: contextWidth, height: 16)
         let tagWidth = defaultTag.isHidden ? 0 : defaultTag.fittingWidth + 6
         nameLabel.sizeToFit()
         let available = contextLabel.frame.minX - 8 - x - tagWidth
@@ -406,7 +620,7 @@ final class PickerTag: NSView {
     }
 }
 
-/// An agent's tab in the picker: its logo, filled while shown, dimmed when the agent is not set up.
+/// A tab in the picker: an agent's logo (dimmed when the agent is not set up) or the Favorites star, filled while shown.
 final class PickerTabButton: NSControl {
     var isSelected = false {
         didSet { if isSelected != oldValue { needsDisplay = true } }
@@ -416,13 +630,17 @@ final class PickerTabButton: NSControl {
     private let run: () -> Void
     private var isHovered = false
 
-    init(kind: ProviderKind, isReady: Bool, action: @escaping () -> Void) {
+    convenience init(kind: ProviderKind, isReady: Bool, action: @escaping () -> Void) {
+        self.init(image: Theme.logo(for: kind), label: kind.displayName, isDimmed: !isReady, action: action)
+    }
+
+    init(image: NSImage, label: String, isDimmed: Bool = false, action: @escaping () -> Void) {
         run = action
         super.init(frame: .zero)
-        logo.image = Theme.logo(for: kind)
+        logo.image = image
         logo.imageScaling = .scaleProportionallyUpOrDown
         logo.contentTintColor = .labelColor
-        logo.alphaValue = isReady ? 1 : 0.35
+        logo.alphaValue = isDimmed ? 0.35 : 1
         logo.translatesAutoresizingMaskIntoConstraints = false
         addSubview(logo)
         NSLayoutConstraint.activate([
@@ -431,10 +649,10 @@ final class PickerTabButton: NSControl {
             logo.widthAnchor.constraint(equalToConstant: 18),
             logo.heightAnchor.constraint(equalToConstant: 18),
         ])
-        toolTip = kind.displayName
+        toolTip = label
         setAccessibilityElement(true)
         setAccessibilityRole(.radioButton)
-        setAccessibilityLabel(kind.displayName)
+        setAccessibilityLabel(label)
     }
 
     required init?(coder: NSCoder) {

@@ -116,6 +116,12 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Read the Cursor CLI's login from the macOS Keychain to show the plan's usage limits (T3 Code's
     /// `cursorKeychainUsageEnabled`). Off by default, because macOS may ask the user to allow the read.
     public var cursorKeychainUsageEnabled: Bool
+    /// Models the user starred (T3 Code's favorites), in the order they were starred. The model picker lists them
+    /// first, and together in its Favorites tab.
+    public var favoriteModels: [ModelReference]
+    /// Models the user never uses (T3 Code's hidden models), left out of the model picker. Settings › Models shows
+    /// them again.
+    public var hiddenModels: [ModelReference]
 
     public nonisolated init() {
         defaultSelection = ModelSelection(provider: .claude, modelID: "default")
@@ -139,6 +145,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         lightTheme = "carbon-light"
         shortcutOverrides = [:]
         cursorKeychainUsageEnabled = false
+        favoriteModels = []
+        hiddenModels = []
     }
 
     public nonisolated func settings(for provider: ProviderKind) -> ProviderSettings {
@@ -175,6 +183,48 @@ public struct AppSettings: Codable, Hashable, Sendable {
         shortcutOverrides = (container.lenient([String: JSONValue].self, forKey: .shortcutOverrides) ?? [:])
             .compactMapValues { $0.isNull ? nil : ($0.string ?? $0.displayText) }
         cursorKeychainUsageEnabled = value(.cursorKeychainUsageEnabled, defaults.cursorKeychainUsageEnabled)
+        // Models of agents this version does not know are skipped, not the whole list.
+        favoriteModels = container.lenientArray(ModelReference.self, forKey: .favoriteModels)
+        hiddenModels = container.lenientArray(ModelReference.self, forKey: .hiddenModels)
+    }
+}
+
+// MARK: - Favorite and hidden models
+
+extension AppSettings {
+    public nonisolated func isFavorite(_ model: ModelReference) -> Bool { favoriteModels.contains(model) }
+
+    public nonisolated func isHidden(_ model: ModelReference) -> Bool { hiddenModels.contains(model) }
+
+    /// Stars or unstars a model. A starred model shows again if it was hidden.
+    public nonisolated mutating func setFavorite(_ isFavorite: Bool, _ model: ModelReference) {
+        favoriteModels.removeAll { $0 == model }
+        guard isFavorite else { return }
+        favoriteModels.append(model)
+        hiddenModels.removeAll { $0 == model }
+    }
+
+    /// Hides a model from the picker or shows it again. A hidden model is no longer a favorite.
+    public nonisolated mutating func setHidden(_ isHidden: Bool, _ model: ModelReference) {
+        hiddenModels.removeAll { $0 == model }
+        guard isHidden else { return }
+        hiddenModels.append(model)
+        favoriteModels.removeAll { $0 == model }
+    }
+
+    /// An agent's models as the picker lists them: its favorites first, then the rest, each in the agent's order, and
+    /// none that are hidden but the `current` one.
+    public nonisolated func pickerModels(_ models: [ModelOption], current: ModelSelection?) -> [ModelOption] {
+        let visible = models.filter { model in
+            !isHidden(model.reference) || (model.provider == current?.provider && model.modelID == current?.modelID)
+        }
+        return visible.filter { isFavorite($0.reference) } + visible.filter { !isFavorite($0.reference) }
+    }
+
+    /// The favorites among `models` (every agent's, in display order), for the picker's Favorites tab: grouped by agent
+    /// as `models` lists them, as T3 Code orders them.
+    public nonisolated func favorites(in models: [ModelOption]) -> [ModelOption] {
+        models.filter { isFavorite($0.reference) && !isHidden($0.reference) }
     }
 }
 

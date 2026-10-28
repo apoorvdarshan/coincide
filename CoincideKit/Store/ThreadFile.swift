@@ -56,7 +56,7 @@ struct ThreadFile: Decodable {
 
     private typealias Container = KeyedDecodingContainer<FileKey>
 
-    nonisolated static let selectionKeys: Set<String> = ["provider", "modelID", "effort"]
+    nonisolated static let selectionKeys: Set<String> = ["provider", "modelID", "effort", "speed"]
     nonisolated static let sessionKeys: Set<String> = ["sessionID", "seenItemCount"]
 
     /// Whether this version reads a top-level field other than the items and sessions. False for a field
@@ -70,10 +70,18 @@ struct ThreadFile: Decodable {
         case "interactionMode": container.reads(InteractionMode.self, key)
         case "isPinned", "isArchived": container.reads(Bool.self, key)
         case "draftContext": readsContext(in: container, key, decoded: try? container.decode([MessageContext].self, forKey: key))
-        case "selection":
-            container.reads(ModelSelection.self, key)
-                && (try? container.nestedContainer(keyedBy: FileKey.self, forKey: key))?.hasOnly(selectionKeys) == true
+        case "selection": readsSelection(container, key)
         default: false
+        }
+    }
+
+    /// The selection leaves out an effort or speed it cannot read rather than failing, so each field is checked.
+    private nonisolated static func readsSelection(_ container: Container, _ key: FileKey) -> Bool {
+        guard container.reads(ModelSelection.self, key),
+            let selection = try? container.nestedContainer(keyedBy: FileKey.self, forKey: key), selection.hasOnly(selectionKeys)
+        else { return false }
+        return selection.allKeys.allSatisfy { field in
+            selection.isNull(field) || selection.reads(String.self, field)
         }
     }
 
