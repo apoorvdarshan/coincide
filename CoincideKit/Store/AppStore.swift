@@ -73,6 +73,7 @@ public final class AppStore {
     /// it has some, copied aside. Their items left running or waiting can no longer finish, so they are
     /// settled as the transcript is read.
     private var filesFromEarlierRuns: Set<UUID> = []
+    private var undoableDeletions: [UUID: Int] = [:]
     private var turnObserver: NSObjectProtocol?
     /// How long changes collect before they are written.
     var saveDelay: TimeInterval = 0.6
@@ -318,6 +319,81 @@ public final class AppStore {
     public func deleteThread(_ id: UUID) {
         removeThread(id, deletingFile: true)
         notify(.threadList)
+    }
+
+    /// Keeps the conversation and its checkpoint references available for this session's Undo history.
+    @MainActor
+    public final class DeletedThread {
+        public let id: UUID
+        fileprivate let thread: ChatThread
+        fileprivate let data: Data
+        fileprivate let unreadOriginal: Data?
+        fileprivate let release: () -> Void
+
+        fileprivate init(thread: ChatThread, data: Data, unreadOriginal: Data?, release: @escaping () -> Void) {
+            self.id = thread.id
+            self.thread = thread
+            self.data = data
+            self.unreadOriginal = unreadOriginal
+            self.release = release
+        }
+
+        isolated deinit { release() }
+    }
+
+    public func canUndoDeletion(of id: UUID) -> Bool { undoableDeletions[id, default: 0] > 0 }
+
+    /// Capture before deleting. Failure to capture leaves the original conversation untouched.
+    public func deleteThreadForUndo(_ id: UUID) throws -> DeletedThread? {
+        guard let thread = thread(id) else { return nil }
+        let hasChanges = pendingThreadSaves.contains(id) || threadsBeingSaved[id] != nil
+        writer.waitUntilIdle()
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        let original = try? Data(contentsOf: sourceFiles[id] ?? threadURL(id))
+        let data: Data
+        var unreadOriginal: Data?
+        if !hasChanges, let original {
+            data = original
+        } else {
+            data = try encoder.encode(thread)
+            if let original {
+                let decoder = StoreWriter.makeDecoder()
+                decoder.userInfo[.checksUnreadContent] = true
+                if (try? decoder.decode(ThreadFile.self, from: original))?.hasUnreadContent == true {
+                    unreadOriginal = original
+                }
+            }
+        }
+        undoableDeletions[id, default: 0] += 1
+        let snapshot = DeletedThread(thread: thread, data: data, unreadOriginal: unreadOriginal) { [weak self] in
+            guard let self else { return }
+            let remaining = self.undoableDeletions[id, default: 0] - 1
+            self.undoableDeletions[id] = remaining > 0 ? remaining : nil
+            self.notify(.threadList)
+        }
+        deleteThread(id)
+        return snapshot
+    }
+
+    /// Never overwrites a recreated thread or restores one into a project the user removed.
+    @discardableResult
+    public func restoreDeletedThread(_ snapshot: DeletedThread) throws -> Bool {
+        let thread = snapshot.thread
+        guard !hasThread(thread.id), project(thread.projectID) != nil else { return false }
+        writer.waitUntilIdle()
+        try FileManager.default.createDirectory(at: threadsDirectory, withIntermediateDirectories: true)
+        if let original = snapshot.unreadOriginal {
+            try original.write(to: threadURL(thread.id).appendingPathExtension("unreadable-undo-\(UUID().uuidString)"), options: .atomic)
+        }
+        try snapshot.data.write(to: threadURL(thread.id), options: .atomic)
+        loadedThreads[thread.id] = thread
+        threadSummaries[thread.id] = ThreadSummary(thread)
+        filesFromEarlierRuns.insert(thread.id)
+        markUsed(thread.id)
+        notify(.threadList)
+        return true
     }
 
     /// Removes the transcript from (and including) the given item, so the user can edit and resend
