@@ -309,7 +309,7 @@ struct PaletteCatalog {
         return items
     }
 
-    /// Every model of the ready agents, grouped by agent, as in the composer's picker.
+    /// Every model of the ready agents, grouped by agent, as in the composer's picker: favorites first, hidden ones left out.
     private func modelMenu(_ thread: ThreadSummary) -> PaletteMenu {
         let window = windowController
         let threadID = thread.id
@@ -317,7 +317,7 @@ struct PaletteCatalog {
             let registry = ProviderRegistry.shared
             let current = AppStore.shared.summary(threadID)?.selection ?? thread.selection
             return registry.readyKinds.map { kind in
-                var models = registry.models(for: kind)
+                var models = registry.pickerModels(for: kind, current: current)
                 if kind == current.provider, !models.contains(where: { $0.modelID == current.modelID }) {
                     models.insert(ModelOption(provider: kind, modelID: current.modelID, displayName: current.modelID), at: 0)
                 }
