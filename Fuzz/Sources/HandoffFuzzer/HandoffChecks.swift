@@ -81,7 +81,9 @@ enum HandoffChecks {
             expectEqual(envelope.components(separatedBy: "</context>").count - 1, entries, "entries close once")
         }
         let prompt = MessageContext.prompt(message: message, context: context)
-        expect(prompt.hasPrefix(message), "the prompt starts with the message")
+        // Compare bytes: a message ending in CR joins the separator's LF into one grapheme,
+        // so String.hasPrefix would reject text that is preserved exactly.
+        expect(prompt.utf8.starts(with: message.utf8), "the prompt preserves the message bytes at its start")
         expect(prompt.hasSuffix(envelope), "the prompt ends with the block")
     }
 

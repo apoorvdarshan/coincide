@@ -5,6 +5,14 @@ import Testing
 
 /// What the user attaches to a message (quotes, terminal excerpts, diff comments, files) and how agents read it.
 struct MessageContextTests {
+    @Test(arguments: ["\r", "  \r", "\r\n", "e\u{301}"])
+    func promptKeepsMessageBytesAcrossTheContextSeparator(_ message: String) {
+        let context = [MessageContext(.quote(.init(text: "reference", provider: nil)))]
+        let prompt = MessageContext.prompt(message: message, context: context)
+        #expect(prompt.utf8.starts(with: message.utf8))
+        #expect(prompt == message + "\n\n" + MessageContext.envelope(context))
+    }
+
     @Test func aMessageWithoutContextIsSentAsTyped() {
         #expect(MessageContext.prompt(message: "Fix it", context: []) == "Fix it")
         #expect(MessageContext.envelope([]) == "")
