@@ -33,6 +33,15 @@ struct GeneralSettingsView: View {
                                 : String(localized: "Return inserts a new line."))
                     }
                     .settingsRevealable(.sendShortcut, highlighted: highlighted)
+                    Picker(selection: model.binding(\.followUpBehavior)) {
+                        ForEach(FollowUpBehavior.allCases, id: \.self) { behavior in
+                            Text(behavior.displayName).tag(behavior)
+                        }
+                    } label: {
+                        Text("Follow-up behavior")
+                        Text(followUpCaption)
+                    }
+                    .settingsRevealable(.followUpBehavior, highlighted: highlighted)
                     Toggle(isOn: model.binding(\.showReasoning)) {
                         Text("Show reasoning")
                         Text("Include the agent’s thinking in the transcript when the model shares it.")
@@ -105,6 +114,26 @@ struct GeneralSettingsView: View {
         }
     }
 
+    /// What a message sent while an agent works does, and the key that does the other for one message, as T3 Code's
+    /// description of its follow-up behavior.
+    private var followUpCaption: String {
+        let sendOnReturn = model.settings.sendOnReturn
+        switch model.settings.followUpBehavior {
+        case .steer:
+            return sendOnReturn
+                ? String(
+                    localized: "Messages sent while an agent works go into its current turn, if it can take them. Command-Return queues one for after the turn instead.")
+                : String(
+                    localized: "Messages sent while an agent works go into its current turn, if it can take them. Shift-Command-Return queues one for after the turn instead.")
+        case .queue:
+            return sendOnReturn
+                ? String(
+                    localized: "Messages sent while an agent works wait until its turn ends. Command-Return sends one into the current turn instead.")
+                : String(
+                    localized: "Messages sent while an agent works wait until its turn ends. Shift-Command-Return sends one into the current turn instead.")
+        }
+    }
+
     private var idleTimeoutOptions: [Int] {
         Array(Set([5, 10, 15, 30, 60, 120, 240, model.settings.idleSessionTimeoutMinutes])).sorted()
     }
@@ -115,6 +144,7 @@ struct GeneralSettingsView: View {
             settings.appearance = defaults.appearance
             settings.fontSize = defaults.fontSize
             settings.sendOnReturn = defaults.sendOnReturn
+            settings.followUpBehavior = defaults.followUpBehavior
             settings.showReasoning = defaults.showReasoning
             settings.confirmBeforeDeletingThreads = defaults.confirmBeforeDeletingThreads
             settings.defaultAccessMode = defaults.defaultAccessMode

@@ -14,6 +14,7 @@ nonisolated enum SettingsRowID: String, Hashable, Sendable {
     case appearance
     case fontSize
     case sendShortcut
+    case followUpBehavior
     case showReasoning
     case defaultModel
     case accessMode
