@@ -500,6 +500,43 @@ struct AntigravityInstallTests {
         #expect(tampered.signatures.all.isEmpty && tampered.validations.all.isEmpty && tampered.currentTarget == nil)
     }
 
+    @Test func delayedCleanupFromAnOlderInstallCannotRemoveTheActiveRelease() async throws {
+        let old = ReleaseFixture(version: "1.2.0")
+        let data = try acpTemporaryDirectory()
+        let first = try InstallHarness(asset: old.asset(), archive: old.archive(), data: data)
+        await first.install()
+        let new = ReleaseFixture(executable: Data("#!/bin/sh\necho new\n".utf8), version: "1.3.0")
+        let updating = try InstallHarness(asset: new.asset(), archive: new.archive(), data: data)
+        await updating.install()
+        let newID = try new.asset().sha256
+        let installer = AntigravityInstaller(paths: updating.paths)
+        // The first install's utility-queue cleanup may be delivered after the second install.
+        installer.pruneReleases(keeping: try old.asset().sha256, inUse: [])
+        #expect(try updating.runtime.activeRelease()?.version == "1.3.0")
+        #expect(updating.versionFolders.contains(newID))
+    }
+
+    @Test func cleanupKeepsReleasesProtectedAfterItsLeaseSnapshotWasTaken() throws {
+        let paths = AntigravityPaths(dataDirectory: try acpTemporaryDirectory(), architecture: "arm64")
+        let installer = AntigravityInstaller(paths: paths)
+        let current = String(repeating: "a", count: 64)
+        let previous = String(repeating: "b", count: 64)
+        let directory = paths.versionsDirectory.appendingPathComponent(previous)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try installer.activate(current)
+        let key = AntigravityPaths.canonicalPath(directory)
+        AntigravityInstaller.protectRelease(key)
+        AntigravityInstaller.protectRelease(key)
+        installer.pruneReleases(keeping: current, inUse: [])
+        #expect(FileManager.default.fileExists(atPath: directory.path))
+        AntigravityInstaller.unprotectRelease(key)
+        installer.pruneReleases(keeping: current, inUse: [])
+        #expect(FileManager.default.fileExists(atPath: directory.path))
+        AntigravityInstaller.unprotectRelease(key)
+        installer.pruneReleases(keeping: current, inUse: [])
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+
     @Test func cancellingKeepsThePreviousRuntime() async throws {
         let fixture = ReleaseFixture()
         let harness = try InstallHarness(asset: fixture.asset(), archive: fixture.archive(), validateDelay: .seconds(30))
