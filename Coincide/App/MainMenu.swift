@@ -69,6 +69,8 @@ final class MainMenu: NSObject, NSMenuDelegate {
         newIn.submenu = newThreadInMenu
         menu.addItem(newIn)
         menu.addItem(item(String(localized: "Add Project…"), #selector(MainWindowController.addProject(_:)), .addProject))
+        menu.addItem(item(String(localized: "Import CLI Session…"), #selector(MainWindowController.importCLISession(_:))))
+        menu.addItem(item(String(localized: "Reveal Imported Source"), #selector(MainWindowController.revealImportedSource(_:))))
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Open in Editor"), #selector(MainWindowController.openInPreferred(_:)), .openInEditor))
         let openIn = NSMenuItem(title: openInMenu.title, action: nil, keyEquivalent: "")

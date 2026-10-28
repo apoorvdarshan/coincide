@@ -316,6 +316,87 @@ public final class AppStore {
         return loadedThreads[threadID]?.items.last { $0.id == itemID }
     }
 
+    /// Native IDs also find sessions already opened in Coincide, including archived threads.
+    public func threadForSession(provider: ProviderKind, sessionID: String) -> UUID? {
+        threadSummaries.values.first {
+            $0.nativeSessionIDs[provider]?.caseInsensitiveCompare(sessionID) == .orderedSame
+                || ($0.importedSession?.provider == provider
+                    && $0.importedSession?.sessionID.caseInsensitiveCompare(sessionID) == .orderedSame)
+        }?.id
+    }
+
+    public func importedSourceURL(for id: UUID) -> URL? {
+        guard summary(id)?.importedSession != nil else { return nil }
+        let url = importArchiveURL(id)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Call only after the user has approved this exact preview. No provider is started by importing.
+    /// All new files are durable before publishing the thread; a failed write removes only this import's files.
+    @discardableResult
+    public func importSession(_ preview: CLISessionPreview) throws -> UUID {
+        if let existing = threadForSession(provider: preview.provider, sessionID: preview.sessionID) { return existing }
+        writer.waitUntilIdle()
+        let manager = FileManager.default
+        let existingProject = projects.first { URL(fileURLWithPath: $0.path).standardizedFileURL == preview.directory }
+        let project = existingProject ?? Project(name: preview.directory.lastPathComponent, path: preview.directory.path)
+        var thread = ChatThread(projectID: project.id, title: preview.title,
+            selection: ModelSelection(provider: preview.provider, modelID: preview.modelID), accessMode: .approval,
+            items: preview.items,
+            sessions: [preview.provider: ProviderSessionRef(sessionID: preview.sessionID, seenItemCount: preview.items.count)],
+            branch: preview.branch, createdAt: preview.createdAt)
+        thread.updatedAt = preview.updatedAt
+        thread.importedSession = ImportedSession(provider: preview.provider, sessionID: preview.sessionID, sourcePath: preview.sourceURL.path)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        let threadData = try encoder.encode(thread)
+        var nextProjects = projects
+        if existingProject == nil {
+            let index = nextProjects.firstIndex { $0.isChats } ?? nextProjects.endIndex
+            nextProjects.insert(project, at: index)
+        }
+        let projectData = try encoder.encode(nextProjects)
+        let archive = importArchiveURL(thread.id)
+        try manager.createDirectory(at: archive.deletingLastPathComponent(), withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        try manager.createDirectory(at: threadsDirectory, withIntermediateDirectories: true)
+        var written: [URL] = []
+        do {
+            try writeImportedData(preview.sourceData, to: archive)
+            written.append(archive)
+            try writeImportedData(threadData, to: threadURL(thread.id))
+            written.append(threadURL(thread.id))
+            if existingProject == nil { try projectData.write(to: projectsURL, options: .atomic) }
+        } catch {
+            for url in written { try? manager.removeItem(at: url) }
+            throw error
+        }
+        projects = nextProjects
+        loadedThreads[thread.id] = thread
+        threadSummaries[thread.id] = ThreadSummary(thread)
+        markUsed(thread.id)
+        writer.recordImportedThread(ThreadSummary(thread), at: threadURL(thread.id))
+        if existingProject == nil { notify(.projects) }
+        notify(.threadList)
+        return thread.id
+    }
+
+    /// Stage privately and rename in the same directory. Foundation forbids combining .atomic and
+    /// .withoutOverwriting; moveItem supplies the no-overwrite check without publishing a partial file.
+    private func writeImportedData(_ data: Data, to url: URL) throws {
+        let manager = FileManager.default
+        let staging = url.deletingLastPathComponent().appendingPathComponent(".import-\(UUID().uuidString)")
+        defer { try? manager.removeItem(at: staging) }
+        try data.write(to: staging, options: .atomic)
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: staging.path)
+        try manager.moveItem(at: staging, to: url)
+    }
+
+    private func importArchiveURL(_ id: UUID) -> URL {
+        directory.appendingPathComponent("ImportedSessions", isDirectory: true).appendingPathComponent("\(id.uuidString).jsonl")
+    }
+
     public func deleteThread(_ id: UUID) {
         removeThread(id, deletingFile: true)
         notify(.threadList)
@@ -328,13 +409,15 @@ public final class AppStore {
         fileprivate let thread: ChatThread
         fileprivate let data: Data
         fileprivate let unreadOriginal: Data?
+        fileprivate let importedSource: Data?
         fileprivate let release: () -> Void
 
-        fileprivate init(thread: ChatThread, data: Data, unreadOriginal: Data?, release: @escaping () -> Void) {
+        fileprivate init(thread: ChatThread, data: Data, unreadOriginal: Data?, importedSource: Data?, release: @escaping () -> Void) {
             self.id = thread.id
             self.thread = thread
             self.data = data
             self.unreadOriginal = unreadOriginal
+            self.importedSource = importedSource
             self.release = release
         }
 
@@ -366,8 +449,12 @@ public final class AppStore {
                 }
             }
         }
+        let importedSource = importedSourceURL(for: id).map { try? Data(contentsOf: $0) } ?? nil
+        if thread.importedSession != nil, FileManager.default.fileExists(atPath: importArchiveURL(id).path), importedSource == nil {
+            throw CocoaError(.fileReadUnknown)
+        }
         undoableDeletions[id, default: 0] += 1
-        let snapshot = DeletedThread(thread: thread, data: data, unreadOriginal: unreadOriginal) { [weak self] in
+        let snapshot = DeletedThread(thread: thread, data: data, unreadOriginal: unreadOriginal, importedSource: importedSource) { [weak self] in
             guard let self else { return }
             let remaining = self.undoableDeletions[id, default: 0] - 1
             self.undoableDeletions[id] = remaining > 0 ? remaining : nil
@@ -386,6 +473,13 @@ public final class AppStore {
         try FileManager.default.createDirectory(at: threadsDirectory, withIntermediateDirectories: true)
         if let original = snapshot.unreadOriginal {
             try original.write(to: threadURL(thread.id).appendingPathExtension("unreadable-undo-\(UUID().uuidString)"), options: .atomic)
+        }
+        if let source = snapshot.importedSource {
+            let archive = importArchiveURL(thread.id)
+            try FileManager.default.createDirectory(at: archive.deletingLastPathComponent(), withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700])
+            try source.write(to: archive, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: archive.path)
         }
         try snapshot.data.write(to: threadURL(thread.id), options: .atomic)
         loadedThreads[thread.id] = thread
@@ -549,7 +643,7 @@ public final class AppStore {
         let source = sourceFiles.removeValue(forKey: id)
         let copies = staleCopies.removeValue(forKey: id) ?? []
         if deletingFile {
-            for url in [threadURL(id)] + [source].compactMap(\.self) + copies { writer.remove(url) }
+            for url in [threadURL(id), importArchiveURL(id)] + [source].compactMap(\.self) + copies { writer.remove(url) }
         } else {
             writer.forget(source ?? threadURL(id))
         }
@@ -804,6 +898,15 @@ private final class StoreWriter: @unchecked Sendable {
         } catch {
             NSLog("Coincide: failed to save \(url.lastPathComponent): \(error)")
             return (bytes, false)
+        }
+    }
+
+    nonisolated func recordImportedThread(_ summary: ThreadSummary, at url: URL) {
+        queue.async {
+            if let stamp = FileStamp(of: url) {
+                self.indexEntries[url.lastPathComponent] = ThreadIndexEntry(file: url.lastPathComponent, stamp: stamp, summary: summary)
+                self.noteIndexChange()
+            }
         }
     }
 
