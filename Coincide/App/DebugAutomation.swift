@@ -28,6 +28,7 @@ import CoincideKit
 ///   thread's project scripts; `{"runScript": "Dev"}` runs one; `{"scriptsSnapshot": "/path.png"}` draws the toolbar
 ///   control; `{"scriptEditor": "Dev"}` (or `""` to add one) opens the editor and `{"sheetSnapshot": "/path.png"}`
 ///   draws the window's sheet
+/// - `{"toolbarLog": true}`: logs the toolbar's items, whether they are hidden and their views' frames
 /// - `{"popupSnapshot": "/path.png"}`: draws the open themed popup into a PNG; `{"closePopup": true}` closes it
 /// - `{"sleep": seconds}`, `{"log": "text"}`, `{"quit": true}`
 enum DebugAutomation {
@@ -199,6 +200,11 @@ enum DebugAutomation {
                 }
                 draw(content, to: URL(fileURLWithPath: file))
                 sheet.contentViewController?.dismiss(nil)
+            case "toolbarLog":
+                for item in mainWindow?.window?.toolbar?.items ?? [] {
+                    let frame = item.view.map { NSStringFromRect($0.frame) } ?? "-"
+                    log("toolbar \(item.itemIdentifier.rawValue) hidden=\(item.isHidden) view=\(frame)")
+                }
             case "popupSnapshot":
                 let popup = NSApp.windows.first { $0 is ThemedPopupPanel && $0.isVisible }
                 guard let content = popup?.contentView, let file = value.string else {
