@@ -228,12 +228,14 @@ private final class SuggestionTableView: NSTableView {
 /// Draws the selection as a rounded accent capsule, as menus do.
 private final class SuggestionRowView: NSTableRowView {
     override var isEmphasized: Bool {
-        get { true }
+        get { false }
         set {}
     }
 
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
+
     override func drawSelection(in dirtyRect: NSRect) {
-        NSColor.selectedContentBackgroundColor.setFill()
+        Theme.sidebarSelection.setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 6, dy: 1), xRadius: 6, yRadius: 6).fill()
     }
 }

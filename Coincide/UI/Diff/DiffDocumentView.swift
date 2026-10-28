@@ -524,8 +524,7 @@ final class DiffTableView: NSTableView {
 /// Row background that keeps diff colors visible under the selection.
 final class DiffRowView: NSTableRowView {
     override func drawSelection(in dirtyRect: NSRect) {
-        let color = isEmphasized ? NSColor.selectedContentBackgroundColor : NSColor.unemphasizedSelectedContentBackgroundColor
-        color.withAlphaComponent(0.3).setFill()
+        Theme.sidebarSelection.setFill()
         bounds.fill()
     }
 

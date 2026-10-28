@@ -176,6 +176,10 @@ final class RailButton: NSButton {
 
     override var intrinsicContentSize: NSSize { NSSize(width: Self.side, height: Self.side) }
 
+    /// The button paints its own fill across its bounds, so its frame must be exactly the size it is laid out at: the
+    /// default push style's alignment insets would make the frame, and the fill, larger than the layout allows for.
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+
     override var isEnabled: Bool {
         didSet { updateTint() }
     }
