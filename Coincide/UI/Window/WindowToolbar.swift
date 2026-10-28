@@ -85,6 +85,7 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
             item.isBordered = false
             item.label = String(localized: "Scripts")
             item.visibilityPriority = .high
+            item.isHidden = !projectScripts.isAvailable
         case .runStatus:
             item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.view = runStatus
