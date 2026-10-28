@@ -66,7 +66,10 @@ final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableVie
         let anchorFrame = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
         var frame = NSRect(x: anchorFrame.minX, y: anchorFrame.maxY + 6, width: anchorFrame.width, height: height)
         if let screen = window.screen?.visibleFrame, frame.maxY > screen.maxY {
-            frame.origin.y = anchorFrame.minY - 6 - height
+            // Below the anchor when it fits there; otherwise above it, pinned to the top of the anchor's own screen
+            // so the list never spills onto a display arranged above or below.
+            let below = anchorFrame.minY - 6 - height
+            frame.origin.y = below >= screen.minY ? below : screen.maxY - height
         }
         panel.setFrame(frame, display: true)
         if panel.parent !== window {

@@ -70,7 +70,13 @@ final class CommandPaletteController {
         let width = min(Self.width, bounds.width - 48)
         // About a sixth of the way down, like T3's dialog.
         let top = bounds.maxY - max(64, bounds.height * 0.16)
-        panel.setFrame(NSRect(x: bounds.midX - width / 2, y: top - height, width: width, height: height), display: false)
+        var frame = NSRect(x: bounds.midX - width / 2, y: top - height, width: width, height: height)
+        // Keep the palette on the parent's screen, even when the window hangs off it or spans two displays.
+        if let screen = (parent?.screen ?? NSScreen.main)?.visibleFrame {
+            frame.origin.x = min(max(frame.minX, screen.minX), screen.maxX - frame.width)
+            frame.origin.y = min(max(frame.minY, screen.minY), screen.maxY - frame.height)
+        }
+        panel.setFrame(frame, display: false)
         panel.invalidateShadow()
     }
 }

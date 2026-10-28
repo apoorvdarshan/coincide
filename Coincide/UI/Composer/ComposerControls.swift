@@ -174,10 +174,20 @@ final class ComposerControlButton: NSButton {
         let frame = window.convertToScreen(convert(bounds, to: nil))
         isMenuOpen = true
         updateAppearance()
-        menu.popUp(positioning: nil, at: NSPoint(x: frame.minX, y: frame.maxY + menu.size.height + 4), in: nil)
+        let origin = Self.menuOrigin(above: frame, menuHeight: menu.size.height, screen: window.screen?.visibleFrame)
+        menu.popUp(positioning: nil, at: origin, in: nil)
         isMenuOpen = false
         isHovered = false
         updateAppearance()
+    }
+
+    /// Where a menu opening above `frame` (screen coordinates) puts its top-left corner. A menu taller than the room
+    /// above the control starts at the top of the control's screen instead: a point past that edge belongs to whatever
+    /// display is arranged there, and macOS would open the menu on it.
+    static func menuOrigin(above frame: NSRect, menuHeight: CGFloat, screen: NSRect?) -> NSPoint {
+        let top = frame.maxY + menuHeight + 4
+        guard let screen else { return NSPoint(x: frame.minX, y: top) }
+        return NSPoint(x: min(max(frame.minX, screen.minX), screen.maxX - 1), y: min(top, screen.maxY))
     }
 
     override func drawFocusRingMask() {

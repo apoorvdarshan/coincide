@@ -371,3 +371,22 @@ struct ComposerSendKeysTests {
                 == "Queue: send when the current turn finishes. ⇧⌘↩ or ⌘-click sends it into the current turn instead.")
     }
 }
+
+struct ComposerMenuPlacementTests {
+    private let screen = NSRect(x: 0, y: 0, width: 1920, height: 1050)
+
+    @Test func aMenuThatFitsOpensJustAboveTheControl() {
+        let origin = ComposerControlButton.menuOrigin(above: NSRect(x: 600, y: 100, width: 120, height: 28), menuHeight: 300, screen: screen)
+        #expect(origin == NSPoint(x: 600, y: 432))
+    }
+
+    @Test func aTallMenuStaysOnTheControlsScreen() {
+        // Taller than the room above: the top would land on a display arranged above this one.
+        let origin = ComposerControlButton.menuOrigin(above: NSRect(x: 600, y: 100, width: 120, height: 28), menuHeight: 1400, screen: screen)
+        #expect(origin == NSPoint(x: 600, y: 1050))
+        // A screen with a non-zero origin, such as a second display.
+        let second = NSRect(x: -227, y: 956, width: 1920, height: 1050)
+        let placed = ComposerControlButton.menuOrigin(above: NSRect(x: -300, y: 1000, width: 120, height: 28), menuHeight: 1200, screen: second)
+        #expect(placed == NSPoint(x: -227, y: 2006))
+    }
+}
