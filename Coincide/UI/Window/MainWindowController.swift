@@ -151,8 +151,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         var folder: URL?
         if let thread = selectedThread {
             title = thread.title
-            subtitle = store.project(thread.projectID)?.name ?? ""
-            if let branch = thread.branch, !branch.isEmpty { subtitle += subtitle.isEmpty ? branch : " · \(branch)" }
+            let project = store.project(thread.projectID)
+            subtitle = project?.isChats == true ? String(localized: "Chat") : project?.name ?? ""
+            if project?.isChats != true, let branch = thread.branch, !branch.isEmpty {
+                subtitle += subtitle.isEmpty ? branch : " · \(branch)"
+            }
             folder = store.workingDirectory(for: thread.id)
         }
         if window.title != title { window.title = title }
@@ -195,6 +198,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func newThread(in projectID: UUID?) {
         showWindow(nil)
+        if projectID == nil, store.settings.newThreadStartsChat {
+            ThreadActions.newChat()
+            return
+        }
         guard let project = projectID ?? currentProjectID else {
             ThreadActions.addProject(in: window)
             return
@@ -203,6 +210,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     // MARK: Actions
+
+    /// A thread without a project, whatever New Thread does.
+    @objc func newChat(_ sender: Any?) {
+        showWindow(nil)
+        ThreadActions.newChat()
+    }
 
     @objc func newThread(_ sender: Any?) {
         newThread(in: nil)

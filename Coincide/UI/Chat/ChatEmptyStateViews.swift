@@ -171,8 +171,9 @@ final class ChatWelcomeView: NSView {
     func update(thread: ChatThread, project: Project?, registry: ProviderRegistry) {
         let name = project?.name ?? String(localized: "this project")
         // One sentence, so each language can place the project name where it belongs. Set in New York, the serif of
-        // the agents' replies.
-        let sentence = String(localized: "What should we build in \(name)?")
+        // the agents' replies. A chat has no project to name.
+        let sentence =
+            project?.isChats == true ? String(localized: "What can I help with?") : String(localized: "What should we build in \(name)?")
         let text = NSMutableAttributedString(
             string: sentence, attributes: [.font: Theme.serifFont(ofSize: 30), .foregroundColor: NSColor.labelColor])
         let centered = NSMutableParagraphStyle()

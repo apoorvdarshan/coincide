@@ -158,10 +158,13 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
     public var isExpanded: Bool
     /// The project's scripts, in the order the menu lists them.
     public var scripts: [ProjectScript]
+    /// The home of chats: threads started without a project, like a chat app's (T3 Code's scratch project). Its folder
+    /// is Coincide's own, and the sidebar lists it last, as Chats.
+    public var isChats: Bool
 
     public nonisolated init(
         id: UUID = UUID(), name: String, path: String, createdAt: Date = Date(), isExpanded: Bool = true,
-        scripts: [ProjectScript] = []
+        scripts: [ProjectScript] = [], isChats: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -169,6 +172,7 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.isExpanded = isExpanded
         self.scripts = scripts
+        self.isChats = isChats
     }
 
     public nonisolated var url: URL { URL(fileURLWithPath: path) }
@@ -181,6 +185,7 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
         createdAt = container.lenient(Date.self, forKey: .createdAt) ?? .distantPast
         isExpanded = container.lenient(Bool.self, forKey: .isExpanded) ?? true
         scripts = container.lenientArray(ProjectScript.self, forKey: .scripts)
+        isChats = container.lenient(Bool.self, forKey: .isChats) ?? false
     }
 }
 

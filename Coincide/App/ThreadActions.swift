@@ -8,6 +8,12 @@ enum ThreadActions {
 
     // MARK: Threads
 
+    /// Starts a chat: a thread without a project, in Coincide's own folder.
+    @discardableResult
+    static func newChat() -> UUID? {
+        newThread(in: store.ensureChatsProject().id)
+    }
+
     /// Opens a new thread in the project, reusing an untouched one there instead of piling up empty threads.
     /// With `source`, the new thread starts in the same worktree and branch.
     @discardableResult
