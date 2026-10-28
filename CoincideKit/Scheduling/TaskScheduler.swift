@@ -9,6 +9,9 @@ import Foundation
     private let startThread: (UUID, String) -> Void
     private let canStart: (ScheduledTask) -> Bool
     private var ticking = false
+    /// Failed runtime transitions must survive until storage recovers. No dispatch may pass these
+    /// writes, otherwise an old active marker can stick forever or a skipped occurrence can launch.
+    private var pendingTransitions: [UUID: ScheduledTask] = [:]
 
     public init(store: ScheduledTaskStore, now: @escaping () -> Date = Date.init,
         canStart: @escaping (ScheduledTask) -> Bool = { _ in true },
@@ -20,7 +23,8 @@ import Foundation
     /// marked interrupted, never automatically resumed; an agent still running after machine sleep is preserved.
     public func resume(afterRelaunch: Bool) {
         let date = now()
-        for var task in store.tasks {
+        for saved in store.tasks {
+            var task = pendingTransitions[saved.id] ?? saved
             var changed = false
             if afterRelaunch, task.activeThreadID != nil {
                 task.activeThreadID = nil
@@ -37,11 +41,12 @@ import Foundation
                 }
                 changed = true
             }
-            if changed { do { try store.save(task) } catch { onFailure?(error) } }
+            if changed { do { try persistTransition(task) } catch { onFailure?(error) } }
         }
     }
 
     public func save(_ value: ScheduledTask) throws {
+        try retryTransitions()
         var task = value
         guard task.isValid else { throw ScheduleError.invalidTask }
         let old = store.task(task.id)
@@ -54,16 +59,19 @@ import Foundation
             current.recurrence = task.recurrence; current.isPaused = task.isPaused
             task = current
         }
-        if old == nil || old?.recurrence != task.recurrence || old?.isPaused == true && !task.isPaused {
+        if old == nil || old?.recurrence != task.recurrence {
             task.nextRunAt = task.recurrence.next(after: now())
+        } else if old?.isPaused == true && !task.isPaused {
+            task.nextRunAt = nextAfterUnpausing(task)
         }
         try store.save(task)
     }
 
     public func setPaused(_ id: UUID, _ paused: Bool) throws {
+        try retryTransitions()
         guard var task = store.task(id) else { return }
         task.isPaused = paused
-        if !paused { task.nextRunAt = task.recurrence.next(after: now()) }
+        if !paused { task.nextRunAt = nextAfterUnpausing(task) }
         try store.save(task)
     }
 
@@ -71,19 +79,26 @@ import Foundation
         guard !ticking else { return }
         ticking = true
         defer { ticking = false }
+        do { try retryTransitions() } catch { onFailure?(error); return }
         let date = now()
         for var task in store.tasks where !task.isPaused && (task.nextRunAt ?? .distantFuture) <= date {
             do {
                 if task.activeThreadID != nil || !canStart(task) {
                     // Continued work and quota resumes consume overlapping slots too; never queue a late run.
                     task.nextRunAt = task.recurrence.next(after: date)
-                    try store.save(task)
+                    try persistTransition(task)
                 } else { try run(task.id, manual: false) }
-            } catch { onFailure?(error) }
+            } catch {
+                onFailure?(error)
+                if !pendingTransitions.isEmpty { return }
+            }
         }
     }
 
-    public func runNow(_ id: UUID) throws { try run(id, manual: true) }
+    public func runNow(_ id: UUID) throws {
+        try retryTransitions()
+        try run(id, manual: true)
+    }
 
     private func run(_ id: UUID, manual: Bool) throws {
         guard var task = store.task(id) else { return }
@@ -92,7 +107,7 @@ import Foundation
         let occurrence = manual ? date : (task.nextRunAt ?? date)
         if !manual, let consumed = task.lastFiredOccurrence, occurrence <= consumed {
             task.nextRunAt = task.recurrence.next(after: date)
-            try store.save(task)
+            try persistTransition(task)
             return
         }
         // Advance before launching, so a crash cannot submit the same scheduled occurrence twice.
@@ -118,13 +133,14 @@ import Foundation
             task.lastFinishedAt = date
             // Invalid configuration needs attention, rather than retrying every timer tick.
             task.isPaused = true
-            try store.save(task)
+            try persistTransition(task)
             throw error
         }
     }
 
     public func finished(threadID: UUID, outcome: ScheduledTask.Outcome, message: String? = nil) {
-        guard var task = store.tasks.first(where: { $0.activeThreadID == threadID }) else { return }
+        guard var task = store.tasks.lazy.map({ self.pendingTransitions[$0.id] ?? $0 })
+            .first(where: { $0.activeThreadID == threadID }) else { return }
         let date = now()
         task.activeThreadID = nil
         task.lastOutcome = outcome
@@ -132,6 +148,29 @@ import Foundation
         task.lastFinishedAt = date
         // A long run consumes any slots it overlaps; the next run is always in the future.
         if (task.nextRunAt ?? .distantFuture) <= date { task.nextRunAt = task.recurrence.next(after: date) }
-        do { try store.save(task) } catch { onFailure?(error) }
+        do { try persistTransition(task) } catch { onFailure?(error) }
+    }
+
+    private func nextAfterUnpausing(_ task: ScheduledTask) -> Date? {
+        // Run Now consumes a one-time occurrence even before its original date. Pause/Resume and
+        // ordinary edits must not rearm it; choosing a different occurrence explicitly may do so.
+        if task.recurrence.kind == .once, task.nextRunAt == nil { return nil }
+        return task.recurrence.next(after: now())
+    }
+
+    private func persistTransition(_ task: ScheduledTask) throws {
+        pendingTransitions[task.id] = task
+        try store.save(task)
+        pendingTransitions[task.id] = nil
+    }
+
+    private func retryTransitions() throws {
+        let date = now()
+        for (id, var task) in pendingTransitions {
+            // Deleting a task remains effective even if an earlier completion could not be saved.
+            guard store.task(id) != nil else { pendingTransitions[id] = nil; continue }
+            if let next = task.nextRunAt, next <= date { task.nextRunAt = task.recurrence.next(after: date) }
+            try persistTransition(task)
+        }
     }
 }
