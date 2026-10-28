@@ -32,24 +32,6 @@ public enum ProviderKind: String, Codable, CaseIterable, Sendable, Hashable {
         case .antigravity: "arrow.up.and.down.and.sparkles"
         }
     }
-
-    /// The access modes the agent can run in, in menu order (T3 Code's `supportedRuntimeModes`). Every agent Coincide
-    /// drives takes both.
-    public nonisolated var accessModes: [AccessMode] { AccessMode.allCases }
-
-    /// The access mode a thread set to `mode` runs in: one the agent does not offer runs as Ask for approval, as T3
-    /// Code runs it Supervised.
-    public nonisolated func accessMode(for mode: AccessMode) -> AccessMode {
-        accessModes.contains(mode) ? mode : .approval
-    }
-
-    /// Whether the agent has a plan mode (T3 Code's `showInteractionModeToggle`). Every agent Coincide drives has one.
-    public nonisolated var supportsPlanMode: Bool { true }
-
-    /// The interaction mode a thread set to `mode` runs in: without a plan mode, the agent builds.
-    public nonisolated func interactionMode(for mode: InteractionMode) -> InteractionMode {
-        supportsPlanMode ? mode : .build
-    }
 }
 
 public struct ModelOption: Codable, Hashable, Sendable, Identifiable {

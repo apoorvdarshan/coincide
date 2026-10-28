@@ -252,26 +252,21 @@ struct PaletteCatalog {
                     trailing: keys(.reasoningEffort), keywords: ["reasoning", "effort", "thinking", "think", "level"],
                     behavior: .submenu(effortMenu(thread, model: model))))
         }
-        let provider = thread.selection.provider
         items.append(
             PaletteItem(
                 id: "action:access", title: String(localized: "Choose Access…"),
-                icon: symbol(ComposerMenus.symbolName(for: provider.accessMode(for: thread.accessMode))),
-                trailing: keys(.accessMode),
+                icon: symbol(ComposerMenus.symbolName(for: thread.accessMode)), trailing: keys(.accessMode),
                 keywords: ["access", "permissions", "approval", "approve", "full access", "ask", "mode"],
                 behavior: .submenu(accessMenu(thread))))
-        // An agent without a plan mode gets no toggle (T3 Code hides it).
-        if provider.supportsPlanMode {
-            let planning = thread.interactionMode == .plan
-            let mode: InteractionMode = planning ? .build : .plan
-            items.append(
-                PaletteItem(
-                    id: "action:interaction-mode",
-                    title: planning ? String(localized: "Switch to Build Mode") : String(localized: "Switch to Plan Mode"),
-                    icon: symbol(planning ? "hammer" : "pencil.and.ruler"), trailing: keys(.planMode),
-                    keywords: ["plan", "build", "mode", "toggle"],
-                    behavior: .run { window?.splitController.content.chat.chooseInteractionMode(mode) }))
-        }
+        let planning = thread.interactionMode == .plan
+        let mode: InteractionMode = planning ? .build : .plan
+        items.append(
+            PaletteItem(
+                id: "action:interaction-mode",
+                title: planning ? String(localized: "Switch to Build Mode") : String(localized: "Switch to Plan Mode"),
+                icon: symbol(planning ? "hammer" : "pencil.and.ruler"), trailing: keys(.planMode),
+                keywords: ["plan", "build", "mode", "toggle"],
+                behavior: .run { window?.splitController.content.chat.chooseInteractionMode(mode) }))
         for kind in registry.readyKinds where kind != thread.selection.provider {
             items.append(
                 PaletteItem(
@@ -330,10 +325,9 @@ struct PaletteCatalog {
 
     private func accessMenu(_ thread: ThreadSummary) -> PaletteMenu {
         let window = windowController
-        let provider = thread.selection.provider
-        let selected = provider.accessMode(for: thread.accessMode)
+        let selected = thread.accessMode
         return PaletteMenu(title: String(localized: "Choose Access…"), placeholder: String(localized: "Search access modes…")) {
-            let items = provider.accessModes.map { mode in
+            let items = AccessMode.allCases.map { mode in
                 PaletteItem(
                     id: "access:\(mode.rawValue)", title: mode.displayName, subtitle: ComposerMenus.summary(for: mode),
                     icon: Theme.symbol(ComposerMenus.symbolName(for: mode), size: 15),

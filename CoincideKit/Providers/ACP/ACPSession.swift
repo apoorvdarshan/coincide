@@ -129,11 +129,6 @@ public final class ACPSession: AgentSession {
     private var usageLimitsRead: Date?
 
     public init(launch: AgentLaunch, flavor: ACPAgentFlavor, transport: ACPTransportFactory? = nil) {
-        // An access or interaction mode the agent does not offer runs as the one it falls back to (see
-        // `ProviderKind.accessModes` and `supportsPlanMode`).
-        var launch = launch
-        launch.accessMode = launch.provider.accessMode(for: launch.accessMode)
-        launch.interactionMode = launch.provider.interactionMode(for: launch.interactionMode)
         self.launch = launch
         self.flavor = flavor
         provider = launch.provider
@@ -153,9 +148,6 @@ public final class ACPSession: AgentSession {
     }
 
     public func send(_ input: AgentTurnInput) async throws {
-        var input = input
-        input.accessMode = provider.accessMode(for: input.accessMode)
-        input.interactionMode = provider.interactionMode(for: input.interactionMode)
         guard !isShutDown else { throw AgentError.notRunning }
         sendGeneration += 1
         let generation = sendGeneration
