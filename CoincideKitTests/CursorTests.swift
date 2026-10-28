@@ -762,6 +762,48 @@ struct CursorProviderTests {
             status: status, environment: Self.environment(configIn: executable.deletingLastPathComponent()))
         #expect(models.map(\.modelID) == [CursorModels.defaultModelID, "composer-2.5", "grok-4.7-high"])
     }
+
+    @Test func detectionReadsThePlansUsageOnceTheKeychainLoginIsAllowed() async throws {
+        let executable = try fakeCLI(acpAnswers: false)
+        defer { try? FileManager.default.removeItem(at: executable.deletingLastPathComponent()) }
+        var environment = Self.environment(configIn: executable.deletingLastPathComponent())
+        for key in ["CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "CURSOR_API_ENDPOINT", "AGENT_CLI_CREDENTIAL_STORE"] {
+            environment[key] = nil
+        }
+        let calls = UsageTestLog<Int>()
+        let stub = UsageFetchStub { _ in
+            calls.append(1)
+            return calls.values.count == 1
+                ? (200, #"{"billingCycleEnd":1789876386000,"planUsage":{"autoPercentUsed":42,"apiPercentUsed":7}}"#) : (500, "")
+        }
+        let credentials = CursorUsageLimits.Credentials(
+            keychainToken: { "keychain-token" },
+            readFile: { url in
+                Issue.record("must not read \(url.path)")
+                return nil
+            },
+            homeDirectory: URL(fileURLWithPath: "/nonexistent"))
+        var allowed = false
+        let provider = CursorProvider(keychainUsageAllowed: { allowed }, usageCredentials: credentials, fetchUsage: stub.fetch)
+
+        // Until the user allows the Keychain read, nothing is read or requested.
+        let first = await provider.detect(executable: executable, environment: environment)
+        #expect(first.state == .ready)
+        #expect(first.usageLimits == nil)
+        #expect(stub.requests.isEmpty)
+
+        allowed = true
+        let second = await provider.detect(executable: executable, environment: environment)
+        let limits = try #require(second.usageLimits)
+        #expect(limits.windows.map(\.label) == ["Other Models", "Cursor Models"])
+        #expect(limits.windows.map(\.usedPercent) == [7, 42])
+        #expect(stub.tokens == ["keychain-token"])
+
+        // A failed read keeps the windows read before; a check that finds no CLI drops them.
+        #expect(await provider.detect(executable: executable, environment: environment).usageLimits == limits)
+        #expect(stub.requests.count == 2)
+        #expect(await provider.detect(executable: nil, environment: environment).usageLimits == nil)
+    }
 }
 
 // MARK: - Session
@@ -1886,5 +1928,273 @@ struct CursorSessionModelAndQuestionTests {
         ])
         #expect(harness.events.contains(.toolCompleted(id: "img", status: .completed, output: "cat.png")))
         #expect(harness.replies.last?["result"] == [:])
+    }
+}
+
+// MARK: - Usage limits
+
+/// Ported from T3 Code's `usageLimits.test.ts` for Cursor. Credentials and requests are stubs: nothing reads the real
+/// Keychain or files, or reaches the network.
+struct CursorUsageLimitsTests {
+    private let now = Date(timeIntervalSince1970: 1_789_000_000)
+    private let usageURL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
+
+    /// Credentials that fail the test when anything reads them.
+    private static func untouched() -> CursorUsageLimits.Credentials {
+        CursorUsageLimits.Credentials(
+            keychainToken: {
+                Issue.record("must not read the Keychain")
+                return nil
+            },
+            readFile: { url in
+                Issue.record("must not read \(url.path)")
+                return nil
+            },
+            homeDirectory: URL(fileURLWithPath: "/nonexistent"))
+    }
+
+    private static func keychain(_ token: @escaping @Sendable () throws -> String?) -> CursorUsageLimits.Credentials {
+        var credentials = untouched()
+        credentials.keychainToken = { try token() }
+        return credentials
+    }
+
+    private static func authFile(_ contents: String?, paths: UsageTestLog<String>) -> CursorUsageLimits.Credentials {
+        var credentials = untouched()
+        credentials.readFile = { url in
+            paths.append(url.path)
+            return contents.map { Data($0.utf8) }
+        }
+        return credentials
+    }
+
+    private func windows(_ outcome: UsageLimitsOutcome) -> [UsageLimitWindow]? {
+        guard case .limits(let limits) = outcome else { return nil }
+        return limits.windows
+    }
+
+    @Test func usesTheAdvertisedPercentagesAndBillingCycleReset() throws {
+        let response = try #require(
+            JSONValue.parse(
+                #"{"billingCycleEnd":"1789876386000","planUsage":{"totalPercentUsed":72.4,"autoPercentUsed":69.5,"apiPercentUsed":100}}"#))
+        let windows = CursorUsageLimits.windows(fromResponse: response)
+        let reset = try Date("2026-09-20T03:53:06Z", strategy: .iso8601)
+        #expect(windows.map(\.id) == ["totalPercentUsed", "autoPercentUsed", "apiPercentUsed"])
+        #expect(windows.map(\.label) == ["Overall", "Cursor Models", "Other Models"])
+        #expect(windows.map(\.usedPercent) == [72.4, 69.5, 100])
+        #expect(windows.allSatisfy { $0.kind == .monthly && $0.resetsAt == reset && $0.durationMinutes == nil })
+        // The reset may come as a number too; anything else is no reset time.
+        #expect(CursorUsageLimits.windows(fromResponse: ["billingCycleEnd": 1_789_876_386_000, "planUsage": ["autoPercentUsed": 1]]).first?.resetsAt == reset)
+        for end: JSONValue in ["", "soon", 0, -5, nil] {
+            #expect(CursorUsageLimits.windows(fromResponse: ["billingCycleEnd": end, "planUsage": ["autoPercentUsed": 1]]).first?.resetsAt == nil)
+        }
+    }
+
+    @Test func doesNotInventUnusedAllowanceForAbsentBuckets() async {
+        #expect(CursorUsageLimits.windows(fromResponse: ["planUsage": [:]]).isEmpty)
+        #expect(CursorUsageLimits.windows(fromResponse: [:]).isEmpty)
+        let zero = CursorUsageLimits.windows(fromResponse: ["planUsage": ["totalPercentUsed": 0]])
+        #expect(zero.map(\.id) == ["totalPercentUsed"])
+        #expect(zero.map(\.usedPercent) == [0])
+        #expect(zero.first?.resetsAt == nil)
+        #expect(CursorUsageLimits.windows(fromResponse: ["planUsage": ["totalPercentUsed": 150]]).map(\.usedPercent) == [100])
+        #expect(CursorUsageLimits.windows(fromResponse: ["planUsage": ["totalPercentUsed": "42"]]).isEmpty)
+        // A reply without any pool is an account without limits, not a failed read.
+        let stub = UsageFetchStub { _ in (200, #"{"planUsage":{}}"#) }
+        let outcome = await CursorUsageLimits.read(
+            environment: ["CURSOR_AUTH_TOKEN": "token"], allowKeychain: false, credentials: Self.untouched(), fetch: stub.fetch)
+        #expect(outcome == .unsupported)
+    }
+
+    @Test func readsTheFileLoginAndEndpointEvenWhenUsageIsMarkedDisabled() async throws {
+        let paths = UsageTestLog<String>()
+        let stub = UsageFetchStub { _ in (200, #"{"enabled":false,"planUsage":{"totalPercentUsed":42}}"#) }
+        let outcome = await CursorUsageLimits.read(
+            environment: [
+                "HOME": "/instance/home", "AGENT_CLI_CREDENTIAL_STORE": "file", "CURSOR_API_ENDPOINT": "https://cursor.example/",
+            ],
+            allowKeychain: true, credentials: Self.authFile(#"{"accessToken":" instance-token "}"#, paths: paths),
+            fetch: stub.fetch, now: now)
+        guard case .limits(let limits) = outcome else {
+            Issue.record("expected limits, got \(outcome)")
+            return
+        }
+        #expect(limits.windows.map(\.usedPercent) == [42])
+        #expect(limits.checkedAt == now)
+        #expect(paths.values == ["/instance/home/.cursor/auth.json"])
+        let request = try #require(stub.requests.first)
+        #expect(stub.requests.count == 1)
+        #expect(request.url?.absoluteString == "https://cursor.example/aiserver.v1.DashboardService/GetCurrentPeriodUsage")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer instance-token")
+        #expect(request.value(forHTTPHeaderField: "connect-protocol-version") == "1")
+        #expect(request.value(forHTTPHeaderField: "x-cursor-client-type") == "cli")
+        #expect(request.httpBody == Data("{}".utf8))
+    }
+
+    @Test func aMissingOrBrokenCredentialFile() async {
+        let cases: [(contents: String?, expected: UsageLimitsOutcome)] = [
+            (nil, .unsupported), ("{}", .unsupported), (#"{"accessToken":"  "}"#, .unsupported), ("not json", .failed),
+        ]
+        for (contents, expected) in cases {
+            let outcome = await CursorUsageLimits.read(
+                environment: ["HOME": "/instance/home", "AGENT_CLI_CREDENTIAL_STORE": "file"], allowKeychain: false,
+                credentials: Self.authFile(contents, paths: UsageTestLog()), fetch: UsageFetchStub.unused().fetch)
+            #expect(outcome == expected)
+        }
+        // Without HOME, the file is looked for in the user's home folder.
+        let paths = UsageTestLog<String>()
+        var credentials = Self.authFile(nil, paths: paths)
+        credentials.homeDirectory = URL(fileURLWithPath: "/Users/dev")
+        _ = await CursorUsageLimits.read(
+            environment: ["AGENT_CLI_CREDENTIAL_STORE": "file"], allowKeychain: false, credentials: credentials,
+            fetch: UsageFetchStub.unused().fetch)
+        #expect(paths.values == ["/Users/dev/.cursor/auth.json"])
+    }
+
+    @Test func neverReadsStaleFilesForKeychainOrMemoryLogins() async {
+        for store in ["memory", "default"] {
+            for token in [nil, "explicit-token"] {
+                let stub =
+                    token == nil ? UsageFetchStub.unused() : UsageFetchStub({ _ in (200, #"{"planUsage":{"totalPercentUsed":10}}"#) })
+                var environment = ["AGENT_CLI_CREDENTIAL_STORE": store]
+                environment["CURSOR_AUTH_TOKEN"] = token
+                let outcome = await CursorUsageLimits.read(
+                    environment: environment, allowKeychain: false, credentials: Self.untouched(), fetch: stub.fetch)
+                if token != nil {
+                    #expect(windows(outcome)?.map(\.usedPercent) == [10])
+                    #expect(stub.tokens == ["explicit-token"])
+                    #expect(stub.requests.first?.url?.absoluteString == usageURL)
+                } else {
+                    #expect(outcome == .unsupported)
+                }
+            }
+        }
+    }
+
+    @Test func reportsFailedRequestsAsFailures() async {
+        for (status, body) in [(401, "private response"), (500, "{}"), (200, "not json"), (200, "[]")] {
+            let stub = UsageFetchStub { _ in (status, body) }
+            let outcome = await CursorUsageLimits.read(
+                environment: ["CURSOR_AUTH_TOKEN": "private-token"], allowKeychain: false, credentials: Self.untouched(),
+                fetch: stub.fetch)
+            #expect(outcome == .failed)
+        }
+        let offline = UsageFetchStub { _ in throw URLError(.notConnectedToInternet) }
+        #expect(
+            await CursorUsageLimits.read(
+                environment: ["CURSOR_AUTH_TOKEN": "token"], allowKeychain: false, credentials: Self.untouched(),
+                fetch: offline.fetch) == .failed)
+    }
+
+    @Test func aSlowRequestTimesOut() async {
+        let slow = UsageFetchStub { _ in
+            Thread.sleep(forTimeInterval: 1)
+            return (200, #"{"planUsage":{"totalPercentUsed":10}}"#)
+        }
+        let outcome = await CursorUsageLimits.read(
+            environment: ["CURSOR_AUTH_TOKEN": "token"], allowKeychain: false, credentials: Self.untouched(),
+            fetch: slow.fetch, timeout: .milliseconds(50))
+        #expect(outcome == .failed)
+    }
+
+    @Test func doesNotUseAStoredLoginForAnExplicitAPIKey() async {
+        let outcome = await CursorUsageLimits.read(
+            environment: ["CURSOR_API_KEY": "different-account"], allowKeychain: true, credentials: Self.untouched(),
+            fetch: UsageFetchStub.unused().fetch)
+        #expect(outcome == .unsupported)
+    }
+
+    @Test func readsTheDefaultMacOSLoginFromKeychainOnlyWhenAllowed() async {
+        let left = await CursorUsageLimits.read(
+            environment: [:], allowKeychain: false, credentials: Self.untouched(), fetch: UsageFetchStub.unused().fetch)
+        #expect(left == .unsupported)
+
+        let stub = UsageFetchStub { _ in (200, #"{"planUsage":{"totalPercentUsed":42}}"#) }
+        let allowed = await CursorUsageLimits.read(
+            environment: [:], allowKeychain: true, credentials: Self.keychain { "keychain-token" }, fetch: stub.fetch)
+        #expect(windows(allowed)?.map(\.usedPercent) == [42])
+        #expect(stub.tokens == ["keychain-token"])
+        #expect(stub.requests.first?.url?.absoluteString == usageURL)
+
+        // No login in the Keychain is no limits; the credential file is not a fallback.
+        let none = await CursorUsageLimits.read(
+            environment: [:], allowKeychain: true, credentials: Self.keychain { nil }, fetch: UsageFetchStub.unused().fetch)
+        #expect(none == .unsupported)
+    }
+
+    @Test func aKeychainFailureFailsTheReadWithoutARequest() async {
+        let failing = await CursorUsageLimits.read(
+            environment: [:], allowKeychain: true,
+            credentials: Self.keychain { throw NSError(domain: NSOSStatusErrorDomain, code: -25293) },
+            fetch: UsageFetchStub.unused().fetch)
+        #expect(failing == .failed)
+        // A Keychain prompt nobody answers stops the wait, not the check.
+        let unanswered = await CursorUsageLimits.read(
+            environment: [:], allowKeychain: true,
+            credentials: Self.keychain {
+                Thread.sleep(forTimeInterval: 1)
+                return "late-token"
+            },
+            fetch: UsageFetchStub.unused().fetch, keychainTimeout: .milliseconds(50))
+        #expect(unanswered == .failed)
+    }
+
+    @Test func doesNotReadKeychainOrSendItsTokenToACustomEndpoint() async {
+        for endpoint in ["http://localhost:3000", "https://cursor-proxy.example", "https://cursor-proxy.example/"] {
+            let outcome = await CursorUsageLimits.read(
+                environment: ["CURSOR_API_ENDPOINT": endpoint], allowKeychain: true, credentials: Self.untouched(),
+                fetch: UsageFetchStub.unused().fetch)
+            #expect(outcome == .unsupported)
+        }
+        // The default endpoint written with a trailing slash is still Cursor's.
+        let stub = UsageFetchStub { _ in (200, #"{"planUsage":{"apiPercentUsed":3}}"#) }
+        let outcome = await CursorUsageLimits.read(
+            environment: ["CURSOR_API_ENDPOINT": " https://api2.cursor.sh/ "], allowKeychain: true,
+            credentials: Self.keychain { "keychain-token" }, fetch: stub.fetch)
+        #expect(windows(outcome)?.map(\.id) == ["apiPercentUsed"])
+        #expect(stub.requests.first?.url?.absoluteString == usageURL)
+    }
+
+    @Test func theKeychainSettingStaysOffUntilTurnedOn() throws {
+        #expect(try JSONDecoder().decode(AppSettings.self, from: Data(#"{"fontSize": 15}"#.utf8)).cursorKeychainUsageEnabled == false)
+        var settings = AppSettings()
+        settings.cursorKeychainUsageEnabled = true
+        #expect(try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings)).cursorKeychainUsageEnabled)
+    }
+
+    @Test func keychainReadsAreSharedAndKeptForFiveMinutes() async throws {
+        let reads = UsageTestLog<Int>()
+        let keychain = CursorKeychain {
+            reads.append(1)
+            Thread.sleep(forTimeInterval: 0.2)
+            return "keychain-token"
+        }
+        async let first = keychain.accessToken()
+        async let second = keychain.accessToken()
+        #expect(try await [first, second] == ["keychain-token", "keychain-token"])
+        #expect(try await keychain.accessToken() == "keychain-token")
+        #expect(reads.values.count == 1)
+
+        // Neither a missing login nor a failure is kept: the next caller reads again.
+        let attempts = UsageTestLog<Int>()
+        let missing = CursorKeychain {
+            attempts.append(1)
+            if attempts.values.count == 1 { throw NSError(domain: NSOSStatusErrorDomain, code: -25293) }
+            return nil
+        }
+        await #expect(throws: NSError.self) { try await missing.accessToken() }
+        #expect(try await missing.accessToken() == nil)
+        #expect(try await missing.accessToken() == nil)
+        #expect(attempts.values.count == 3)
+
+        // A token is read again once it is older than its lifetime.
+        let expiring = CursorKeychain(lifetime: 0) {
+            attempts.append(1)
+            return "fresh"
+        }
+        _ = try await expiring.accessToken()
+        _ = try await expiring.accessToken()
+        #expect(attempts.values.count == 5)
     }
 }

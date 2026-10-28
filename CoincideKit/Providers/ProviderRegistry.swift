@@ -28,7 +28,7 @@ public final class ProviderRegistry {
     public init(store: AppStore, providers: [AgentProvider]? = nil, shell: ShellEnvironment = .shared) {
         self.store = store
         self.shell = shell
-        let all = providers ?? Self.builtInProviders()
+        let all = providers ?? Self.builtInProviders(store: store)
         self.providers = Dictionary(all.map { ($0.kind, $0) }, uniquingKeysWith: { first, _ in first })
         // Coming back to Coincide after installing or signing in to an agent finds it without a manual refresh.
         activationObserver = NotificationCenter.default.addObserver(
@@ -48,11 +48,12 @@ public final class ProviderRegistry {
     /// `NSApplication.didBecomeActiveNotification`, without importing AppKit.
     private static let didBecomeActive = Notification.Name("NSApplicationDidBecomeActiveNotification")
 
-    public static func builtInProviders() -> [AgentProvider] {
+    /// Every provider Coincide ships, reading their settings from `store`.
+    public static func builtInProviders(store: AppStore = .shared) -> [AgentProvider] {
         [
             ClaudeProvider(),
             CodexProvider(),
-            CursorProvider(),
+            CursorProvider(keychainUsageAllowed: { store.settings.cursorKeychainUsageEnabled }),
             ACPProvider(profile: .grok),
             OpenCodeProvider(),
             PiProvider(),

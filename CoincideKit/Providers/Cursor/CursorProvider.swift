@@ -9,10 +9,43 @@ public final class CursorProvider: AgentProvider {
 
     /// The model the CLI is set to, shown on the picker's default entry.
     private var currentModelName: String?
+    /// Whether the user let Coincide read the CLI's Keychain login for the plan's usage (T3 Code's "Cursor account
+    /// usage" setting).
+    private let keychainUsageAllowed: @MainActor () -> Bool
+    private let usageCredentials: CursorUsageLimits.Credentials
+    private let fetchUsage: UsageLimitsFetch
+    /// The plan's windows from the last check, kept when a later read fails.
+    private var usageLimits: UsageLimits?
 
-    public init() {}
+    public convenience init(keychainUsageAllowed: @escaping @MainActor () -> Bool = { false }) {
+        self.init(keychainUsageAllowed: keychainUsageAllowed, usageCredentials: .live, fetchUsage: UsageLimitsHTTP.live)
+    }
 
+    init(
+        keychainUsageAllowed: @escaping @MainActor () -> Bool, usageCredentials: CursorUsageLimits.Credentials,
+        fetchUsage: @escaping UsageLimitsFetch
+    ) {
+        self.keychainUsageAllowed = keychainUsageAllowed
+        self.usageCredentials = usageCredentials
+        self.fetchUsage = fetchUsage
+    }
+
+    /// Checks the CLI and, once it is signed in, reads the plan's usage windows, as T3 Code does.
     public func detect(executable: URL?, environment: [String: String]) async -> ProviderStatus {
+        var status = await checkInstallation(executable: executable, environment: environment)
+        guard status.state == .ready else {
+            usageLimits = nil
+            return status
+        }
+        let outcome = await CursorUsageLimits.read(
+            environment: environment, allowKeychain: keychainUsageAllowed(), credentials: usageCredentials,
+            fetch: fetchUsage)
+        usageLimits = outcome.resolved(after: usageLimits)
+        status.usageLimits = usageLimits
+        return status
+    }
+
+    private func checkInstallation(executable: URL?, environment: [String: String]) async -> ProviderStatus {
         guard let executable else { return ProviderStatus(state: .notInstalled, message: setupHint) }
         async let versionRun = ProcessRunner.run(executable, ["--version"], environment: environment, timeout: 15)
         async let statusRun = ProcessRunner.run(

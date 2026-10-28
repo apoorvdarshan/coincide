@@ -137,6 +137,9 @@ struct ProviderSettingsView: View {
             if model.isEnabled(kind) && (status.executable != nil || status.version != nil || status.account != nil) {
                 ProviderDetailsSection(status: status)
             }
+            if kind == .cursor && model.isEnabled(kind) {
+                CursorUsageSection(model: model)
+            }
             Section("Executable") {
                 ExecutablePathRow(model: model, kind: kind)
             }
@@ -251,6 +254,30 @@ private struct ProviderDetailsSection: View {
                 } else {
                     Text("Not found").foregroundStyle(.secondary)
                 }
+            }
+        }
+    }
+}
+
+/// T3 Code's "Cursor account usage" switch: the Cursor CLI keeps its login in the Keychain, and Coincide reads it
+/// for the plan's limits only once the user turns this on.
+private struct CursorUsageSection: View {
+    let model: SettingsModel
+
+    var body: some View {
+        Section("Usage Limits") {
+            Toggle(
+                isOn: Binding(
+                    get: { model.settings.cursorKeychainUsageEnabled },
+                    set: { isOn in
+                        model.update { $0.cursorKeychainUsageEnabled = isOn }
+                        model.check(.cursor)
+                    })
+            ) {
+                Text("Show account usage")
+                Text(
+                    "Read your Cursor CLI login from the macOS Keychain to show your plan’s monthly limits in the composer. macOS may ask you to allow access."
+                )
             }
         }
     }

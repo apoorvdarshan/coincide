@@ -117,3 +117,99 @@ struct UsageLimitsTests {
         #expect(limits.summary(at: now) == "Session: 62% left, resets in 2h 5m. Weekly: 80% left")
     }
 }
+
+// MARK: - Provider usage checks
+
+struct UsageLimitsOutcomeTests {
+    private let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    /// Blocks the thread, deaf to cancellation, then returns 1.
+    private static func block(for seconds: TimeInterval) -> Int {
+        Thread.sleep(forTimeInterval: seconds)
+        return 1
+    }
+
+    @Test func aFailedReadKeepsTheLastLimitsLikeT3() {
+        let previous = UsageLimits(
+            windows: [UsageLimitWindow(id: "m", kind: .monthly, label: "Monthly", usedPercent: 40)], checkedAt: now)
+        let fresh = UsageLimits(
+            windows: [UsageLimitWindow(id: "m", kind: .monthly, label: "Monthly", usedPercent: 45)], checkedAt: now)
+        #expect(UsageLimitsOutcome.limits(fresh).resolved(after: previous) == fresh)
+        #expect(UsageLimitsOutcome.failed.resolved(after: previous) == previous)
+        #expect(UsageLimitsOutcome.failed.resolved(after: nil) == nil)
+        // A setup without limits (signed out, an API key) drops what an earlier check read.
+        #expect(UsageLimitsOutcome.unsupported.resolved(after: previous) == nil)
+    }
+
+    @Test func aTimeoutStopsWaitingWithoutWaitingForTheWork() async throws {
+        let clock = ContinuousClock()
+        let start = clock.now
+        await #expect(throws: UsageLimitsTimeout.self) {
+            // Work that ignores cancellation, like a Keychain read waiting on the user.
+            try await usageLimitsWithTimeout(.milliseconds(50)) { Self.block(for: 1) }
+        }
+        #expect(clock.now - start < .milliseconds(900))
+        #expect(try await usageLimitsWithTimeout(.seconds(5)) { 7 } == 7)
+        await #expect(throws: URLError.self) {
+            try await usageLimitsWithTimeout(.seconds(5)) { () async throws -> Int in throw URLError(.timedOut) }
+        }
+    }
+
+    @Test func aMissingFileReadsAsNothingButOtherFailuresThrow() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-usage-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(try readFileIfPresent(directory.appending(path: "missing.json")) == nil)
+        #expect(try readFileIfPresent(directory.appending(path: "missing/auth.json")) == nil)
+        try Data("{}".utf8).write(to: directory.appending(path: "auth.json"))
+        #expect(try readFileIfPresent(directory.appending(path: "auth.json")) == Data("{}".utf8))
+        #expect(throws: (any Error).self) { try readFileIfPresent(directory) }
+    }
+}
+
+/// Answers usage requests in tests and records them, so nothing reaches the network.
+final class UsageFetchStub: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [URLRequest] = []
+    private let answer: @Sendable (URLRequest) throws -> (status: Int, body: String)
+
+    init(_ answer: @escaping @Sendable (URLRequest) throws -> (status: Int, body: String)) {
+        self.answer = answer
+    }
+
+    /// A stub that fails the test when anything is requested.
+    static func unused() -> UsageFetchStub {
+        UsageFetchStub { request in
+            Issue.record("unexpected usage request to \(request.url?.absoluteString ?? "")")
+            throw URLError(.cancelled)
+        }
+    }
+
+    var requests: [URLRequest] { lock.withLock { recorded } }
+
+    /// The bearer tokens of the requests, in order.
+    var tokens: [String] {
+        requests.map { ($0.value(forHTTPHeaderField: "Authorization") ?? "").replacing("Bearer ", with: "") }
+    }
+
+    var fetch: UsageLimitsFetch {
+        { request in
+            self.lock.withLock { self.recorded.append(request) }
+            let (status, body) = try self.answer(request)
+            let response = HTTPURLResponse(
+                url: request.url ?? URL(fileURLWithPath: "/"), statusCode: status, httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"])!
+            return (Data(body.utf8), response)
+        }
+    }
+}
+
+/// Values tests collect from `@Sendable` closures.
+final class UsageTestLog<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [Value] = []
+
+    func append(_ value: Value) { lock.withLock { stored.append(value) } }
+
+    var values: [Value] { lock.withLock { stored } }
+}

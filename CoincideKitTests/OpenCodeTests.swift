@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 
 @testable import CoincideKit
@@ -972,6 +973,271 @@ struct OpenCodeCatalogLoadingTests {
         let api = serve(models: [(401, #"{"_tag":"UnauthorizedError","message":"Unauthorized"}"#)])
         await #expect(throws: OpenCodeAPIError.self) { try await OpenCodeCatalog.load(api: api, directory: "/tmp/project") }
         #expect(OpenCodeStubProtocol.requestCount(host: api.baseURL.host() ?? "", path: "/api/model") == 1)
+    }
+}
+
+// MARK: - Usage limits
+
+/// Ported from T3 Code's OpenCode Go usage tests (`status.test.ts`). Credentials are stubs or files in a scratch
+/// folder, and requests are stubs: nothing reads the real OpenCode data or reaches the network.
+struct OpenCodeUsageLimitsTests {
+    private let now = Date(timeIntervalSince1970: 1_789_000_000)
+    private static let resetsAt = "2026-09-17T12:00:00.000Z"
+
+    private static func usage(_ rolling: Double, _ weekly: Double, _ monthly: Double) -> String {
+        func window(_ percent: Double) -> String { #"{"percent":\#(percent),"resetsAt":"\#(resetsAt)"}"# }
+        return #"{"usage":{"rolling":\#(window(rolling)),"weekly":\#(window(weekly)),"monthly":\#(window(monthly))}}"#
+    }
+
+    /// Credentials that fail the test when anything reads them.
+    private static func untouched() -> OpenCodeUsageLimits.Credentials {
+        OpenCodeUsageLimits.Credentials(
+            readFile: { url in
+                Issue.record("must not read \(url.path)")
+                return nil
+            },
+            consoleKey: { url in
+                Issue.record("must not open \(url.path)")
+                return nil
+            },
+            homeDirectory: URL(fileURLWithPath: "/nonexistent"))
+    }
+
+    /// Reads real files, for a scratch folder named in the environment.
+    private static let scratchFiles = OpenCodeUsageLimits.Credentials(
+        readFile: readFileIfPresent, consoleKey: OpenCodeUsageLimits.consoleKey(databaseAt:),
+        homeDirectory: URL(fileURLWithPath: "/nonexistent"))
+
+    private static func logged(authFile: String?, consoleKey: String? = nil, paths: UsageTestLog<String>)
+        -> OpenCodeUsageLimits.Credentials
+    {
+        OpenCodeUsageLimits.Credentials(
+            readFile: { url in
+                paths.append(url.path)
+                return authFile.map { Data($0.utf8) }
+            },
+            consoleKey: { url in
+                paths.append(url.path)
+                return consoleKey
+            },
+            homeDirectory: URL(fileURLWithPath: "/nonexistent"))
+    }
+
+    @Test func readsGoLimitsWithTheXDGCredentialsAndKeepsResetTimes() async throws {
+        let paths = UsageTestLog<String>()
+        let stub = UsageFetchStub { _ in (200, Self.usage(0, 10, 125)) }
+        let outcome = await OpenCodeUsageLimits.read(
+            environment: ["XDG_DATA_HOME": "/instance/data", "OPENCODE_API_KEY": "env-key"],
+            credentials: Self.logged(authFile: #"{"opencode-go":{"type":"api","key":"instance-key"}}"#, paths: paths),
+            fetch: stub.fetch, now: now)
+        guard case .limits(let limits) = outcome else {
+            Issue.record("expected limits, got \(outcome)")
+            return
+        }
+        let reset = try Date("2026-09-17T12:00:00Z", strategy: .iso8601)
+        #expect(limits.checkedAt == now)
+        #expect(limits.windows.map(\.id) == ["go_rolling", "go_weekly", "go_monthly"])
+        #expect(limits.windows.map(\.kind) == [.session, .weekly, .monthly])
+        #expect(limits.windows.map(\.label) == ["Go · Session", "Go · Weekly", "Go · Monthly"])
+        #expect(limits.windows.map(\.usedPercent) == [0, 10, 100])
+        #expect(limits.windows.map(\.durationMinutes) == [300, 10_080, nil])
+        #expect(limits.windows.allSatisfy { $0.resetsAt == reset })
+        #expect(paths.values == ["/instance/data/opencode/auth.json", "/instance/data/opencode/opencode.db"])
+        let request = try #require(stub.requests.first)
+        #expect(stub.requests.count == 1)
+        #expect(request.url?.absoluteString == "https://opencode.ai/zen/go/v1/usage")
+        #expect(request.httpMethod == "GET")
+        // The stored Go key wins over the environment's, as in OpenCode.
+        #expect(stub.tokens == ["instance-key"])
+    }
+
+    @Test func fallsBackToTheEnvironmentKeyAndTheHomeFolder() async {
+        let paths = UsageTestLog<String>()
+        let stub = UsageFetchStub { _ in (200, Self.usage(1, 2, 3)) }
+        let outcome = await OpenCodeUsageLimits.read(
+            environment: ["HOME": "/Users/dev", "OPENCODE_API_KEY": " env-key ", "OPENCODE_DB": "/elsewhere/opencode.db"],
+            credentials: Self.logged(authFile: nil, paths: paths), fetch: stub.fetch)
+        #expect(outcome != .failed)
+        #expect(stub.tokens == ["env-key"])
+        #expect(paths.values == ["/Users/dev/.local/share/opencode/auth.json", "/elsewhere/opencode.db"])
+
+        // Another kind of stored Go credential is not a key.
+        let other = UsageFetchStub { _ in (200, Self.usage(1, 2, 3)) }
+        _ = await OpenCodeUsageLimits.read(
+            environment: ["XDG_DATA_HOME": "/data", "OPENCODE_API_KEY": "env-key"],
+            credentials: Self.logged(authFile: #"{"opencode-go":{"type":"oauth","key":"oauth"}}"#, paths: UsageTestLog()),
+            fetch: other.fetch)
+        #expect(other.tokens == ["env-key"])
+    }
+
+    @Test func noKeyOrABrokenAuthFileReadsNothing() async {
+        let none = await OpenCodeUsageLimits.read(
+            environment: ["XDG_DATA_HOME": "/data"], credentials: Self.logged(authFile: "{}", paths: UsageTestLog()),
+            fetch: UsageFetchStub.unused().fetch)
+        #expect(none == .unsupported)
+        for broken in ["not json", "[]"] {
+            let outcome = await OpenCodeUsageLimits.read(
+                environment: ["XDG_DATA_HOME": "/data", "OPENCODE_API_KEY": "env-key"],
+                credentials: Self.logged(authFile: broken, paths: UsageTestLog()), fetch: UsageFetchStub.unused().fetch)
+            #expect(outcome == .failed)
+        }
+    }
+
+    @Test func usesTheSelectedConsoleKeyFallingBackOnlyOnAuthRejection() async throws {
+        let dataHome = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-opencode-\(UUID().uuidString)")
+        let directory = dataHome.appending(path: "opencode")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dataHome) }
+        try Data(#"{"opencode-go":{"type":"api","key":"go-key"}}"#.utf8).write(to: directory.appending(path: "auth.json"))
+        let databaseURL = directory.appending(path: "opencode.db")
+        let selectedURL = directory.appending(path: "selected.db")
+        let database = try CredentialDatabase(at: databaseURL)
+        let consoleKey = #"{"type":"key","key":"console-key"}"#
+
+        struct Case {
+            var consoleRow = #"{"type":"key","key":"console-key"}"#
+            var active: Int? = 1
+            var consoleStatus = 200
+            var inline = false
+            var databaseFile: String?
+            var requested: [String]
+        }
+        let cases = [
+            Case(consoleRow: #"{"type":"key","key":"console-key","metadata":{"server":"https://opencode.ai/console"}}"#, requested: ["console-key"]),
+            Case(consoleStatus: 401, requested: ["console-key", "go-key"]),
+            Case(consoleStatus: 403, requested: ["console-key", "go-key"]),
+            Case(consoleStatus: 500, requested: ["console-key"]),
+            Case(active: 0, requested: ["go-key"]),
+            Case(consoleRow: #"{"type":"oauth","methodID":"device","access":"token","refresh":"refresh","expires":0}"#, requested: ["go-key"]),
+            Case(consoleRow: #"{"type":"key","key":"console-key","metadata":{"server":"https://console.example"}}"#, requested: ["go-key"]),
+            Case(inline: true, requested: ["inline-key"]),
+            Case(databaseFile: "selected.db", requested: ["console-key"]),
+            Case(databaseFile: ":memory:", requested: ["go-key"]),
+            Case(active: nil, requested: ["console-key"]),
+        ]
+        for test in cases {
+            try database.execute("DELETE FROM credential")
+            try database.insert("cred_selected", "opencode", test.consoleRow, active: test.active, created: 2, updated: 2)
+            // Rows without a selection flag follow creation order, even when an older key was updated later.
+            try database.insert(
+                "cred_older", "opencode", #"{"type":"key","key":"old-key"}"#, active: test.active == nil ? nil : 0, created: 1,
+                updated: 9)
+            try database.insert("cred_other", "other", consoleKey, active: 1, created: 10, updated: 10)
+            if test.databaseFile == "selected.db" {
+                try? FileManager.default.removeItem(at: selectedURL)
+                try FileManager.default.copyItem(at: databaseURL, to: selectedURL)
+                try database.execute(#"UPDATE credential SET value = '{"type":"key","key":"old-key"}' WHERE id = 'cred_selected'"#)
+            }
+            let before = try Data(contentsOf: databaseURL)
+            var environment = ["XDG_DATA_HOME": dataHome.path]
+            environment["OPENCODE_DB"] = test.databaseFile
+            if test.inline { environment["OPENCODE_AUTH_CONTENT"] = #"{"opencode-go":{"type":"api","key":"inline-key"}}"# }
+            let stub = UsageFetchStub { request in
+                let key = (request.value(forHTTPHeaderField: "Authorization") ?? "").replacing("Bearer ", with: "")
+                // The old key is expired; only the expected keys work.
+                let status = key == "console-key" ? test.consoleStatus : test.requested.contains(key) ? 200 : 401
+                return (status, Self.usage(1, 1, 1))
+            }
+            let outcome = await OpenCodeUsageLimits.read(environment: environment, credentials: Self.scratchFiles, fetch: stub.fetch)
+            #expect(stub.tokens == test.requested, "\(test)")
+            #expect(try Data(contentsOf: databaseURL) == before, "the database is only read")
+            if test.consoleStatus == 500 {
+                #expect(outcome == .failed)
+            } else {
+                guard case .limits(let limits) = outcome else {
+                    Issue.record("expected limits for \(test), got \(outcome)")
+                    continue
+                }
+                #expect(limits.windows.count == 3)
+            }
+        }
+    }
+
+    @Test func keepsGoEntitlementAbsenceDistinctFromFailedOrMalformedResponses() async {
+        let cases: [(status: Int, expected: UsageLimitsOutcome)] = [(403, .unsupported), (401, .failed), (200, .failed), (500, .failed)]
+        for (status, expected) in cases {
+            let stub = UsageFetchStub { _ in (status, "{}") }
+            let outcome = await OpenCodeUsageLimits.read(
+                // Inline credentials bypass the disk and the database.
+                environment: ["OPENCODE_AUTH_CONTENT": #"{"opencode-go":{"type":"api","key":"inline-key"}}"#],
+                credentials: Self.untouched(), fetch: stub.fetch)
+            #expect(outcome == expected, "HTTP \(status)")
+            #expect(stub.tokens == ["inline-key"])
+        }
+        // A window missing from the answer, or one without a reset time, fails the read too.
+        let partial = UsageFetchStub { _ in
+            (200, #"{"usage":{"rolling":{"percent":1,"resetsAt":"2026-09-17T12:00:00Z"},"weekly":{"percent":1,"resetsAt":"2026-09-17T12:00:00Z"},"monthly":{"percent":1}}}"#)
+        }
+        let outcome = await OpenCodeUsageLimits.read(
+            environment: ["OPENCODE_AUTH_CONTENT": #"{"opencode-go":{"type":"api","key":"inline-key"}}"#],
+            credentials: Self.untouched(), fetch: partial.fetch)
+        #expect(outcome == .failed)
+    }
+
+    @Test func aSlowAnswerTimesOut() async {
+        let slow = UsageFetchStub { _ in
+            Thread.sleep(forTimeInterval: 1)
+            return (200, Self.usage(1, 1, 1))
+        }
+        let outcome = await OpenCodeUsageLimits.read(
+            environment: ["OPENCODE_AUTH_CONTENT": #"{"opencode-go":{"type":"api","key":"inline-key"}}"#],
+            credentials: Self.untouched(), fetch: slow.fetch, timeout: .milliseconds(50))
+        #expect(outcome == .failed)
+    }
+
+    @Test func storedConsoleKeysMustBelongToOpenCodesConsole() {
+        func key(_ value: String) -> String? { OpenCodeUsageLimits.consoleKey(fromStoredValue: value) }
+        #expect(key(#"{"type":"key","key":" console-key "}"#) == "console-key")
+        #expect(key(#"{"type":"key","key":"k","metadata":null}"#) == "k")
+        #expect(key(#"{"type":"key","key":"k","metadata":{}}"#) == "k")
+        #expect(key(#"{"type":"key","key":"k","metadata":{"server":42}}"#) == "k")
+        #expect(key(#"{"type":"key","key":"k","metadata":{"server":"https://opencode.ai/console/"}}"#) == "k")
+        #expect(key(#"{"type":"key","key":"k","metadata":{"server":"https://OpenCode.ai:443/console?x=1"}}"#) == "k")
+        #expect(key(#"{"type":"key","key":"k","metadata":{"server":"http://opencode.ai/console"}}"#) == nil)
+        #expect(key(#"{"type":"key","key":"k","metadata":{"server":"https://opencode.ai/console/other"}}"#) == nil)
+        #expect(key(#"{"type":"key","key":"k","metadata":{"server":"not a url"}}"#) == nil)
+        #expect(key(#"{"type":"key","key":"k","metadata":"self-hosted"}"#) == nil)
+        #expect(key(#"{"type":"api","key":"k"}"#) == nil)
+        #expect(key(#"{"type":"key","key":"  "}"#) == nil)
+        #expect(key("not json") == nil)
+    }
+
+    @Test func aMissingDatabaseIsNotCreated() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-missing-\(UUID().uuidString).db")
+        #expect(OpenCodeUsageLimits.consoleKey(databaseAt: url) == nil)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @MainActor @Test func detectionReadsNothingWithoutOpenCode() async {
+        let provider = OpenCodeProvider(usageCredentials: Self.untouched(), fetchUsage: UsageFetchStub.unused().fetch)
+        let status = await provider.detect(executable: nil, environment: ["OPENCODE_API_KEY": "env-key"])
+        #expect(status.state == .notInstalled)
+        #expect(status.usageLimits == nil)
+    }
+}
+
+/// A scratch database with OpenCode 2's `credential` table.
+private final class CredentialDatabase {
+    private var handle: OpaquePointer?
+
+    init(at url: URL) throws {
+        guard sqlite3_open(url.path, &handle) == SQLITE_OK else { throw CocoaError(.fileWriteUnknown) }
+        try execute(
+            "CREATE TABLE credential (id text PRIMARY KEY, integration_id text, value text, active integer, time_created integer, time_updated integer)"
+        )
+    }
+
+    deinit { sqlite3_close(handle) }
+
+    func execute(_ sql: String) throws {
+        guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    func insert(_ id: String, _ integration: String, _ value: String, active: Int?, created: Int, updated: Int) throws {
+        func quoted(_ text: String) -> String { "'" + text.replacing("'", with: "''") + "'" }
+        try execute(
+            "INSERT INTO credential VALUES (\(quoted(id)), \(quoted(integration)), \(quoted(value)), \(active.map(String.init) ?? "NULL"), \(created), \(updated))"
+        )
     }
 }
 
