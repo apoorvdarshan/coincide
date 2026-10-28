@@ -57,6 +57,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebar.onSelectThread = { [weak self] id in self?.open(id, unsnooze: false) }
         splitController.onPanelsChanged = { [weak self] in self?.updatePanelItems() }
         runStatus.onStop = { [weak self] in self?.stopTurn(nil) }
+        projectScripts.onVisibilityChange = { [weak self] visible in
+            self?.toolbarItems[.projectScripts]?.isHidden = !visible
+        }
         // A script started in the open thread shows its terminal.
         ProjectScripts.shared.onShowTerminal = { [weak self] threadID in
             guard let self, threadID == selectedThreadID, !splitController.content.isTerminalOpen else { return }
