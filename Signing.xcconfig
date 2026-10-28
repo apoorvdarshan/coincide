@@ -1,0 +1,9 @@
+// Code signing. Builds are signed ad hoc by default (as CI does). To sign your own builds with a stable
+// identity, create Local.xcconfig next to this file (it is gitignored), for example:
+//
+//   CODE_SIGN_IDENTITY = Developer ID Application
+//   DEVELOPMENT_TEAM = ABCDE12345
+//
+// macOS ties privacy permissions (such as access to Documents) to the app's signature. Ad-hoc builds
+// get a new identity on every build, so macOS asks again each time; a stable identity keeps the answer.
+#include? "Local.xcconfig"

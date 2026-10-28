@@ -557,7 +557,28 @@ public final class ThreadRunner {
         let task = Task { try await session.start() }
         launches[threadID, default: [:]][provider] = Launch(session: session, task: task)
         lastActivity[threadID, default: [:]][provider] = Date()
+        noteSlowStart(of: session, threadID: threadID, provider: provider)
         return try await join(Launch(session: session, task: task), threadID, provider)
+    }
+
+    /// How long an agent may take to start before the thread explains the likely reasons.
+    var slowStartNoticeDelay: Duration = .seconds(15)
+
+    /// Agents launched by Coincide read their own settings (for example `~/.claude/CLAUDE.md`), which often
+    /// live in folders macOS protects. Their reads then wait for the user to let Coincide access that folder,
+    /// so a launch that hangs usually means a permission prompt is waiting, or was declined.
+    private func noteSlowStart(of session: AgentSession, threadID: UUID, provider: ProviderKind) {
+        Task { [weak self] in
+            try? await Task.sleep(for: self?.slowStartNoticeDelay ?? .seconds(15))
+            guard let self, self.launches[threadID]?[provider]?.session === session else { return }
+            self.store.append(
+                TranscriptItem(
+                    kind: .notice,
+                    text: String(
+                        localized: "\(provider.displayName) is taking a while to start. If macOS asked whether Coincide may access a folder such as Documents, where agent settings often live, allow it. You can also grant access in System Settings › Privacy & Security › Files and Folders."),
+                    provider: provider),
+                to: threadID)
+        }
     }
 
     /// Waits for a session to start and makes it the thread's live session for its provider.

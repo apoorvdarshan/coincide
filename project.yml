@@ -27,6 +27,9 @@ targets:
   CoincideKit:
     type: framework
     platform: macOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     sources:
       - path: CoincideKit
     settings:
@@ -40,6 +43,9 @@ targets:
   Coincide:
     type: application
     platform: macOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     sources:
       - path: Coincide
     dependencies:
@@ -61,6 +67,9 @@ targets:
   CoincideTests:
     type: bundle.unit-test
     platform: macOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     sources:
       - path: CoincideTests
     dependencies:
@@ -81,6 +90,9 @@ targets:
   CoincideKitTests:
     type: bundle.unit-test
     platform: macOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     sources:
       - path: CoincideKitTests
     dependencies:

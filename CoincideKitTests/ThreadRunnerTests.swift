@@ -737,3 +737,46 @@ struct AccessDowngradeRunnerTests {
         #expect(provider.lastSession?.sent.last?.accessMode == .approval)
     }
 }
+
+/// A session whose start never finishes, like an agent blocked on a macOS permission prompt.
+@MainActor
+private final class StalledSession: AgentSession {
+    let provider: ProviderKind
+    var sessionID: String?
+    var onEvent: ((AgentEvent) -> Void)?
+    init(provider: ProviderKind) { self.provider = provider }
+    func start() async throws { try await Task.sleep(for: .seconds(30)) }
+    func send(_ input: AgentTurnInput) async throws {}
+    func respond(to approvalID: String, optionID: String) {}
+    func interrupt() {}
+    func shutdown() {}
+}
+
+@MainActor
+private final class StalledProvider: AgentProvider {
+    let kind: ProviderKind = .claude
+    let executableNames = ["sh"]
+    let setupHint = ""
+    func detect(executable: URL?, environment: [String: String]) async -> ProviderStatus { ProviderStatus(state: .ready) }
+    func models(status: ProviderStatus, environment: [String: String]) async -> [ModelOption] { [] }
+    func makeSession(_ launch: AgentLaunch) -> AgentSession { StalledSession(provider: kind) }
+}
+
+@MainActor
+struct SlowStartNoticeTests {
+    @Test func aSlowAgentStartExplainsFolderPermissions() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-tests-\(UUID().uuidString)")
+        let store = AppStore(directory: dir)
+        let runner = ThreadRunner(store: store, registry: ProviderRegistry(store: store, providers: [StalledProvider()]))
+        runner.slowStartNoticeDelay = .milliseconds(100)
+        store.updateSettings { $0.checkpointsEnabled = false }
+        let project = store.addProject(at: FileManager.default.temporaryDirectory)
+        let thread = store.createThread(in: project.id, selection: ModelSelection(provider: .claude, modelID: "m"))
+        let sending = Task { await runner.send(threadID: thread.id, text: "hi") }
+        try await Task.sleep(for: .milliseconds(600))
+        let notice = store.thread(thread.id)?.items.last { $0.kind == .notice }
+        #expect(notice?.text.contains("Files and Folders") == true)
+        runner.stop(threadID: thread.id)
+        sending.cancel()
+    }
+}
