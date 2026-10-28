@@ -425,6 +425,10 @@ final class SidebarViewController: NSViewController {
             lines.append(String(localized: "Handed off from \(others.map(\.displayName).formatted(.list(type: .and)))"))
         }
         if let label = status.label { lines.append(label) }
+        let background = ThreadRunner.shared.backgroundTasks(thread.id)
+        if !status.isRunning, !background.isEmpty {
+            lines.append(String(localized: "Working in the background: \(background.map(\.task.title).formatted(.list(type: .and)))"))
+        }
         // A turn the agent started itself shows as working like any other; the tooltip says why.
         if let note = AgentTurns.shared.runningNote(in: thread.id) { lines.append(note) }
         var jumpHint: String?
@@ -435,7 +439,7 @@ final class SidebarViewController: NSViewController {
             title: thread.title, provider: thread.selection.provider, isPinned: thread.isPinned,
             isArchived: thread.isArchived, status: status, updatedAt: thread.updatedAt,
             canArchive: ThreadActions.canArchive(thread.id), canFork: ThreadForking.canFork(thread.id),
-            toolTip: lines.joined(separator: "\n"),
+            hasBackgroundWork: !background.isEmpty, toolTip: lines.joined(separator: "\n"),
             accessibilityLabel: [thread.title, status.label, project?.name].compactMap(\.self).joined(separator: ", "),
             jumpHint: jumpHint)
     }

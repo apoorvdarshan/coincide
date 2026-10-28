@@ -120,6 +120,7 @@ final class ChatViewController: NSViewController {
         let findBarWidth = findBar.widthAnchor.constraint(equalToConstant: TranscriptFindBar.width)
         findBarWidth.priority = .defaultHigh
         let composerView = composer.view
+        composer.onRevealItem = { [weak self] itemID in self?.revealItem(itemID) }
         composerView.translatesAutoresizingMaskIntoConstraints = false
         composerContainer.addSubview(composerView)
         composerAtBottom = composerContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor)
@@ -679,24 +680,43 @@ final class ChatViewController: NSViewController {
 
     /// Brings the current match into view: opens the turn, group of tool calls and row folding it away,
     /// scrolls to it (inside a tool call's output too) and points it out.
-    private func revealCurrentMatch() {
-        guard let threadID = displayedThreadID, let thread = store.thread(threadID), let match = finder.current,
-            let item = itemsByID[match.itemID]
-        else { return }
-        let rowID = TranscriptRowID.item(match.itemID)
-        var open = expanded[threadID] ?? []
+    /// Opens the turn and tool group that fold an item away and scrolls to it, as find does for its match.
+    func revealItem(_ itemID: UUID) {
+        guard let threadID = displayedThreadID, let thread = store.thread(threadID) else { return }
+        let open = rowsOpened(toShow: itemID, in: thread)
+        if open != (expanded[threadID] ?? []) {
+            expanded[threadID] = open
+            rebuild()
+        }
+        guard let index = list.index(of: .item(itemID)) else { return }
+        list.reveal(row: index)
+    }
+
+    /// The open rows with whatever folds `itemID` away opened too: its turn's work and its group of tool calls.
+    private func rowsOpened(toShow itemID: UUID, in thread: ChatThread) -> Set<TranscriptRowID> {
+        let rowID = TranscriptRowID.item(itemID)
+        var open = expanded[thread.id] ?? []
         var layout = builder(for: thread)
         var rows = layout.build()
-        if !rows.contains(where: { $0.id == rowID }), let header = layout.foldingHeader(of: match.itemID) {
+        if !rows.contains(where: { $0.id == rowID }), let header = layout.foldingHeader(of: itemID) {
             open.insert(header)
             layout.expanded = open
             rows = layout.build()
         }
         let group = rows.first { row in
-            if case .group(let ids, _) = row.kind { return ids.contains(match.itemID) }
+            if case .group(let ids, _) = row.kind { return ids.contains(itemID) }
             return false
         }
         if !rows.contains(where: { $0.id == rowID }), let group { open.insert(group.id) }
+        return open
+    }
+
+    private func revealCurrentMatch() {
+        guard let threadID = displayedThreadID, let thread = store.thread(threadID), let match = finder.current,
+            let item = itemsByID[match.itemID]
+        else { return }
+        let rowID = TranscriptRowID.item(match.itemID)
+        var open = rowsOpened(toShow: match.itemID, in: thread)
         if !open.contains(rowID), rowHidesMatch(match, of: item) {
             open.insert(rowID)
             bumpRevision(match.itemID)

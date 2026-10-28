@@ -478,12 +478,18 @@ struct ClaudeEventMapper {
         case "background_tasks_changed"?:
             // Replaces the whole set; ambient tasks (watchers) are not work anyone waits for.
             var tasks: [String: String] = [:]
+            var report: [BackgroundTask] = []
             for task in frame["tasks"]?.array ?? [] where task["ambient"]?.bool != true {
                 guard let id = task["task_id"]?.string else { continue }
-                tasks[id] = Self.cleaned(task["description"]?.string) ?? task["task_type"]?.string ?? id
+                let type = task["task_type"]?.string ?? ""
+                let title = Self.cleaned(task["description"]?.string) ?? (type.isEmpty ? id : type)
+                tasks[id] = title
+                let kind: BackgroundTask.Kind =
+                    type.contains("agent") ? .agent : type.contains("bash") || type.contains("shell") ? .command : .other
+                report.append(BackgroundTask(id: id, title: title, kind: kind, toolCallID: task["tool_use_id"]?.string))
             }
             backgroundTasks = tasks
-            return []
+            return [.backgroundWork(report)]
         case "api_retry"?:
             guard !retryNoticed else { return [] }
             retryNoticed = true

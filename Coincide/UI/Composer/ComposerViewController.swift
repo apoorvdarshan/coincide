@@ -15,6 +15,9 @@ import QuickLookUI
 /// The view fills the width it is given and centers the composer in the transcript's column; clicks
 /// outside the composer's controls pass through to whatever is behind it.
 final class ComposerViewController: NSViewController, NSTextViewDelegate {
+    /// Shows a transcript item, such as the tool call that started background work.
+    var onRevealItem: ((UUID) -> Void)?
+
     var threadID: UUID? {
         didSet {
             guard threadID != oldValue else { return }
@@ -32,6 +35,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private let queueBanner = ComposerQueueBanner()
     private let usageBanner = ComposerUsageBanner()
     private let handoffBanner = ComposerHandoffBanner()
+    private let backgroundBanner = ComposerBackgroundBanner()
     private let planBanner = ComposerPlanBanner()
     private let questionBanner = ComposerQuestionBanner()
     private let approvalBanner = ComposerApprovalBanner()
@@ -175,7 +179,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         column.spacing = 6
         column.detachesHiddenViews = true
         // What needs an answer sits closest to the input.
-        let banners: [NSView] = [handoffBanner, planBanner, usageBanner, queueBanner, questionBanner, approvalBanner]
+        let banners: [NSView] = [
+            backgroundBanner, handoffBanner, planBanner, usageBanner, queueBanner, questionBanner, approvalBanner,
+        ]
         for view in banners + [surface, branchToolbar] {
             column.addArrangedSubview(view)
         }
@@ -242,6 +248,12 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             guard let self, let threadID else { return }
             runner.dismissQuestion(threadID: threadID, itemID: itemID)
             focus()
+        }
+        backgroundBanner.onSelect = { [weak self] _, task in
+            guard let self, let threadID = self.threadID, let toolCall = task.toolCallID,
+                let item = self.runner.itemID(forToolCall: toolCall, in: threadID)
+            else { return }
+            self.onRevealItem?(item)
         }
         queueBanner.onEdit = { [weak self] id in self?.editQueued(id) }
         queueBanner.onRemove = { [weak self] id in
@@ -552,11 +564,16 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     private func refreshRunState() {
         guard let threadID, let thread else {
+            backgroundBanner.isHidden = true
             queueBanner.isHidden = true
             footer.contextMeter.isHidden = true
             updateSendState()
             return
         }
+        let background = runner.backgroundTasks(threadID)
+        if !background.isEmpty { backgroundBanner.show(background) }
+        backgroundBanner.isHidden = background.isEmpty
+
         let queued = runner.queuedMessages(threadID)
         if !queued.isEmpty { queueBanner.show(queued, canSteer: runner.canSteer(threadID), steerKey: sendKeys.steerQueued) }
         queueBanner.isHidden = queued.isEmpty

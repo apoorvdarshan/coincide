@@ -147,6 +147,27 @@ struct ThreadRunnerTests {
         await runner.send(threadID: threadID, text: text)
     }
 
+    // MARK: Background work
+
+    @Test func backgroundWorkOutlastsTheTurnAndEndsWithTheSession() async throws {
+        await completeTurn("audit it", reply: "Started an agent.")
+        let session = try #require(claude.sessions.first)
+        var changes = 0
+        let token = store.observe { if case .runState(let id) = $0, id == threadID { changes += 1 } }
+        let task = BackgroundTask(id: "a1", title: "Audit the port", kind: .agent, toolCallID: "toolu_1")
+        session.emit(.backgroundWork([task]))
+        #expect(!runner.isRunning(threadID))
+        #expect(runner.backgroundTasks(threadID).map(\.task) == [task])
+        #expect(runner.backgroundTasks(threadID).first?.provider == .claude)
+        // The same report again changes nothing.
+        session.emit(.backgroundWork([task]))
+        #expect(changes == 1)
+        session.emit(.sessionExited(error: nil))
+        #expect(runner.backgroundTasks(threadID).isEmpty)
+        #expect(changes == 2)
+        _ = token
+    }
+
     // MARK: Starting and stopping
 
     @Test func aFolderThatIsGoneFailsTheTurn() async {
