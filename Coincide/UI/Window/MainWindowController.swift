@@ -8,6 +8,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private(set) lazy var root = MainRootViewController(split: splitController)
     var rail: NavigationRailViewController { root.rail }
     let runStatus = RunStatusView()
+    let projectScripts = ProjectScriptsControl()
     var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     let threadTitle = ThreadTitleView()
 
@@ -56,6 +57,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebar.onSelectThread = { [weak self] id in self?.open(id) }
         splitController.onPanelsChanged = { [weak self] in self?.updatePanelItems() }
         runStatus.onStop = { [weak self] in self?.stopTurn(nil) }
+        // A script started in the open thread shows its terminal.
+        ProjectScripts.shared.onShowTerminal = { [weak self] threadID in
+            guard let self, threadID == selectedThreadID, !splitController.content.isTerminalOpen else { return }
+            splitController.content.toggleTerminal()
+        }
         runStatus.onVisibilityChange = { [weak self] visible in
             self?.toolbarItems[.runStatus]?.isHidden = !visible
         }
@@ -153,6 +159,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func updateRunStatus() {
+        projectScripts.threadID = selectedThreadID
         guard let id = selectedThreadID else {
             runStatus.update(.idle)
             return

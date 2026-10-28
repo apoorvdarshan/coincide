@@ -822,3 +822,30 @@ struct ThreadTitleTests {
         #expect(prompt.contains("\"title\""))
     }
 }
+
+struct ProjectScriptTests {
+    @Test func projectsSavedBeforeScriptsHaveNoneAndBadScriptsAreSkipped() throws {
+        let old = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Lumen","path":"/tmp/lumen"}"#
+        #expect(try JSONDecoder().decode(Project.self, from: Data(old.utf8)).scripts.isEmpty)
+        let mixed = #"""
+            {"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Lumen","path":"/tmp/lumen",
+             "scripts":[{"name":"Dev","command":"npm run dev","icon":"rocket"},{"name":"No command"}]}
+            """#
+        let scripts = try JSONDecoder().decode(Project.self, from: Data(mixed.utf8)).scripts
+        #expect(scripts.map(\.name) == ["Dev"])
+        #expect(scripts.first?.icon == .play)
+    }
+
+    @Test func t3FilesBringTheirScripts() {
+        let file = #"""
+            {"$schema":"https://t3.codes/schema/t3.json","scripts":[
+              {"name":"Setup","command":"pnpm install","icon":"configure","runOnWorktreeCreate":true},
+              {"name":"  ","command":"echo nameless"},
+              {"name":"Test","command":"pnpm test","icon":"test"}]}
+            """#
+        let scripts = ProjectScript.scripts(fromT3File: Data(file.utf8))
+        #expect(scripts.map(\.name) == ["Setup", "Test"])
+        #expect(scripts.first?.runOnWorktreeCreate == true && scripts.first?.icon == .configure)
+        #expect(scripts.last?.runOnWorktreeCreate == false)
+    }
+}

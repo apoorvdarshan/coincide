@@ -54,9 +54,12 @@ final class ThreadTerminals {
 
     // MARK: Changes
 
+    /// The session each project script last ran in, by script.
+    private var scriptSessions: [UUID: UUID] = [:]
+
     @discardableResult
-    func addTab() -> TerminalSession {
-        let session = makeSession()
+    func addTab(environment: [String: String] = [:]) -> TerminalSession {
+        let session = makeSession(environment: environment)
         let tab = TerminalTab(session: session)
         tabs.append(tab)
         activeTabID = tab.id
@@ -134,11 +137,27 @@ final class ThreadTerminals {
         onChange?(.tabs)
     }
 
-    private func makeSession() -> TerminalSession {
+    /// Runs a project script in the terminal it ran in last when that terminal is idle again, as T3 Code does, else in
+    /// a new tab, and shows that terminal.
+    func run(_ script: ProjectScript, environment: [String: String]) {
+        let previous = scriptSessions[script.id].flatMap { id in sessions.first { $0.id == id } }
+        let session: TerminalSession
+        if let previous, previous.state == .running, !previous.isBusy {
+            session = previous
+            activate(previous)
+        } else {
+            session = addTab(environment: environment)
+        }
+        scriptSessions[script.id] = session.id
+        session.run(script.command)
+    }
+
+    private func makeSession(environment: [String: String] = [:]) -> TerminalSession {
         let used = Set(sessions.map(\.number))
         let number = (1...).first { !used.contains($0) }!
         let start = TerminalLaunch.directory(for: threadID)
-        let session = TerminalSession(number: number, directory: start.url, missingDirectory: start.missing)
+        let session = TerminalSession(
+            number: number, directory: start.url, missingDirectory: start.missing, environment: environment)
         session.onChange = { [weak self, weak session] in
             guard let self, let session else { return }
             self.onChange?(.session(session))

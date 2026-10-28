@@ -27,6 +27,8 @@ final class TerminalSession {
     /// pane stays to show why.
     var onExit: ((_ keepOpen: Bool) -> Void)?
 
+    /// Variables added to the shell's environment, such as a project script's folders.
+    private let extraEnvironment: [String: String]
     private var shellPID: pid_t = 0
     private var launchedAt = Date.distantPast
     private var pendingInput: [UInt8] = []
@@ -34,9 +36,10 @@ final class TerminalSession {
     private var refreshScheduled = false
     private var settleTimer: Timer?
 
-    init(number: Int, directory: URL, missingDirectory: URL?) {
+    init(number: Int, directory: URL, missingDirectory: URL?, environment: [String: String] = [:]) {
         self.number = number
         self.directory = directory
+        extraEnvironment = environment
         paneView = TerminalPaneView(terminalView: ShellTerminalView(font: Theme.monoFont))
         terminalView.setAccessibilityLabel(title)
         if let missingDirectory {
@@ -68,6 +71,16 @@ final class TerminalSession {
         }
     }
 
+    /// Types `command` into the shell and presses Return, once the shell is up.
+    func run(_ command: String) {
+        let input = Array((command + "\r").utf8)
+        switch state {
+        case .starting: pendingInput.append(contentsOf: input)
+        case .running: terminalView.process?.send(data: input[...])
+        case .exited: break
+        }
+    }
+
     func restart() {
         guard case .exited = state, !isClosed else { return }
         paneView.hideExitBanner()
@@ -94,7 +107,8 @@ final class TerminalSession {
         let loginName = "-" + (shell as NSString).lastPathComponent
         TerminalLaunch.withDefaultPipeSignal {
             terminalView.startProcess(
-                executable: shell, args: [], environment: TerminalLaunch.environment(from: environment, directory: directory),
+                executable: shell, args: [],
+                environment: TerminalLaunch.environment(from: environment, directory: directory, extra: extraEnvironment),
                 execName: loginName, currentDirectory: directory.path)
         }
         let process = terminalView.process!

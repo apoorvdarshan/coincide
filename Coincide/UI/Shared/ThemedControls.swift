@@ -89,7 +89,7 @@ final class ThemedButton: NSButton {
             text = Theme.ink
         case .plain:
             fill = isHovered ? Theme.sidebarHover : nil
-            text = .secondaryLabelColor
+            text = hasDestructiveAction ? .systemRed : .secondaryLabelColor
         }
         if let fill {
             var color = fill
@@ -421,5 +421,83 @@ final class ThemedProgressBar: NSView {
         color.setFill()
         NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: max(width, bounds.height), height: bounds.height), xRadius: radius, yRadius: radius)
             .fill()
+    }
+}
+
+/// A text field in the app's theme: a rounded raised fill with a border, in place of the system's bezel.
+final class ThemedTextField: NSTextField {
+    override class var cellClass: AnyClass? {
+        get { ThemedTextFieldCell.self }
+        set {}
+    }
+
+    convenience init(placeholder: String, monospaced: Bool = false) {
+        self.init(frame: .zero)
+        placeholderString = placeholder
+        font = monospaced ? .monospacedSystemFont(ofSize: 12, weight: .regular) : .systemFont(ofSize: 13)
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isBezeled = false
+        isBordered = false
+        drawsBackground = false
+        focusRingType = .none
+        isEditable = true
+        isSelectable = true
+        usesSingleLineMode = true
+        cell?.isScrollable = true
+        cell?.wraps = false
+        wantsLayer = true
+        heightAnchor.constraint(equalToConstant: 28).isActive = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        guard let layer else { return }
+        layer.cornerRadius = 7
+        layer.cornerCurve = .continuous
+        layer.backgroundColor = Theme.raisedFill.cgColor
+        let focused = currentEditor() != nil
+        layer.borderWidth = focused ? 1.5 : 1
+        layer.borderColor = (focused ? Theme.ink.withAlphaComponent(0.45) : Theme.surfaceBorder).cgColor
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        needsDisplay = true
+        return became
+    }
+
+    override func textDidEndEditing(_ notification: Notification) {
+        super.textDidEndEditing(notification)
+        needsDisplay = true
+    }
+}
+
+/// Keeps the text of a `ThemedTextField` clear of its rounded edges, while drawing and while editing.
+final class ThemedTextFieldCell: NSTextFieldCell {
+    private func inset(_ rect: NSRect) -> NSRect {
+        let lineHeight = (font ?? .systemFont(ofSize: 13)).boundingRectForFont.height.rounded(.up)
+        let y = rect.minY + max(0, (rect.height - lineHeight) / 2)
+        return NSRect(x: rect.minX + 8, y: y, width: rect.width - 16, height: min(lineHeight, rect.height))
+    }
+
+    override func drawingRect(forBounds rect: NSRect) -> NSRect { inset(super.drawingRect(forBounds: rect)) }
+
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: inset(rect), in: controlView, editor: textObj, delegate: delegate, event: event)
+    }
+
+    override func select(
+        withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int,
+        length selLength: Int
+    ) {
+        super.select(withFrame: inset(rect), in: controlView, editor: textObj, delegate: delegate, start: selStart, length: selLength)
     }
 }

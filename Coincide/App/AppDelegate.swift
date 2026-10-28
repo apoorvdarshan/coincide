@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ThreadActivity.shared.start()
         AgentTurns.shared.start()
         NotificationController.shared.start()
+        ProjectScripts.shared.start()
         mainWindow?.showWindow(nil)
         Task { await ProviderRegistry.shared.refresh() }
         #if DEBUG
