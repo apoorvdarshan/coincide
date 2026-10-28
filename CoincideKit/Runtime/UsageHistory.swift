@@ -43,6 +43,7 @@ public final class UsageHistory {
     private let file: URL
     private let writer = DispatchQueue(label: "Coincide.usage-history", qos: .utility)
     private var generation = 0
+    private var unreadableOriginalBlocksWrites = false
 
     public init(directory: URL) {
         file = directory.appendingPathComponent("usage-history.json")
@@ -57,12 +58,15 @@ public final class UsageHistory {
             // Preserve unreadable data before the first new record replaces the history.
             do {
                 try FileManager.default.moveItem(at: file, to: file.appendingPathExtension("unreadable-\(UUID())"))
-            } catch { self.error = error.localizedDescription }
+            } catch {
+                unreadableOriginalBlocksWrites = true
+                self.error = error.localizedDescription
+            }
         }
     }
 
     public func record(_ value: UsageRecord) {
-        guard error == nil, !records.contains(where: { $0.id == value.id }) else { return }
+        guard !unreadableOriginalBlocksWrites, !records.contains(where: { $0.id == value.id }) else { return }
         records.append(value)
         if records.count > Self.limit { records.removeFirst(records.count - Self.limit) }
         generation += 1
@@ -70,6 +74,7 @@ public final class UsageHistory {
         let snapshot = records
         let file = file
         writer.async { [weak self] in
+            var failure: String?
             do {
                 let encoder = JSONEncoder()
                 encoder.dateEncodingStrategy = .iso8601
@@ -77,12 +82,13 @@ public final class UsageHistory {
                 try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try data.write(to: file, options: .atomic)
             } catch {
-                let message = error.localizedDescription
-                Task { @MainActor [weak self] in
-                    guard let self, self.generation == revision else { return }
-                    self.error = message
-                    NotificationCenter.default.post(name: Self.didChange, object: self)
-                }
+                failure = error.localizedDescription
+            }
+            let message = failure
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == revision, self.error != message else { return }
+                self.error = message
+                NotificationCenter.default.post(name: Self.didChange, object: self)
             }
         }
         NotificationCenter.default.post(name: Self.didChange, object: self)
