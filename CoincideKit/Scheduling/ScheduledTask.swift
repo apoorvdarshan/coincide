@@ -17,8 +17,9 @@ public struct TaskRecurrence: Codable, Equatable, Sendable {
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
-        guard lhs.kind == rhs.kind, lhs.timeZoneID == rhs.timeZoneID else { return false }
+        guard lhs.kind == rhs.kind else { return false }
         if lhs.kind == .once { return lhs.date == rhs.date }
+        guard lhs.timeZoneID == rhs.timeZoneID else { return false }
         return lhs.hour == rhs.hour && lhs.minute == rhs.minute && (lhs.kind != .weekly || lhs.weekday == rhs.weekday)
     }
 
