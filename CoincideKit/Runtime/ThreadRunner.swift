@@ -32,6 +32,8 @@ public final class ThreadRunner {
         var delivered = false
         /// The model the turn runs with, recorded on its items even if the thread's selection changes meanwhile.
         var modelID: String?
+        /// Only this turn's reports, without carrying the previous turn's context/cost into history.
+        var reportedUsage = TokenUsage()
         /// The user's messages the turn took in while it ran (steering it), in order. Each is a user item
         /// after `userItemID`, marked `steered`, that belongs to this turn rather than opening one.
         public internal(set) var steeredItemIDs: [UUID] = []
@@ -70,6 +72,7 @@ public final class ThreadRunner {
 
     private let store: AppStore
     private let registry: ProviderRegistry
+    public let usageHistory: UsageHistory
     private var sessions: [UUID: [ProviderKind: AgentSession]] = [:]
     private var launches: [UUID: [ProviderKind: Launch]] = [:]
     /// The native id each live session last reported, to notice when the thread forgot it (rewind).
@@ -130,6 +133,7 @@ public final class ThreadRunner {
     public init(store: AppStore, registry: ProviderRegistry) {
         self.store = store
         self.registry = registry
+        usageHistory = UsageHistory(directory: store.directory)
         idleTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.shutDownIdleSessions() }
         }
@@ -830,6 +834,10 @@ public final class ThreadRunner {
             }
 
         case .usage(let value):
+            if turnOfProvider, var turn = turns[threadID] {
+                turn.reportedUsage = value.merged(with: turn.reportedUsage)
+                turns[threadID] = turn
+            }
             if usageProviders[threadID] != provider { usage[threadID] = nil }
             usageProviders[threadID] = provider
             usage[threadID] = value.merged(with: usage[threadID] ?? TokenUsage())
@@ -925,6 +933,17 @@ public final class ThreadRunner {
     private func finishTurn(_ threadID: UUID, _ turnID: UUID, outcome: TurnOutcome) {
         guard let turn = turns[threadID], turn.userItemID == turnID else { return }
         let provider = turn.provider
+        if let projectID = store.summary(threadID)?.projectID {
+            let result: UsageRecord.Outcome
+            switch outcome {
+            case .completed: result = .completed
+            case .interrupted: result = .interrupted
+            case .failed: result = .failed
+            }
+            usageHistory.record(UsageRecord(id: turnID, threadID: threadID, projectID: projectID,
+                provider: provider, modelID: turn.modelID, startedAt: turn.startedAt, finishedAt: Date(),
+                outcome: result, usage: turn.reportedUsage))
+        }
         turns[threadID] = nil
         lastActivity[threadID, default: [:]][provider] = Date()
         if let thread = store.thread(threadID) {

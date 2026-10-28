@@ -78,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !Self.isHostingTests else { return }
         ThreadRunner.shared.shutdownAll()
         AppStore.shared.flush()
+        ThreadRunner.shared.usageHistory.flush()
         if mainWindow?.window?.isVisible == true { mainWindow?.saveLayout() }
         UIState.shared.flush()
     }

@@ -515,6 +515,16 @@ struct ThreadRunnerTests {
         store.updateThread(threadID) { $0.selection = ModelSelection(provider: .claude, modelID: "other") }
         await runner.send(threadID: threadID, text: "two")
         #expect(runner.usage[threadID] == TokenUsage(inputTokens: 150))
+        #expect(runner.usageHistory.records.count == 2)
+        #expect(runner.usageHistory.records[0].usage.outputTokens == 5)
+        #expect(runner.usageHistory.records[1].usage == TokenUsage(inputTokens: 150))
+        #expect(runner.usageHistory.records[1].modelID == "other")
+        claude.last?.onSend = { session, _ in session.emit(.turnCompleted(.interrupted)) }
+        await runner.send(threadID: threadID, text: "three")
+        #expect(runner.usageHistory.records.last?.usage == TokenUsage())
+        #expect(runner.usageHistory.records.last?.outcome == .interrupted)
+        runner.usageHistory.flush()
+        #expect(UsageHistory(directory: store.directory).records.count == 3)
     }
 
     // MARK: Turns the agent starts
