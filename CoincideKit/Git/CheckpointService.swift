@@ -334,7 +334,7 @@ public final class CheckpointService {
                 if let id = UUID(uuidString: String(file.dropLast(5))) { known.insert(id) }
             }
         }
-        for threadID in known where !store.hasThread(threadID) {
+        for threadID in known where !store.hasThread(threadID) && !store.canUndoDeletion(of: threadID) {
             await deleteCheckpoints(threadID: threadID)
         }
     }
