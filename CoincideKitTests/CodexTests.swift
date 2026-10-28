@@ -172,6 +172,48 @@ struct CodexProtocolTests {
         #expect(models.map(\.modelID) == ["gpt-6.1-sol", "gpt-6-luna"])
     }
 
+    @Test func catalogServiceTiersBecomeSpeeds() throws {
+        func entry(_ model: String, adding extra: [String: JSONValue] = [:]) throws -> JSONValue {
+            let base = try #require(catalogEntry(model, model, efforts: ["low"], defaultEffort: "low").object)
+            return .object(base.merging(extra) { _, new in new })
+        }
+        let astra = try entry(
+            "gpt-6-astra",
+            adding: [
+                "serviceTiers": [
+                    ["id": "default", "name": "Standard", "description": ""],
+                    ["id": "fast", "name": "Fast", "description": "Faster responses"],
+                    ["id": "ultrafast", "name": "Ultrafast", "description": ""],
+                ]
+            ])
+        // Older catalogs only name the extra tiers.
+        let sol = try entry("gpt-6.1-sol", adding: ["additionalSpeedTiers": ["fast"]])
+        let luna = try entry("gpt-6-luna")
+        let models = CodexProtocol.models(fromEntries: [astra, sol, luna])
+        #expect(
+            models[0].speeds == [
+                ModelSpeed(id: "fast", name: "Fast", detail: "Faster responses"),
+                ModelSpeed(id: "ultrafast", name: "Ultrafast", detail: "Even faster, more expensive"),
+            ])
+        #expect(models[1].speeds == [.fast])
+        #expect(models[2].speeds.isEmpty)
+    }
+
+    @Test func turnsAskForTheChosenServiceTier() {
+        var fast = selection()
+        fast.speed = "ultrafast"
+        let input = AgentTurnInput(text: "x", selection: fast, accessMode: .fullAccess, interactionMode: .build)
+        let tier = CodexProtocol.serviceTier(for: fast, explicit: false)
+        #expect(tier == "ultrafast")
+        let params = CodexProtocol.turnStartParams(threadID: "T", cwd: "/w", input: input, fallbackModel: nil, serviceTier: tier)
+        #expect(params["serviceTier"] == "ultrafast")
+        // Standard speed leaves the thread's tier alone, unless an earlier turn changed it.
+        #expect(CodexProtocol.serviceTier(for: selection(), explicit: false) == nil)
+        #expect(CodexProtocol.serviceTier(for: selection(), explicit: true) == "default")
+        let standard = AgentTurnInput(text: "x", selection: selection(), accessMode: .fullAccess, interactionMode: .build)
+        #expect(CodexProtocol.turnStartParams(threadID: "T", cwd: "/w", input: standard, fallbackModel: nil)["serviceTier"] == nil)
+    }
+
     @Test func builtInModelsMirrorT3Defaults() {
         #expect(CodexProtocol.builtInModels.map(\.modelID) == ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"])
         #expect(CodexProtocol.builtInModels.allSatisfy { model in model.defaultEffort.map { model.efforts.contains($0) } == true })
@@ -1270,6 +1312,28 @@ struct CodexSessionTests {
         #expect(second.at("params.approvalPolicy") == "untrusted")
         #expect(second.at("params.collaborationMode.mode") == "plan")
         #expect(transport.requests("initialize").count == 1)
+    }
+
+    @Test func aChosenSpeedRidesItsTurnAndStandardIsAskedForByNameAfterIt() async throws {
+        let transport = FakeCodexTransport()
+        let (session, _) = makeSession(transports: [transport])
+        try await session.start()
+        var turn = 0
+        func send(speed: String?) async throws -> JSONValue? {
+            turn += 1
+            transport.handlers["turn/start"] = { [turn] _ in .result(["turn": ["id": .string("R\(turn)"), "status": "inProgress"]]) }
+            var message = self.input()
+            message.selection.speed = speed
+            try await session.send(message)
+            transport.notify("turn/completed", ["threadId": "T", "turn": ["id": .string("R\(turn)"), "status": "completed"]])
+            return transport.requests("turn/start").last?.at("params.serviceTier")
+        }
+        // Until a turn asks for a tier, standard turns leave Codex's own setting alone.
+        #expect(try await send(speed: nil) == nil)
+        #expect(try await send(speed: "fast") == "fast")
+        // Codex keeps the tier for the thread, so going back to standard says so.
+        #expect(try await send(speed: nil) == "default")
+        #expect(try await send(speed: "ultrafast") == "ultrafast")
     }
 
     @Test func failedTurnsReportCodexDetails() async throws {

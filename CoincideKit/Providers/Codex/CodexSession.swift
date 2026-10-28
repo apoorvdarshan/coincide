@@ -2,7 +2,7 @@ import Foundation
 
 /// One Coincide thread driven through `codex app-server`, the JSON-RPC protocol T3 Code uses.
 ///
-/// The Codex thread id is the session id. Model, effort, permissions and Plan mode travel with every
+/// The Codex thread id is the session id. Model, effort, speed, permissions and Plan mode travel with every
 /// `turn/start`, so changes between turns need no restart.
 @MainActor
 final class CodexSession: AgentSession {
@@ -32,6 +32,8 @@ final class CodexSession: AgentSession {
     private var skillsRequested = false
     /// The skills Codex offers in the thread's folder, by name, with their files.
     private var skills: [String: String] = [:]
+    /// A turn asked for a service tier, which Codex keeps for the thread; later turns name theirs, standard included.
+    private var askedForServiceTier = false
 
     private struct Turn {
         let token = UUID()
@@ -106,9 +108,11 @@ final class CodexSession: AgentSession {
             // A new thread has seen nothing of the conversation, so it gets the whole recap.
             var input = input
             if replacedThreads != replaced { input.text = input.prompt(forNewSession: true) }
+            let serviceTier = CodexProtocol.serviceTier(for: input.selection, explicit: askedForServiceTier)
+            if serviceTier != nil { askedForServiceTier = true }
             let params = CodexProtocol.turnStartParams(
                 threadID: threadID, cwd: launch.workingDirectory.path, input: input, fallbackModel: threadModel,
-                skills: skills)
+                skills: skills, serviceTier: serviceTier)
             let result = try await connection.request("turn/start", params, timeout: .seconds(120))
             // Stopped or lost while waiting: the turn has already been reported.
             guard turn?.token == current.token else { return }

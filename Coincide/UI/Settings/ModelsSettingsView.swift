@@ -2,7 +2,8 @@ import AppKit
 import CoincideKit
 import SwiftUI
 
-/// Every model the providers offer, with custom model ids and the default for new threads.
+/// Every model the providers offer, with custom model ids, the default for new threads, and the favorites and hidden
+/// models of the composer's model picker.
 struct ModelsSettingsView: View {
     let model: SettingsModel
     @State private var filter = ""
@@ -16,6 +17,8 @@ struct ModelsSettingsView: View {
         let providerIndex: Int
         let isCustom: Bool
         let isDefault: Bool
+        let isFavorite: Bool
+        let isHidden: Bool
 
         var id: String { option.id }
         var name: String { option.displayName }
@@ -29,7 +32,9 @@ struct ModelsSettingsView: View {
             SettingsPaneHeader(title: String(localized: "Models")) {
                 SettingsIconTile(symbol: SettingsSection.models.symbolName, color: SettingsSection.models.tint, size: 44)
             } subtitle: {
-                Text("Models your providers offer, plus custom model IDs you add. Right-click a model to use it for new threads.")
+                Text(
+                    "Models your providers offer, plus custom model IDs you add. Right-click a model to use it for new threads, star it, or hide it from the model picker."
+                )
             }
             filterBar
             Group {
@@ -64,14 +69,16 @@ struct ModelsSettingsView: View {
     // MARK: Rows
 
     private var allRows: [CatalogRow] {
-        let selection = model.settings.defaultSelection
+        let settings = model.settings
+        let selection = settings.defaultSelection
         return model.kinds.enumerated().flatMap { index, kind -> [CatalogRow] in
             guard model.isEnabled(kind) else { return [] }
             let custom = Set(model.providerSettings(kind).customModels)
             return (model.models[kind] ?? []).map { option in
                 CatalogRow(
                     option: option, providerIndex: index, isCustom: custom.contains(option.modelID),
-                    isDefault: selection.provider == kind && selection.modelID == option.modelID)
+                    isDefault: selection.provider == kind && selection.modelID == option.modelID,
+                    isFavorite: settings.isFavorite(option.reference), isHidden: settings.isHidden(option.reference))
             }
         }
     }
@@ -118,8 +125,16 @@ struct ModelsSettingsView: View {
             TableColumn("Model", value: \.name) { row in
                 HStack(spacing: 6) {
                     Text(row.name)
+                        .foregroundStyle(row.isHidden ? .secondary : .primary)
+                    if row.isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.caption)
+                            .foregroundStyle(Color(nsColor: Theme.accent))
+                            .accessibilityLabel(Text("Favorite"))
+                    }
                     if row.isDefault { SettingsTag(text: String(localized: "Default"), tint: Color(nsColor: Theme.ink)) }
                     if row.isCustom { SettingsTag(text: String(localized: "Custom"), tint: .secondary) }
+                    if row.isHidden { SettingsTag(text: String(localized: "Hidden"), tint: .secondary) }
                 }
                 .help(Text("Model ID: \(row.modelID)"))
             }
@@ -145,6 +160,12 @@ struct ModelsSettingsView: View {
                     .help(efforts.joined(separator: ", "))
             }
             .width(min: 90, ideal: 140)
+            TableColumn("Speed") { row in
+                // The faster speeds the model offers besides standard, such as Fast.
+                Text(row.option.speeds.isEmpty ? "–" : row.option.speeds.map(\.name).joined(separator: ", "))
+                    .foregroundStyle(.secondary)
+            }
+            .width(min: 60, ideal: 90)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: false))
         .contextMenu(forSelectionType: CatalogRow.ID.self) { ids in
@@ -155,6 +176,8 @@ struct ModelsSettingsView: View {
                     NSPasteboard.general.setText(row.modelID)
                 }
                 Divider()
+                pickerButtons([row])
+                Divider()
                 Button("Show \(row.option.provider.displayName) Settings") {
                     model.navigate(to: .provider(row.option.provider))
                 }
@@ -164,6 +187,25 @@ struct ModelsSettingsView: View {
                         model.removeCustomModel(row.modelID, from: row.option.provider)
                     }
                 }
+            } else if !ids.isEmpty {
+                pickerButtons(ids.compactMap { row($0) })
+            }
+        }
+    }
+
+    /// Stars the models, or hides them from the model picker (T3 Code's hidden models), or undoes either for all of them.
+    @ViewBuilder
+    private func pickerButtons(_ rows: [CatalogRow]) -> some View {
+        let favorites = rows.allSatisfy(\.isFavorite)
+        let hidden = rows.allSatisfy(\.isHidden)
+        Button(favorites ? String(localized: "Remove from Favorites") : String(localized: "Add to Favorites")) {
+            model.update { settings in
+                for row in rows { settings.setFavorite(!favorites, row.option.reference) }
+            }
+        }
+        Button(hidden ? String(localized: "Show in Model Picker") : String(localized: "Hide from Model Picker")) {
+            model.update { settings in
+                for row in rows { settings.setHidden(!hidden, row.option.reference) }
             }
         }
     }

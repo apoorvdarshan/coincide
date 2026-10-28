@@ -46,12 +46,17 @@ public struct ModelOption: Codable, Hashable, Sendable, Identifiable {
     public var contextWindow: Int?
     /// Whether the model accepts image input.
     public var supportsImages: Bool
+    /// Faster speeds the model offers besides the standard one, such as Claude's fast mode or Codex's Fast and
+    /// Ultrafast service tiers. Empty when it runs at one speed.
+    public var speeds: [ModelSpeed]
 
     public nonisolated var id: String { "\(provider.rawValue)/\(modelID)" }
 
+    public nonisolated var reference: ModelReference { ModelReference(provider: provider, modelID: modelID) }
+
     public nonisolated init(
         provider: ProviderKind, modelID: String, displayName: String, efforts: [String] = [],
-        defaultEffort: String? = nil, contextWindow: Int? = nil, supportsImages: Bool = true
+        defaultEffort: String? = nil, contextWindow: Int? = nil, supportsImages: Bool = true, speeds: [ModelSpeed] = []
     ) {
         self.provider = provider
         self.modelID = modelID
@@ -60,6 +65,41 @@ public struct ModelOption: Codable, Hashable, Sendable, Identifiable {
         self.defaultEffort = defaultEffort
         self.contextWindow = contextWindow
         self.supportsImages = supportsImages
+        self.speeds = speeds
+    }
+
+    /// The speed with id `speed`, when the model offers it.
+    public nonisolated func speed(_ speed: String?) -> ModelSpeed? {
+        speed.flatMap { id in speeds.first { $0.id == id } }
+    }
+}
+
+/// A faster speed a model offers (T3 Code's fast mode and service tiers). Its id is what the agent is sent.
+public struct ModelSpeed: Codable, Hashable, Sendable {
+    /// `fast` for Claude's fast mode; for Codex, the service tier's id, such as `fast` or `ultrafast`.
+    public var id: String
+    public var name: String
+    /// What the speed costs or changes, when the agent says.
+    public var detail: String?
+
+    public nonisolated init(id: String, name: String, detail: String? = nil) {
+        self.id = id
+        self.name = name
+        self.detail = detail
+    }
+
+    /// Claude's fast mode, and Codex's Fast tier.
+    public nonisolated static let fast = ModelSpeed(id: "fast", name: String(localized: "Fast"))
+}
+
+/// One agent's model, as the user's favorite and hidden models name it.
+public struct ModelReference: Codable, Hashable, Sendable {
+    public var provider: ProviderKind
+    public var modelID: String
+
+    public nonisolated init(provider: ProviderKind, modelID: String) {
+        self.provider = provider
+        self.modelID = modelID
     }
 }
 
@@ -95,11 +135,23 @@ public struct ModelSelection: Codable, Hashable, Sendable {
     public var provider: ProviderKind
     public var modelID: String
     public var effort: String?
+    /// A faster speed the model offers (an id of `ModelOption.speeds`), such as `fast`; nil runs at standard speed.
+    public var speed: String?
 
-    public nonisolated init(provider: ProviderKind, modelID: String, effort: String? = nil) {
+    public nonisolated init(provider: ProviderKind, modelID: String, effort: String? = nil, speed: String? = nil) {
         self.provider = provider
         self.modelID = modelID
         self.effort = effort
+        self.speed = speed
+    }
+
+    /// The provider and model are required; an effort or speed this version cannot read is left unset.
+    public nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decode(ProviderKind.self, forKey: .provider)
+        modelID = try container.decode(String.self, forKey: .modelID)
+        effort = container.lenient(String.self, forKey: .effort)
+        speed = container.lenient(String.self, forKey: .speed)
     }
 }
 
