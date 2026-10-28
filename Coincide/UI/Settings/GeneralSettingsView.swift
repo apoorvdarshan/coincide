@@ -89,6 +89,11 @@ struct GeneralSettingsView: View {
                                 : String(localized: "Agents ask before running commands or editing files."))
                     }
                     .settingsRevealable(.accessMode, highlighted: highlighted)
+                    Toggle(isOn: model.binding(\.generatesThreadTitles)) {
+                        Text("Name threads with the agent")
+                        Text("The thread's agent titles it from your first message, with its quickest model.")
+                    }
+                    .settingsRevealable(.threadTitles, highlighted: highlighted)
                 }
 
                 Section("Notifications") {
@@ -174,6 +179,7 @@ struct GeneralSettingsView: View {
             settings.lightTheme = defaults.lightTheme
             settings.sendOnReturn = defaults.sendOnReturn
             settings.followUpBehavior = defaults.followUpBehavior
+            settings.generatesThreadTitles = defaults.generatesThreadTitles
             settings.showReasoning = defaults.showReasoning
             settings.confirmBeforeDeletingThreads = defaults.confirmBeforeDeletingThreads
             settings.defaultAccessMode = defaults.defaultAccessMode

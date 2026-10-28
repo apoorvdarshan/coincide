@@ -221,6 +221,9 @@ private struct SettingsSearchResults: View {
             SettingsSearchEntry(
                 title: String(localized: "Confirm before deleting threads"), pane: general, setting: .confirmDelete),
             SettingsSearchEntry(
+                title: String(localized: "Name threads with the agent"), pane: general, setting: .threadTitles,
+                keywords: [String(localized: "Titles"), String(localized: "Rename"), String(localized: "AI")]),
+            SettingsSearchEntry(
                 title: String(localized: "Notifications"), pane: general, setting: .notifications,
                 keywords: [String(localized: "Background"), String(localized: "Alerts")]),
             SettingsSearchEntry(

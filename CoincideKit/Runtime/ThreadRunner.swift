@@ -231,7 +231,15 @@ public final class ThreadRunner {
         let provider = selection.provider
 
         if !thread.hasUserMessages {
-            store.updateThread(threadID) { $0.title = Self.title(from: trimmed) }
+            let provisional = Self.title(from: trimmed)
+            store.updateThread(threadID) { $0.title = provisional }
+            if store.settings.generatesThreadTitles, !trimmed.isEmpty, let cwd = store.workingDirectory(for: threadID) {
+                Task { [store, registry] in
+                    await ThreadTitles.generate(
+                        threadID: threadID, message: trimmed, provisional: provisional, selection: selection, cwd: cwd,
+                        store: store, registry: registry)
+                }
+            }
         }
         let userItem = TranscriptItem(
             kind: .user, text: trimmed, provider: provider, modelID: selection.modelID,

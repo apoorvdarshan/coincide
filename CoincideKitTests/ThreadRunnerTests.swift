@@ -804,3 +804,21 @@ struct SlowStartNoticeTests {
         sending.cancel()
     }
 }
+
+@MainActor
+struct ThreadTitleTests {
+    @Test func aTitleIsTakenFromTheAgentsJSONAndTidied() {
+        #expect(ThreadTitles.title(fromReply: #"Sure. {"title": "  \"Remember the login email.\" "}"#) == "Remember the login email")
+        #expect(ThreadTitles.title(fromReply: #"{"title": "Fix   flaky\nupload test"}"#) == "Fix flaky")
+        #expect(ThreadTitles.title(fromReply: #"{"name": "nope"}"#) == nil)
+        #expect(ThreadTitles.title(fromReply: #"{"title": " … "}"#) == "…")
+        let long = ThreadTitles.title(fromReply: #"{"title": "\#(String(repeating: "word ", count: 30))"}"#)
+        #expect(long?.count == 60 && long?.hasSuffix("…") == true)
+    }
+
+    @Test func thePromptCarriesTheMessage() {
+        let prompt = ThreadTitles.prompt(message: "Make the login screen remember the email")
+        #expect(prompt.contains("<message>\nMake the login screen remember the email\n</message>"))
+        #expect(prompt.contains("\"title\""))
+    }
+}
