@@ -81,18 +81,6 @@ struct ProviderSetupGuideTests {
         #expect(antigravity.commands.isEmpty)
         #expect(antigravity.note != nil)
         #expect(antigravity.website != nil)
-        let pi = ProviderSetupGuide(kind: .pi, hint: "", executableNames: ["pi"], executableOverride: nil)
-        #expect(pi.commands.map(\.purpose) == [.install])
-        #expect(pi.note?.contains("/login") == true)
-    }
-
-    @Test func museSignsInWithItsLoginAndExplainsAPIKeys() {
-        let muse = ProviderSetupGuide(
-            kind: .muse, hint: MuseProvider().setupHint, executableNames: ["muse"], executableOverride: "/opt/muse/bin/muse")
-        #expect(muse.commands.map(\.text) == ["/opt/muse/bin/muse login"])
-        #expect(muse.commands.map(\.purpose) == [.signIn])
-        #expect(muse.website?.host() == "dev.meta.ai")
-        #expect(muse.note?.contains("META_API_KEY") == true)
     }
 }
 

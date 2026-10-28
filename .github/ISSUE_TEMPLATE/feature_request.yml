@@ -36,7 +36,6 @@ body:
         - Cursor
         - Grok Build
         - OpenCode
-        - Pi
         - Antigravity
         - A new agent
         - Not agent-specific

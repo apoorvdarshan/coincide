@@ -21,7 +21,7 @@ private func registryAgent(id: String = "devin", data: URL) -> (ACPAgentConfig, 
 struct ACPAgentKindTests {
     @Test func builtInKindsKeepTheirRawValuesAndCustomAgentsArePrefixed() throws {
         #expect(
-            ProviderKind.allCases.map(\.rawValue) == ["claude", "codex", "cursor", "grok", "opencode", "pi", "antigravity", "fx", "muse"])
+            ProviderKind.allCases.map(\.rawValue) == ["claude", "codex", "cursor", "grok", "opencode", "antigravity"])
         #expect(ProviderKind.acp("devin").rawValue == "acp:devin")
         #expect(ProviderKind(rawValue: "acp:devin") == .acp("devin"))
         #expect(ProviderKind(rawValue: "codex") == .codex)
@@ -41,7 +41,7 @@ struct ACPAgentKindTests {
         #expect(ACPAgentConfig.makeID(from: "devin", existing: ["devin", "devin-2"]) == "devin-3")
         #expect(ACPAgentConfig.makeID(from: "Claude", existing: []) == "claude-2")
         #expect(ACPAgentConfig.makeID(from: "model", existing: []) == "model-2")
-        #expect(ACPAgentConfig.makeID(from: "fx", existing: []) == "fx-2")
+        #expect(ACPAgentConfig.makeID(from: "antigravity", existing: []) == "antigravity-2")
         #expect(ACPAgentConfig.makeID(from: "!!!", existing: []) == "agent")
         #expect(ACPAgentConfig.makeID(from: "mistral-vibe", existing: []) == "mistral-vibe")
         let long = ACPAgentConfig.makeID(from: String(repeating: "a", count: 200), existing: [])
@@ -49,16 +49,14 @@ struct ACPAgentKindTests {
         #expect(ACPAgentConfig.isValidID(ACPAgentConfig.makeID(from: "Ünïcode Agent ✨", existing: [])))
     }
 
-    /// The per-agent mode hooks fx and Muse Code introduced: an added agent runs in either access mode and in plan
-    /// mode, starts on, and never writes commit messages or pull request text (T3 Code keeps registry instances out of
-    /// its text generation).
+    /// The per-agent mode hooks: an added agent runs in either access mode and in plan mode, starts on, and never
+    /// writes commit messages or pull request text (T3 Code keeps registry instances out of its text generation).
     @Test func addedAgentsTakeEveryModeButWriteNoText() {
         let kind = ProviderKind.acp("devin")
         #expect(kind.accessModes == AccessMode.allCases)
         #expect(kind.accessMode(for: .fullAccess) == .fullAccess)
         #expect(kind.supportsPlanMode)
         #expect(kind.interactionMode(for: .plan) == .plan)
-        #expect(kind.isEnabledByDefault)
         #expect(!kind.supportsTextGeneration)
         #expect(ProviderKind.codex.supportsTextGeneration)
         #expect(AppSettings().settings(for: kind).isEnabled)

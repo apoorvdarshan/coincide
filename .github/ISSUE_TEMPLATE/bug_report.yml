@@ -37,7 +37,6 @@ body:
         - Cursor
         - Grok Build
         - OpenCode
-        - Pi
         - Antigravity
         - Not agent-specific
     validations:

@@ -5,20 +5,17 @@ import Foundation
 public enum ACPProfile: String, Sendable, CaseIterable {
     case grok
     case antigravity
-    case fx
 
     public nonisolated var kind: ProviderKind {
         switch self {
         case .grok: .grok
         case .antigravity: .antigravity
-        case .fx: .fx
         }
     }
 
     public nonisolated var executableNames: [String] {
         switch self {
         case .grok: ["grok"]
-        case .fx: ["fx"]
         // Google's ACP agent ships as `agy_acp_server.par` beside its `localharness_external` helper.
         // The runtime Coincide downloaded comes first, as T3 Code prefers it to one on PATH (a custom
         // path in Settings still wins).
@@ -43,7 +40,6 @@ public enum ACPProfile: String, Sendable, CaseIterable {
                 localized:
                     "Install Antigravity below to download Google’s runtime, then sign in with Google. To use your own copy instead, choose agy_acp_server (with its localharness_external helper beside it) as the custom path."
             )
-        case .fx: String(localized: "Install fx and run `fx login`.")
         }
     }
 
@@ -51,7 +47,6 @@ public enum ACPProfile: String, Sendable, CaseIterable {
         switch self {
         case .grok: GrokFlavor()
         case .antigravity: AntigravityFlavor()
-        case .fx: FxFlavor()
         }
     }
 }
@@ -64,8 +59,8 @@ public final class ACPProvider: AgentProvider {
     public var executableNames: [String] { names() }
     public var setupHint: String { hint() }
 
-    /// Models the last probe listed and the model its default stands for, with the executable it probed.
-    private var probed: (executable: URL, models: [ModelOption], defaultModel: String?)?
+    /// Models the last probe listed, with the executable it probed.
+    private var probed: (executable: URL, models: [ModelOption])?
     /// The plan's usage windows the last check read, with the account they belong to.
     private var checkedUsageLimits: (account: String?, limits: UsageLimits)?
     private let names: @MainActor () -> [String]
@@ -108,7 +103,7 @@ public final class ACPProvider: AgentProvider {
         }
         let flavor = makeFlavor()
         let probe = await flavor.probe(executable: executable, environment: environment)
-        probed = (executable, probe.models, probe.defaultModel)
+        probed = (executable, probe.models)
         var status = probe.status
         // Like T3 Code, only a ready agent's limits are read. A failed read keeps what the last check of the same
         // account read; another account, or one without limits to read, starts afresh.
@@ -133,13 +128,6 @@ public final class ACPProvider: AgentProvider {
     }
 
     public func makeSession(_ launch: AgentLaunch) -> AgentSession {
-        // The default model is read when a turn starts, so a later check's answer applies (T3 Code reads its snapshot).
-        ACPSession(
-            launch: launch, flavor: makeFlavor(),
-            defaultModel: { [weak self] in self?.probed.flatMap { $0.executable == launch.executable ? $0.defaultModel : nil } })
-    }
-
-    public func skills(workingDirectory: URL, environment: [String: String]) async -> [ProviderSkill] {
-        await makeFlavor().skills(workingDirectory: workingDirectory, environment: environment)
+        ACPSession(launch: launch, flavor: makeFlavor())
     }
 }

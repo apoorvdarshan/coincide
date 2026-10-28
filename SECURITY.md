@@ -1,6 +1,6 @@
 # Security Policy
 
-Coincide is a native macOS app that runs the coding agent CLIs you install (Claude Code, Codex, Cursor, Grok Build, OpenCode, Pi and Antigravity) on your Mac, with your own logins. It can run commands, edit files and drive git in the folders you open, so security reports are very welcome.
+Coincide is a native macOS app that runs the coding agent CLIs you install (Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity) on your Mac, with your own logins. It can run commands, edit files and drive git in the folders you open, so security reports are very welcome.
 
 ## Supported Versions
 
@@ -42,7 +42,7 @@ If you hear nothing within 7 days, add a comment to the advisory. Please keep th
 **In scope:**
 
 - The app and the CoincideKit framework (`Coincide/`, `CoincideKit/`).
-- How Coincide starts and talks to agent CLI processes: the arguments and environment it passes (including the login shell environment it reads), and how it parses their output (Claude stream-json, Codex and ACP JSON-RPC, the OpenCode HTTP API and event stream, Pi RPC). For example, agent output that crashes Coincide, runs code, or makes Coincide act outside the project folder.
+- How Coincide starts and talks to agent CLI processes: the arguments and environment it passes (including the login shell environment it reads), and how it parses their output (Claude stream-json, Codex and ACP JSON-RPC, the OpenCode HTTP API and event stream). For example, agent output that crashes Coincide, runs code, or makes Coincide act outside the project folder.
 - Access modes: anything that lets an agent run a command or change a file without asking while **Ask for approval** is selected, or that approves a request the user did not approve.
 - File and terminal requests agents make through Coincide (ACP file system and terminal requests), such as reading or writing outside the working directory.
 - The local OpenCode server Coincide starts, and anything that exposes it to other users or machines.

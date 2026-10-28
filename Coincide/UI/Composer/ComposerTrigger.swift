@@ -1,19 +1,17 @@
 import CoincideKit
 import Foundation
 
-/// The word before the caret when it asks for completions: `@path`, `/command` or `$skill`.
+/// The word before the caret when it asks for completions: `@path` or `/command`.
 nonisolated struct ComposerTrigger: Equatable, Sendable {
     enum Kind: Sendable {
         case path
         case command
-        /// A skill of the thread's agent (fx), which it loads when the message names it as `$name`.
-        case skill
     }
 
     var kind: Kind
-    /// What follows the `@`, `/` or `$`.
+    /// What follows the `@` or `/`.
     var query: String
-    /// UTF-16 range of the whole word, `@`, `/` or `$` included.
+    /// UTF-16 range of the whole word, `@` or `/` included.
     var range: NSRange
 
     /// Finds the trigger in the word that ends at `cursor`, a UTF-16 offset into `text`.
@@ -34,16 +32,9 @@ nonisolated struct ComposerTrigger: Equatable, Sendable {
             while end < string.length, !isWhitespace(string.character(at: end)) { end += 1 }
             let word = string.substring(with: NSRange(location: start + 1, length: end - start - 1))
             return word.contains("/") ? nil : ComposerTrigger(kind: .command, query: query, range: range)
-        case 0x24:  // $
-            return isAmount(query) ? nil : ComposerTrigger(kind: .skill, query: query, range: range)
         default:
             return nil
         }
-    }
-
-    /// `$5`, `$1,200.50`, `$3k` and `$1e6` are amounts, not skills (T3 Code's `isCurrencyAmountQuery`).
-    static func isAmount(_ query: String) -> Bool {
-        query.wholeMatch(of: /\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*/) != nil
     }
 
     static func isWhitespace(_ character: unichar) -> Bool {
@@ -68,7 +59,7 @@ nonisolated enum ComposerCommand: Hashable, Sendable {
     case agent(ProviderKind)
 
     /// The built-in commands followed by one per agent the user can switch to. `/usage-limits` is offered when the
-    /// selected agent reported its limits, `/plan` and `/build` when it has a plan mode (fx has none).
+    /// selected agent reported its limits, `/plan` and `/build` when it has a plan mode.
     static func available(agents: [ProviderKind], usageLimits: Bool = false, planMode: Bool = true) -> [ComposerCommand] {
         [.model] + (planMode ? [.plan, .build] : []) + (usageLimits ? [.usageLimits] : []) + agents.map { .agent($0) }
     }
@@ -138,5 +129,4 @@ nonisolated enum ComposerCommand: Hashable, Sendable {
 nonisolated enum ComposerSuggestion: Equatable, Sendable {
     case file(ComposerFileEntry)
     case command(ComposerCommand)
-    case skill(ProviderSkill)
 }

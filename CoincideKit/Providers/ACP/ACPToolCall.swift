@@ -20,7 +20,7 @@ public struct ACPToolCallState: Sendable, Hashable {
     public var content: [ACPToolCallContent]
     public var locations: [String]
     public var meta: JSONValue?
-    /// The tool name the agent sent beside the title (fx).
+    /// The tool name the agent sent beside the title (`ACPToolCallUpdate.name`).
     public var name: String?
     /// The agent's own name for the tool, e.g. `read_file`.
     public var toolName: String?

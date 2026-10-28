@@ -65,10 +65,7 @@ public final class ProviderRegistry {
             CursorProvider(keychainUsageAllowed: { store.settings.cursorKeychainUsageEnabled }),
             ACPProvider(profile: .grok),
             OpenCodeProvider(),
-            PiProvider(),
             ACPProvider(profile: .antigravity),
-            ACPProvider(profile: .fx),
-            MuseProvider(),
         ]
     }
 
@@ -111,13 +108,6 @@ public final class ProviderRegistry {
     /// Display name for a selection, falling back to the raw id.
     public func displayName(for selection: ModelSelection) -> String {
         model(for: selection)?.displayName ?? selection.modelID
-    }
-
-    /// The skills the composer's `$` menu offers on `kind` for a thread working in `workingDirectory`; none while the
-    /// provider is not ready.
-    public func skills(for kind: ProviderKind, workingDirectory: URL) async -> [ProviderSkill] {
-        guard status(kind).state == .ready, let provider = provider(kind) else { return [] }
-        return await provider.skills(workingDirectory: workingDirectory, environment: environment(for: kind))
     }
 
     /// Lets a running session update the model list it discovered.
@@ -176,9 +166,6 @@ public final class ProviderRegistry {
 
     private func environment(for kind: ProviderKind, fresh: Bool) async -> [String: String] {
         var env = fresh ? await shell.freshEnvironment() : await shell.environment()
-        // The provider may leave out what it must not inherit (Muse Code drops a shell's `META_API_KEY`); variables the
-        // user set for it apply afterwards, so theirs always win.
-        if let provider = provider(kind) { env = provider.inheritedEnvironment(env) }
         for (key, value) in store.settings.settings(for: kind).environment { env[key] = value }
         return env
     }
@@ -265,7 +252,7 @@ public final class ProviderRegistry {
     }
 
     /// Picks a usable selection: the requested one if its provider is ready, otherwise the first ready model. With
-    /// `writingText`, only providers that support text generation count (fx does not; see
+    /// `writingText`, only providers that support text generation count (user-added ACP agents do not; see
     /// `ProviderKind.supportsTextGeneration`).
     public func usableSelection(preferring selection: ModelSelection, writingText: Bool = false) -> ModelSelection {
         let usable = { (kind: ProviderKind) in !writingText || kind.supportsTextGeneration }

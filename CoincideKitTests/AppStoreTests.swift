@@ -77,6 +77,81 @@ struct AppStoreTests {
         #expect(store.settings.fontSize == 15)
     }
 
+    /// Pi, fx and Muse Code are no longer built in, so their raw values read as unknown providers. What a build that
+    /// had them saved still loads: their provider settings are skipped and the rest kept, a selection on one falls back
+    /// as an unknown provider's does, and transcript items labelled with one keep everything but the label.
+    @Test func settingsAndThreadsOfRemovedProvidersStillLoad() throws {
+        for raw in ["pi", "fx", "muse"] { #expect(ProviderKind(rawValue: raw) == nil) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let settings = """
+            {"defaultSelection":{"provider":"fx","modelID":"default","effort":"medium"},"defaultAccessMode":"approval",
+             "providers":["pi",{"isEnabled":true,"executablePath":"/opt/pi"},"codex",{"isEnabled":false,"customModels":["gpt-x"]},
+                          "fx",{"isEnabled":true},"muse",{"isEnabled":true,"environment":{"KEY":"value"}}],
+             "fontSize":15}
+            """
+        try Data(settings.utf8).write(to: directory.appendingPathComponent("settings.json"))
+        let store = AppStore(directory: directory)
+        #expect(store.settings.providers == [.codex: ProviderSettings(isEnabled: false, customModels: ["gpt-x"])])
+        #expect(store.settings.defaultSelection == ModelSelection(provider: .claude, modelID: "default"))
+        #expect(store.settings.defaultAccessMode == .approval)
+        #expect(store.settings.fontSize == 15)
+
+        let project = store.addProject(at: URL(fileURLWithPath: "/tmp"))
+        let thread = store.createThread(in: project.id)
+        store.flush()
+        let json = """
+            {"id":"\(thread.id.uuidString)","projectID":"\(project.id.uuidString)","title":"Earlier",
+             "createdAt":"2026-10-01T10:00:00Z","updatedAt":"2026-10-01T10:00:00Z",
+             "selection":{"provider":"fx","modelID":"default","effort":"medium"},"accessMode":"fullAccess","interactionMode":"plan",
+             "items":[
+               {"id":"\(UUID().uuidString)","kind":"user","text":"hello","createdAt":"2026-10-01T10:00:00Z"},
+               {"id":"\(UUID().uuidString)","kind":"assistant","text":"from pi","provider":"pi","modelID":"p1",
+                "createdAt":"2026-10-01T10:00:00Z"},
+               {"id":"\(UUID().uuidString)","kind":"tool","text":"out","provider":"fx","category":"command","status":"completed",
+                "createdAt":"2026-10-01T10:00:00Z"},
+               {"id":"\(UUID().uuidString)","kind":"assistant","text":"from muse","provider":"muse","createdAt":"2026-10-01T10:00:00Z"}
+             ],
+             "sessions":["pi",{"sessionID":"p","seenItemCount":2},"claude",{"sessionID":"c1","seenItemCount":1},
+                         "fx",{"sessionID":"f","seenItemCount":3},"muse",{"sessionID":"m","seenItemCount":4}]}
+            """
+        try Data(json.utf8).write(to: threadFile(thread.id))
+        // The index as that build wrote it: the thread's summary names fx and the removed agents' sessions.
+        let indexing = AppStore(directory: directory)
+        indexing.flush()
+        var index = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: indexFile)) as? [String: Any])
+        var entries = try #require(index["entries"] as? [[String: Any]])
+        var summary = try #require(entries.first?["summary"] as? [String: Any])
+        summary["selection"] = ["provider": "fx", "modelID": "default", "effort": "medium"]
+        summary["sessionProviders"] = ["claude", "fx", "muse", "pi"]
+        entries[0]["summary"] = summary
+        index["entries"] = entries
+        try JSONSerialization.data(withJSONObject: index).write(to: indexFile)
+
+        let reloaded = AppStore(directory: directory)
+        // The index entry is read past and the file read again.
+        #expect(reloaded.summaryReads == 1)
+        let listed = try #require(reloaded.summary(thread.id))
+        #expect(listed.selection == ModelSelection(provider: .claude, modelID: "default"))
+        #expect(listed.sessionProviders == [.claude])
+        #expect(listed.itemCount == 4)
+        let loaded = try #require(reloaded.thread(thread.id))
+        #expect(loaded.title == "Earlier")
+        #expect(loaded.selection == ModelSelection(provider: .claude, modelID: "default"))
+        #expect(loaded.accessMode == .fullAccess && loaded.interactionMode == .plan)
+        #expect(loaded.items.map(\.text) == ["hello", "from pi", "out", "from muse"])
+        #expect(loaded.items.allSatisfy { $0.provider == nil })
+        #expect(loaded.items[1].modelID == "p1")
+        #expect(loaded.items[2].category == .command && loaded.items[2].status == .completed)
+        #expect(loaded.sessions == [.claude: ProviderSessionRef(sessionID: "c1", seenItemCount: 1)])
+
+        // The first save keeps the file as that build wrote it beside the thread (see ThreadFileTests).
+        reloaded.append(TranscriptItem(kind: .user, text: "next"), to: thread.id)
+        reloaded.flush()
+        let copies = try FileManager.default.contentsOfDirectory(atPath: threadsDirectory.path).filter { $0.contains(".unreadable-") }
+        #expect(copies.count == 1)
+        #expect(AppStore(directory: directory).thread(thread.id)?.items.count == 5)
+    }
+
     @Test func manyQuickChangesAllReachTheDisk() throws {
         let store = AppStore(directory: directory)
         store.saveDelay = 0

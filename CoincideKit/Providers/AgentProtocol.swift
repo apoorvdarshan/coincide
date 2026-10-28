@@ -391,53 +391,6 @@ public struct ProviderStatus: Sendable, Hashable {
     public nonisolated static let unknown = ProviderStatus(state: .unknown)
 }
 
-/// A skill the agent loads when a message names it as `$name` (T3 Code's provider skills).
-public struct ProviderSkill: Sendable, Hashable {
-    public enum Scope: String, Sendable, Hashable {
-        /// From the workspace or a folder above it.
-        case project
-        /// From the user's home folder.
-        case user
-    }
-
-    public var name: String
-    public var description: String?
-    /// The skill's `SKILL.md`.
-    public var path: String
-    public var scope: Scope
-
-    public nonisolated init(name: String, description: String? = nil, path: String, scope: Scope) {
-        self.name = name
-        self.description = description
-        self.path = path
-        self.scope = scope
-    }
-
-    /// What `$name` inserts into a message.
-    public nonisolated var mention: String { "$" + name }
-
-    /// Skills for the `$` menu, best match first. The menu offers one skill per name regardless of case, the first
-    /// one listed, as T3 Code does; typing a name that differs only in case still runs that skill.
-    public nonisolated static func matching(_ query: String, in skills: [ProviderSkill]) -> [ProviderSkill] {
-        var seen = Set<String>()
-        let unique = skills.filter { seen.insert($0.name.lowercased()).inserted }
-        let query = query.lowercased()
-        guard !query.isEmpty else { return unique }
-        let ranked = unique.enumerated().compactMap { index, skill -> (rank: Int, index: Int, skill: ProviderSkill)? in
-            let name = skill.name.lowercased()
-            if name == query { return (0, index, skill) }
-            if name.hasPrefix(query) { return (1, index, skill) }
-            if name.split(whereSeparator: { "-_/:".contains($0) }).contains(where: { $0.hasPrefix(query) }) {
-                return (2, index, skill)
-            }
-            if name.contains(query) { return (3, index, skill) }
-            if skill.description?.lowercased().contains(query) == true { return (4, index, skill) }
-            return nil
-        }
-        return ranked.sorted { ($0.rank, $0.index) < ($1.rank, $1.index) }.map(\.skill)
-    }
-}
-
 /// Knows how to find, probe and launch one provider CLI.
 @MainActor
 public protocol AgentProvider: AnyObject {
@@ -447,22 +400,11 @@ public protocol AgentProvider: AnyObject {
     /// Setup hint shown when the provider is missing, e.g. "Install Claude Code and run `claude auth login`".
     var setupHint: String { get }
 
-    /// The login shell's environment as this provider's process should inherit it, before the user's own variables
-    /// for the provider are added. Most providers take it as it is.
-    func inheritedEnvironment(_ environment: [String: String]) -> [String: String]
     /// Checks installation and sign-in. `executable` is nil when nothing was found on PATH.
     func detect(executable: URL?, environment: [String: String]) async -> ProviderStatus
     /// Models to offer in the picker. May run the CLI to discover them; fall back to a built-in list.
     func models(status: ProviderStatus, environment: [String: String]) async -> [ModelOption]
     func makeSession(_ launch: AgentLaunch) -> AgentSession
-    /// Skills the composer's `$` menu offers for a thread working in `workingDirectory`, in the agent's own order.
-    func skills(workingDirectory: URL, environment: [String: String]) async -> [ProviderSkill]
-}
-
-extension AgentProvider {
-    public func skills(workingDirectory: URL, environment: [String: String]) async -> [ProviderSkill] { [] }
-
-    public func inheritedEnvironment(_ environment: [String: String]) -> [String: String] { environment }
 }
 
 public enum AgentError: LocalizedError, Sendable {

@@ -99,6 +99,22 @@ struct ACPMapperTests {
         #expect(setup.effectiveModes == nil)
     }
 
+    /// An agent may list another option (its backend, here) in the `model` category ahead of the `model` option.
+    @Test func theModelOptionIsTheOneNamedModelWhenOthersShareItsCategory() throws {
+        let json = try #require(
+            JSONValue.parse(
+                """
+                {"sessionId":"s","configOptions":[
+                {"id":"provider","name":"Provider","category":"model","type":"select","currentValue":"gateway","options":[{"value":"gateway","name":"Gateway"},{"value":"direct","name":"Direct"}]},
+                {"id":"model","name":"Model","category":"model","type":"select","currentValue":"b","options":[{"value":"a","name":"A"},{"value":"b","name":"B"}]},
+                {"id":"effort","name":"Effort","category":"thought_level","type":"select","currentValue":"low","options":[{"value":"low","name":"Low"},{"value":"high","name":"High"}]}]}
+                """))
+        let setup = ACPSessionSetup(json: json)
+        #expect(setup.modelOption?.id == "model")
+        #expect(setup.currentModelID == "b")
+        #expect(setup.reasoningOption?.id == "effort")
+    }
+
     @Test func modesComeFromModeConfigOption() throws {
         let json = try #require(
             JSONValue.parse(
@@ -376,6 +392,18 @@ struct ACPMapperTests {
         #expect(mapper.markDeclined("x") == [.toolCompleted(id: "x", status: .declined, output: nil)])
         // The agent's own failure report does not overwrite the decline.
         #expect(map(&mapper, #"{"sessionUpdate":"tool_call_update","toolCallId":"x","status":"failed"}"#).isEmpty)
+    }
+
+    /// A tool name sent beside the title names the tool when no `_meta` does.
+    @Test func aToolNameBesideTheTitleNamesTheTool() {
+        let update = ACPToolCallUpdate(json: ["toolCallId": "t", "name": "write_file", "title": "Write a.txt", "kind": "edit"])
+        #expect(update?.name == "write_file")
+        var state = ACPToolCallState(ACPToolCallUpdate(id: "t", name: "write_file", kind: "edit"))
+        #expect(state.toolName == "write_file")
+        state.merge(ACPToolCallUpdate(id: "t", status: "completed"))
+        #expect(state.name == "write_file" && state.toolName == "write_file")
+        let named = ACPToolCallState(ACPToolCallUpdate(id: "u", name: "edit", meta: ["toolName": "apply_patch"]))
+        #expect(named.toolName == "apply_patch")
     }
 
     @Test func rawInputIsKeptWhenUpdatesResendAnEmptyObject() {

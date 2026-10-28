@@ -15,18 +15,13 @@ public enum ProviderKind: RawRepresentable, Codable, CaseIterable, Sendable, Has
     case cursor
     case grok
     case opencode
-    case pi
     case antigravity
-    /// Vercel's fx (`fx acp`).
-    case fx
-    /// Meta's Muse Code (`muse serve`).
-    case muse
     /// A user-added ACP agent, by its instance ID (`ACPAgentConfig.id`).
     case acp(String)
 
     /// The built-in agents, in display order. Custom ACP agents come from settings.
     public nonisolated static let allCases: [ProviderKind] = [
-        .claude, .codex, .cursor, .grok, .opencode, .pi, .antigravity, .fx, .muse,
+        .claude, .codex, .cursor, .grok, .opencode, .antigravity,
     ]
 
     /// What starts a custom agent's raw value.
@@ -50,10 +45,7 @@ public enum ProviderKind: RawRepresentable, Codable, CaseIterable, Sendable, Has
         case .cursor: "cursor"
         case .grok: "grok"
         case .opencode: "opencode"
-        case .pi: "pi"
         case .antigravity: "antigravity"
-        case .fx: "fx"
-        case .muse: "muse"
         case .acp(let id): Self.acpPrefix + id
         }
     }
@@ -91,17 +83,11 @@ public enum ProviderKind: RawRepresentable, Codable, CaseIterable, Sendable, Has
         case .cursor: "Cursor"
         case .grok: "Grok Build"
         case .opencode: "OpenCode"
-        case .pi: "Pi"
         case .antigravity: "Antigravity"
-        case .fx: "fx"
-        case .muse: "Muse Code"
         // The name the user gave it, also for a thread that outlived the agent (until Coincide quits).
         case .acp(let id): ACPAgentNames.shared.name(for: id) ?? id
         }
     }
-
-    /// Whether the provider is on before the user changes its setting. Muse Code starts off, as in T3 Code.
-    public nonisolated var isEnabledByDefault: Bool { self != .muse }
 
     /// SF Symbol used in menus and the sidebar.
     public nonisolated var symbolName: String {
@@ -111,20 +97,15 @@ public enum ProviderKind: RawRepresentable, Codable, CaseIterable, Sendable, Has
         case .cursor: "cursorarrow.rays"
         case .grok: "bolt.horizontal"
         case .opencode: "terminal"
-        case .pi: "p.circle"
         case .antigravity: "arrow.up.and.down.and.sparkles"
-        case .fx: "fx"
-        case .muse: "infinity"
         case .acp: "point.3.connected.trianglepath.dotted"
         }
     }
 
-    /// The access modes the agent can run in, in menu order (T3 Code's `supportedRuntimeModes`). fx asks before it
-    /// changes anything and has no full access. A user-added ACP agent takes both: Coincide answers its approvals by
-    /// the thread's mode, as T3 Code answers a registry agent's.
-    public nonisolated var accessModes: [AccessMode] {
-        self == .fx ? [.approval] : AccessMode.allCases
-    }
+    /// The access modes the agent can run in, in menu order (T3 Code's `supportedRuntimeModes`). Every agent Coincide
+    /// drives takes both; a user-added ACP agent's approvals are answered by the thread's mode, as T3 Code answers a
+    /// registry agent's.
+    public nonisolated var accessModes: [AccessMode] { AccessMode.allCases }
 
     /// The access mode a thread set to `mode` runs in: one the agent does not offer runs as Ask for approval, as T3
     /// Code runs it Supervised.
@@ -132,9 +113,9 @@ public enum ProviderKind: RawRepresentable, Codable, CaseIterable, Sendable, Has
         accessModes.contains(mode) ? mode : .approval
     }
 
-    /// Whether the agent has a plan mode (T3 Code's `showInteractionModeToggle`). fx and Muse Code have none. A
-    /// user-added ACP agent has one: its own plan mode when it offers one, otherwise plan-mode instructions.
-    public nonisolated var supportsPlanMode: Bool { self != .fx && self != .muse }
+    /// Whether the agent has a plan mode (T3 Code's `showInteractionModeToggle`). Every agent Coincide drives has one;
+    /// a user-added ACP agent uses its own plan mode when it offers one, otherwise plan-mode instructions.
+    public nonisolated var supportsPlanMode: Bool { true }
 
     /// The interaction mode a thread set to `mode` runs in: without a plan mode, the agent builds.
     public nonisolated func interactionMode(for mode: InteractionMode) -> InteractionMode {
@@ -142,10 +123,9 @@ public enum ProviderKind: RawRepresentable, Codable, CaseIterable, Sendable, Has
     }
 
     /// Whether Coincide may ask the agent for commit messages, branch names and pull request text (T3 Code's
-    /// `supportsTextGeneration`). fx saves every `fx acp` session under `~/.fx` and ACP cannot delete one, so each
-    /// request would leave a session behind. User-added ACP agents never write them, as T3 Code doesn't use registry
-    /// instances for its own text generation.
-    public nonisolated var supportsTextGeneration: Bool { self != .fx && acpAgentID == nil }
+    /// `supportsTextGeneration`). User-added ACP agents never write them, as T3 Code doesn't use registry instances for
+    /// its own text generation.
+    public nonisolated var supportsTextGeneration: Bool { acpAgentID == nil }
 
     /// The composer command that switches a thread to this agent, without its slash: `codex`, or a custom agent's
     /// instance ID (`ACPAgentConfig.makeID` keeps those clear of the built-in names).
@@ -160,9 +140,8 @@ public enum ProviderKind: RawRepresentable, Codable, CaseIterable, Sendable, Has
         case .cursor: ["cursor"]
         case .grok: ["grok-build"]
         case .opencode: ["opencode", "opencode-v2"]
-        case .pi: ["pi-acp"]
         case .antigravity: ["antigravity-acp"]
-        case .fx, .muse, .acp: []
+        case .acp: []
         }
     }
 }
