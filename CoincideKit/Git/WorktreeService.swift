@@ -25,6 +25,8 @@ public final class WorktreeService {
     private var bases: [UUID: String] = [:]
     /// Threads whose temporary branch has been (or is being) named.
     private var named: Set<UUID> = []
+    /// Called when a thread moves into a worktree made for it, so its project's setup scripts can run there.
+    public var onWorktreeCreated: ((_ threadID: UUID, _ path: URL) -> Void)?
 
     public init(store: AppStore, git: GitService) {
         self.store = store
@@ -84,6 +86,7 @@ public final class WorktreeService {
             thread.worktreePath = worktree.path
             thread.branch = worktree.branch
         }
+        onWorktreeCreated?(threadID, URL(fileURLWithPath: worktree.path))
     }
 
     /// Moves a thread that has no messages back to the project folder, removing the worktree

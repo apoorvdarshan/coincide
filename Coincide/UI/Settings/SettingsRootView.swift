@@ -221,6 +221,12 @@ private struct SettingsSearchResults: View {
             SettingsSearchEntry(
                 title: String(localized: "Confirm before deleting threads"), pane: general, setting: .confirmDelete),
             SettingsSearchEntry(
+                title: String(localized: "Resume after usage limits"), pane: general, setting: .resumeAfterLimit,
+                keywords: [String(localized: "Rate limit"), String(localized: "Continue"), String(localized: "Auto-resume")]),
+            SettingsSearchEntry(
+                title: String(localized: "New Thread starts a chat"), pane: general, setting: .newThreadChat,
+                keywords: [String(localized: "Chats"), String(localized: "No project"), String(localized: "Shortcut")]),
+            SettingsSearchEntry(
                 title: String(localized: "Name threads with the agent"), pane: general, setting: .threadTitles,
                 keywords: [String(localized: "Titles"), String(localized: "Rename"), String(localized: "AI")]),
             SettingsSearchEntry(

@@ -31,7 +31,8 @@ enum TerminalLaunch {
 
     /// The login-shell environment with SwiftTerm's terminal identity, minus the variables that
     /// describe whatever terminal or multiplexer Coincide itself was launched from.
-    static func environment(from base: [String: String], directory: URL) -> [String] {
+    /// `extra` is added last, after Coincide's own variables are dropped, so a project script's `COINCIDE_*` survive.
+    static func environment(from base: [String: String], directory: URL, extra: [String: String] = [:]) -> [String] {
         var environment = base.filter { key, _ in
             !inheritedTerminalKeys.contains(key) && !inheritedTerminalPrefixes.contains { key.hasPrefix($0) }
         }
@@ -44,6 +45,7 @@ enum TerminalLaunch {
         if environment["LANG"] == nil, environment["LC_ALL"] == nil, environment["LC_CTYPE"] == nil {
             environment["LANG"] = defaultLanguage
         }
+        environment.merge(extra) { _, value in value }
         return environment.map { "\($0.key)=\($0.value)" }
     }
 

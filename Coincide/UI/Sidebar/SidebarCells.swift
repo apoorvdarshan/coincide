@@ -175,18 +175,22 @@ final class StatusDot: NSView {
 
 // MARK: - Header
 
-/// The "Projects" section header with its options and add buttons.
+/// A section heading with an add button and optional sidebar options.
 final class SidebarHeaderCell: NSTableCellView {
-    init(target: AnyObject, addAction: Selector, optionsAction: Selector) {
+    init(title: String, target: AnyObject, addAction: Selector, addSymbol: String, addLabel: String, optionsAction: Selector? = nil) {
         super.init(frame: .zero)
-        let title = NSTextField(labelWithString: String(localized: "Projects"))
+        let title = NSTextField(labelWithString: title)
         title.font = .systemFont(ofSize: 11, weight: .semibold)
         title.textColor = .secondaryLabelColor
-        let options = sidebarAccessoryButton(
-            symbol: "ellipsis.circle", label: String(localized: "Sidebar Options"), target: target, action: optionsAction)
+        var views: [NSView] = [title, NSView()]
+        if let optionsAction {
+            views.append(sidebarAccessoryButton(
+                symbol: "ellipsis.circle", label: String(localized: "Sidebar Options"), target: target, action: optionsAction))
+        }
         let add = sidebarAccessoryButton(
-            symbol: "folder.badge.plus", label: String(localized: "Add Project…"), target: target, action: addAction)
-        let stack = NSStackView(views: [title, NSView(), options, add])
+            symbol: addSymbol, label: addLabel, target: target, action: addAction)
+        views.append(add)
+        let stack = NSStackView(views: views)
         stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
         textField = title
@@ -254,6 +258,8 @@ final class ProjectCell: HoverCellView {
     func configure(project: Project, hiddenStatus: ThreadRowModel.Status?) {
         // During an inline rename this would replace what the user typed; ending the rename sets the name.
         if nameField.currentEditor() == nil { nameField.stringValue = project.name }
+        newThreadButton.toolTip = String(localized: "New Thread")
+        newThreadButton.setAccessibilityLabel(String(localized: "New Thread"))
         let exists = FileManager.default.fileExists(atPath: project.path)
         icon.image = Theme.symbol(exists ? "folder" : "questionmark.folder", size: 14)
         icon.contentTintColor = .secondaryLabelColor

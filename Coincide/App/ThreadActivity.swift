@@ -2,11 +2,11 @@ import AppKit
 import CoincideKit
 
 extension Notification.Name {
-    /// A thread's pending approvals or unseen result changed. userInfo["threadID"]: UUID
+    /// A thread's pending approvals, questions or unseen result changed. userInfo["threadID"]: UUID
     static let coincideThreadActivityChanged = Notification.Name("coincide.threadActivityChanged")
 }
 
-/// What each thread needs from the user: approvals waiting for an answer, and turns that ended while
+/// What each thread needs from the user: approvals and questions waiting for an answer, and turns that ended while
 /// the user was looking elsewhere. Feeds the sidebar badges, the toolbar status and the Dock badge.
 final class ThreadActivity {
     static let shared = ThreadActivity(store: .shared)
@@ -14,6 +14,8 @@ final class ThreadActivity {
     private let store: AppStore
     /// Approval item ids still waiting, per thread.
     private var pending: [UUID: Set<UUID>] = [:]
+    /// Question item ids still waiting, kept separate from approvals so the Dock badge remains unchanged.
+    private var pendingQuestions: [UUID: Set<UUID>] = [:]
     private var token: ObservationToken?
 
     /// The thread shown in the main window. Its results count as seen while Coincide is active.
@@ -36,6 +38,8 @@ final class ThreadActivity {
     // MARK: Queries
 
     func pendingApprovalCount(_ threadID: UUID) -> Int { pending[threadID]?.count ?? 0 }
+
+    func pendingQuestionCount(_ threadID: UUID) -> Int { pendingQuestions[threadID]?.count ?? 0 }
 
     var totalPendingApprovals: Int { pending.values.reduce(0) { $0 + $1.count } }
 
@@ -84,13 +88,11 @@ final class ThreadActivity {
 
     private func handle(_ change: StoreChange) {
         switch change {
-        case .items(let threadID, let changedIDs, let appended):
-            if appended {
-                trackAppended(changedIDs, in: threadID)
-            } else if changedIDs.isEmpty {
+        case .items(let threadID, let changedIDs, _):
+            if changedIDs.isEmpty {
                 recount(threadID)
-            } else if let waiting = pending[threadID], !waiting.isDisjoint(with: changedIDs) {
-                recheck(waiting.intersection(changedIDs), in: threadID)
+            } else {
+                recheck(changedIDs, in: threadID)
             }
         case .threadList, .projects:
             pruneDeletedThreads()
@@ -99,45 +101,43 @@ final class ThreadActivity {
         }
     }
 
-    private func trackAppended(_ ids: [UUID], in threadID: UUID) {
-        guard let items = store.thread(threadID)?.items else { return }
-        var added = false
-        for id in ids {
-            // Appended items sit at the end, so search backwards.
-            guard let item = items.last(where: { $0.id == id }), item.kind == .approval, item.status == .waiting else {
-                continue
-            }
-            pending[threadID, default: []].insert(id)
-            added = true
-        }
-        if added { changed(threadID) }
-    }
-
-    private func recheck(_ ids: Set<UUID>, in threadID: UUID) {
+    private func recheck(_ ids: [UUID], in threadID: UUID) {
+        // The store has already loaded this transcript to append or edit it. Queries below never read it.
         let items = store.thread(threadID)?.items ?? []
-        var waiting = pending[threadID] ?? []
+        var approvals = pending[threadID] ?? []
+        var questions = pendingQuestions[threadID] ?? []
         for id in ids {
-            let item = items.last { $0.id == id }
-            if item?.status != .waiting { waiting.remove(id) }
+            approvals.remove(id)
+            questions.remove(id)
+            // Appended and streaming items sit near the end, so search backwards.
+            guard let item = items.last(where: { $0.id == id }), item.status == .waiting else { continue }
+            if item.kind == .approval { approvals.insert(id) }
+            if item.kind == .question { questions.insert(id) }
         }
-        setPending(waiting, for: threadID)
+        setPending(approvals: approvals, questions: questions, for: threadID)
     }
 
     private func recount(_ threadID: UUID) {
-        let ids = store.thread(threadID)?.items.filter { $0.kind == .approval && $0.status == .waiting }.map(\.id) ?? []
-        setPending(Set(ids), for: threadID)
+        var approvals = Set<UUID>()
+        var questions = Set<UUID>()
+        for item in store.thread(threadID)?.items ?? [] where item.status == .waiting {
+            if item.kind == .approval { approvals.insert(item.id) }
+            if item.kind == .question { questions.insert(item.id) }
+        }
+        setPending(approvals: approvals, questions: questions, for: threadID)
     }
 
-    private func setPending(_ ids: Set<UUID>, for threadID: UUID) {
-        let before = pending[threadID] ?? []
-        guard before != ids else { return }
-        pending[threadID] = ids.isEmpty ? nil : ids
+    private func setPending(approvals: Set<UUID>, questions: Set<UUID>, for threadID: UUID) {
+        guard (pending[threadID] ?? []) != approvals || (pendingQuestions[threadID] ?? []) != questions else { return }
+        pending[threadID] = approvals.isEmpty ? nil : approvals
+        pendingQuestions[threadID] = questions.isEmpty ? nil : questions
         changed(threadID)
     }
 
     private func pruneDeletedThreads() {
-        for id in pending.keys where !store.hasThread(id) {
+        for id in Set(pending.keys).union(pendingQuestions.keys) where !store.hasThread(id) {
             pending[id] = nil
+            pendingQuestions[id] = nil
             changed(id)
         }
         let stale = UIState.shared.values.unseen.keys.filter { key in

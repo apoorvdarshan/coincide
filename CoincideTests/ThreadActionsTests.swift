@@ -93,8 +93,10 @@ struct ThreadActionsTests {
             store.updateThread(drafted.id) { $0.draft = "half a thought" }
             let archived = store.createThread(in: project.id)
             store.updateThread(archived.id) { $0.isArchived = true }
+            let snoozed = store.createThread(in: project.id)
+            store.updateThread(snoozed.id) { $0.snoozedUntil = Date().addingTimeInterval(600) }
             let fresh = try #require(ThreadActions.newThread(in: project.id))
-            #expect(fresh != drafted.id && fresh != archived.id)
+            #expect(fresh != drafted.id && fresh != archived.id && fresh != snoozed.id)
         }
     }
 
@@ -291,5 +293,40 @@ final class ThreadIDRecorder {
         #expect(excerpt?.count ?? 0 <= 40)
         #expect(excerpt?.hasSuffix("…") == true)
         #expect(NotificationController.excerpt("```\ncode only\n```") == nil)
+    }
+}
+
+@MainActor
+struct ThreadSnoozeTests {
+    private var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+
+    private func date(_ day: Int, _ hour: Int) -> Date {
+        // October 2026: the 27th is a Tuesday and the 25th a Sunday.
+        calendar.date(from: DateComponents(year: 2026, month: 10, day: day, hour: hour))!
+    }
+
+    @Test func aWeekdayMorningOffersEveryChoice() {
+        let nextMonday = calendar.date(from: DateComponents(year: 2026, month: 11, day: 2, hour: 9))!
+        let presets = ThreadSnooze.presets(now: date(27, 10), calendar: calendar)
+        #expect(presets.map(\.date) == [date(27, 11), date(27, 13), date(27, 18), date(28, 9), nextMonday])
+    }
+
+    @Test func aSundayNightSkipsTheEveningAndANextWeekThatIsTomorrow() {
+        let presets = ThreadSnooze.presets(now: date(25, 20), calendar: calendar)
+        #expect(presets.map(\.date) == [date(25, 21), date(25, 23), date(26, 9)])
+    }
+
+    @Test func onlyAFutureSnoozeHidesAThread() {
+        let project = UUID()
+        var summary = ThreadSummary(ChatThread(projectID: project, selection: ModelSelection(provider: .claude, modelID: "m")))
+        #expect(!ThreadSnooze.isHidden(summary))
+        summary.snoozedUntil = Date().addingTimeInterval(600)
+        #expect(ThreadSnooze.isHidden(summary))
+        summary.snoozedUntil = Date().addingTimeInterval(-1)
+        #expect(!ThreadSnooze.isHidden(summary))
     }
 }
