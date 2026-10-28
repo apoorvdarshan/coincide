@@ -265,6 +265,8 @@ final class PaletteViewController: NSViewController {
 
     @objc private func goBack() {
         guard let previous = menus.popLast() else { return }
+        searched = nil
+        searchTask?.cancel()
         focusSearchField()
         setQuery(previous.parentQuery)
     }
@@ -274,7 +276,10 @@ final class PaletteViewController: NSViewController {
         let query = field.stringValue
         rangesByID = [:]
         let groups: [PaletteGroup]
-        if let menu = menus.last?.menu {
+        if let menu = menus.last?.menu, let search = menu.search {
+            groups = searched?.query == query ? searched?.groups ?? [] : []
+            if searched?.query != query { runSearch(search, query: query) }
+        } else if let menu = menus.last?.menu {
             groups = filter(menu.groups(), query: PaletteSearch.Query(query), limitSecondary: false)
         } else if PaletteCatalog.isPathQuery(query) {
             groups = contents.catalog.folderItems(for: query)
@@ -311,6 +316,23 @@ final class PaletteViewController: NSViewController {
         table.reloadData()
         if let first = rows.indices.first(where: isSelectable) { select(first) }
         resize()
+    }
+
+    /// The latest results of a nested list that searches itself, and the search under way.
+    private var searched: (query: String, groups: [PaletteGroup])?
+    private var searchTask: Task<Void, Never>?
+
+    /// Runs a nested list's own search once typing pauses, then shows its results if the query is still the same.
+    private func runSearch(_ search: @escaping (String) async -> [PaletteGroup], query: String) {
+        searchTask?.cancel()
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            let groups = await search(query)
+            guard let self, !Task.isCancelled, field.stringValue == query else { return }
+            searched = (query, groups)
+            refresh()
+        }
     }
 
     /// Match ranges of the ranked items, for bold highlighting.
@@ -419,6 +441,7 @@ final class PaletteViewController: NSViewController {
         switch item.behavior {
         case .submenu(let menu):
             menus.append((menu, field.stringValue))
+            searched = nil
             setQuery("")
         case .run(let action):
             onRun?(action)

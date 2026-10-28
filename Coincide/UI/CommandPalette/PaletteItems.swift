@@ -56,6 +56,9 @@ struct PaletteMenu {
     var title: String
     var placeholder: String
     var groups: () -> [PaletteGroup]
+    /// Finds the list for each query itself, such as files or text in a project, instead of the palette filtering
+    /// `groups`. Its results are shown as they are.
+    var search: ((String) async -> [PaletteGroup])?
 }
 
 /// Builds the palette's contents from the store and the main window's state.
@@ -134,7 +137,7 @@ struct PaletteCatalog {
         }
         let core = items
         items = []
-        if let thread { items += composerActions(for: thread) }
+        if let thread { items += composerActions(for: thread) + searchActions(for: thread) }
         if let split = window?.splitController {
             items.append(
                 PaletteItem(
@@ -230,6 +233,21 @@ struct PaletteCatalog {
                 id: "setting:\(section.rawValue)", title: title, subtitle: String(localized: "Settings"), icon: symbol(icon),
                 keywords: keywords, behavior: .run { SettingsWindowController.shared.show(section: section) })
         }
+    }
+
+    // MARK: Project search
+
+    /// Go to File and Search in Project over the thread's folder.
+    private func searchActions(for thread: ThreadSummary) -> [PaletteItem] {
+        guard let root = AppStore.shared.workingDirectory(for: thread.id) else { return [] }
+        return [
+            PaletteItem(
+                id: "action:go-to-file", title: String(localized: "Go to File…"), icon: symbol("doc.text.magnifyingglass"),
+                keywords: ["file", "open", "find", "quick open"], behavior: .submenu(ProjectSearch.goToFileMenu(root: root))),
+            PaletteItem(
+                id: "action:search-project", title: String(localized: "Search in Project…"), icon: symbol("text.magnifyingglass"),
+                keywords: ["search", "grep", "find", "text", "content"], behavior: .submenu(ProjectSearch.searchMenu(root: root))),
+        ]
     }
 
     // MARK: Composer
