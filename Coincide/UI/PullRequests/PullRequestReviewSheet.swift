@@ -5,7 +5,9 @@ import CoincideKit
 final class PullRequestReviewSheet: NSViewController, NSTextViewDelegate {
     var onSubmit: ((PullRequestReviewEvent, String) async throws -> Void)?
     private let number: Int
-    private let eventPicker = ThemedPopUpButton(frame: .zero, pullsDown: false)
+    private lazy var eventPicker = ThemedButton(
+        title: String(localized: "Comment"), style: .secondary, target: self, action: #selector(showReviewKinds))
+    private var event = PullRequestReviewEvent.comment
     private let message = PlaceholderTextView()
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private lazy var submitButton = ThemedButton(
@@ -24,9 +26,6 @@ final class PullRequestReviewSheet: NSViewController, NSTextViewDelegate {
     override func loadView() {
         let title = NSTextField(labelWithString: String(localized: "Review pull request #\(number)"))
         title.font = .systemFont(ofSize: 15, weight: .semibold)
-        eventPicker.addItems(withTitles: [String(localized: "Comment"), String(localized: "Approve"), String(localized: "Request Changes")])
-        eventPicker.target = self
-        eventPicker.action = #selector(selectionChanged)
         eventPicker.setAccessibilityLabel(String(localized: "Review outcome"))
         message.placeholder = String(localized: "Write your review…")
         message.setAccessibilityLabel(String(localized: "Review message"))
@@ -68,10 +67,26 @@ final class PullRequestReviewSheet: NSViewController, NSTextViewDelegate {
         view.window?.makeFirstResponder(message)
     }
 
-    private var event: PullRequestReviewEvent { PullRequestReviewEvent.allCases[max(0, eventPicker.indexOfSelectedItem)] }
-
     func textDidChange(_ notification: Notification) { updateEnabled() }
-    @objc private func selectionChanged() { updateEnabled() }
+
+    @objc private func showReviewKinds() {
+        let menu = NSMenu()
+        let titles = [String(localized: "Comment"), String(localized: "Approve"), String(localized: "Request Changes")]
+        for (index, title) in titles.enumerated() {
+            let item = menu.addItem(withTitle: title, action: #selector(selectEvent(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            item.state = PullRequestReviewEvent.allCases[index] == event ? .on : .off
+        }
+        ThemedPopup.show(menu: menu, from: eventPicker, preferAbove: false)
+    }
+
+    @objc private func selectEvent(_ sender: NSMenuItem) {
+        guard PullRequestReviewEvent.allCases.indices.contains(sender.tag) else { return }
+        event = PullRequestReviewEvent.allCases[sender.tag]
+        eventPicker.title = sender.title
+        updateEnabled()
+    }
 
     private func updateEnabled() {
         submitButton.isEnabled = !isSubmitting && event.accepts(body: message.string)
