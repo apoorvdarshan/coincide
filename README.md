@@ -19,6 +19,7 @@ T3 Code is an Electron app with a Node server behind a web UI. Coincide is built
 - **Every agent, one picker.** Models from all installed and signed-in agents appear in one menu, grouped by agent, with reasoning effort where the model has it.
 - **Switch mid-thread.** Each agent keeps its own native session for the thread. When you switch, the next agent gets a recap of the turns it missed and continues in the same working directory. Switch back and the earlier agent resumes its own session.
 - **Projects and threads** in a sidebar with search, pinning and archiving, plus a ⌘K command palette.
+- **Snooze threads** until later today, tomorrow or next week. They return automatically; running agents and requests for input stay visible. Find hidden conversations through search or Show Snoozed Threads.
 - **Full access or approvals.** Let agents run freely, or approve each command and file edit. Agents can also ask you questions, which you answer inline.
 - **Plan mode**, image attachments, `@` file mentions, `/` commands (including `/claude`, `/codex`, … to switch agents), queued follow-up messages and per-thread drafts.
 - **A native transcript** with Markdown, syntax-highlighted code, collapsible work logs per turn, and each reply labelled with the agent and model that wrote it.

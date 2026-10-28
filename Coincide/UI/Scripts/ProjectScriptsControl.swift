@@ -2,12 +2,17 @@ import AppKit
 import CoincideKit
 
 /// The toolbar's project scripts (T3 Code's header control): the script run last as a button, beside a menu of every
-/// script and ways to add, edit or import them. Without scripts it is a single button offering to add one. Hidden
-/// while no thread is open.
+/// script and ways to add, edit or import them. Without scripts it is a single button offering to add one. Its
+/// toolbar item is hidden while no thread is open (`onVisibilityChange`): a toolbar does not lay out again for a
+/// hidden view, so the item itself is what hides.
 final class ProjectScriptsControl: NSView {
     var threadID: UUID? {
         didSet { refresh() }
     }
+
+    /// Whether a thread with a project is open, so the control has something to show.
+    private(set) var isAvailable = false
+    var onVisibilityChange: ((Bool) -> Void)?
 
     private let runButton = ComposerControlButton()
     private let menuButton = ComposerControlButton()
@@ -66,7 +71,11 @@ final class ProjectScriptsControl: NSView {
     private var project: Project? { ProjectScripts.shared.project(ofThread: threadID) }
 
     private func refresh() {
-        isHidden = project == nil
+        let available = project != nil
+        if available != isAvailable {
+            isAvailable = available
+            onVisibilityChange?(available)
+        }
         guard let project else { return }
         if let primary = ProjectScripts.shared.primaryScript(in: project) {
             runButton.isHidden = false

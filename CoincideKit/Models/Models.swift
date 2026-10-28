@@ -210,10 +210,13 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
     public var isExpanded: Bool
     /// The project's scripts, in the order the menu lists them.
     public var scripts: [ProjectScript]
+    /// The home of chats: threads started without a project, like a chat app's (T3 Code's scratch project). Its folder
+    /// is Coincide's own, and the sidebar lists it last, as Chats.
+    public var isChats: Bool
 
     public nonisolated init(
         id: UUID = UUID(), name: String, path: String, createdAt: Date = Date(), isExpanded: Bool = true,
-        scripts: [ProjectScript] = []
+        scripts: [ProjectScript] = [], isChats: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -221,6 +224,7 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.isExpanded = isExpanded
         self.scripts = scripts
+        self.isChats = isChats
     }
 
     public nonisolated var url: URL { URL(fileURLWithPath: path) }
@@ -233,6 +237,7 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
         createdAt = container.lenient(Date.self, forKey: .createdAt) ?? .distantPast
         isExpanded = container.lenient(Bool.self, forKey: .isExpanded) ?? true
         scripts = container.lenientArray(ProjectScript.self, forKey: .scripts)
+        isChats = container.lenient(Bool.self, forKey: .isChats) ?? false
     }
 }
 
@@ -506,6 +511,8 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     public var sessions: [ProviderKind: ProviderSessionRef]
     public var isPinned: Bool
     public var isArchived: Bool
+    /// Hidden from the thread list until then (T3 Code's snooze), unless the agent needs the user first.
+    public var snoozedUntil: Date?
     /// Working directory when the thread runs in its own git worktree.
     public var worktreePath: String?
     public var branch: String?
@@ -556,6 +563,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         sessions = container.lenientProviderMap(ProviderSessionRef.self, forKey: .sessions)
         isPinned = container.lenient(Bool.self, forKey: .isPinned) ?? false
         isArchived = container.lenient(Bool.self, forKey: .isArchived) ?? false
+        snoozedUntil = container.lenient(Date.self, forKey: .snoozedUntil)
         worktreePath = container.lenient(String.self, forKey: .worktreePath)
         branch = container.lenient(String.self, forKey: .branch)
         draft = container.lenient(String.self, forKey: .draft)

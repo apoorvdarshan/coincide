@@ -38,6 +38,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentTurns.shared.start()
         NotificationController.shared.start()
         ProjectScripts.shared.start()
+        ThreadSnooze.shared.start()
+        // Chats are always listed, so the first one can be started from the sidebar.
+        AppStore.shared.ensureChatsProject()
         mainWindow?.showWindow(nil)
         Task { await ProviderRegistry.shared.refresh() }
         #if DEBUG

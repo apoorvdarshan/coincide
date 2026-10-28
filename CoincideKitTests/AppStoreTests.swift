@@ -651,6 +651,8 @@ struct ThreadSummaryTests {
         let item = { (kind: String) in #"{"id":"\#(UUID().uuidString)","kind":"\#(kind)","text":"t"}"# }
         let files = [
             "{\(id)}",
+            #"{\#(id),"snoozedUntil":"2026-10-28T09:00:00Z"}"#,
+            #"{\#(id),"snoozedUntil":"invalid"}"#,
             #"{\#(id),"title":"T","createdAt":"2026-10-01T10:00:00Z","updatedAt":"2026-10-02T10:00:00Z","isPinned":true,"isArchived":true,"draft":"d","branch":"b","worktreePath":"/w"}"#,
             #"{\#(id),"createdAt":"2026-10-01T10:00:00Z","title":7,"accessMode":"readOnly","interactionMode":"plan","selection":{"provider":"future","modelID":"x"}}"#,
             #"{\#(id),"items":[\#(item("assistant")),"junk",{"kind":"user"},\#(item("hologram")),\#(item("user")),42]}"#,

@@ -54,9 +54,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func configure() {
         // Text fields edit through the window's shared field editor; it selects in the theme's colors too.
         (window?.fieldEditor(true, for: nil) as? NSTextView)?.selectedTextAttributes = [.backgroundColor: Theme.textSelection]
-        sidebar.onSelectThread = { [weak self] id in self?.open(id) }
+        sidebar.onSelectThread = { [weak self] id in self?.open(id, unsnooze: false) }
         splitController.onPanelsChanged = { [weak self] in self?.updatePanelItems() }
         runStatus.onStop = { [weak self] in self?.stopTurn(nil) }
+        projectScripts.onVisibilityChange = { [weak self] visible in
+            self?.toolbarItems[.projectScripts]?.isHidden = !visible
+        }
         // A script started in the open thread shows its terminal.
         ProjectScripts.shared.onShowTerminal = { [weak self] threadID in
             guard let self, threadID == selectedThreadID, !splitController.content.isTerminalOpen else { return }
@@ -81,8 +84,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         for (name, selector) in events { center.addObserver(self, selector: selector, name: name, object: nil) }
 
         let saved = UIState.shared.values.selectedThreadID.flatMap { store.summary($0) }
-        let initial = saved.map(\.id) ?? store.recentThreads.first?.id
-        open(initial)
+        let initial = saved.flatMap { ThreadSnooze.isHidden($0) ? nil : $0.id }
+            ?? store.recentThreads.first(where: { !ThreadSnooze.isHidden($0) })?.id
+        open(initial, unsnooze: false)
         updatePanelItems()
     }
 
@@ -90,8 +94,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// Shows a thread in the chat, terminal and diff panes, and highlights it in the sidebar.
     /// As in T3, the composer takes focus, unless the user is working in the sidebar, terminal or diff.
-    func open(_ threadID: UUID?) {
+    func open(_ threadID: UUID?, unsnooze: Bool = true) {
         let threadID = threadID.flatMap { store.hasThread($0) ? $0 : nil }
+        // Explicit opens (palette, notifications, keyboard navigation) bring a conversation back.
+        // Restoring the window and the sidebar's automatic neighbour selection preserve its snooze.
+        if unsnooze, let threadID, store.summary(threadID)?.snoozedUntil != nil {
+            ThreadSnooze.shared.unsnooze(threadID)
+        }
         guard threadID != selectedThreadID || !hasOpenedThread else { return }
         hasOpenedThread = true
         selectedThreadID = threadID
@@ -148,8 +157,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         var folder: URL?
         if let thread = selectedThread {
             title = thread.title
-            subtitle = store.project(thread.projectID)?.name ?? ""
-            if let branch = thread.branch, !branch.isEmpty { subtitle += subtitle.isEmpty ? branch : " · \(branch)" }
+            let project = store.project(thread.projectID)
+            subtitle = project?.isChats == true ? String(localized: "Chat") : project?.name ?? ""
+            if project?.isChats != true, let branch = thread.branch, !branch.isEmpty {
+                subtitle += subtitle.isEmpty ? branch : " · \(branch)"
+            }
             folder = store.workingDirectory(for: thread.id)
         }
         if window.title != title { window.title = title }
@@ -192,6 +204,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func newThread(in projectID: UUID?) {
         showWindow(nil)
+        if projectID == nil, store.settings.newThreadStartsChat {
+            ThreadActions.newChat()
+            return
+        }
         guard let project = projectID ?? currentProjectID else {
             ThreadActions.addProject(in: window)
             return
@@ -200,6 +216,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     // MARK: Actions
+
+    /// A thread without a project, whatever New Thread does.
+    @objc func newChat(_ sender: Any?) {
+        showWindow(nil)
+        ThreadActions.newChat()
+    }
 
     @objc func newThread(_ sender: Any?) {
         newThread(in: nil)
