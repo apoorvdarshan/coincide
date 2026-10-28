@@ -90,7 +90,7 @@ enum SafeLinks {
 
     /// Asks before opening. Cancel is the default button, so pressing Return never opens anything.
     private static func confirm(title: String, detail: String, action: String, window: NSWindow?, then perform: @escaping () -> Void) {
-        let alert = NSAlert()
+        let alert = ThemedAlert()
         alert.messageText = title
         alert.informativeText = detail
         alert.addButton(withTitle: String(localized: "Cancel"))

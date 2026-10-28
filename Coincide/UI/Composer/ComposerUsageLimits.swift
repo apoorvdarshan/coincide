@@ -245,7 +245,7 @@ final class ComposerUsageBanner: ComposerBanner {
         message.font = .systemFont(ofSize: 12)
         message.maximumNumberOfLines = 2
         message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let details = NSButton(title: String(localized: "Details"), target: self, action: #selector(showDetails))
+        let details = ThemedButton(title: String(localized: "Details"), target: self, action: #selector(showDetails))
         details.bezelStyle = .push
         details.controlSize = .small
         details.setContentCompressionResistancePriority(.required, for: .horizontal)

@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             reasons.append(String(localized: "\(jobs) commands are still running in terminals."))
         }
         reasons.append(String(localized: "Quitting stops them."))
-        let alert = NSAlert()
+        let alert = ThemedAlert()
         alert.messageText = String(localized: "Quit Coincide?")
         alert.informativeText = reasons.joined(separator: " ")
         alert.addButton(withTitle: String(localized: "Quit"))

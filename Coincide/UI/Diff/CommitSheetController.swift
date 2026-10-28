@@ -18,12 +18,12 @@ final class CommitSheetController: NSViewController, NSTableViewDataSource, NSTa
     private let files: [ChangedFile]
     private var excluded: Set<String> = []
     private let tableView = NSTableView()
-    private let allCheckbox = NSButton(checkboxWithTitle: String(localized: "Files"), target: nil, action: nil)
+    private let allCheckbox = ThemedCheckbox(label: String(localized: "Files"), target: nil, action: nil)
     private let selectionLabel = NSTextField(labelWithString: "")
     private let totalsLabel = NSTextField(labelWithString: "")
     private let messageView = PlaceholderTextView()
-    private let commitButton = NSButton(title: String(localized: "Commit"), target: nil, action: nil)
-    private let newBranchButton = NSButton(title: String(localized: "Commit on New Branch"), target: nil, action: nil)
+    private let commitButton = ThemedButton(title: String(localized: "Commit"), style: .primary, target: nil, action: nil)
+    private let newBranchButton = ThemedButton(title: String(localized: "Commit on New Branch"), target: nil, action: nil)
 
     init(branch: String?, isDefaultBranch: Bool, files: [ChangedFile]) {
         self.branch = branch
@@ -98,7 +98,7 @@ final class CommitSheetController: NSViewController, NSTableViewDataSource, NSTa
         messageScroll.borderType = .lineBorder
         messageScroll.heightAnchor.constraint(equalToConstant: 84).isActive = true
 
-        let cancel = NSButton(title: String(localized: "Cancel"), target: self, action: #selector(cancel))
+        let cancel = ThemedButton(title: String(localized: "Cancel"), target: self, action: #selector(cancel))
         cancel.keyEquivalent = "\u{1b}"
         newBranchButton.target = self
         newBranchButton.action = #selector(commitOnNewBranch)
@@ -197,7 +197,7 @@ final class CommitSheetController: NSViewController, NSTableViewDataSource, NSTa
 }
 
 private final class CommitFileCell: NSTableCellView {
-    private let checkbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let checkbox = ThemedCheckbox(label: "", target: nil, action: nil)
     private let pathLabel = NSTextField(labelWithString: "")
     private let countsLabel = NSTextField(labelWithString: "")
     private var onToggle: ((Bool) -> Void)?

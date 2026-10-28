@@ -747,7 +747,7 @@ final class DiffViewController: NSViewController {
         guard let window = view.window, let status else { return }
         let branch = status.branch ?? "HEAD"
         let commits = action.includesCommit
-        let alert = NSAlert()
+        let alert = ThemedAlert()
         switch action {
         case .commitPush, .push:
             alert.messageText =
@@ -893,7 +893,7 @@ final class DiffEmptyStateView: NSView {
     private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
-    private let button = NSButton(title: "", target: nil, action: nil)
+    private let button = ThemedButton(title: "", style: .primary, target: nil, action: nil)
     private var action: (() -> Void)?
 
     override init(frame frameRect: NSRect) {

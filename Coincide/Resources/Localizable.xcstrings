@@ -91255,6 +91255,7 @@
       }
     },
     "More %@ Models" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -99891,6 +99892,7 @@
       }
     },
     "Not Available" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -111720,6 +111722,7 @@
       }
     },
     "Provider Settings…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -118992,6 +118995,7 @@
       }
     },
     "Refresh Providers" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

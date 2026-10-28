@@ -1118,11 +1118,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         return ComposerMenus.accessMenu(current: thread.accessMode, target: self, action: #selector(chooseAccess(_:)))
     }
 
-    @objc private func chooseModel(_ sender: NSMenuItem) {
-        guard let selection = sender.representedObject as? ModelSelection else { return }
-        select(selection)
-    }
-
     /// Picking a model from another provider switches the thread's agent; that agent's native session
     /// continues and it gets a recap of the turns it missed (see `Handoff`). The effort carries over
     /// when the new model supports it.

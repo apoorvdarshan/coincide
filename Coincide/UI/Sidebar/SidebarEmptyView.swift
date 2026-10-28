@@ -6,7 +6,7 @@ final class SidebarEmptyView: NSView {
     private let icon = NSImageView()
     private let titleField = NSTextField(labelWithString: "")
     private let messageField = NSTextField(wrappingLabelWithString: "")
-    private let button = NSButton(title: String(localized: "Add Project…"), target: nil, action: nil)
+    private let button = ThemedButton(title: String(localized: "Add Project…"), style: .primary, target: nil, action: nil)
     private var acceptsFolders = false
     private var isDropTarget = false {
         didSet { needsDisplay = true }

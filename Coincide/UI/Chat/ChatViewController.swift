@@ -830,7 +830,7 @@ final class ChatViewController: NSViewController {
 
     // MARK: Rewind
 
-    private func present(_ alert: NSAlert, then handle: @escaping (NSApplication.ModalResponse) -> Void) {
+    private func present(_ alert: ThemedAlert, then handle: @escaping (NSApplication.ModalResponse) -> Void) {
         guard let window = view.window else {
             handle(alert.runModal())
             return
@@ -859,7 +859,7 @@ final class ChatViewController: NSViewController {
     }
 
     private func present(_ error: Error) {
-        let alert = NSAlert(error: error)
+        let alert = ThemedAlert(error: error)
         if let window = view.window {
             alert.beginSheetModal(for: window)
         } else {
@@ -903,7 +903,7 @@ extension ChatViewController: TranscriptHost {
             return
         }
         let canRestoreFiles = CheckpointService.shared.canRestore(threadID: threadID, userItemID: itemID)
-        let alert = NSAlert()
+        let alert = ThemedAlert()
         alert.messageText = String(localized: "Edit from here?")
         if canRestoreFiles {
             alert.informativeText = String(

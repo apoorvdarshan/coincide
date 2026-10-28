@@ -440,8 +440,8 @@ final class TerminalPaneView: NSView {
         let label = NSTextField(labelWithString: message)
         label.font = Theme.smallFont
         label.textColor = .secondaryLabelColor
-        let restart = NSButton(title: String(localized: "Restart"), target: self, action: #selector(restartShell))
-        let close = NSButton(title: String(localized: "Close"), target: self, action: #selector(closePane))
+        let restart = ThemedButton(title: String(localized: "Restart"), style: .primary, target: self, action: #selector(restartShell))
+        let close = ThemedButton(title: String(localized: "Close"), target: self, action: #selector(closePane))
         for button in [restart, close] {
             button.bezelStyle = .glass
             button.controlSize = .small

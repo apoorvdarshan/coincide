@@ -19,11 +19,10 @@ struct GeneralSettingsView: View {
                     .settingsRevealable(.appearance, highlighted: highlighted)
                     FontSizeRow(size: model.binding(\.fontSize))
                         .settingsRevealable(.fontSize, highlighted: highlighted)
-                    Picker(selection: model.binding(\.replyTypeface)) {
-                        ForEach(ReplyTypeface.allCases, id: \.self) { typeface in
-                            Text(typeface.displayName).tag(typeface)
-                        }
-                    } label: {
+                    ThemedPicker(
+                        selection: model.binding(\.replyTypeface),
+                        options: ReplyTypeface.allCases.map { .init($0, $0.displayName) }
+                    ) {
                         Text("Reply font")
                         Text("The typeface of agents’ replies in the conversation.")
                     }
@@ -37,10 +36,10 @@ struct GeneralSettingsView: View {
                 }
 
                 Section("Chat") {
-                    Picker(selection: model.binding(\.sendOnReturn)) {
-                        Text("Return").tag(true)
-                        Text("Command-Return").tag(false)
-                    } label: {
+                    ThemedPicker(
+                        selection: model.binding(\.sendOnReturn),
+                        options: [.init(true, String(localized: "Return")), .init(false, String(localized: "Command-Return"))]
+                    ) {
                         Text("Send messages with")
                         Text(
                             model.settings.sendOnReturn
@@ -48,11 +47,10 @@ struct GeneralSettingsView: View {
                                 : String(localized: "Return inserts a new line."))
                     }
                     .settingsRevealable(.sendShortcut, highlighted: highlighted)
-                    Picker(selection: model.binding(\.followUpBehavior)) {
-                        ForEach(FollowUpBehavior.allCases, id: \.self) { behavior in
-                            Text(behavior.displayName).tag(behavior)
-                        }
-                    } label: {
+                    ThemedPicker(
+                        selection: model.binding(\.followUpBehavior),
+                        options: FollowUpBehavior.allCases.map { .init($0, $0.displayName) }
+                    ) {
                         Text("Follow-up behavior")
                         Text(followUpCaption)
                     }
@@ -71,11 +69,10 @@ struct GeneralSettingsView: View {
 
                 Section("New Threads") {
                     DefaultModelRows(model: model, highlighted: highlighted)
-                    Picker(selection: model.binding(\.defaultAccessMode)) {
-                        ForEach(AccessMode.allCases, id: \.self) { mode in
-                            Text(mode.displayName).tag(mode)
-                        }
-                    } label: {
+                    ThemedPicker(
+                        selection: model.binding(\.defaultAccessMode),
+                        options: AccessMode.allCases.map { .init($0, $0.displayName) }
+                    ) {
                         Text("Access")
                         Text(
                             model.settings.defaultAccessMode == .fullAccess
@@ -101,11 +98,10 @@ struct GeneralSettingsView: View {
                 }
 
                 Section("Agents") {
-                    Picker(selection: model.binding(\.idleSessionTimeoutMinutes)) {
-                        ForEach(idleTimeoutOptions, id: \.self) { minutes in
-                            Text(SettingsFormat.minutes(minutes)).tag(minutes)
-                        }
-                    } label: {
+                    ThemedPicker(
+                        selection: model.binding(\.idleSessionTimeoutMinutes),
+                        options: idleTimeoutOptions.map { .init($0, SettingsFormat.minutes($0)) }
+                    ) {
                         Text("Close idle agents after")
                         Text("Agent processes idle this long shut down to free memory. Threads pick up where they left off.")
                     }
@@ -317,36 +313,33 @@ private struct DefaultModelRows: View {
         let current = model.defaultModel
         let groups = model.kinds.filter { model.isEnabled($0) && !(model.models[$0] ?? []).isEmpty }
         // Each item carries its agent's logo, so models with the same name stay distinguishable.
-        Picker(selection: modelBinding) {
-            if current == nil {
-                Label(selection.modelID, image: Theme.logoName(for: selection.provider)).tag(selectionID)
-            }
-            ForEach(groups, id: \.self) { kind in
-                Section {
-                    ForEach(model.models[kind] ?? []) { option in
-                        Label(option.displayName, image: Theme.logoName(for: kind)).tag(option.id)
-                    }
-                } header: {
-                    Text(groupTitle(kind))
+        let unknown: [ThemedPicker<String, TupleView<(Text, Text)>>.Option] =
+            current == nil
+            ? [.init(selectionID, selection.modelID, image: Theme.logo(for: selection.provider, size: 14))] : []
+        let options =
+            unknown
+            + groups.flatMap { kind in
+                (model.models[kind] ?? []).map { option in
+                    ThemedPicker<String, TupleView<(Text, Text)>>.Option(
+                        option.id, option.displayName, image: Theme.logo(for: kind, size: 14), group: groupTitle(kind))
                 }
             }
-        } label: {
+        ThemedPicker(selection: modelBinding, options: options) {
             Text("Model")
             Text(caption(for: selection.provider))
         }
         .settingsRevealable(.defaultModel, highlighted: highlighted)
 
         if let current, !current.efforts.isEmpty {
-            Picker(selection: effortBinding) {
-                Text(
-                    current.defaultEffort.map { String(localized: "Default (\(SettingsFormat.effort($0)))") }
-                        ?? String(localized: "Default")
-                )
-                .tag(String?.none)
-                ForEach(current.efforts, id: \.self) { effort in
-                    Text(SettingsFormat.effort(effort)).tag(Optional(effort))
-                }
-            } label: {
+            ThemedPicker(
+                selection: effortBinding,
+                options: [
+                    .init(
+                        String?.none,
+                        current.defaultEffort.map { String(localized: "Default (\(SettingsFormat.effort($0)))") }
+                            ?? String(localized: "Default"))
+                ] + current.efforts.map { .init(Optional($0), SettingsFormat.effort($0)) }
+            ) {
                 Text("Reasoning effort")
                 Text("How long the model thinks before it answers.")
             }
@@ -544,7 +537,7 @@ private struct ThemeTile: View {
                 Image(nsImage: theme.swatch(size: NSSize(width: 84, height: 52)))
                     .overlay {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2)
+                            .strokeBorder(isSelected ? Color(nsColor: Theme.ink) : .clear, lineWidth: 2)
                             .padding(-3)
                     }
                 Text(verbatim: theme.name)

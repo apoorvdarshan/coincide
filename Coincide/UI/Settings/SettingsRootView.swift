@@ -9,9 +9,16 @@ struct SettingsRootView: View {
         NavigationSplitView {
             SettingsSidebar(model: model)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: Theme.sidebarBackground))
         } detail: {
             detail
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: Theme.contentBackground))
         }
+        .toggleStyle(ThemedSwitchToggleStyle())
+        .buttonStyle(ThemedButtonStyle())
+        .tint(Color(nsColor: Theme.ink))
         .toolbar(removing: .sidebarToggle)
         .searchable(text: $model.searchText, placement: .sidebar, prompt: Text("Search"))
         .searchFocused($isSearchFocused)
