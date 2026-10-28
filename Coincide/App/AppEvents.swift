@@ -18,6 +18,9 @@ extension Notification.Name {
     /// Attaches context to the composer's message, from the terminal or the diff. Handled by the composer.
     /// userInfo["threadID"]: UUID, ["context"]: MessageContext
     static let coincideAddComposerContext = Notification.Name("coincide.addComposerContext")
+    /// Writes `#123` into the composer, as picking the pull request from the `#` list does. Handled by the composer.
+    /// userInfo["pullRequest"]: PullRequestSummary
+    static let coincideMentionPullRequest = Notification.Name("coincide.mentionPullRequest")
     /// Handled by the settings window controller.
     /// userInfo["section"]: String (SettingsSection raw value), optional;
     /// userInfo["provider"]: String (ProviderKind raw value), optional
@@ -39,6 +42,10 @@ enum AppEvents {
         var info: [String: Any] = ["threadID": threadID, "turnID": turnID]
         if let path { info["path"] = path }
         NotificationCenter.default.post(name: .coincideShowTurnDiff, object: nil, userInfo: info)
+    }
+
+    static func mentionPullRequest(_ pullRequest: PullRequestSummary) {
+        NotificationCenter.default.post(name: .coincideMentionPullRequest, object: nil, userInfo: ["pullRequest": pullRequest])
     }
 
     static func showSettings(section: SettingsSection? = nil, provider: ProviderKind? = nil) {

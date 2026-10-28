@@ -14,6 +14,12 @@ final class UIState {
         case failed
     }
 
+    /// What the inspector column at the window's right shows.
+    enum InspectorPanel: String, Codable {
+        case diff
+        case pullRequests
+    }
+
     struct Values: Codable {
         var windowFrame: String?
         var selectedThreadID: UUID?
@@ -23,6 +29,7 @@ final class UIState {
         var isSidebarCollapsed = false
         var inspectorWidth: Double?
         var isInspectorOpen = false
+        var inspectorPanel = InspectorPanel.diff
         var terminalHeight: Double?
         var isTerminalOpen = false
         /// Bundle identifier of the app the toolbar's "Open in" button uses.
@@ -30,6 +37,9 @@ final class UIState {
         var showsArchivedThreads = false
         /// List snoozed threads too, marked with when they wake.
         var showsSnoozedThreads = false
+        var showsSettledThreads = false
+        /// A settled conversation returns when new activity is newer than this timestamp.
+        var settledThreads: [String: Date] = [:]
         /// The project script run last in each project (ids as strings), which the toolbar runs with one click.
         var lastScripts: [String: String] = [:]
         /// Threads per project before the sidebar shows "Show more"; 0 shows all.
@@ -53,11 +63,14 @@ final class UIState {
             isSidebarCollapsed = value(.isSidebarCollapsed, defaults.isSidebarCollapsed)
             inspectorWidth = value(.inspectorWidth, defaults.inspectorWidth)
             isInspectorOpen = value(.isInspectorOpen, defaults.isInspectorOpen)
+            inspectorPanel = value(.inspectorPanel, defaults.inspectorPanel)
             terminalHeight = value(.terminalHeight, defaults.terminalHeight)
             isTerminalOpen = value(.isTerminalOpen, defaults.isTerminalOpen)
             preferredOpenTarget = value(.preferredOpenTarget, defaults.preferredOpenTarget)
             showsArchivedThreads = value(.showsArchivedThreads, defaults.showsArchivedThreads)
             showsSnoozedThreads = value(.showsSnoozedThreads, defaults.showsSnoozedThreads)
+            showsSettledThreads = value(.showsSettledThreads, defaults.showsSettledThreads)
+            settledThreads = value(.settledThreads, defaults.settledThreads)
             lastScripts = value(.lastScripts, defaults.lastScripts)
             sidebarThreadLimit = value(.sidebarThreadLimit, defaults.sidebarThreadLimit)
             unseen = value(.unseen, defaults.unseen)

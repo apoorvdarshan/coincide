@@ -72,7 +72,7 @@ final class DiffCommentEditor: NSViewController, ThemedPopupContent, NSTextViewD
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
         textView.delegate = self
-        textView.setAccessibilityLabel(String(localized: "Comment"))
+        textView.setAccessibilityLabel(String(localized: "Comment on the diff"))
         let scroll = NSScrollView()
         scroll.documentView = textView
         scroll.drawsBackground = false

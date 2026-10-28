@@ -14,7 +14,7 @@ import CoincideKit
 /// - `{"approve": "allow"}`: answers the latest pending approval with the option of that kind or id
 /// - `{"openThread": "title"}`: opens an existing thread
 /// - `{"request": "approval" | "question"}`: adds a sample request waiting for an answer, to check how it looks
-/// - `{"toggle": "sidebar" | "terminal" | "diff"}`, `{"appearance": "light" | "dark" | "system"}`
+/// - `{"toggle": "sidebar" | "terminal" | "diff" | "pullRequests"}`, `{"appearance": "light" | "dark" | "system"}`
 /// - `{"settings": "general" | "providers" | "models" | "keyboard" | "about"}`: opens the settings window
 /// - `{"find": "text"}`: opens the find bar searching for the text; `{"findNext": 2}`, `{"findPrevious": 1}`,
 ///   `{"closeFind": true}`
@@ -93,12 +93,23 @@ enum DebugAutomation {
             case "request":
                 guard let threadID else { continue }
                 store.append(sampleRequest(value.string ?? "approval"), to: threadID)
+            case "inbox":
+                let titles = Set(value["titles"]?.array?.compactMap(\.string) ?? [])
+                let ids = store.threadSummaries.values.filter { titles.contains($0.title) }.map(\.id)
+                switch value["action"]?.string {
+                case "archive": ThreadInbox.shared.archive(ids, archived: true)
+                case "settle": ThreadInbox.shared.settle(ids, settled: true)
+                case "undo": ThreadInbox.shared.undo()
+                case "redo": ThreadInbox.shared.redo()
+                default: log("unknown inbox action")
+                }
             case "toggle":
                 let window = NSApp.windows.compactMap { $0.windowController as? MainWindowController }.first
                 switch value.string {
                 case "sidebar": window?.toggleSidebarPanel(nil)
                 case "terminal": window?.toggleTerminalPanel(nil)
                 case "diff": window?.toggleDiffPanel(nil)
+                case "pullRequests": window?.togglePullRequestsPanel(nil)
                 default: log("unknown panel \(value.displayText)")
                 }
             case "settings":

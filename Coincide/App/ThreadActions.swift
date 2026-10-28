@@ -18,20 +18,30 @@ enum ThreadActions {
     /// With `source`, the new thread starts in the same worktree and branch.
     @discardableResult
     static func newThread(in projectID: UUID, basedOn source: ThreadSummary? = nil) -> UUID? {
+        newThread(in: projectID, worktreePath: source?.worktreePath, branch: source?.branch, setsFolder: source != nil)
+    }
+
+    /// Opens a new thread in the worktree at `worktreePath` on `branch`, such as one checked out for a pull request.
+    @discardableResult
+    static func newThread(in projectID: UUID, worktreePath: String, branch: String?) -> UUID? {
+        newThread(in: projectID, worktreePath: worktreePath, branch: branch, setsFolder: true)
+    }
+
+    /// An empty thread in the same folder is reused rather than adding another. With `setsFolder` the thread runs in
+    /// `worktreePath` (the project folder when nil) on `branch`.
+    private static func newThread(in projectID: UUID, worktreePath: String?, branch: String?, setsFolder: Bool) -> UUID? {
         guard store.project(projectID) != nil else { return nil }
         let id: UUID
-        if let empty = store.threads(in: projectID).first(where: { isUntouched($0, matching: source) }) {
+        if let empty = store.threads(in: projectID).first(where: { isUntouched($0, in: worktreePath) }) {
             id = empty.id
         } else {
             let selection = ProviderRegistry.shared.usableSelection(preferring: store.settings.defaultSelection)
             id = store.createThread(in: projectID, selection: selection).id
         }
-        if let source, let thread = store.summary(id),
-            thread.worktreePath != source.worktreePath || thread.branch != source.branch
-        {
+        if setsFolder, let thread = store.summary(id), thread.worktreePath != worktreePath || thread.branch != branch {
             store.updateThread(id) { thread in
-                thread.worktreePath = source.worktreePath
-                thread.branch = source.branch
+                thread.worktreePath = worktreePath
+                thread.branch = branch
             }
         }
         if store.project(projectID)?.isExpanded == false {
@@ -42,9 +52,10 @@ enum ThreadActions {
         return id
     }
 
-    private static func isUntouched(_ thread: ThreadSummary, matching source: ThreadSummary?) -> Bool {
+    private static func isUntouched(_ thread: ThreadSummary, in worktreePath: String?) -> Bool {
         thread.itemCount == 0 && !thread.hasDraft && !thread.isArchived
-            && (thread.snoozedUntil ?? .distantPast) <= Date() && thread.worktreePath == source?.worktreePath
+            && !ThreadInbox.shared.isSettled(thread)
+            && (thread.snoozedUntil ?? .distantPast) <= Date() && thread.worktreePath == worktreePath
     }
 
     static func rename(_ threadID: UUID, to title: String) {
@@ -64,44 +75,47 @@ enum ThreadActions {
 
     static func toggleArchived(_ threadID: UUID) {
         guard canArchive(threadID) else { return }
-        store.updateThread(threadID) { $0.isArchived.toggle() }
+        guard let thread = store.summary(threadID) else { return }
+        ThreadInbox.shared.archive([threadID], archived: !thread.isArchived)
     }
 
     static func markUnread(_ threadID: UUID) {
         ThreadActivity.shared.markUnread(threadID)
     }
 
-    /// Deletes the thread, asking first unless the user turned that off. A command still running in one of
-    /// its terminals is stopped too, so that is always asked about.
+    /// Deletion is undoable for the current app session. Running work still needs confirmation.
     static func delete(_ threadID: UUID, in window: NSWindow?) {
-        guard let thread = store.summary(threadID) else { return }
+        delete([threadID], in: window)
+    }
+
+    static func delete(_ threadIDs: [UUID], in window: NSWindow?) {
+        let ids = Array(Set(threadIDs)).filter { store.hasThread($0) }
+        guard !ids.isEmpty else { return }
         let perform = {
-            ThreadRunner.shared.shutdown(threadID: threadID)
-            store.deleteThread(threadID)
+            for id in ids { ThreadRunner.shared.shutdown(threadID: id) }
+            do { try ThreadInbox.shared.delete(ids) } catch { NSApp.presentError(error) }
         }
-        let busy = busyTerminals(in: [threadID])
-        guard store.settings.confirmBeforeDeletingThreads || !busy.isEmpty else {
+        let busy = busyTerminals(in: ids)
+        let running = ids.contains { ThreadRunner.shared.isRunning($0) }
+        guard store.settings.confirmBeforeDeletingThreads || !busy.isEmpty || running else {
             perform()
             return
         }
         let alert = ThemedAlert()
         alert.alertStyle = .warning
-        alert.messageText = String(localized: "Delete “\(thread.title)”?")
-        var text =
-            ThreadRunner.shared.isRunning(threadID)
-            ? String(localized: "The agent working in it is stopped and the conversation is deleted. Files on disk are not changed.")
-            : String(localized: "This permanently deletes the conversation. Files on disk are not changed.")
-        if busy.count == 1 {
-            text += "\n\n" + String(localized: "“\(busy[0].title)” is still running in its terminal. Deleting the thread stops it.")
-        } else if busy.count > 1 {
-            let names = ListFormatter.localizedString(byJoining: busy.map { "“\($0.title)”" })
-            text += "\n\n" + String(localized: "\(names) are still running in its terminals. Deleting the thread stops them.")
+        if ids.count == 1, let thread = store.summary(ids[0]) {
+            alert.messageText = String(localized: "Delete “\(thread.title)”?")
+        } else {
+            alert.messageText = String(localized: "Delete Threads (\(ids.count))?")
+        }
+        var text = String(localized: "You can undo this deletion until Coincide quits or the undo history is cleared. Files in your project are not changed.")
+        if running || !busy.isEmpty {
+            text += "\n\n" + String(localized: "Running agents and terminal commands in these threads will stop. Undo restores conversations, but does not restart stopped work.")
         }
         alert.informativeText = text
         alert.addButton(withTitle: String(localized: "Delete")).hasDestructiveAction = true
         alert.addButton(withTitle: String(localized: "Cancel"))
-        // "Don't ask again" never covers stopping a running command.
-        alert.showsSuppressionButton = busy.isEmpty
+        alert.showsSuppressionButton = busy.isEmpty && !running
         alert.suppressionButton?.title = String(localized: "Don’t ask again")
         present(alert, in: window) { confirmed in
             guard confirmed else { return }
@@ -111,6 +125,8 @@ enum ThreadActions {
             perform()
         }
     }
+
+    static func hasBusyTerminals(_ id: UUID) -> Bool { !busyTerminals(in: [id]).isEmpty }
 
     // MARK: Projects
 
