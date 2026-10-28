@@ -84,12 +84,10 @@ enum ComposerMenus {
         return menu
     }
 
-    /// The access modes `provider` offers, with the one the thread runs in checked.
-    static func accessMenu(current: AccessMode, provider: ProviderKind, target: AnyObject, action: Selector) -> NSMenu {
+    static func accessMenu(current: AccessMode, target: AnyObject, action: Selector) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let current = provider.accessMode(for: current)
-        for mode in provider.accessModes {
+        for mode in AccessMode.allCases {
             let item = NSMenuItem(title: mode.displayName, action: action, keyEquivalent: "")
             item.target = target
             item.representedObject = mode

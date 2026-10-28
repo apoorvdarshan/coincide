@@ -91,13 +91,6 @@ struct ComposerCommandTests {
         #expect(ComposerCommand.standalone("/default", in: commands) == .build)
     }
 
-    /// An agent without a plan mode gets no `/plan` or `/build`.
-    @Test func anAgentWithoutPlanModeOffersNoPlanCommands() {
-        let commands = ComposerCommand.available(agents: [.codex], planMode: false)
-        #expect(commands == [.model, .agent(.codex)])
-        #expect(ComposerCommand.standalone("/plan", in: commands) == nil)
-    }
-
     @Test func aMessageThatIsOnlyACommandRunsIt() {
         #expect(ComposerCommand.standalone("/plan", in: commands) == .plan)
         #expect(ComposerCommand.standalone("  /PLAN \n", in: commands) == .plan)
@@ -260,12 +253,12 @@ struct ComposerLabelTests {
         #expect(ComposerMenus.summary(for: .fullAccess) != ComposerMenus.summary(for: .approval))
     }
 
-    /// The menu offers the agent's own access modes, with the one the thread runs in checked.
-    @Test func theAccessMenuOffersTheAgentsOwnModes() {
+    /// The menu offers every access mode, with the thread's checked.
+    @Test func theAccessMenuOffersEveryModeWithTheThreadsChecked() {
         let action = Selector(("chooseAccess:"))
-        let codex = ComposerMenus.accessMenu(current: .fullAccess, provider: .codex, target: NSObject(), action: action)
-        #expect(codex.items.map { $0.representedObject as? AccessMode } == [.fullAccess, .approval])
-        #expect(codex.items.map(\.state) == [.on, .off])
+        let menu = ComposerMenus.accessMenu(current: .approval, target: NSObject(), action: action)
+        #expect(menu.items.map { $0.representedObject as? AccessMode } == [.fullAccess, .approval])
+        #expect(menu.items.map(\.state) == [.off, .on])
     }
 }
 

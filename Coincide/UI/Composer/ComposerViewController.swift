@@ -527,18 +527,15 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             footer.effortButton.isHidden = true
         }
 
-        // The mode the agent runs the thread in: one set to an access mode the agent does not offer runs Ask for
-        // approval.
-        let access = provider.accessMode(for: thread.accessMode)
-        footer.accessButton.configure(title: access.displayName, symbolName: ComposerMenus.symbolName(for: access), chevron: true)
-        footer.accessButton.toolTip = keyBindings.toolTip(ComposerMenus.summary(for: access), for: .accessMode)
-        footer.accessButton.setAccessibilityLabel(String(localized: "Access: \(access.displayName)"))
+        footer.accessButton.configure(
+            title: thread.accessMode.displayName, symbolName: ComposerMenus.symbolName(for: thread.accessMode),
+            chevron: true)
+        footer.accessButton.toolTip = keyBindings.toolTip(ComposerMenus.summary(for: thread.accessMode), for: .accessMode)
+        footer.accessButton.setAccessibilityLabel(String(localized: "Access: \(thread.accessMode.displayName)"))
 
-        // Without a plan mode, T3 Code hides the toggle and the agent's threads build.
-        footer.modeButton.isHidden = !provider.supportsPlanMode
-        let planning = provider.interactionMode(for: thread.interactionMode) == .plan
+        let planning = thread.interactionMode == .plan
         footer.modeButton.configure(
-            title: (planning ? InteractionMode.plan : .build).displayName, symbolName: planning ? "pencil.and.ruler" : "hammer",
+            title: thread.interactionMode.displayName, symbolName: planning ? "pencil.and.ruler" : "hammer",
             chevron: false)
         footer.modeButton.isActive = planning
         footer.modeButton.toolTip =
@@ -629,8 +626,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             planBanner.isHidden = proposedPlan == nil
             if let proposedPlan { planBanner.show(planTitle: Self.title(ofPlan: proposedPlan)) }
         }
-        guard let threadID, let thread, thread.selection.provider.interactionMode(for: thread.interactionMode) == .plan,
-            !runner.isRunning(threadID), attachments.isEmpty
+        guard let threadID, let thread, thread.interactionMode == .plan, !runner.isRunning(threadID), attachments.isEmpty
         else { return }
         var plan: String?
         var reply: String?
@@ -1067,9 +1063,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private var availableCommands: [ComposerCommand] {
         let provider = thread?.selection.provider
         let hasLimits = provider.flatMap { runner.usageLimits(for: $0) }.map { !$0.windows.isEmpty } ?? false
-        return ComposerCommand.available(
-            agents: registry.readyKinds.filter { $0 != provider }, usageLimits: hasLimits,
-            planMode: provider?.supportsPlanMode ?? true)
+        return ComposerCommand.available(agents: registry.readyKinds.filter { $0 != provider }, usageLimits: hasLimits)
     }
 
     private func perform(_ command: ComposerCommand) {
@@ -1115,8 +1109,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     private func accessMenu() -> NSMenu? {
         guard let thread else { return nil }
-        return ComposerMenus.accessMenu(
-            current: thread.accessMode, provider: thread.selection.provider, target: self, action: #selector(chooseAccess(_:)))
+        return ComposerMenus.accessMenu(current: thread.accessMode, target: self, action: #selector(chooseAccess(_:)))
     }
 
     @objc private func chooseModel(_ sender: NSMenuItem) {
@@ -1178,15 +1171,12 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     @objc func toggleInteractionMode() {
-        guard let thread, thread.selection.provider.supportsPlanMode else { return }
+        guard let thread else { return }
         setInteractionMode(thread.interactionMode == .plan ? .build : .plan)
     }
 
-    /// An agent without a plan mode only builds.
     func setInteractionMode(_ mode: InteractionMode) {
-        guard let threadID, let thread, thread.interactionMode != mode,
-            mode == .build || thread.selection.provider.supportsPlanMode
-        else { return }
+        guard let threadID, thread?.interactionMode != mode else { return }
         store.updateThread(threadID) { $0.interactionMode = mode }
     }
 

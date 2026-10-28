@@ -59,9 +59,9 @@ nonisolated enum ComposerCommand: Hashable, Sendable {
     case agent(ProviderKind)
 
     /// The built-in commands followed by one per agent the user can switch to. `/usage-limits` is offered when the
-    /// selected agent reported its limits, `/plan` and `/build` when it has a plan mode.
-    static func available(agents: [ProviderKind], usageLimits: Bool = false, planMode: Bool = true) -> [ComposerCommand] {
-        [.model] + (planMode ? [.plan, .build] : []) + (usageLimits ? [.usageLimits] : []) + agents.map { .agent($0) }
+    /// selected agent reported its limits.
+    static func available(agents: [ProviderKind], usageLimits: Bool = false) -> [ComposerCommand] {
+        [.model, .plan, .build] + (usageLimits ? [.usageLimits] : []) + agents.map { .agent($0) }
     }
 
     var name: String {
