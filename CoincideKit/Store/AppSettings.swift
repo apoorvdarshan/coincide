@@ -91,9 +91,6 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Read the Cursor CLI's login from the macOS Keychain to show the plan's usage limits (T3 Code's
     /// `cursorKeychainUsageEnabled`). Off by default, because macOS may ask the user to allow the read.
     public var cursorKeychainUsageEnabled: Bool
-    /// ACP agents the user added (local commands and ACP Registry agents), in the order the provider list shows them.
-    /// Each runs as `ProviderKind.acp(id)`, with its common settings in `providers`.
-    public var acpAgents: [ACPAgentConfig]
 
     public nonisolated init() {
         defaultSelection = ModelSelection(provider: .claude, modelID: "default")
@@ -111,16 +108,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
         fontSize = 13
         shortcutOverrides = [:]
         cursorKeychainUsageEnabled = false
-        acpAgents = []
     }
 
     public nonisolated func settings(for provider: ProviderKind) -> ProviderSettings {
         providers[provider] ?? ProviderSettings()
-    }
-
-    /// The custom ACP agent with instance ID `id`.
-    public nonisolated func acpAgent(_ id: String) -> ACPAgentConfig? {
-        acpAgents.first { $0.id == id }
     }
 
     public nonisolated init(from decoder: Decoder) throws {
@@ -147,9 +138,6 @@ public struct AppSettings: Codable, Hashable, Sendable {
         shortcutOverrides = (container.lenient([String: JSONValue].self, forKey: .shortcutOverrides) ?? [:])
             .compactMapValues { $0.isNull ? nil : ($0.string ?? $0.displayText) }
         cursorKeychainUsageEnabled = value(.cursorKeychainUsageEnabled, defaults.cursorKeychainUsageEnabled)
-        // Agents this version cannot read are skipped, and an id that repeats keeps its first agent.
-        var seen = Set<String>()
-        acpAgents = container.lenientArray(ACPAgentConfig.self, forKey: .acpAgents).filter { seen.insert($0.id).inserted }
     }
 }
 

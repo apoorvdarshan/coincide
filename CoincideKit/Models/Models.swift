@@ -1,80 +1,14 @@
 import Foundation
-import Synchronization
 
 /// A coding agent Coincide can drive. Each one is a CLI the user installs and signs in to
 /// with their own subscription; Coincide never sells or proxies tokens.
-///
-/// The built-in agents are fixed cases. `acp` is an agent the user added (T3 Code's `acpRegistry` provider
-/// instances): a local ACP command or an agent from the ACP Registry, keyed by its stable instance ID, with its
-/// settings in `AppSettings.acpAgents`. Every kind is written as one string (`claude`, `acp:devin`), so threads and
-/// settings written before custom agents existed read as they always did, and a build that doesn't know `acp:` skips
-/// such entries as it skips any unknown provider.
-public enum ProviderKind: RawRepresentable, Codable, CaseIterable, Sendable, Hashable {
+public enum ProviderKind: String, Codable, CaseIterable, Sendable, Hashable {
     case claude
     case codex
     case cursor
     case grok
     case opencode
     case antigravity
-    /// A user-added ACP agent, by its instance ID (`ACPAgentConfig.id`).
-    case acp(String)
-
-    /// The built-in agents, in display order. Custom ACP agents come from settings.
-    public nonisolated static let allCases: [ProviderKind] = [
-        .claude, .codex, .cursor, .grok, .opencode, .antigravity,
-    ]
-
-    /// What starts a custom agent's raw value.
-    public nonisolated static let acpPrefix = "acp:"
-
-    public nonisolated init?(rawValue: String) {
-        if rawValue.hasPrefix(Self.acpPrefix) {
-            let id = String(rawValue.dropFirst(Self.acpPrefix.count))
-            guard Self.isValidACPAgentID(id) else { return nil }
-            self = .acp(id)
-            return
-        }
-        guard let kind = Self.allCases.first(where: { $0.rawValue == rawValue }) else { return nil }
-        self = kind
-    }
-
-    public nonisolated var rawValue: String {
-        switch self {
-        case .claude: "claude"
-        case .codex: "codex"
-        case .cursor: "cursor"
-        case .grok: "grok"
-        case .opencode: "opencode"
-        case .antigravity: "antigravity"
-        case .acp(let id): Self.acpPrefix + id
-        }
-    }
-
-    public nonisolated init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let raw = try container.decode(String.self)
-        guard let kind = ProviderKind(rawValue: raw) else {
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown provider \(raw)")
-        }
-        self = kind
-    }
-
-    public nonisolated func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
-    }
-
-    /// Whether `id` can name a custom ACP agent: lowercase letters, digits, `.`, `_` and `-`, starting with a letter or
-    /// digit, at most 64 characters, so it is safe in a raw value, a file name and a `/` command.
-    public nonisolated static func isValidACPAgentID(_ id: String) -> Bool {
-        id.utf8.count <= 64 && id.range(of: #"^[a-z0-9][a-z0-9._-]*$"#, options: .regularExpression) != nil
-    }
-
-    /// The instance ID of a custom ACP agent; nil for the built-in agents.
-    public nonisolated var acpAgentID: String? {
-        if case .acp(let id) = self { return id }
-        return nil
-    }
 
     public nonisolated var displayName: String {
         switch self {
@@ -84,8 +18,6 @@ public enum ProviderKind: RawRepresentable, Codable, CaseIterable, Sendable, Has
         case .grok: "Grok Build"
         case .opencode: "OpenCode"
         case .antigravity: "Antigravity"
-        // The name the user gave it, also for a thread that outlived the agent (until Coincide quits).
-        case .acp(let id): ACPAgentNames.shared.name(for: id) ?? id
         }
     }
 
@@ -98,13 +30,11 @@ public enum ProviderKind: RawRepresentable, Codable, CaseIterable, Sendable, Has
         case .grok: "bolt.horizontal"
         case .opencode: "terminal"
         case .antigravity: "arrow.up.and.down.and.sparkles"
-        case .acp: "point.3.connected.trianglepath.dotted"
         }
     }
 
     /// The access modes the agent can run in, in menu order (T3 Code's `supportedRuntimeModes`). Every agent Coincide
-    /// drives takes both; a user-added ACP agent's approvals are answered by the thread's mode, as T3 Code answers a
-    /// registry agent's.
+    /// drives takes both.
     public nonisolated var accessModes: [AccessMode] { AccessMode.allCases }
 
     /// The access mode a thread set to `mode` runs in: one the agent does not offer runs as Ask for approval, as T3
@@ -113,54 +43,12 @@ public enum ProviderKind: RawRepresentable, Codable, CaseIterable, Sendable, Has
         accessModes.contains(mode) ? mode : .approval
     }
 
-    /// Whether the agent has a plan mode (T3 Code's `showInteractionModeToggle`). Every agent Coincide drives has one;
-    /// a user-added ACP agent uses its own plan mode when it offers one, otherwise plan-mode instructions.
+    /// Whether the agent has a plan mode (T3 Code's `showInteractionModeToggle`). Every agent Coincide drives has one.
     public nonisolated var supportsPlanMode: Bool { true }
 
     /// The interaction mode a thread set to `mode` runs in: without a plan mode, the agent builds.
     public nonisolated func interactionMode(for mode: InteractionMode) -> InteractionMode {
         supportsPlanMode ? mode : .build
-    }
-
-    /// Whether Coincide may ask the agent for commit messages, branch names and pull request text (T3 Code's
-    /// `supportsTextGeneration`). User-added ACP agents never write them, as T3 Code doesn't use registry instances for
-    /// its own text generation.
-    public nonisolated var supportsTextGeneration: Bool { acpAgentID == nil }
-
-    /// The composer command that switches a thread to this agent, without its slash: `codex`, or a custom agent's
-    /// instance ID (`ACPAgentConfig.makeID` keeps those clear of the built-in names).
-    public nonisolated var commandName: String { acpAgentID ?? rawValue }
-
-    /// The ACP Registry's ids for agents Coincide drives as built-in providers, which the registry search leaves out
-    /// as T3 Code does (each provider client's `acpRegistryAgentIds`).
-    public nonisolated var registryAgentIDs: [String] {
-        switch self {
-        case .claude: ["claude-acp"]
-        case .codex: ["codex-acp"]
-        case .cursor: ["cursor"]
-        case .grok: ["grok-build"]
-        case .opencode: ["opencode", "opencode-v2"]
-        case .antigravity: ["antigravity-acp"]
-        case .acp: []
-        }
-    }
-}
-
-/// The names of the custom ACP agents, for `ProviderKind.displayName`, which has no access to settings. `AppStore`
-/// adds every agent's name whenever settings load or change. Names are only added or replaced, never removed, so a
-/// thread of an agent the user removed keeps its name until Coincide quits.
-public final class ACPAgentNames: Sendable {
-    public static let shared = ACPAgentNames()
-
-    private let names = Mutex<[String: String]>([:])
-
-    public nonisolated func name(for id: String) -> String? {
-        names.withLock { $0[id] }
-    }
-
-    /// Adds or replaces names, by instance ID.
-    public nonisolated func register(_ added: [String: String]) {
-        names.withLock { names in names.merge(added) { $1 } }
     }
 }
 

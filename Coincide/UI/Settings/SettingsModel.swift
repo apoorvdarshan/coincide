@@ -190,69 +190,6 @@ final class SettingsModel {
         updateProvider(kind, recheck: false) { $0.customModels.removeAll { $0 == id } }
     }
 
-    // MARK: ACP agents
-
-    /// The user-added ACP agent `kind` runs, if it is one.
-    func acpAgent(_ kind: ProviderKind) -> ACPAgentConfig? { kind.acpAgentID.flatMap(settings.acpAgent) }
-
-    /// Adds an agent with its environment variables, and checks it.
-    func addACPAgent(_ agent: ACPAgentConfig, environment: [String: String] = [:]) {
-        store.updateSettings {
-            $0.acpAgents.append(agent)
-            $0.providers[agent.kind] = ProviderSettings(environment: environment)
-        }
-        check(agent.kind)
-    }
-
-    /// Changes an agent's settings and, when asked, checks it again.
-    func updateACPAgent(_ id: String, recheck: Bool = true, _ mutate: (inout ACPAgentConfig) -> Void) {
-        guard var agent = settings.acpAgent(id) else { return }
-        let before = agent
-        mutate(&agent)
-        guard agent != before else { return }
-        store.updateSettings { settings in
-            if let index = settings.acpAgents.firstIndex(where: { $0.id == id }) { settings.acpAgents[index] = agent }
-        }
-        if recheck { check(agent.kind) }
-    }
-
-    /// Removes an agent and its settings. Its threads keep their history; files Coincide installed for it go once
-    /// no other agent uses them and nothing runs from them.
-    func removeACPAgent(_ id: String) {
-        let kind = ProviderKind.acp(id)
-        if pane == .provider(kind) { pane = .section(.providers) }
-        store.updateSettings {
-            $0.acpAgents.removeAll { $0.id == id }
-            $0.providers[kind] = nil
-        }
-        registry.forget(kind)
-        ACPRegistryTools.shared.removeUnused(keeping: store.settings.acpAgents)
-    }
-
-    /// Installs a registry agent and adds it; returns its kind.
-    func addRegistryAgent(_ result: ACPRegistrySearchResult) async throws -> ProviderKind {
-        let install = try await ACPRegistryTools.shared.install(
-            result.agent, result.distribution, environment: await ShellEnvironment.shared.environment())
-        let id = ACPAgentConfig.makeID(from: result.agent.id, existing: Set(store.settings.acpAgents.map(\.id)))
-        addACPAgent(ACPAgentConfig(id: id, name: result.agent.name, source: .registry, registry: install))
-        return .acp(id)
-    }
-
-    /// Installs `agent`'s current registry version for the added agent `id` (an update, or a reinstall of files that
-    /// went missing), then removes the version it replaced once nothing runs from it.
-    func reinstallRegistryAgent(_ id: String, from agent: ACPRegistryAgent) async throws {
-        guard let distribution = agent.distribution(for: ACPRegistryPlatform.current) else {
-            throw ACPRegistryInstallError(String(localized: "This agent has no download for this Mac."))
-        }
-        let install = try await ACPRegistryTools.shared.install(
-            agent, distribution, environment: await ShellEnvironment.shared.environment())
-        updateACPAgent(id) { $0.registry = install }
-        ACPRegistryTools.shared.removeUnused(keeping: store.settings.acpAgents)
-    }
-
-    /// How to start an added agent outside a thread, for signing in.
-    func acpLaunch(_ id: String) async -> ACPAgentLaunch? { await registry.acpLaunch(for: id) }
-
     // MARK: Sync
 
     private func syncSettings() {

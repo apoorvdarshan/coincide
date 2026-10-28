@@ -149,9 +149,6 @@ struct ProviderSetupGuide {
         case .antigravity:
             (nil, nil, URL(string: "https://antigravity.google"),
              String(localized: "Install Antigravity, open it once and sign in with your Google account."))
-        // An added agent's page has its own install and sign-in sections.
-        case .acp:
-            (nil, nil, nil, nil)
         }
     }
 
