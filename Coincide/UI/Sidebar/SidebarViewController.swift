@@ -622,7 +622,7 @@ final class SidebarViewController: NSViewController {
         collapse.target = self
         menu.addItem(expand)
         menu.addItem(collapse)
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
+        ThemedPopup.show(menu: menu, from: sender, preferAbove: false)
     }
 
     @objc private func toggleShowArchived() {
@@ -1093,6 +1093,10 @@ final class SidebarOutlineView: NSOutlineView {
     var onActivate: (() -> Void)?
 
     var hasRows: Bool { numberOfRows > 0 }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        ThemedContextMenu.show(super.menu(for: event), for: event, in: window)
+    }
 
     override func keyDown(with event: NSEvent) {
         switch event.specialKey {

@@ -166,11 +166,9 @@ final class ComposerApprovalBanner: ComposerBanner {
         for view in buttons.arrangedSubviews { view.removeFromSuperview() }
         let options = (item.approval?.options ?? []).sorted { Self.order($0.kind) < Self.order($1.kind) }
         for option in options {
-            let button = NSButton(title: option.label, target: self, action: #selector(respond(_:)))
-            button.controlSize = .small
-            button.bezelStyle = .push
+            let button = ThemedButton(title: option.label, target: self, action: #selector(respond(_:)))
             button.identifier = NSUserInterfaceItemIdentifier(option.id)
-            if option.kind == .allowOnce { button.tintProminence = .primary }
+            if option.kind == .allowOnce { button.style = .primary }
             buttons.addArrangedSubview(button)
         }
     }
@@ -243,8 +241,8 @@ final class ComposerQuestionBanner: ComposerBanner, NSTextFieldDelegate {
     private let options = NSStackView()
     private let answerField = NSTextField()
     private let secretField = NSSecureTextField()
-    private let backButton = NSButton(title: String(localized: "Back"), target: nil, action: nil)
-    private let nextButton = NSButton(title: String(localized: "Next"), target: nil, action: nil)
+    private let backButton = ThemedButton(title: String(localized: "Back"), target: nil, action: nil)
+    private let nextButton = ThemedButton(title: String(localized: "Next"), style: .primary, target: nil, action: nil)
     private var itemID: UUID?
     private var requestTitle: String?
     private var questions: [UserQuestion] = []
@@ -285,14 +283,9 @@ final class ComposerQuestionBanner: ComposerBanner, NSTextFieldDelegate {
         }
         answerField.placeholderString = String(localized: "Type your own answer")
         secretField.placeholderString = String(localized: "Type your answer")
-        for button in [backButton, nextButton] {
-            button.controlSize = .small
-            button.bezelStyle = .push
-            button.target = self
-        }
+        for button in [backButton, nextButton] { button.target = self }
         backButton.action = #selector(back)
         nextButton.action = #selector(next)
-        nextButton.tintProminence = .primary
 
         let titleRow = NSStackView(views: [heading, agent, NSView(), counter, dismiss])
         titleRow.orientation = .horizontal
@@ -363,8 +356,8 @@ final class ComposerQuestionBanner: ComposerBanner, NSTextFieldDelegate {
         for (position, option) in question.options.enumerated() {
             let button =
                 question.allowsMultipleSelection
-                ? NSButton(checkboxWithTitle: option.label, target: self, action: #selector(toggleOption(_:)))
-                : NSButton(radioButtonWithTitle: option.label, target: self, action: #selector(toggleOption(_:)))
+                ? ThemedCheckbox(label: option.label, target: self, action: #selector(toggleOption(_:)))
+                : ThemedCheckbox(label: option.label, target: self, action: #selector(toggleOption(_:)), radio: true)
             button.tag = position
             let row = NSStackView(views: [button])
             row.orientation = .vertical

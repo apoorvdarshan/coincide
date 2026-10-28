@@ -1,73 +1,9 @@
 import AppKit
 import CoincideKit
 
-/// Builds the composer's menus: the agent and model picker, reasoning effort and access mode.
+/// Builds the composer's menus: reasoning effort and access mode. (The agent and model picker is `ModelPickerViewController`.)
 /// Items carry their value in `representedObject`.
 enum ComposerMenus {
-    /// Models listed inline per provider; longer lists move the rest into a submenu.
-    private static let inlineModelLimit = 12
-
-    /// Ready providers with their models, then the others, disabled, with how to set them up.
-    static func modelMenu(
-        current: ModelSelection, registry: ProviderRegistry, target: AnyObject, choose: Selector, refresh: Selector,
-        settings: Selector
-    ) -> NSMenu {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        let ready = registry.readyKinds
-        for kind in ready {
-            if menu.numberOfItems > 0 { menu.addItem(.separator()) }
-            menu.addItem(providerHeader(kind))
-            var models = registry.models(for: kind)
-            if kind == current.provider, !models.contains(where: { $0.modelID == current.modelID }) {
-                models.insert(ModelOption(provider: kind, modelID: current.modelID, displayName: current.modelID), at: 0)
-            }
-            let inline =
-                models.count > inlineModelLimit
-                ? Array(models.prefix(inlineModelLimit - 2)) + models.dropFirst(inlineModelLimit - 2).filter {
-                    $0.modelID == current.modelID && kind == current.provider
-                }
-                : models
-            for model in inline {
-                menu.addItem(modelItem(model, current: current, target: target, action: choose))
-            }
-            if models.count > inline.count {
-                let more = NSMenuItem(title: String(localized: "More \(kind.displayName) Models"), action: nil, keyEquivalent: "")
-                let submenu = NSMenu()
-                for model in models {
-                    submenu.addItem(modelItem(model, current: current, target: target, action: choose))
-                }
-                more.submenu = submenu
-                menu.addItem(more)
-            }
-        }
-
-        let unavailable = registry.orderedKinds.filter { !ready.contains($0) }
-        if !unavailable.isEmpty {
-            if menu.numberOfItems > 0 { menu.addItem(.separator()) }
-            menu.addItem(.sectionHeader(title: String(localized: "Not Available")))
-            for kind in unavailable {
-                let item = NSMenuItem(title: kind.displayName, action: nil, keyEquivalent: "")
-                item.image = providerImage(kind)
-                item.subtitle = statusText(kind, registry: registry)
-                item.isEnabled = false
-                menu.addItem(item)
-            }
-        }
-
-        menu.addItem(.separator())
-        let refreshItem = NSMenuItem(title: String(localized: "Refresh Providers"), action: refresh, keyEquivalent: "")
-        refreshItem.target = target
-        refreshItem.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
-        refreshItem.isEnabled = !registry.isRefreshing
-        menu.addItem(refreshItem)
-        let settingsItem = NSMenuItem(title: String(localized: "Provider Settings…"), action: settings, keyEquivalent: "")
-        settingsItem.target = target
-        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
-        menu.addItem(settingsItem)
-        return menu
-    }
-
     static func effortMenu(model: ModelOption, current: String?, target: AnyObject, action: Selector) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -146,27 +82,5 @@ enum ComposerMenus {
             if registry.isRefreshing { return String(localized: "Checking…") }
             return status.message ?? String(localized: "Not checked yet.")
         }
-    }
-
-    /// The agent's logo, for menus, which tint one-color logos like their text.
-    static func providerImage(_ kind: ProviderKind, size: CGFloat = 13) -> NSImage? {
-        Theme.logo(for: kind, size: size)
-    }
-
-    private static func providerHeader(_ kind: ProviderKind) -> NSMenuItem {
-        let item = NSMenuItem.sectionHeader(title: kind.displayName)
-        item.image = providerImage(kind, size: 11)
-        return item
-    }
-
-    private static func modelItem(_ model: ModelOption, current: ModelSelection, target: AnyObject, action: Selector)
-        -> NSMenuItem
-    {
-        let item = NSMenuItem(title: model.displayName, action: action, keyEquivalent: "")
-        item.target = target
-        item.representedObject = ModelSelection(provider: model.provider, modelID: model.modelID, effort: model.defaultEffort)
-        item.state = model.provider == current.provider && model.modelID == current.modelID ? .on : .off
-        if model.displayName != model.modelID, model.modelID != "default" { item.toolTip = model.modelID }
-        return item
     }
 }

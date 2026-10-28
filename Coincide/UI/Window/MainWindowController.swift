@@ -28,6 +28,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.isRestorable = false
         window.tabbingMode = .disallowed
         window.toolbarStyle = .unified
+        window.backgroundColor = Theme.contentBackground
+        // The toolbar shows the theme's colors under it rather than a band of its own.
+        window.titlebarAppearsTransparent = true
         // The toolbar shows the title after the thread list (`ThreadTitleView`); the window's would sit over the list.
         window.titleVisibility = .hidden
         window.minSize = NSSize(width: 820, height: 520)

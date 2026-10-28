@@ -77,7 +77,7 @@ enum ThreadActions {
             perform()
             return
         }
-        let alert = NSAlert()
+        let alert = ThemedAlert()
         alert.alertStyle = .warning
         alert.messageText = String(localized: "Delete “\(thread.title)”?")
         var text =
@@ -182,7 +182,7 @@ enum ThreadActions {
     static func removeProject(_ projectID: UUID, in window: NSWindow?) {
         guard let project = store.project(projectID) else { return }
         let threads = store.threads(in: projectID, includeArchived: true)
-        let alert = NSAlert()
+        let alert = ThemedAlert()
         alert.alertStyle = .warning
         alert.messageText = String(localized: "Remove “\(project.name)”?")
         var text =
@@ -226,7 +226,7 @@ enum ThreadActions {
         return threadIDs.flatMap { manager.terminals(for: $0).sessions.filter(\.isBusy) }
     }
 
-    private static func present(_ alert: NSAlert, in window: NSWindow?, completion: @escaping (Bool) -> Void) {
+    private static func present(_ alert: ThemedAlert, in window: NSWindow?, completion: @escaping (Bool) -> Void) {
         if let window, window.isVisible {
             alert.beginSheetModal(for: window) { completion($0 == .alertFirstButtonReturn) }
         } else {

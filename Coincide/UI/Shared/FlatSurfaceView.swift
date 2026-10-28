@@ -76,7 +76,7 @@ final class FlatSurfaceView: NSView {
             color = base.blended(withFraction: tint.alphaComponent, of: tint.withAlphaComponent(1)) ?? fill
         }
         layer.backgroundColor = color.cgColor
-        layer.borderWidth = 1
+        layer.borderWidth = Theme.borderWidth(for: effectiveAppearance)
         layer.borderColor = Theme.surfaceBorder.cgColor
     }
 }

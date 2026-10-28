@@ -566,6 +566,10 @@ private extension Range where Bound == Int {
 /// The transcript table: keyboard navigation over rows (arrows move, Space or Return opens and
 /// closes, ⌘C copies, Escape returns to the composer) and typing goes to the composer.
 final class TranscriptTableView: NSTableView {
+    override func menu(for event: NSEvent) -> NSMenu? {
+        ThemedContextMenu.show(super.menu(for: event), for: event, in: window)
+    }
+
     var onToggleRow: ((Int, _ expand: Bool?) -> Void)?
     var onCopyRow: ((Int) -> Void)?
     var onEscape: (() -> Void)?

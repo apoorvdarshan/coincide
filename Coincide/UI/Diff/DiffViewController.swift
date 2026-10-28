@@ -32,11 +32,11 @@ final class DiffViewController: NSViewController {
     private let checkpoints = CheckpointService.shared
     private let runner = ThreadRunner.shared
 
-    private let scopeButton = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let scopeButton = ThemedPopUpButton(frame: .zero, pullsDown: true)
     private let summaryLabel = NSTextField(labelWithString: "")
     private let spinner = NSProgressIndicator()
     private let refreshButton = NSButton(title: "", target: nil, action: nil)
-    private let optionsButton = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let optionsButton = ThemedPopUpButton(frame: .zero, pullsDown: true)
     private let splitView = NSSplitView()
     private let fileList = DiffFileListView(frame: .zero)
     private let document = DiffDocumentView(frame: .zero)
@@ -86,10 +86,11 @@ final class DiffViewController: NSViewController {
     // MARK: View
 
     override func loadView() {
-        let root = NSView()
+        let root = SolidBackgroundView(color: Theme.contentBackground)
         root.setAccessibilityLabel(String(localized: "Diff"))
 
         scopeButton.controlSize = .regular
+        scopeButton.isBordered = false
         scopeButton.target = self
         scopeButton.setAccessibilityLabel(String(localized: "Changes to show"))
         scopeButton.setContentCompressionResistancePriority(.init(200), for: .horizontal)
@@ -746,7 +747,7 @@ final class DiffViewController: NSViewController {
         guard let window = view.window, let status else { return }
         let branch = status.branch ?? "HEAD"
         let commits = action.includesCommit
-        let alert = NSAlert()
+        let alert = ThemedAlert()
         switch action {
         case .commitPush, .push:
             alert.messageText =
@@ -892,7 +893,7 @@ final class DiffEmptyStateView: NSView {
     private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
-    private let button = NSButton(title: "", target: nil, action: nil)
+    private let button = ThemedButton(title: "", style: .primary, target: nil, action: nil)
     private var action: (() -> Void)?
 
     override init(frame frameRect: NSRect) {

@@ -73,6 +73,7 @@ final class ChatViewController: NSViewController {
     private var findRefreshScheduled = false
     private var appliedFontSize = 0.0
     private var appliedReplyTypeface = ReplyTypeface.newYork
+    private var appliedThemes = (dark: "", light: "")
     private var rails: [TranscriptRowID: TranscriptRail] = [:]
     private var composerAtBottom: NSLayoutConstraint!
     private var composerCentered: NSLayoutConstraint!
@@ -164,6 +165,7 @@ final class ChatViewController: NSViewController {
         jumpButton.alphaValue = 0
         appliedFontSize = store.settings.fontSize
         appliedReplyTypeface = store.settings.replyTypeface
+        appliedThemes = (store.settings.darkTheme, store.settings.lightTheme)
         appliedShowReasoning = store.settings.showReasoning
         observation = store.observe { [weak self] change in self?.handle(change) }
         loadThread()
@@ -445,8 +447,10 @@ final class ChatViewController: NSViewController {
         let settings = store.settings
         guard
             settings.fontSize != appliedFontSize || settings.showReasoning != appliedShowReasoning
-                || settings.replyTypeface != appliedReplyTypeface
+                || settings.replyTypeface != appliedReplyTypeface || settings.darkTheme != appliedThemes.dark
+                || settings.lightTheme != appliedThemes.light
         else { return }
+        appliedThemes = (settings.darkTheme, settings.lightTheme)
         appliedFontSize = settings.fontSize
         appliedReplyTypeface = settings.replyTypeface
         appliedShowReasoning = settings.showReasoning
@@ -826,7 +830,7 @@ final class ChatViewController: NSViewController {
 
     // MARK: Rewind
 
-    private func present(_ alert: NSAlert, then handle: @escaping (NSApplication.ModalResponse) -> Void) {
+    private func present(_ alert: ThemedAlert, then handle: @escaping (NSApplication.ModalResponse) -> Void) {
         guard let window = view.window else {
             handle(alert.runModal())
             return
@@ -855,7 +859,7 @@ final class ChatViewController: NSViewController {
     }
 
     private func present(_ error: Error) {
-        let alert = NSAlert(error: error)
+        let alert = ThemedAlert(error: error)
         if let window = view.window {
             alert.beginSheetModal(for: window)
         } else {
@@ -899,7 +903,7 @@ extension ChatViewController: TranscriptHost {
             return
         }
         let canRestoreFiles = CheckpointService.shared.canRestore(threadID: threadID, userItemID: itemID)
-        let alert = NSAlert()
+        let alert = ThemedAlert()
         alert.messageText = String(localized: "Edit from here?")
         if canRestoreFiles {
             alert.informativeText = String(

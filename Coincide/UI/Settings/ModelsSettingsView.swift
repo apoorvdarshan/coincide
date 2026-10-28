@@ -78,13 +78,13 @@ struct ModelsSettingsView: View {
 
     private var filterBar: some View {
         HStack(spacing: 8) {
-            Picker("Provider", selection: $provider) {
-                Text("All Providers").tag(ProviderKind?.none)
-                Divider()
-                ForEach(model.kinds.filter { model.isEnabled($0) }, id: \.self) { kind in
-                    Text(kind.displayName).tag(Optional(kind))
-                }
-            }
+            ThemedPicker(
+                selection: $provider,
+                options: [.init(ProviderKind?.none, String(localized: "All Providers"))]
+                    + model.kinds.filter { model.isEnabled($0) }.map {
+                        .init(Optional($0), $0.displayName, image: Theme.logo(for: $0, size: 14))
+                    }
+            ) { EmptyView() }
             .labelsHidden()
             .fixedSize()
             TextField("Filter", text: $filter, prompt: Text("Filter models"))
@@ -228,11 +228,10 @@ private struct AddCustomModelForm: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Picker("Provider", selection: $provider) {
-                ForEach(model.kinds, id: \.self) { kind in
-                    Text(kind.displayName).tag(kind)
-                }
-            }
+            ThemedPicker(
+                selection: $provider,
+                options: model.kinds.map { .init($0, $0.displayName, image: Theme.logo(for: $0, size: 14)) }
+            ) { Text("Provider") }
             TextField("Model ID", text: $modelID, prompt: Text("model-id"))
                 .font(.body.monospaced())
                 .onSubmit(add)

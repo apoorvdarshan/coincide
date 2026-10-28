@@ -9,9 +9,16 @@ struct SettingsRootView: View {
         NavigationSplitView {
             SettingsSidebar(model: model)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: Theme.sidebarBackground))
         } detail: {
             detail
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: Theme.contentBackground))
         }
+        .toggleStyle(ThemedSwitchToggleStyle())
+        .buttonStyle(ThemedButtonStyle())
+        .tint(Color(nsColor: Theme.ink))
         .toolbar(removing: .sidebarToggle)
         .searchable(text: $model.searchText, placement: .sidebar, prompt: Text("Search"))
         .searchFocused($isSearchFocused)
@@ -186,6 +193,12 @@ private struct SettingsSearchResults: View {
             SettingsSearchEntry(
                 title: String(localized: "Font size"), pane: general, setting: .fontSize,
                 keywords: [String(localized: "Text size"), String(localized: "Zoom")]),
+            SettingsSearchEntry(
+                title: String(localized: "Dark theme"), pane: general, setting: .darkTheme,
+                keywords: [String(localized: "Theme"), String(localized: "Colors"), String(localized: "Dark mode")]),
+            SettingsSearchEntry(
+                title: String(localized: "Light theme"), pane: general, setting: .lightTheme,
+                keywords: [String(localized: "Theme"), String(localized: "Colors"), String(localized: "Light mode")]),
             SettingsSearchEntry(
                 title: String(localized: "Reply font"), pane: general, setting: .replyTypeface,
                 keywords: [String(localized: "Serif"), String(localized: "Typeface"), String(localized: "New York")]),

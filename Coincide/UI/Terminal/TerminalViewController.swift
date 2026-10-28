@@ -266,7 +266,7 @@ final class TerminalViewController: NSViewController {
             close()
             return
         }
-        let alert = NSAlert()
+        let alert = ThemedAlert()
         alert.alertStyle = .warning
         if busy.count == 1 {
             alert.messageText = String(localized: "Close this terminal?")
@@ -434,7 +434,7 @@ private final class TerminalEmptyStateView: NSView {
     var onNewTerminal: (() -> Void)?
 
     private let message = NSTextField(wrappingLabelWithString: "")
-    private let newButton = NSButton()
+    private let newButton = ThemedButton(title: "", style: .primary, target: nil, action: nil)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)

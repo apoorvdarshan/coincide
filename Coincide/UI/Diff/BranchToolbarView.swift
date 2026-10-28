@@ -332,7 +332,7 @@ final class BranchToolbarView: NSView {
 
     private func present(_ error: Error) {
         guard let window else { return }
-        let alert = NSAlert()
+        let alert = ThemedAlert()
         alert.alertStyle = .warning
         alert.messageText = error.localizedDescription
         if let detail = (error as? GitError)?.detail { alert.informativeText = detail }

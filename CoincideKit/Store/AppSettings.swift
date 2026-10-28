@@ -100,6 +100,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Font size for the transcript and composer.
     public var fontSize: Double
     public var replyTypeface: ReplyTypeface
+    /// The color themes used in dark and light mode, by id. An id this version does not know falls back to the first
+    /// theme of its kind.
+    public var darkTheme: String
+    public var lightTheme: String
     /// Menu shortcuts the user changed, by `KeyCommand` id, written like T3 Code's keybindings (`mod+shift+k`).
     /// An empty string removes the command's shortcut. Commands not listed use their defaults.
     public var shortcutOverrides: [String: String]
@@ -122,6 +126,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         worktreeBranchPrefix = "coincide/"
         fontSize = 13
         replyTypeface = .newYork
+        darkTheme = "carbon"
+        lightTheme = "carbon-light"
         shortcutOverrides = [:]
         cursorKeychainUsageEnabled = false
     }
@@ -151,6 +157,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         worktreeBranchPrefix = value(.worktreeBranchPrefix, defaults.worktreeBranchPrefix)
         fontSize = value(.fontSize, defaults.fontSize)
         replyTypeface = value(.replyTypeface, defaults.replyTypeface)
+        darkTheme = value(.darkTheme, defaults.darkTheme)
+        lightTheme = value(.lightTheme, defaults.lightTheme)
         // A value that is not text stays as written, so the Keyboard pane can point it out.
         shortcutOverrides = (container.lenient([String: JSONValue].self, forKey: .shortcutOverrides) ?? [:])
             .compactMapValues { $0.isNull ? nil : ($0.string ?? $0.displayText) }

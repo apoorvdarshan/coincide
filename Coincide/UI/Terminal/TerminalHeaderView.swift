@@ -23,7 +23,7 @@ final class TerminalHeaderView: NSView {
     private let tabStrip = NSStackView()
     private var tabViews: [UUID: TerminalTabItemView] = [:]
     private let directoryIcon = NSImageView()
-    private let directoryLabel = NSTextField(labelWithString: "")
+    private let directoryLabel = ThemedMenuLabel(labelWithString: "")
     private var directory: URL?
     private var hasThread = false
     private lazy var newTabButton = iconButton("plus", label: String(localized: "New Terminal"), action: #selector(newTab))

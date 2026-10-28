@@ -103,7 +103,16 @@ final class NavigationRailViewController: NSViewController {
     private func stack(_ buttons: [RailButton]) -> NSStackView {
         let stack = NSStackView(views: buttons)
         stack.orientation = .vertical
-        stack.spacing = 4
+        stack.alignment = .centerX
+        stack.distribution = .gravityAreas
+        stack.spacing = 6
+        // Fixed squares, so the stack never stretches a button and its highlight into the next one.
+        for button in buttons {
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: RailButton.side),
+                button.heightAnchor.constraint(equalToConstant: RailButton.side),
+            ])
+        }
         return stack
     }
 

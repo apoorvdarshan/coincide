@@ -236,11 +236,11 @@ final class TranscriptTextCache {
 enum TranscriptText {
     static func style(_ style: TranscriptTextCache.Style) -> ChatMarkdownStyle {
         switch style {
-        case .assistant: ChatMarkdownStyle(fontSize: Theme.replyFontSize, isSerif: Theme.usesSerifReplies)
+        case .assistant: ChatMarkdownStyle(fontSize: Theme.replyFontSize, textColor: Theme.ink, isSerif: Theme.usesSerifReplies)
         case .approval, .error, .toolDetail: ChatMarkdownStyle(fontSize: Theme.fontSize)
-        case .user: ChatMarkdownStyle(fontSize: Theme.fontSize, preservesLineBreaks: true)
+        case .user: ChatMarkdownStyle(fontSize: Theme.fontSize, textColor: Theme.ink, preservesLineBreaks: true)
         case .reasoning: ChatMarkdownStyle(fontSize: Theme.fontSize - 1, textColor: .secondaryLabelColor)
-        case .plan: ChatMarkdownStyle(fontSize: Theme.fontSize, dimsCompletedTasks: true)
+        case .plan: ChatMarkdownStyle(fontSize: Theme.fontSize, textColor: Theme.ink, dimsCompletedTasks: true)
         }
     }
 

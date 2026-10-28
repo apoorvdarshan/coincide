@@ -212,7 +212,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     private func wireActions() {
-        footer.modelButton.menuProvider = { [weak self] in self?.modelMenu() }
+        footer.modelButton.popupProvider = { [weak self] in self?.modelPicker() }
+        for button in [footer.modelButton, footer.effortButton, footer.accessButton] { button.popupClearance = surface }
         footer.effortButton.menuProvider = { [weak self] in self?.effortMenu() }
         footer.accessButton.menuProvider = { [weak self] in self?.accessMenu() }
         footer.modeButton.target = self
@@ -1096,11 +1097,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     // MARK: Menus and modes
 
-    private func modelMenu() -> NSMenu? {
+    private func modelPicker() -> ModelPickerViewController? {
         guard let thread else { return nil }
-        return ComposerMenus.modelMenu(
-            current: thread.selection, registry: registry, target: self, choose: #selector(chooseModel(_:)),
-            refresh: #selector(refreshProviders), settings: #selector(openProviderSettings))
+        let picker = ModelPickerViewController(current: thread.selection, registry: registry)
+        picker.onSelect = { [weak self] selection in self?.select(selection) }
+        picker.onEffort = { [weak self] effort in self?.setEffort(effort) }
+        picker.onRefresh = { [weak self] in self?.refreshProviders() }
+        picker.onSettings = { [weak self] in self?.openProviderSettings() }
+        return picker
     }
 
     private func effortMenu() -> NSMenu? {
@@ -1112,11 +1116,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private func accessMenu() -> NSMenu? {
         guard let thread else { return nil }
         return ComposerMenus.accessMenu(current: thread.accessMode, target: self, action: #selector(chooseAccess(_:)))
-    }
-
-    @objc private func chooseModel(_ sender: NSMenuItem) {
-        guard let selection = sender.representedObject as? ModelSelection else { return }
-        select(selection)
     }
 
     /// Picking a model from another provider switches the thread's agent; that agent's native session

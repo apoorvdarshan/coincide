@@ -13,7 +13,7 @@ final class ComposerFooterView: NSView {
     let contextMeter = ComposerContextMeter()
     let stopButton = ComposerSendButton()
     let sendButton = ComposerSendButton()
-    let implementButton = NSButton(title: String(localized: "Implement"), target: nil, action: nil)
+    let implementButton = ThemedButton(title: String(localized: "Implement"), style: .primary, target: nil, action: nil)
 
     private let leadingControls = NSStackView()
     private let trailingControls = NSStackView()

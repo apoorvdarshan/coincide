@@ -114,7 +114,7 @@ enum OpenTargets {
                 do {
                     _ = try await NSWorkspace.shared.open([item], withApplicationAt: target.appURL, configuration: configuration)
                 } catch {
-                    NSAlert(error: error).runModal()
+                    ThemedAlert(error: error).runModal()
                 }
             }
         }

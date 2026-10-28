@@ -85,6 +85,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let window = NSWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.toolbarStyle = .unified
+        window.backgroundColor = Theme.contentBackground
+        window.titlebarAppearsTransparent = true
         window.tabbingMode = .disallowed
         window.collectionBehavior.insert(.fullScreenNone)
         window.isReleasedWhenClosed = false

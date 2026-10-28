@@ -6,8 +6,10 @@ final class ChatNoThreadView: NSView {
     private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
-    private lazy var newThreadButton = NSButton(title: String(localized: "New Thread"), target: self, action: #selector(newThread))
-    private lazy var addProjectButton = NSButton(title: String(localized: "Add Project…"), target: self, action: #selector(addProject))
+    private lazy var newThreadButton = ThemedButton(
+        title: String(localized: "New Thread"), style: .primary, target: self, action: #selector(newThread))
+    private lazy var addProjectButton = ThemedButton(
+        title: String(localized: "Add Project…"), target: self, action: #selector(addProject))
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -80,7 +82,8 @@ final class ChatWelcomeView: NSView {
     private lazy var settingsButton = NSButton(title: String(localized: "Agent Settings…"), target: self, action: #selector(openSettings))
     private let footer = NSStackView()
     private let missingLabel = NSTextField(labelWithString: "")
-    private lazy var locateButton = NSButton(title: String(localized: "Locate Folder…"), target: self, action: #selector(locateFolder))
+    private lazy var locateButton = ThemedButton(
+        title: String(localized: "Locate Folder…"), target: self, action: #selector(locateFolder))
     private let missingRow = NSStackView()
     private var projectID: UUID?
     /// Runs when the user picks an agent from the row of agents.
