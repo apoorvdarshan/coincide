@@ -397,6 +397,7 @@ public final class AppStore {
 
     public func updateSettings(_ mutate: (inout AppSettings) -> Void) {
         mutate(&settings)
+        ACPAgentNames.shared.register(settings.acpAgents)
         writer.write(settings, to: settingsURL)
         notify(.settings)
     }
@@ -488,6 +489,7 @@ public final class AppStore {
         try? FileManager.default.createDirectory(at: threadsDirectory, withIntermediateDirectories: true)
         let decoder = StoreWriter.makeDecoder()
         if let value = Self.read(AppSettings.self, from: settingsURL, decoder: decoder) { settings = value }
+        ACPAgentNames.shared.register(settings.acpAgents)
         if let value = Self.read(LenientList<Project>.self, from: projectsURL, decoder: decoder) {
             projects = value.elements
             if value.skipped > 0 { Self.setAside(projectsURL, copy: true) }

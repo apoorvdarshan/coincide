@@ -15,6 +15,9 @@ import Foundation
 ///
 /// Everything else (handshake, resume, models, effort, plan mode, approvals, questions,
 /// elicitations, file system, usage, cancel and crash handling) comes from `ACPSession`.
+///
+/// Agents the user adds in Settings (a local ACP command or an ACP Registry agent) need none of
+/// these steps: they run as `ProviderKind.acp(id)` with `ACPCustomFlavor`.
 @MainActor
 public protocol ACPAgentFlavor {
     var provider: ProviderKind { get }

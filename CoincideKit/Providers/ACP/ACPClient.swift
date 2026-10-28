@@ -66,6 +66,11 @@ public final class ACPClient {
         _ = try await connection.request(isV2 ? "auth/login" : "authenticate", params: ["methodId": .string(methodID)], timeout: timeout)
     }
 
+    /// Signs the agent out, for agents that advertise it (`ACPInitializeResult.canLogout`).
+    public func logout(timeout: TimeInterval? = nil) async throws {
+        _ = try await connection.request(isV2 ? "auth/logout" : "logout", params: [:], timeout: timeout)
+    }
+
     public func newSession(cwd: URL, meta: JSONValue? = nil, timeout: TimeInterval? = nil) async throws -> ACPSessionSetup {
         var params: [String: JSONValue] = ["cwd": .string(cwd.path), "mcpServers": []]
         if let meta { params["_meta"] = meta }
