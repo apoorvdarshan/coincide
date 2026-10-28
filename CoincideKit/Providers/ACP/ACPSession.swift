@@ -474,12 +474,14 @@ public final class ACPSession: AgentSession {
 
     private func spawn(accessMode: AccessMode, lease: ACPLaunchLease?) throws -> ACPClient {
         launchLease = lease
-        var environment = flavor.environment(launch.environment, executable: launch.executable)
+        let executable = lease?.executable ?? launch.executable
+        var environment = flavor.environment(launch.environment, executable: executable)
+            .merging(lease?.environmentOverrides ?? [:]) { _, pinned in pinned }
         if flavor.usesPrivateTemporaryDirectory, let directory = makeTemporaryDirectory() {
             environment["TMPDIR"] = directory.path + "/"
             temporaryDirectory = directory
         }
-        let transport = makeTransport(launch.executable, flavor.arguments(for: accessMode), launch.workingDirectory, environment)
+        let transport = makeTransport(executable, flavor.arguments(for: accessMode), launch.workingDirectory, environment)
         let connection = ACPConnection(write: { [weak transport] line in transport?.write(line) })
         let client = ACPClient(connection: connection)
         let capabilities = flavor.clientCapabilities

@@ -36,8 +36,8 @@ public struct AntigravityPaths: Sendable, Hashable {
     /// A symbolic link to the active release's folder, replaced atomically on each install.
     nonisolated var currentLink: URL { managedDirectory.appendingPathComponent("current") }
 
-    /// The executable of the active release, through `current`. Sessions launch this path; the
-    /// harness is found next to the file it resolves to.
+    /// The executable of the active release, through `current`. Before launching, the runtime
+    /// resolves and leases its immutable executable/helper pair together.
     public nonisolated var managedExecutable: URL { currentLink.appendingPathComponent(AntigravityRelease.executableName) }
 
     public nonisolated var profileDirectory: URL {

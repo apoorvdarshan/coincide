@@ -239,12 +239,11 @@ public final class AntigravityRuntime {
     /// Keeps the downloaded release `executable` runs from until the lease is released. Nil for an
     /// executable outside the downloaded runtime.
     public func lease(for executable: URL) -> ACPLaunchLease? {
-        guard paths.isManaged(executable) else { return nil }
-        let key = (AntigravityPaths.canonicalPath(executable) as NSString).deletingLastPathComponent
-        AntigravityInstaller.protectRelease(key)
+        guard let pinned = installer.pinRelease(for: executable), let directory = pinned.releaseDirectory else { return nil }
+        let key = directory.path
         leases[key, default: 0] += 1
         leaseCount += 1
-        return ACPLaunchLease { [weak self] in
+        return ACPLaunchLease(executable: pinned.executable, environmentOverrides: ["ANTIGRAVITY_HARNESS_PATH": pinned.harness.path]) { [weak self] in
             AntigravityInstaller.unprotectRelease(key)
             guard let self else { return }
             self.leaseCount -= 1
@@ -315,6 +314,20 @@ public struct AntigravityInstaller: Sendable {
     nonisolated static func unprotectRelease(_ path: String) {
         releaseAccess.withLock { counts in
             if let count = counts[path], count > 1 { counts[path] = count - 1 } else { counts[path] = nil }
+        }
+    }
+
+    /// Resolve the executable/helper pair and protect its release in the same critical section as
+    /// activation and pruning. Every launch must use these returned paths, never `current` again.
+    nonisolated func pinRelease(for executable: URL) -> AntigravityExecutable? {
+        Self.releaseAccess.withLock { counts in
+            guard paths.isManaged(executable) else { return nil }
+            let executable = URL(fileURLWithPath: AntigravityPaths.canonicalPath(executable))
+            let directory = executable.deletingLastPathComponent()
+            counts[directory.path, default: 0] += 1
+            return AntigravityExecutable(
+                executable: executable, harness: directory.appendingPathComponent(AntigravityRelease.harnessName),
+                version: nil, releaseDirectory: directory)
         }
     }
     nonisolated static let recordName = ".install-complete.json"

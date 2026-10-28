@@ -23,7 +23,8 @@ final class AntigravityAgentProcess {
         executable: URL, workingDirectory: URL, environment: [String: String], transport factory: ACPTransportFactory? = nil,
         lease: ACPLaunchLease? = nil
     ) {
-        var environment = environment
+        let executable = lease?.executable ?? executable
+        var environment = environment.merging(lease?.environmentOverrides ?? [:]) { _, pinned in pinned }
         let temporary = FileManager.default.temporaryDirectory
             .appendingPathComponent("Coincide-antigravity", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
