@@ -166,6 +166,9 @@
         }
       }
     },
+    "%@ or ⌘-click" : {
+
+    },
     "%@ picks up where the other agents left off, with a recap of the %lld messages it missed." : {
       "localizations" : {
         "en" : {
@@ -2278,6 +2281,12 @@
     "Follow" : {
 
     },
+    "Follow-up behavior" : {
+
+    },
+    "Follow-ups" : {
+
+    },
     "Font size" : {
 
     },
@@ -2724,6 +2733,18 @@
 
     },
     "Message agent: %@" : {
+
+    },
+    "Messages sent while an agent works go into its current turn, if it can take them. Command-Return queues one for after the turn instead." : {
+
+    },
+    "Messages sent while an agent works go into its current turn, if it can take them. Shift-Command-Return queues one for after the turn instead." : {
+
+    },
+    "Messages sent while an agent works wait until its turn ends. Command-Return sends one into the current turn instead." : {
+
+    },
+    "Messages sent while an agent works wait until its turn ends. Shift-Command-Return sends one into the current turn instead." : {
 
     },
     "Minimal" : {
@@ -3498,10 +3519,32 @@
     "Question %lld" : {
 
     },
+    "Queue" : {
+
+    },
     "Queue message" : {
 
     },
     "Queue message. It is sent when the current turn finishes." : {
+
+    },
+    "Queue or steer instead" : {
+
+    },
+    "Queue the message instead while the agent works" : {
+
+    },
+    "Queue: send when the current turn finishes (%@). %@ sends it into the current turn instead." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Queue: send when the current turn finishes (%1$@). %2$@ sends it into the current turn instead."
+          }
+        }
+      }
+    },
+    "Queue: send when the current turn finishes. %@ sends it into the current turn instead." : {
 
     },
     "Queued for after the current turn" : {
@@ -3995,12 +4038,6 @@
     "Send" : {
 
     },
-    "Send (↩)" : {
-
-    },
-    "Send (⌘↩)" : {
-
-    },
     "Send a message to decline and redirect the agent" : {
 
     },
@@ -4013,10 +4050,16 @@
     "Send message, or queue it while the agent works" : {
 
     },
+    "Send message, or steer the agent with it while it works" : {
+
+    },
     "Send messages with" : {
 
     },
     "Send now, into the current turn" : {
+
+    },
+    "Send the first queued message into the current turn" : {
 
     },
     "Sent into the current turn" : {
@@ -4268,10 +4311,20 @@
     "Steer message" : {
 
     },
-    "Steer: send into the current turn (↩). ⌘↩ or ⌘-click queues it for after the turn." : {
+    "Steer the agent with the message instead while it works" : {
 
     },
-    "Steer: send into the current turn (⌘↩). ⇧⌘↩ or ⌘-click queues it for after the turn." : {
+    "Steer: send into the current turn (%@). %@ queues it for after the turn." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Steer: send into the current turn (%1$@). %2$@ queues it for after the turn."
+          }
+        }
+      }
+    },
+    "Steer: send into the current turn. %@ queues it for after the turn." : {
 
     },
     "Steered the active turn" : {
@@ -5234,6 +5287,9 @@
 
     },
     "⇥ Complete" : {
+
+    },
+    "⌘-click" : {
 
     },
     "⌫ Back" : {

@@ -232,21 +232,37 @@ struct KeyboardSettingsView: View {
         return [ShortcutGroup(title: String(localized: "Other Menu Commands"), shortcuts: shortcuts)]
     }
 
-    /// Keys that work in one part of the window. Composer keys follow the "Send messages with" setting.
+    /// Keys that work in one part of the window. Composer keys follow the "Send messages with" and "Follow-up behavior"
+    /// settings.
     private var placeGroups: [ShortcutGroup] {
         let sendOnReturn = model.settings.sendOnReturn
+        let steers = model.settings.followUpBehavior == .steer
+        var composer = [
+            Shortcut(
+                steers
+                    ? String(localized: "Send message, or steer the agent with it while it works")
+                    : String(localized: "Send message, or queue it while the agent works"),
+                sendOnReturn ? ["↩"] : ["⌘", "↩"]),
+            Shortcut(
+                steers
+                    ? String(localized: "Queue the message instead while the agent works")
+                    : String(localized: "Steer the agent with the message instead while it works"),
+                sendOnReturn ? ["⌘", "↩"] : ["⇧", "⌘", "↩"]),
+        ]
+        if sendOnReturn {
+            composer.append(Shortcut(String(localized: "Send the first queued message into the current turn"), ["⇧", "⌘", "↩"]))
+        }
+        composer += [
+            Shortcut(String(localized: "Insert new line"), sendOnReturn ? ["⇧", "↩"] : ["↩"]),
+            Shortcut(String(localized: "Switch between Build and Plan"), ["⇧", "⇥"]),
+            Shortcut(String(localized: "Earlier and later messages you sent"), ["↑"], or: ["↓"]),
+            Shortcut(String(localized: "Edit the last queued message"), ["⌥", "↑"]),
+            Shortcut(String(localized: "Insert the highlighted file or command"), ["⇥"]),
+            Shortcut(String(localized: "Close file and command suggestions"), ["⎋"]),
+        ]
         return [
             ShortcutGroup(
-                title: String(localized: "Composer"),
-                shortcuts: [
-                    Shortcut(String(localized: "Send message, or queue it while the agent works"), sendOnReturn ? ["↩"] : ["⌘", "↩"]),
-                    Shortcut(String(localized: "Insert new line"), sendOnReturn ? ["⇧", "↩"] : ["↩"]),
-                    Shortcut(String(localized: "Switch between Build and Plan"), ["⇧", "⇥"]),
-                    Shortcut(String(localized: "Earlier and later messages you sent"), ["↑"], or: ["↓"]),
-                    Shortcut(String(localized: "Edit the last queued message"), ["⌥", "↑"]),
-                    Shortcut(String(localized: "Insert the highlighted file or command"), ["⇥"]),
-                    Shortcut(String(localized: "Close file and command suggestions"), ["⎋"]),
-                ],
+                title: String(localized: "Composer"), shortcuts: composer,
                 note: String(localized: "Type @ to mention a file and / for commands.")),
             ShortcutGroup(
                 title: String(localized: "Sidebar"),

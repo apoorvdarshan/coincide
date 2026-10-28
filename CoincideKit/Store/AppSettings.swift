@@ -14,6 +14,28 @@ public enum AppearanceMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// What sending does while the agent works, as T3 Code's `followUpBehavior`: steer the message into the running turn,
+/// or queue it for after the turn. The alternate send does the other for one message.
+public enum FollowUpBehavior: String, Codable, CaseIterable, Sendable {
+    case steer
+    case queue
+
+    public nonisolated var displayName: String {
+        switch self {
+        case .steer: String(localized: "Steer")
+        case .queue: String(localized: "Queue")
+        }
+    }
+
+    /// The other behavior, which the alternate send uses.
+    public nonisolated var opposite: FollowUpBehavior {
+        switch self {
+        case .steer: .queue
+        case .queue: .steer
+        }
+    }
+}
+
 public struct ProviderSettings: Codable, Hashable, Sendable {
     public var isEnabled: Bool
     /// Absolute path to the CLI, when the user overrides PATH lookup.
@@ -49,6 +71,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var appearance: AppearanceMode
     /// Return sends; Shift-Return inserts a newline. When false, Command-Return sends.
     public var sendOnReturn: Bool
+    /// Whether a message sent while the agent works steers its turn or waits for it to end.
+    public var followUpBehavior: FollowUpBehavior
     public var showReasoning: Bool
     public var confirmBeforeDeletingThreads: Bool
     /// Provider sessions idle this long are shut down to free memory; their ids are kept for resume.
@@ -71,6 +95,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         providers = [:]
         appearance = .system
         sendOnReturn = true
+        followUpBehavior = .steer
         showReasoning = true
         confirmBeforeDeletingThreads = true
         idleSessionTimeoutMinutes = 30
@@ -97,6 +122,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         providers = container.lenientProviderMap(ProviderSettings.self, forKey: .providers)
         appearance = value(.appearance, defaults.appearance)
         sendOnReturn = value(.sendOnReturn, defaults.sendOnReturn)
+        followUpBehavior = value(.followUpBehavior, defaults.followUpBehavior)
         showReasoning = value(.showReasoning, defaults.showReasoning)
         confirmBeforeDeletingThreads = value(.confirmBeforeDeletingThreads, defaults.confirmBeforeDeletingThreads)
         idleSessionTimeoutMinutes = value(.idleSessionTimeoutMinutes, defaults.idleSessionTimeoutMinutes)

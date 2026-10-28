@@ -492,6 +492,9 @@ final class ComposerQueueBanner: ComposerBanner {
     var onSteer: ((UUID) -> Void)?
     /// Whether the running turn takes messages now, which offers "Send now" on each row.
     private var canSteer = false
+    /// The key that sends the oldest queued message now (`ComposerSendKeys.steerQueued`), named on its row's "Send now"
+    /// as in T3 Code's queue.
+    private var steerKey: KeyShortcut?
 
     private let rows = NSStackView()
     private static let visibleRows = 3
@@ -506,11 +509,12 @@ final class ComposerQueueBanner: ComposerBanner {
         rows.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -18).isActive = true
     }
 
-    func show(_ messages: [ThreadRunner.QueuedMessage], canSteer: Bool) {
+    func show(_ messages: [ThreadRunner.QueuedMessage], canSteer: Bool, steerKey: KeyShortcut?) {
         self.canSteer = canSteer
+        self.steerKey = steerKey
         for view in rows.arrangedSubviews { view.removeFromSuperview() }
-        for message in messages.prefix(Self.visibleRows) {
-            let row = makeRow(message)
+        for (index, message) in messages.prefix(Self.visibleRows).enumerated() {
+            let row = makeRow(message, isFirst: index == 0)
             rows.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
         }
@@ -525,7 +529,7 @@ final class ComposerQueueBanner: ComposerBanner {
                 : String(localized: "\(messages.count) queued messages"))
     }
 
-    private func makeRow(_ message: ThreadRunner.QueuedMessage) -> NSView {
+    private func makeRow(_ message: ThreadRunner.QueuedMessage, isFirst: Bool) -> NSView {
         let icon = ComposerBanner.icon("clock", color: .tertiaryLabelColor)
         let firstLine = message.text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         let images = message.imagePaths.count
@@ -541,10 +545,10 @@ final class ComposerQueueBanner: ComposerBanner {
         let remove = rowButton("xmark", label: String(localized: "Remove from queue"), id: message.id, action: #selector(remove(_:)))
         var views: [NSView] = [icon, label, NSView()]
         if canSteer {
-            views.append(
-                rowButton(
-                    "arrow.turn.up.right", label: String(localized: "Send now, into the current turn"), id: message.id,
-                    action: #selector(steer(_:))))
+            let title = String(localized: "Send now, into the current turn")
+            let button = rowButton("arrow.turn.up.right", label: title, id: message.id, action: #selector(steer(_:)))
+            if isFirst, let keys = steerKey?.displayString { button.toolTip = String(localized: "\(title) (\(keys))") }
+            views.append(button)
         }
         let row = NSStackView(views: views + [edit, remove])
         row.orientation = .horizontal

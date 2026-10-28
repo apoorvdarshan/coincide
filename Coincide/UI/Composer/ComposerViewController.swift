@@ -8,9 +8,9 @@ import QuickLookUI
 /// banners for pending approvals and questions, plan follow-ups, agent switches, usage limits and queued
 /// messages. Drafts persist per thread.
 ///
-/// While a turn runs, send steers it (the agent takes the message in as it works) when the agent can, and
-/// otherwise queues the message for after the turn; the alternate send (⌘↩, or ⇧⌘↩ when ⌘↩ sends, or
-/// ⌘-click) does the other, as T3 Code's follow-up behavior.
+/// While a turn runs, send steers it (the agent takes the message in as it works) or queues the message for
+/// after the turn, as the follow-up behavior setting says; the alternate send (⌘↩, or ⇧⌘↩ when ⌘↩ sends, or
+/// ⌘-click) does the other, as in T3 Code. A message the agent can't take now is queued either way.
 ///
 /// The view fills the width it is given and centers the composer in the transcript's column; clicks
 /// outside the composer's controls pass through to whatever is behind it.
@@ -76,7 +76,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private var usageClock: Timer?
     /// Watches the modifier keys while the composer shows, so send can show what the alternate send does.
     private var flagsMonitor: Any?
-    /// The alternate send's modifiers are held: send queues instead of steering.
+    /// The alternate send's modifiers are held: send does the other of the follow-up behavior.
     private var alternateHeld = false
 
     init(store: AppStore = .shared, registry: ProviderRegistry = .shared, runner: ThreadRunner = .shared) {
@@ -349,7 +349,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         refreshUsageLimits()
     }
 
-    /// Send shows what it will do: holding the alternate send's modifiers while a turn runs turns steer into queue.
+    /// Send shows what it will do: holding the alternate send's modifiers while a turn runs turns steer into queue,
+    /// or queue into steer.
     private func modifiersChanged(_ flags: NSEvent.ModifierFlags) {
         let held = isAlternate(flags)
         guard held != alternateHeld else { return }
@@ -445,16 +446,27 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     private func applySettings() {
         textView.font = Theme.bodyFont
-        footer.sendButton.toolTip =
-            store.settings.sendOnReturn ? String(localized: "Send (↩)") : String(localized: "Send (⌘↩)")
         refreshStopToolTip()
         updateTextHeight()
     }
 
-    /// The footer's tooltips name the menu commands' shortcuts, which the user can change.
+    /// The footer's tooltips name the menu commands' shortcuts, which the user can change. Send's and the queue's
+    /// leave out a send key a command was given.
     @objc private func keyBindingsChanged() {
         refreshStopToolTip()
         refreshControls(thread)
+        refreshRunState()
+    }
+
+    /// The send keys that reach the composer, for tooltips.
+    private var sendKeys: ComposerSendKeys {
+        let keyBindings = KeyBindingsController.shared
+        return ComposerSendKeys(sendOnReturn: store.settings.sendOnReturn, menuHas: { keyBindings.menuBarHas($0) })
+    }
+
+    /// What send does while a turn runs: the follow-up behavior setting, or steer while an approval is shown.
+    private var followUpBehavior: FollowUpBehavior {
+        ComposerDispatch.followUpBehavior(store.settings.followUpBehavior, approvalShown: hasPendingApproval)
     }
 
     private func refreshStopToolTip() {
@@ -543,7 +555,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             return
         }
         let queued = runner.queuedMessages(threadID)
-        if !queued.isEmpty { queueBanner.show(queued, canSteer: runner.canSteer(threadID)) }
+        if !queued.isEmpty { queueBanner.show(queued, canSteer: runner.canSteer(threadID), steerKey: sendKeys.steerQueued) }
         queueBanner.isHidden = queued.isEmpty
 
         // Usage belongs to whichever agent ran last; after a switch it says nothing about the new one.
@@ -575,6 +587,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         hasPendingQuestion = !questions.isEmpty
         approvalBanner.isHidden = approvals.isEmpty
         questionBanner.isHidden = questions.isEmpty
+        // A shown approval makes send steer.
+        updateSendState()
         if announce {
             let message =
                 hasPendingQuestion ? String(localized: "The agent asked a question") : String(localized: "The agent needs approval")
@@ -739,8 +753,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         !attachments.isEmpty || textView.string.contains { !$0.isWhitespace }
     }
 
-    /// Send while idle; while a turn runs, send steers the turn (or queues when its agent can't take the message
-    /// now, or the alternate send's modifiers are held) and Stop sits beside it.
+    /// Send while idle; while a turn runs, send steers or queues as the follow-up behavior says (the other while the
+    /// alternate send's modifiers are held, and queue when the agent can't take the message now) and Stop sits
+    /// beside it.
     private func updateSendState() {
         let send = footer.sendButton
         guard let threadID, let thread else {
@@ -759,21 +774,18 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         footer.implementButton.isHidden = !(proposedPlan != nil && !hasContent && !running)
         send.isHidden = !footer.implementButton.isHidden
         send.isEnabled = canSend
-        if running, runner.canSteer(threadID), !alternateHeld {
+        let canSteer = runner.canSteer(threadID)
+        let behavior = followUpBehavior
+        send.toolTip = sendKeys.sendToolTip(running: running, canSteer: canSteer, behavior: behavior)
+        switch ComposerDispatch.resolve(running: running, canSteer: canSteer, alternate: alternateHeld, behavior: behavior) {
+        case .steer:
             send.mode = .steer
-            send.toolTip =
-                store.settings.sendOnReturn
-                ? String(localized: "Steer: send into the current turn (↩). ⌘↩ or ⌘-click queues it for after the turn.")
-                : String(localized: "Steer: send into the current turn (⌘↩). ⇧⌘↩ or ⌘-click queues it for after the turn.")
             send.setAccessibilityLabel(String(localized: "Steer message"))
-        } else if running {
+        case .queue:
             send.mode = .queue
-            send.toolTip = String(localized: "Queue message. It is sent when the current turn finishes.")
             send.setAccessibilityLabel(String(localized: "Queue message"))
-        } else {
+        case .send:
             send.mode = .send
-            send.toolTip =
-                store.settings.sendOnReturn ? String(localized: "Send (↩)") : String(localized: "Send (⌘↩)")
             send.setAccessibilityLabel(String(localized: "Send message"))
         }
     }
@@ -1184,7 +1196,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     /// Sends, runs a typed command, or implements a proposed plan when empty. While a turn runs the message
-    /// steers it when its agent can take it, and is queued otherwise; `alternate` does the other.
+    /// steers it or is queued as the follow-up behavior says (`ComposerDispatch`); `alternate` does the other.
     private func primaryAction(alternate: Bool = false) {
         guard let threadID else { return }
         let text = textView.string
@@ -1204,17 +1216,26 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             NSSound.beep()
             return
         }
+        // Decided before the approvals are declined, since a shown approval makes it steer.
+        let dispatch = ComposerDispatch.resolve(
+            running: runner.isRunning(threadID), canSteer: runner.canSteer(threadID), alternate: alternate,
+            behavior: followUpBehavior)
         declinePendingRequests(threadID)
         let imagePaths = attachments.map(\.path)
-        let steers = runner.isRunning(threadID) && !alternate
         clearComposer()
-        guard steers else {
-            Task { await runner.send(threadID: threadID, text: text, imagePaths: imagePaths) }
-            return
-        }
-        Task {
-            let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths)
-            announce(delivery)
+        switch dispatch {
+        case .steer:
+            Task {
+                let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths)
+                announce(delivery)
+            }
+        case .send, .queue:
+            Task {
+                // `send` queues the message while a turn runs.
+                let queues = runner.isRunning(threadID)
+                await runner.send(threadID: threadID, text: text, imagePaths: imagePaths)
+                if queues { announce(.queued) }
+            }
         }
     }
 

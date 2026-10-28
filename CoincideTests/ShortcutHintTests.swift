@@ -40,6 +40,35 @@ struct ShortcutHintTests {
         #expect(controller.toolTip("Reasoning effort", for: .reasoningEffort) == "Reasoning effort")
     }
 
+    @Test func theComposerSendKeysLeaveOutAKeyAMenuItemHas() {
+        let returnKey = KeyShortcut("enter")!
+        let commandReturn = KeyShortcut("mod+enter")!
+        let shiftCommandReturn = KeyShortcut("mod+shift+enter")!
+        #expect(!controller.menuBarHas(returnKey) && !controller.menuBarHas(commandReturn))
+        func keys(sendOnReturn: Bool) -> ComposerSendKeys {
+            ComposerSendKeys(sendOnReturn: sendOnReturn) { controller.menuBarHas($0) }
+        }
+        #expect(keys(sendOnReturn: true).alternate == commandReturn)
+
+        // The menu bar sees keys first, so a command given ⌘↩ takes it from the composer.
+        set(.newThread, "mod+enter")
+        #expect(controller.menuBarHas(commandReturn))
+        #expect(keys(sendOnReturn: true).alternate == nil)
+        #expect(keys(sendOnReturn: false).send == nil)
+        #expect(keys(sendOnReturn: false).alternate == shiftCommandReturn)
+        #expect(
+            keys(sendOnReturn: true).sendToolTip(running: true, canSteer: true, behavior: .steer)
+                == "Steer: send into the current turn (↩). ⌘-click queues it for after the turn.")
+
+        // A fixed menu item's key counts too.
+        menu.addItem(NSMenuItem(title: "Fixed", action: nil, keyEquivalent: "\r"))
+        menu.items.last?.keyEquivalentModifierMask = [.command, .shift]
+        controller.attach(to: menu)
+        #expect(controller.menuBarHas(shiftCommandReturn))
+        #expect(keys(sendOnReturn: true).steerQueued == nil)
+        #expect(!controller.menuBarHas(returnKey))
+    }
+
     @Test func aChangeIsAnnouncedAfterTheMenuHasItsNewShortcut() async {
         await confirmation { announced in
             let observer = NotificationCenter.default.addObserver(
