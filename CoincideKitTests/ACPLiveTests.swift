@@ -347,3 +347,52 @@ struct ACPAntigravitySignInLiveTests {
         }
     }
 }
+
+/// Runs an installed, signed-in ACP agent as a local ACP command (Settings › Add ACP Agent › Local ACP command), the
+/// way a user-added agent runs: probe for status and models, then two turns checking a reply and remembered context.
+/// `COINCIDE_LIVE_LOCAL_ACP="<executable> <arg> …"` runs it, e.g. `"cursor-agent acp"` (no shell parsing: arguments
+/// are split on spaces only); `COINCIDE_LIVE_LOCAL_ACP_MODEL` picks a model by id prefix. A failing reply check prints
+/// the session's events, which show the agent's own message (for example an account's usage limit).
+@MainActor
+@Suite(.serialized, .timeLimit(.minutes(10)))
+struct ACPLocalCommandLiveTests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["COINCIDE_LIVE_LOCAL_ACP"] != nil))
+    func aLocalCommandProbesAndAnswers() async throws {
+        let words = try #require(ProcessInfo.processInfo.environment["COINCIDE_LIVE_LOCAL_ACP"]).split(separator: " ").map(String.init)
+        let config = ACPAgentConfig(id: "live-local", name: "Live local agent", source: .local, command: words[0], arguments: Array(words.dropFirst()))
+        let environment = await ShellEnvironment.shared.environment()
+        let executable = try #require(await ShellEnvironment.shared.which(config.command), "\(config.command) is not on PATH")
+        let flavor = ACPCustomFlavor(config: config)
+
+        let probe = await flavor.probe(executable: executable, environment: environment)
+        #expect(probe.status.state == .ready, "\(probe.status.message ?? "")")
+        // `COINCIDE_LIVE_LOCAL_ACP_MODEL` picks a model by id prefix (an account may not be able to use the default).
+        let wanted = ProcessInfo.processInfo.environment["COINCIDE_LIVE_LOCAL_ACP_MODEL"]
+        let model = try #require(
+            wanted.flatMap { prefix in probe.models.first { $0.modelID.hasPrefix(prefix) } } ?? probe.models.first,
+            "The probe listed no matching model: \(probe.models.map(\.modelID))")
+
+        let selection = ModelSelection(provider: config.kind, modelID: model.modelID, effort: model.defaultEffort)
+        let launch = AgentLaunch(
+            provider: config.kind, executable: executable, environment: environment,
+            workingDirectory: try LiveRun.folder("local-acp"), resumeSessionID: nil, selection: selection,
+            accessMode: .fullAccess, interactionMode: .build)
+        let session = ACPSession(launch: launch, flavor: flavor)
+        let log = ACPEventLog()
+        log.attach(session)
+        try await session.start()
+        defer { session.shutdown() }
+        #expect(session.provider == .acp("live-local"))
+        for (text, expected) in [
+            ("Remember the word walnut. Reply with exactly: pong", "pong"),
+            ("Which word did I ask you to remember? Reply with that word only.", "walnut"),
+        ] {
+            let finished = log.completions.count
+            try await session.send(AgentTurnInput(text: text, selection: selection, accessMode: .fullAccess, interactionMode: .build))
+            await acpWaitUntil("the turn to finish", timeout: .seconds(180)) { log.completions.count > finished }
+            #expect(log.completions.last == .completed)
+            #expect(LiveRun.replyText(log.events).lowercased().contains(expected), "\(log.events.map { String(String(describing: $0).prefix(200)) })")
+            log.removeAll()
+        }
+    }
+}
