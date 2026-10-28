@@ -114,6 +114,9 @@ struct PaletteCatalog {
                     trailing: keys(.openInEditor),
                     keywords: ["open", "editor", "finder", "terminal", "reveal"], behavior: .run { window?.openInPreferred(nil) }))
         }
+        items.append(PaletteItem(id: "action:scheduled-tasks", title: String(localized: "Scheduled Tasks…"),
+            icon: symbol("clock"), keywords: ["schedule", "tasks", "automation", "daily", "weekly"],
+            behavior: .run { window?.showScheduledTasks(nil) }))
         if let split = window?.splitController {
             items.append(
                 PaletteItem(
@@ -155,6 +158,9 @@ struct PaletteCatalog {
         let core = items
         items = []
         if let thread { items += composerActions(for: thread) + searchActions(for: thread) }
+        items.append(PaletteItem(id: "action:scheduled-tasks", title: String(localized: "Scheduled Tasks…"),
+            icon: symbol("clock"), keywords: ["schedule", "tasks", "automation", "daily", "weekly"],
+            behavior: .run { window?.showScheduledTasks(nil) }))
         if let split = window?.splitController {
             items.append(
                 PaletteItem(

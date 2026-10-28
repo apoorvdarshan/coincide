@@ -44,7 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Chats are always listed, so the first one can be started from the sidebar.
         AppStore.shared.ensureChatsProject()
         mainWindow?.showWindow(nil)
-        Task { await ProviderRegistry.shared.refresh() }
+        Task {
+            await ProviderRegistry.shared.refresh()
+            ScheduledTasks.shared.start()
+        }
         #if DEBUG
         DebugAutomation.startIfRequested()
         #endif
@@ -78,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         guard !Self.isHostingTests else { return }
+        ScheduledTasks.shared.stop()
         PreviewSessions.shared.stop()
         ThreadRunner.shared.shutdownAll()
         AppStore.shared.flush()
