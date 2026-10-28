@@ -110,6 +110,7 @@ enum DebugAutomation {
                 case "terminal": window?.toggleTerminalPanel(nil)
                 case "diff": window?.toggleDiffPanel(nil)
                 case "pullRequests": window?.togglePullRequestsPanel(nil)
+                case "schedules": ScheduledTasksWindowController.shared.show()
                 case "preview": window?.togglePreviewPanel(nil)
                 default: log("unknown panel \(value.displayText)")
                 }

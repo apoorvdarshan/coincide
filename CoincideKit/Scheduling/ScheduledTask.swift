@@ -16,6 +16,12 @@ public struct TaskRecurrence: Codable, Equatable, Sendable {
         self.hour = hour; self.minute = minute; self.weekday = weekday
     }
 
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        guard lhs.kind == rhs.kind, lhs.timeZoneID == rhs.timeZoneID else { return false }
+        if lhs.kind == .once { return lhs.date == rhs.date }
+        return lhs.hour == rhs.hour && lhs.minute == rhs.minute && (lhs.kind != .weekly || lhs.weekday == rhs.weekday)
+    }
+
     public var isValid: Bool {
         TimeZone(identifier: timeZoneID) != nil && (0...23).contains(hour) && (0...59).contains(minute)
             && (1...7).contains(weekday) && date.timeIntervalSinceReferenceDate.isFinite
@@ -27,9 +33,18 @@ public struct TaskRecurrence: Codable, Equatable, Sendable {
         if kind == .once { return date > now ? date : nil }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: timeZoneID)!
-        var match = DateComponents(hour: hour, minute: minute, second: 0)
-        if kind == .weekly { match.weekday = weekday }
-        return calendar.nextDate(after: now, matching: match, matchingPolicy: .nextTime, repeatedTimePolicy: .first, direction: .forward)
+        let match = DateComponents(hour: hour, minute: minute, second: 0)
+        let today = calendar.startOfDay(for: now)
+        for offset in 0...7 {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: today) else { continue }
+            if kind == .weekly, calendar.component(.weekday, from: day) != weekday { continue }
+            // Search from the day's start, not from `now`: after the first 01:30 on a fall-back day,
+            // Calendar otherwise returns the second 01:30 even with repeatedTimePolicy.first.
+            if let candidate = calendar.nextDate(after: day.addingTimeInterval(-1), matching: match,
+                matchingPolicy: .nextTime, repeatedTimePolicy: .first, direction: .forward),
+                calendar.isDate(candidate, inSameDayAs: day), candidate > now { return candidate }
+        }
+        return nil
     }
 }
 

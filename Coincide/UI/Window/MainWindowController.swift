@@ -250,6 +250,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         splitController.toggleDiffPanel()
     }
 
+    @objc func showScheduledTasks(_ sender: Any?) { ScheduledTasksWindowController.shared.show() }
+
     @objc func togglePreviewPanel(_ sender: Any?) {
         showWindow(nil)
         splitController.togglePreviewPanel()

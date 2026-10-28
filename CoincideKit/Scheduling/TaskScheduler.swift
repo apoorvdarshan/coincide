@@ -7,11 +7,13 @@ import Foundation
     private let now: () -> Date
     private let makeThread: (ScheduledTask) throws -> UUID
     private let startThread: (UUID, String) -> Void
+    private let canStart: (ScheduledTask) -> Bool
     private var ticking = false
 
     public init(store: ScheduledTaskStore, now: @escaping () -> Date = Date.init,
+        canStart: @escaping (ScheduledTask) -> Bool = { _ in true },
         makeThread: @escaping (ScheduledTask) throws -> UUID, startThread: @escaping (UUID, String) -> Void) {
-        self.store = store; self.now = now; self.makeThread = makeThread; self.startThread = startThread
+        self.store = store; self.now = now; self.makeThread = makeThread; self.startThread = startThread; self.canStart = canStart
     }
 
     /// Relaunch and wake skip missed occurrences instead of creating a backlog. A prior process's active run is
@@ -42,10 +44,10 @@ import Foundation
     public func save(_ value: ScheduledTask) throws {
         var task = value
         guard task.isValid else { throw ScheduleError.invalidTask }
-        if task.recurrence.kind == .once, task.recurrence.date <= now(), task.activeThreadID == nil {
+        let old = store.task(task.id)
+        if task.recurrence.kind == .once, task.recurrence.date <= now(), old?.recurrence != task.recurrence, task.activeThreadID == nil {
             throw ScheduleError.pastDate
         }
-        let old = store.task(task.id)
         if var current = old {
             // An editor may have been open while a run started or finished. Preserve live execution state.
             current.name = task.name; current.projectID = task.projectID; current.prompt = task.prompt
@@ -70,8 +72,14 @@ import Foundation
         ticking = true
         defer { ticking = false }
         let date = now()
-        for task in store.tasks where !task.isPaused && task.activeThreadID == nil && (task.nextRunAt ?? .distantFuture) <= date {
-            do { try run(task.id, manual: false) } catch { onFailure?(error) }
+        for var task in store.tasks where !task.isPaused && (task.nextRunAt ?? .distantFuture) <= date {
+            do {
+                if task.activeThreadID != nil || !canStart(task) {
+                    // Continued work and quota resumes consume overlapping slots too; never queue a late run.
+                    task.nextRunAt = task.recurrence.next(after: date)
+                    try store.save(task)
+                } else { try run(task.id, manual: false) }
+            } catch { onFailure?(error) }
         }
     }
 
@@ -79,7 +87,7 @@ import Foundation
 
     private func run(_ id: UUID, manual: Bool) throws {
         guard var task = store.task(id) else { return }
-        guard task.activeThreadID == nil else { throw ScheduleError.alreadyRunning }
+        guard task.activeThreadID == nil, canStart(task) else { throw ScheduleError.alreadyRunning }
         let date = now()
         let occurrence = manual ? date : (task.nextRunAt ?? date)
         if !manual, let consumed = task.lastFiredOccurrence, occurrence <= consumed {
