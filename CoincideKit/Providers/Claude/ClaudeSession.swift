@@ -702,6 +702,8 @@ final class ClaudeSession: AgentSession {
 
     /// A new process (or none) runs the conversation: stream state and turns of the old one are gone.
     private func processRestarted() {
+        // The old process's background work ended with it.
+        if !mapper.backgroundTasks.isEmpty { emit(.backgroundWork([])) }
         mapper.processRestarted()
         agentTurn = nil
         endedTurnResultPending = false

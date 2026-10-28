@@ -587,6 +587,23 @@ struct ClaudeMapperTests {
         #expect(mapper.permissionMode == nil && mapper.backgroundTasks.isEmpty)
     }
 
+    @Test func reportsBackgroundWorkWithoutAmbientWatchers() {
+        var mapper = testMapper()
+        let events = mapLines(
+            [
+                #"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"a1","task_type":"local_agent","description":"Audit the port","tool_use_id":"toolu_1"},{"task_id":"b1","task_type":"local_bash","description":"npm run dev"},{"task_id":"m1","task_type":"monitor","description":"watch","ambient":true}]}"#,
+                #"{"type":"system","subtype":"background_tasks_changed","tasks":[]}"#,
+            ], into: &mapper)
+        #expect(
+            events == [
+                .backgroundWork([
+                    BackgroundTask(id: "a1", title: "Audit the port", kind: .agent, toolCallID: "toolu_1"),
+                    BackgroundTask(id: "b1", title: "npm run dev", kind: .command),
+                ]),
+                .backgroundWork([]),
+            ])
+    }
+
     @Test func partialInputTitlesAToolEarly() {
         #expect(
             ClaudeTools.partialStringField("file_path", in: #"{"file_path": "/tmp/a \"b\".txt", "conte"#) == "/tmp/a \"b\".txt")

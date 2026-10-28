@@ -62,6 +62,9 @@ struct ThreadRowModel: Equatable {
     var canArchive: Bool
     /// Whether the thread has a settled turn to fork from.
     var canFork = false
+    /// An agent of the thread still runs work of its own after its reply, such as a subagent: the row keeps its
+    /// spinner.
+    var hasBackgroundWork = false
     var toolTip: String
     var accessibilityLabel: String
     /// The thread's Go to Thread shortcut ("⌘1"…) while the user holds its modifier keys, as in T3. Nil when the
@@ -448,8 +451,9 @@ final class ThreadCell: HoverCellView {
         icon.image = symbol.flatMap { Theme.symbol($0, size: 12, weight: .medium) } ?? Theme.logo(for: model.provider, size: 14)
         icon.setAccessibilityLabel(model.provider.displayName)
         icon.contentTintColor = emphasized ? selectedText : tint
-        icon.isHidden = model.status.isRunning
-        if model.status.isRunning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        let spins = model.status.isRunning || model.hasBackgroundWork
+        icon.isHidden = spins
+        if spins { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         titleField.textColor = model.isArchived ? .secondaryLabelColor : .labelColor
         unseenDot.color = emphasized ? selectedText : .systemGreen
         let timeColor: NSColor =

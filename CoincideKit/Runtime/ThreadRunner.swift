@@ -88,6 +88,8 @@ public final class ThreadRunner {
     /// The model of the latest turn, so another model's context window is not kept.
     private var usageModels: [UUID: String] = [:]
     public private(set) var queues: [UUID: [QueuedMessage]] = [:]
+    /// What each thread's agents run in the background, by provider (`AgentEvent.backgroundWork`).
+    private var backgroundWork: [UUID: [ProviderKind: [BackgroundTask]]] = [:]
     /// Subscription usage each provider's sessions reported, merged over what an earlier check or report read.
     private var reportedUsageLimits: [ProviderKind: UsageLimits] = [:]
     private var idleTimer: Timer?
@@ -154,6 +156,26 @@ public final class ThreadRunner {
 
     /// Messages waiting for the running turn to finish, oldest first.
     public func queuedMessages(_ threadID: UUID) -> [QueuedMessage] { queues[threadID] ?? [] }
+
+    /// The work the thread's agents run in the background, such as subagents and long commands, which can go on
+    /// after their turn ended.
+    public func backgroundTasks(_ threadID: UUID) -> [(provider: ProviderKind, task: BackgroundTask)] {
+        (backgroundWork[threadID] ?? [:]).sorted { $0.key.rawValue < $1.key.rawValue }
+            .flatMap { provider, tasks in tasks.map { (provider, $0) } }
+    }
+
+    /// The transcript item of a provider's tool call, such as the one that started a background task.
+    public func itemID(forToolCall id: String, in threadID: UUID) -> UUID? {
+        guard let item = itemMaps[threadID]?[key(.tool, id)], store.item(item, in: threadID) != nil else { return nil }
+        return item
+    }
+
+    private func setBackgroundWork(_ tasks: [BackgroundTask], threadID: UUID, provider: ProviderKind) {
+        guard (backgroundWork[threadID]?[provider] ?? []) != tasks else { return }
+        backgroundWork[threadID, default: [:]][provider] = tasks.isEmpty ? nil : tasks
+        if backgroundWork[threadID]?.isEmpty == true { backgroundWork[threadID] = nil }
+        store.notify(.runState(threadID))
+    }
 
     /// Whether a message can go into the running turn now: its agent has the prompt, takes messages while it
     /// works, and is still the thread's agent. A turn the agent started itself, or one being stopped, cannot.
@@ -477,6 +499,7 @@ public final class ThreadRunner {
         let launching = launches[threadID]?.removeValue(forKey: provider)
         liveSessionIDs[threadID]?[provider] = nil
         guard live != nil || launching != nil else { return }
+        setBackgroundWork([], threadID: threadID, provider: provider)
         live?.shutdown()
         launching?.session.shutdown()
         declineOpenPrompts(threadID, provider: provider, since: nil)
@@ -768,6 +791,8 @@ public final class ThreadRunner {
             registry.updateModels(models, for: provider)
         case .notice(let text):
             store.append(TranscriptItem(kind: .notice, text: text, provider: provider), to: threadID)
+        case .backgroundWork(let tasks):
+            setBackgroundWork(tasks, threadID: threadID, provider: provider)
 
         case .agentTurnStarted(let note):
             startAgentTurn(threadID, provider: provider, note: note)
@@ -778,6 +803,7 @@ public final class ThreadRunner {
         case .sessionExited(let error):
             let wasLive = sessions[threadID]?[provider] === session
             if wasLive {
+                setBackgroundWork([], threadID: threadID, provider: provider)
                 sessions[threadID]?[provider] = nil
                 liveSessionIDs[threadID]?[provider] = nil
                 declineOpenPrompts(threadID, provider: provider, since: nil)

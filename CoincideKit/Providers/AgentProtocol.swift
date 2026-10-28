@@ -259,6 +259,29 @@ public struct UsageLimits: Sendable, Hashable {
     }
 }
 
+/// Work an agent keeps running on its own, such as a background command or subagent, which can outlast the turn
+/// that started it.
+public struct BackgroundTask: Sendable, Hashable, Identifiable {
+    public enum Kind: Sendable, Hashable {
+        case agent
+        case command
+        case other
+    }
+
+    public var id: String
+    public var title: String
+    public var kind: Kind
+    /// The provider's id of the tool call that started it, when known.
+    public var toolCallID: String?
+
+    public nonisolated init(id: String, title: String, kind: Kind, toolCallID: String? = nil) {
+        self.id = id
+        self.title = title
+        self.kind = kind
+        self.toolCallID = toolCallID
+    }
+}
+
 /// What a session reports while it runs. Item ids are the provider's; Coincide maps them to
 /// transcript items. A delta for an id that has not been seen yet starts a new item.
 public enum AgentEvent: Sendable, Hashable {
@@ -297,6 +320,8 @@ public enum AgentEvent: Sendable, Hashable {
     /// The provider discovered (or refreshed) its model list while running.
     case modelsDiscovered([ModelOption])
     case notice(String)
+    /// Everything the agent now runs in the background; replaces the previous report.
+    case backgroundWork([BackgroundTask])
     /// The provider started a turn on its own, without a prompt from Coincide: for example Claude Code
     /// answering a finished background task, or an extension waking the agent. The thread shows as
     /// running until the provider ends the turn with `.turnCompleted`, and Stop calls `interrupt()`.
