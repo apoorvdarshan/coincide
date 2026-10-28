@@ -33,6 +33,12 @@ struct ComposerTriggerTests {
         #expect(detect(text) == nil)
     }
 
+    @Test func aDollarWordAsksForSkillsButAnAmountDoesNot() {
+        #expect(detect("$") == ComposerTrigger(kind: .skill, query: "", range: NSRange(location: 0, length: 1)))
+        #expect(detect("use $rev") == ComposerTrigger(kind: .skill, query: "rev", range: NSRange(location: 4, length: 4)))
+        #expect(detect("costs $20") == nil)
+    }
+
     @Test func anAtWordMentionsAFile() {
         #expect(detect("@") == ComposerTrigger(kind: .path, query: "", range: NSRange(location: 0, length: 1)))
         #expect(detect("see @src/ma") == ComposerTrigger(kind: .path, query: "src/ma", range: NSRange(location: 4, length: 7)))
@@ -59,9 +65,9 @@ struct ComposerTriggerTests {
         #expect(ComposerTrigger.mention("@scope/package.json") == "@@scope/package.json")
     }
 
-    /// `$` starts no completion: `$` words and amounts stay plain text.
-    @Test(arguments: ["$", "use $review", "costs $1,200.50"])
-    func aDollarWordIsPlainText(text: String) {
+    /// Amounts stay plain text; `$` words ask for skills (`aDollarWordAsksForSkillsButAnAmountDoesNot`).
+    @Test(arguments: ["costs $1,200.50", "$5"])
+    func anAmountIsPlainText(text: String) {
         #expect(detect(text) == nil)
     }
 }

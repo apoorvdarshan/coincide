@@ -29,6 +29,9 @@ final class CodexSession: AgentSession {
     private var requestSerial = 0
     private var modelsRequested = false
     private var rateLimitsRequested = false
+    private var skillsRequested = false
+    /// The skills Codex offers in the thread's folder, by name, with their files.
+    private var skills: [String: String] = [:]
 
     private struct Turn {
         let token = UUID()
@@ -104,7 +107,8 @@ final class CodexSession: AgentSession {
             var input = input
             if replacedThreads != replaced { input.text = input.prompt(forNewSession: true) }
             let params = CodexProtocol.turnStartParams(
-                threadID: threadID, cwd: launch.workingDirectory.path, input: input, fallbackModel: threadModel)
+                threadID: threadID, cwd: launch.workingDirectory.path, input: input, fallbackModel: threadModel,
+                skills: skills)
             let result = try await connection.request("turn/start", params, timeout: .seconds(120))
             // Stopped or lost while waiting: the turn has already been reported.
             guard turn?.token == current.token else { return }
@@ -151,7 +155,7 @@ final class CodexSession: AgentSession {
         }
         let params: JSONValue = [
             "threadId": .string(threadID), "expectedTurnId": .string(turnID),
-            "input": CodexProtocol.userInput(text: input.text, imagePaths: input.imagePaths),
+            "input": CodexProtocol.userInput(text: input.text, imagePaths: input.imagePaths, skills: skills),
         ]
         _ = try await connection.request("turn/steer", params, timeout: .seconds(30))
     }
@@ -270,6 +274,22 @@ final class CodexSession: AgentSession {
         if let threadModel { emit(.modelResolved(threadModel)) }
         reportModels(on: connection)
         reportRateLimits(on: connection)
+        reportSkills(on: connection)
+    }
+
+    /// Lists the skills Codex offers in the thread's folder once per session, for the composer's `$` picker.
+    private func reportSkills(on connection: CodexConnection) {
+        guard !skillsRequested else { return }
+        skillsRequested = true
+        let cwd = launch.workingDirectory.path
+        Task { [weak self] in
+            guard let result = try? await connection.request("skills/list", ["cwds": [.string(cwd)]], timeout: .seconds(20))
+            else { return }
+            let skills = CodexProtocol.skills(fromList: result, cwd: cwd)
+            guard let self else { return }
+            self.skills = Dictionary(skills.compactMap { skill in skill.path.map { (skill.name, $0) } }) { first, _ in first }
+            emit(.commandsDiscovered(skills))
+        }
     }
 
     /// Reads the plan's usage windows once per session, so the composer's meter is current before the first turn;

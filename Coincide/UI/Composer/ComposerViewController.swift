@@ -1023,12 +1023,19 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         }
         switch trigger.kind {
         case .command:
-            let commands = ComposerCommand.matching(trigger.query, in: availableCommands)
-            if commands.isEmpty {
+            let commands = ComposerCommand.matching(trigger.query, in: availableCommands).map { ComposerSuggestion.command($0) }
+            let items = commands + agentCommands(matching: trigger.query, token: "/")
+            if items.isEmpty {
                 suggestions.hide()
             } else {
-                suggestions.show(
-                    commands.map { .command($0) }, emptyText: nil, listLabel: String(localized: "Commands"), above: surface)
+                suggestions.show(items, emptyText: nil, listLabel: String(localized: "Commands"), above: surface)
+            }
+        case .skill:
+            let items = agentCommands(matching: trigger.query, token: "$", skillsOnly: true)
+            if items.isEmpty {
+                suggestions.hide()
+            } else {
+                suggestions.show(items, emptyText: nil, listLabel: String(localized: "Skills"), above: surface)
             }
         case .path:
             guard let root = threadID.flatMap({ store.workingDirectory(for: $0) }) else {
@@ -1065,6 +1072,20 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             self.trigger = nil
             suggestions.hide()
             perform(command)
+        case .agentCommand(let command, _, let token):
+            replace(trigger.range, with: token + command.name + " ")
+        }
+    }
+
+    /// The selected agent's own commands (or with `skillsOnly`, its skills) matching `query`, as completions written
+    /// with `token`.
+    private func agentCommands(matching query: String, token: String, skillsOnly: Bool = false) -> [ComposerSuggestion] {
+        guard let threadID, let provider = thread?.selection.provider else { return [] }
+        let offered = runner.commands(threadID, provider: provider).filter {
+            skillsOnly ? $0.kind == .skill : $0.isSlashCommand
+        }
+        return ProviderCommand.matching(query, in: offered).prefix(200).map {
+            .agentCommand($0, provider: provider, token: token)
         }
     }
 

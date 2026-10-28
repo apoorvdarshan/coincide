@@ -1,15 +1,17 @@
 import CoincideKit
 import Foundation
 
-/// The word before the caret when it asks for completions: `@path` or `/command`.
+/// The word before the caret when it asks for completions: `@path`, `/command` or `$skill`.
 nonisolated struct ComposerTrigger: Equatable, Sendable {
     enum Kind: Sendable {
         case path
         case command
+        /// The agent's skills (T3 Code's `$` picker).
+        case skill
     }
 
     var kind: Kind
-    /// What follows the `@` or `/`.
+    /// What follows the `@`, `/` or `$`.
     var query: String
     /// UTF-16 range of the whole word, `@` or `/` included.
     var range: NSRange
@@ -32,6 +34,9 @@ nonisolated struct ComposerTrigger: Equatable, Sendable {
             while end < string.length, !isWhitespace(string.character(at: end)) { end += 1 }
             let word = string.substring(with: NSRange(location: start + 1, length: end - start - 1))
             return word.contains("/") ? nil : ComposerTrigger(kind: .command, query: query, range: range)
+        case 0x24:  // $
+            // An amount such as $20 is not a skill.
+            return query.first?.isNumber == true ? nil : ComposerTrigger(kind: .skill, query: query, range: range)
         default:
             return nil
         }
@@ -129,4 +134,6 @@ nonisolated enum ComposerCommand: Hashable, Sendable {
 nonisolated enum ComposerSuggestion: Equatable, Sendable {
     case file(ComposerFileEntry)
     case command(ComposerCommand)
+    /// One of the agent's own commands or skills, written as `token` (`/` or `$`) plus its name.
+    case agentCommand(ProviderCommand, provider: ProviderKind, token: String)
 }

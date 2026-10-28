@@ -259,6 +259,58 @@ public struct UsageLimits: Sendable, Hashable {
     }
 }
 
+/// Something the user can run in an agent: a slash command such as `/compact` or one they added, or a skill.
+public struct ProviderCommand: Sendable, Hashable, Identifiable {
+    public enum Kind: Sendable, Hashable {
+        case command
+        /// Offered under `$` as well as `/`. Claude Code runs skills and custom commands alike as `/name`.
+        case skill
+    }
+
+    public var name: String
+    public var description: String?
+    /// What the command takes after its name, such as `[file]`.
+    public var argumentHint: String?
+    public var kind: Kind
+    /// Part of the agent itself, rather than added by the user, a project or a plugin.
+    public var isBuiltIn: Bool
+    /// The skill's file, which Codex takes along with the name.
+    public var path: String?
+    /// The agent runs it as `/name`. Codex's skills run only as `$name`.
+    public var isSlashCommand: Bool
+
+    public var id: String { name }
+
+    public nonisolated init(
+        name: String, description: String? = nil, argumentHint: String? = nil, kind: Kind = .command, isBuiltIn: Bool = false,
+        path: String? = nil, isSlashCommand: Bool = true
+    ) {
+        self.name = name
+        self.description = description
+        self.argumentHint = argumentHint
+        self.kind = kind
+        self.isBuiltIn = isBuiltIn
+        self.path = path
+        self.isSlashCommand = isSlashCommand
+    }
+
+    /// Commands matching a query, best first: name, name prefix, name containing it, then description.
+    public nonisolated static func matching(_ query: String, in commands: [ProviderCommand]) -> [ProviderCommand] {
+        let query = query.lowercased()
+        guard !query.isEmpty else { return commands }
+        return commands.enumerated().compactMap { index, command -> (Int, Int, ProviderCommand)? in
+            let name = command.name.lowercased()
+            if name == query { return (0, index, command) }
+            if name.hasPrefix(query) || name.split(separator: ":").last?.hasPrefix(query) == true { return (1, index, command) }
+            if name.contains(query) { return (2, index, command) }
+            if command.description?.lowercased().contains(query) == true { return (3, index, command) }
+            return nil
+        }
+        .sorted { ($0.0, $0.1) < ($1.0, $1.1) }
+        .map(\.2)
+    }
+}
+
 /// Work an agent keeps running on its own, such as a background command or subagent, which can outlast the turn
 /// that started it.
 public struct BackgroundTask: Sendable, Hashable, Identifiable {
@@ -322,6 +374,8 @@ public enum AgentEvent: Sendable, Hashable {
     case notice(String)
     /// Everything the agent now runs in the background; replaces the previous report.
     case backgroundWork([BackgroundTask])
+    /// The commands and skills the agent offers in this session's folder; replaces the previous report.
+    case commandsDiscovered([ProviderCommand])
     /// The provider started a turn on its own, without a prompt from Coincide: for example Claude Code
     /// answering a finished background task, or an extension waking the agent. The thread shows as
     /// running until the provider ends the turn with `.turnCompleted`, and Stop calls `interrupt()`.
@@ -400,6 +454,8 @@ public struct ProviderStatus: Sendable, Hashable {
     public var message: String?
     /// The subscription's usage windows, when the check could read them.
     public var usageLimits: UsageLimits?
+    /// The commands and skills the check found, from the user's home folder. Sessions report each folder's own.
+    public var commands: [ProviderCommand] = []
 
     public nonisolated init(
         state: State, version: String? = nil, executable: URL? = nil, account: String? = nil, message: String? = nil,

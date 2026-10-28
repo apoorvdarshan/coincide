@@ -45,6 +45,34 @@ struct CodexProtocolTests {
         #expect(params.at("capabilities.optOutNotificationMethods")?.array == ["turn/diff/updated"])
     }
 
+    @Test func skillsComeFromTheFolderAskedAboutAndRideAlongAsInputItems() {
+        let list: JSONValue = [
+            "data": [
+                [
+                    "cwd": "/other",
+                    "skills": [["name": "elsewhere", "path": "/o/SKILL.md", "enabled": true]],
+                ],
+                [
+                    "cwd": "/work",
+                    "skills": [
+                        ["name": "deploy", "path": "/w/deploy/SKILL.md", "enabled": true, "description": "Long", "shortDescription": "Ship it"],
+                        ["name": "off", "path": "/w/off/SKILL.md", "enabled": false],
+                    ],
+                ],
+            ]
+        ]
+        let skills = CodexProtocol.skills(fromList: list, cwd: "/work")
+        #expect(
+            skills == [
+                ProviderCommand(
+                    name: "deploy", description: "Ship it", kind: .skill, path: "/w/deploy/SKILL.md", isSlashCommand: false)
+            ])
+        let input = CodexProtocol.userInput(
+            text: "run $deploy and $deploy, not $20 or $missing", imagePaths: [], skills: ["deploy": "/w/deploy/SKILL.md"])
+        #expect(input.array?.count == 2)
+        #expect(input.array?.last == ["type": "skill", "name": "deploy", "path": "/w/deploy/SKILL.md"])
+    }
+
     @Test func threadStartAndResumeCarryWorkingDirectoryModelAndConfig() {
         let start = CodexProtocol.threadStartParams(cwd: "/work", model: "gpt-6-luna")
         #expect(start["cwd"] == "/work")
@@ -1571,7 +1599,7 @@ struct CodexSessionTests {
         try await session.send(input())
         #expect(transport.requests("thread/resume").first?.at("params.threadId") == "T")
         let methods = transport.sent.compactMap { $0["method"]?.string }.filter {
-            $0 != "model/list" && $0 != "account/rateLimits/read"
+            $0 != "model/list" && $0 != "account/rateLimits/read" && $0 != "skills/list"
         }
         #expect(methods.suffix(2) == ["thread/resume", "turn/start"])
     }

@@ -45,12 +45,14 @@ enum CodexProtocol {
     }
 
     /// `turn/start` carries the model, effort, permissions and mode, so every turn applies the latest selection.
-    static func turnStartParams(threadID: String, cwd: String, input: AgentTurnInput, fallbackModel: String?) -> JSONValue {
+    static func turnStartParams(
+        threadID: String, cwd: String, input: AgentTurnInput, fallbackModel: String?, skills: [String: String] = [:]
+    ) -> JSONValue {
         let model = modelID(input.selection) ?? fallbackModel
         let effort = reasoningEffort(input.selection)
         var params: [String: JSONValue] = [
             "threadId": .string(threadID),
-            "input": userInput(text: input.text, imagePaths: input.imagePaths),
+            "input": userInput(text: input.text, imagePaths: input.imagePaths, skills: skills),
             "cwd": .string(cwd),
             // Catalogs can default summaries to "none"; ask for them on every turn.
             "summary": "detailed",
@@ -73,11 +75,48 @@ enum CodexProtocol {
         return .object(params)
     }
 
-    static func userInput(text: String, imagePaths: [String]) -> JSONValue {
+    /// The text and images, plus a skill item for each `$name` in the text that names one of `skills` (name to
+    /// path), as Codex's own composer sends them.
+    static func userInput(text: String, imagePaths: [String], skills: [String: String] = [:]) -> JSONValue {
         var items: [JSONValue] = []
         if !text.isEmpty { items.append(["type": "text", "text": .string(text), "text_elements": []]) }
         items += imagePaths.map { ["type": "localImage", "path": .string($0)] }
+        for name in mentionedSkills(in: text, known: Set(skills.keys)) {
+            if let path = skills[name] { items.append(["type": "skill", "name": .string(name), "path": .string(path)]) }
+        }
         return .array(items)
+    }
+
+    /// The skills a message names as `$name`, each once, in order.
+    static func mentionedSkills(in text: String, known: Set<String>) -> [String] {
+        guard !known.isEmpty, text.contains("$") else { return [] }
+        let string = text as NSString
+        var names: [String] = []
+        for match in skillMention.matches(in: text, range: NSRange(location: 0, length: string.length)) {
+            let name = string.substring(with: match.range(at: 2))
+            if known.contains(name), !names.contains(name) { names.append(name) }
+        }
+        return names
+    }
+
+    private static let skillMention = try! NSRegularExpression(
+        pattern: #"(^|\s)\$(?=[A-Za-z0-9:_-]*[A-Za-z])([A-Za-z0-9][A-Za-z0-9:_-]*)(?=\s|$)"#)
+
+    /// The enabled skills from `skills/list`, for the folder asked about.
+    static func skills(fromList result: JSONValue, cwd: String) -> [ProviderCommand] {
+        let entries = result["data"]?.array ?? []
+        let entry = entries.first { $0["cwd"]?.string == cwd }
+        let skills = entry.map { $0["skills"]?.array ?? [] } ?? entries.flatMap { $0["skills"]?.array ?? [] }
+        var seen: Set<String> = []
+        return skills.compactMap { skill in
+            guard skill["enabled"]?.bool != false, let name = skill["name"]?.string, !name.isEmpty,
+                seen.insert(name).inserted
+            else { return nil }
+            let description =
+                skill["shortDescription"]?.string ?? skill.at("interface.shortDescription")?.string ?? skill["description"]?.string
+            return ProviderCommand(
+                name: name, description: description, kind: .skill, path: skill["path"]?.string, isSlashCommand: false)
+        }
     }
 
     /// Approval mode asks before anything that is not a known-safe read; full access never asks.

@@ -1,7 +1,7 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// The completion list for `@` mentions and `/` commands. It floats above the composer in a borderless
+/// The completion list for `@` mentions, `/` commands and `$` skills. It floats above the composer in a borderless
 /// child window, so the text view keeps keyboard focus while the composer moves the selection.
 final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     var onChoose: ((ComposerSuggestion) -> Void)?
@@ -165,6 +165,11 @@ final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableVie
                     NSImage(systemSymbolName: command.symbolName, accessibilityDescription: nil)
                 }
             cell.show(icon: icon, title: command.title, detail: command.summary, tint: .secondaryLabelColor)
+        case .agentCommand(let command, let provider, let token):
+            let hint = command.argumentHint.map { " " + $0 } ?? ""
+            cell.show(
+                icon: Theme.logo(for: provider, size: 14), title: token + command.name + hint,
+                detail: command.description ?? "", tint: nil)
         }
         return cell
     }
@@ -180,6 +185,8 @@ final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableVie
             switch item {
             case .file(let entry): entry.path
             case .command(let command): "\(command.title), \(command.summary)"
+            case .agentCommand(let command, _, let token): [token + command.name, command.description].compactMap(\.self)
+                .joined(separator: ", ")
             }
         NSAccessibility.post(
             element: tableView, notification: .announcementRequested,

@@ -839,7 +839,11 @@ public final class ACPSession: AgentSession {
             if let usage = usage?["totalTokens"]?.acpInt { contextTokens = usage }
         case .notice(let title, let description):
             showNotice(title, description)
-        case .userMessageChunk, .availableCommands, .sessionInfo, .other:
+        case .availableCommands(let commands):
+            emit(
+                .commandsDiscovered(
+                    commands.map { ProviderCommand(name: $0.name, description: $0.description.isEmpty ? nil : $0.description) }))
+        case .userMessageChunk, .sessionInfo, .other:
             break
         default:
             if flavor.isBackgroundUpdate(meta: notification.meta) {
