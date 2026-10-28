@@ -89,6 +89,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var followUpBehavior: FollowUpBehavior
     public var showReasoning: Bool
     public var confirmBeforeDeletingThreads: Bool
+    /// Have the thread's agent name a new thread from its first message (T3 Code's generated titles).
+    public var generatesThreadTitles: Bool
     /// Provider sessions idle this long are shut down to free memory; their ids are kept for resume.
     public var idleSessionTimeoutMinutes: Int
     /// Post a system notification when a turn finishes or needs approval while Coincide is in the background.
@@ -120,6 +122,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         followUpBehavior = .steer
         showReasoning = true
         confirmBeforeDeletingThreads = true
+        generatesThreadTitles = true
         idleSessionTimeoutMinutes = 30
         notifyWhenInBackground = true
         checkpointsEnabled = true
@@ -151,6 +154,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         followUpBehavior = value(.followUpBehavior, defaults.followUpBehavior)
         showReasoning = value(.showReasoning, defaults.showReasoning)
         confirmBeforeDeletingThreads = value(.confirmBeforeDeletingThreads, defaults.confirmBeforeDeletingThreads)
+        generatesThreadTitles = value(.generatesThreadTitles, defaults.generatesThreadTitles)
         idleSessionTimeoutMinutes = value(.idleSessionTimeoutMinutes, defaults.idleSessionTimeoutMinutes)
         notifyWhenInBackground = value(.notifyWhenInBackground, defaults.notifyWhenInBackground)
         checkpointsEnabled = value(.checkpointsEnabled, defaults.checkpointsEnabled)

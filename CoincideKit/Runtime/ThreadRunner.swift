@@ -172,12 +172,6 @@ public final class ThreadRunner {
         sessionCommands[threadID]?[provider] ?? registry.commands(for: provider)
     }
 
-    /// The transcript item of a provider's tool call, such as the one that started a background task.
-    public func itemID(forToolCall id: String, in threadID: UUID) -> UUID? {
-        guard let item = itemMaps[threadID]?[key(.tool, id)], store.item(item, in: threadID) != nil else { return nil }
-        return item
-    }
-
     private func setBackgroundWork(_ tasks: [BackgroundTask], threadID: UUID, provider: ProviderKind) {
         guard (backgroundWork[threadID]?[provider] ?? []) != tasks else { return }
         backgroundWork[threadID, default: [:]][provider] = tasks.isEmpty ? nil : tasks
@@ -231,7 +225,15 @@ public final class ThreadRunner {
         let provider = selection.provider
 
         if !thread.hasUserMessages {
-            store.updateThread(threadID) { $0.title = Self.title(from: trimmed) }
+            let provisional = Self.title(from: trimmed)
+            store.updateThread(threadID) { $0.title = provisional }
+            if store.settings.generatesThreadTitles, !trimmed.isEmpty, let cwd = store.workingDirectory(for: threadID) {
+                Task { [store, registry] in
+                    await ThreadTitles.generate(
+                        threadID: threadID, message: trimmed, provisional: provisional, selection: selection, cwd: cwd,
+                        store: store, registry: registry)
+                }
+            }
         }
         let userItem = TranscriptItem(
             kind: .user, text: trimmed, provider: provider, modelID: selection.modelID,

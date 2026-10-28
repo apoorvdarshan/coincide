@@ -546,6 +546,7 @@ final class TranscriptReasoningCell: TranscriptCell {
 // MARK: - Live status
 
 /// The bottom line while a turn runs and nothing else shows activity: "Thinking…", beside the rail's breathing dot.
+/// Between turns it says what an agent still runs in the background.
 final class TranscriptLiveCell: TranscriptCell {
     override var railNodeY: CGFloat { TranscriptMetrics.workRowHeight / 2 }
 
@@ -570,7 +571,13 @@ final class TranscriptLiveCell: TranscriptCell {
         switch status {
         case .starting(let provider): label.stringValue = String(localized: "Starting \(provider.displayName)…")
         case .thinking: label.stringValue = String(localized: "Thinking…")
+        case .background(let provider, let titles):
+            label.stringValue =
+                titles.count == 1
+                ? String(localized: "\(provider.displayName) is working in the background: \(titles[0])")
+                : String(localized: "\(provider.displayName) is running \(titles.count) tasks in the background")
         }
+        if case .background(_, let titles) = status { toolTip = titles.joined(separator: "\n") } else { toolTip = nil }
         setAccessibilityLabel(label.stringValue)
         TranscriptShimmer.set(true, on: label)
     }
@@ -584,7 +591,8 @@ final class TranscriptLiveCell: TranscriptCell {
         let column = TranscriptMetrics.column(width: bounds.width)
         let size = label.intrinsicContentSize
         label.frame = NSRect(
-            x: column.x + 4, y: ((TranscriptMetrics.workRowHeight - size.height) / 2).rounded(), width: ceil(size.width) + 2, height: size.height)
+            x: column.x + 4, y: ((TranscriptMetrics.workRowHeight - size.height) / 2).rounded(),
+            width: min(ceil(size.width) + 2, column.width - 8), height: size.height)
         TranscriptShimmer.layout(label)
     }
 }

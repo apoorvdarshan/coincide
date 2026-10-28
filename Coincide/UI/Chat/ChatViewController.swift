@@ -120,7 +120,6 @@ final class ChatViewController: NSViewController {
         let findBarWidth = findBar.widthAnchor.constraint(equalToConstant: TranscriptFindBar.width)
         findBarWidth.priority = .defaultHigh
         let composerView = composer.view
-        composer.onRevealItem = { [weak self] itemID in self?.revealItem(itemID) }
         composerView.translatesAutoresizingMaskIntoConstraints = false
         composerContainer.addSubview(composerView)
         composerAtBottom = composerContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor)
@@ -293,6 +292,10 @@ final class ChatViewController: NSViewController {
         builder.turnStartedAt = turn?.startedAt
         builder.isStarting = runner.isStarting(thread.id)
         builder.runningProvider = turn?.provider ?? thread.selection.provider
+        let background = runner.backgroundTasks(thread.id)
+        if let first = background.first {
+            builder.backgroundWork = (first.provider, background.map(\.task.title))
+        }
         builder.showReasoning = store.settings.showReasoning
         builder.expanded = expanded[thread.id] ?? []
         builder.agentTurnIDs = AgentTurns.shared.anchors(in: thread.id)
@@ -680,18 +683,6 @@ final class ChatViewController: NSViewController {
 
     /// Brings the current match into view: opens the turn, group of tool calls and row folding it away,
     /// scrolls to it (inside a tool call's output too) and points it out.
-    /// Opens the turn and tool group that fold an item away and scrolls to it, as find does for its match.
-    func revealItem(_ itemID: UUID) {
-        guard let threadID = displayedThreadID, let thread = store.thread(threadID) else { return }
-        let open = rowsOpened(toShow: itemID, in: thread)
-        if open != (expanded[threadID] ?? []) {
-            expanded[threadID] = open
-            rebuild()
-        }
-        guard let index = list.index(of: .item(itemID)) else { return }
-        list.reveal(row: index)
-    }
-
     /// The open rows with whatever folds `itemID` away opened too: its turn's work and its group of tool calls.
     private func rowsOpened(toShow itemID: UUID, in thread: ChatThread) -> Set<TranscriptRowID> {
         let rowID = TranscriptRowID.item(itemID)
