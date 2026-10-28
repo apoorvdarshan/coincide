@@ -72,6 +72,8 @@ final class ChatViewController: NSViewController {
     private var pendingFind: DispatchWorkItem?
     private var findRefreshScheduled = false
     private var appliedFontSize = 0.0
+    private var appliedReplyTypeface = ReplyTypeface.newYork
+    private var rails: [TranscriptRowID: TranscriptRail] = [:]
     private var appliedShowReasoning = true
     private var previewURLs: [URL] = []
     private var previewIndex = 0
@@ -102,6 +104,7 @@ final class ChatViewController: NSViewController {
         findBar.isHidden = true
 
         addChild(composer)
+        welcomeView.onChooseAgent = { [weak self] kind in self?.switchAgent(to: kind) }
         for subview in [list.scrollView, welcomeView, composerContainer, jumpButton, findBar, noThreadView] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(subview)
@@ -149,6 +152,7 @@ final class ChatViewController: NSViewController {
         jumpButton.isHidden = true
         jumpButton.alphaValue = 0
         appliedFontSize = store.settings.fontSize
+        appliedReplyTypeface = store.settings.replyTypeface
         appliedShowReasoning = store.settings.showReasoning
         observation = store.observe { [weak self] change in self?.handle(change) }
         loadThread()
@@ -249,7 +253,11 @@ final class ChatViewController: NSViewController {
         }
         let rows = builder(for: thread).build(reusing: &settledRows, changed: changedSinceRebuild)
         changedSinceRebuild.removeAll()
+        let items = itemsByID
+        rails = TranscriptRail.rails(
+            for: rows, provider: { items[$0]?.provider }, runningProvider: runner.turn(thread.id)?.provider ?? thread.selection.provider)
         list.update(rows, reload: reload, keeping: anchor)
+        list.refreshRails()
     }
 
     /// Marks an item's rows as changed, for cached heights and the rows kept for finished turns.
@@ -407,8 +415,12 @@ final class ChatViewController: NSViewController {
 
     private func settingsChanged() {
         let settings = store.settings
-        guard settings.fontSize != appliedFontSize || settings.showReasoning != appliedShowReasoning else { return }
+        guard
+            settings.fontSize != appliedFontSize || settings.showReasoning != appliedShowReasoning
+                || settings.replyTypeface != appliedReplyTypeface
+        else { return }
         appliedFontSize = settings.fontSize
+        appliedReplyTypeface = settings.replyTypeface
         appliedShowReasoning = settings.showReasoning
         textCache.removeAll()
         list.invalidateHeights()
@@ -965,9 +977,17 @@ extension ChatViewController: TranscriptHost {
     }
 
     func modelLabel(for meta: AssistantMeta) -> String {
-        guard let modelID = meta.modelID, !modelID.isEmpty, modelID != "default" else { return meta.provider.displayName }
-        let model = registry.displayName(for: ModelSelection(provider: meta.provider, modelID: modelID))
+        guard let model = modelName(for: meta) else { return meta.provider.displayName }
         return "\(meta.provider.displayName) · \(model)"
+    }
+
+    func modelName(for meta: AssistantMeta) -> String? {
+        guard let modelID = meta.modelID, !modelID.isEmpty, modelID != "default" else { return nil }
+        return registry.displayName(for: ModelSelection(provider: meta.provider, modelID: modelID))
+    }
+
+    func rail(for id: TranscriptRowID) -> TranscriptRail? {
+        rails[id]
     }
 
     func findHighlights(for itemID: UUID) -> TranscriptFindHighlights? {

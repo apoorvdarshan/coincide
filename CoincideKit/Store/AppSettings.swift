@@ -14,6 +14,20 @@ public enum AppearanceMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// The typeface of agents' replies: Apple's New York serif, which sets them apart from the interface and the
+/// user's own messages, or the system's San Francisco.
+public enum ReplyTypeface: String, Codable, CaseIterable, Sendable {
+    case newYork
+    case system
+
+    public nonisolated var displayName: String {
+        switch self {
+        case .newYork: String(localized: "New York")
+        case .system: String(localized: "San Francisco")
+        }
+    }
+}
+
 /// What sending does while the agent works, as T3 Code's `followUpBehavior`: steer the message into the running turn,
 /// or queue it for after the turn. The alternate send does the other for one message.
 public enum FollowUpBehavior: String, Codable, CaseIterable, Sendable {
@@ -85,6 +99,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var worktreeBranchPrefix: String
     /// Font size for the transcript and composer.
     public var fontSize: Double
+    public var replyTypeface: ReplyTypeface
     /// Menu shortcuts the user changed, by `KeyCommand` id, written like T3 Code's keybindings (`mod+shift+k`).
     /// An empty string removes the command's shortcut. Commands not listed use their defaults.
     public var shortcutOverrides: [String: String]
@@ -106,6 +121,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         checkpointsEnabled = true
         worktreeBranchPrefix = "coincide/"
         fontSize = 13
+        replyTypeface = .newYork
         shortcutOverrides = [:]
         cursorKeychainUsageEnabled = false
     }
@@ -134,6 +150,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         checkpointsEnabled = value(.checkpointsEnabled, defaults.checkpointsEnabled)
         worktreeBranchPrefix = value(.worktreeBranchPrefix, defaults.worktreeBranchPrefix)
         fontSize = value(.fontSize, defaults.fontSize)
+        replyTypeface = value(.replyTypeface, defaults.replyTypeface)
         // A value that is not text stays as written, so the Keyboard pane can point it out.
         shortcutOverrides = (container.lenient([String: JSONValue].self, forKey: .shortcutOverrides) ?? [:])
             .compactMapValues { $0.isNull ? nil : ($0.string ?? $0.displayText) }

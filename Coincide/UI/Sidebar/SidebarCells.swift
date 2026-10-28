@@ -426,9 +426,9 @@ final class ThreadCell: HoverCellView {
         guard let model else { return }
         let emphasized = backgroundStyle == .emphasized
         let selectedText = NSColor.alternateSelectedControlTextColor
-        var symbol = model.isArchived ? "archivebox" : model.provider.symbolName
-        // Provider colors stay as they are: an alpha variant of a system color stops following the appearance.
-        var tint = model.isArchived ? NSColor.tertiaryLabelColor : Theme.color(for: model.provider)
+        // The agent's logo, unless the thread is archived or waits for an approval.
+        var symbol: String? = model.isArchived ? "archivebox" : nil
+        var tint = model.isArchived ? NSColor.tertiaryLabelColor : NSColor.labelColor
         badge.isHidden = true
         switch model.status {
         case .approval(let count):
@@ -445,7 +445,7 @@ final class ThreadCell: HoverCellView {
             break
         }
         badge.isEmphasized = emphasized
-        icon.image = Theme.symbol(symbol, size: 12, weight: .medium)
+        icon.image = symbol.flatMap { Theme.symbol($0, size: 12, weight: .medium) } ?? Theme.logo(for: model.provider, size: 14)
         icon.setAccessibilityLabel(model.provider.displayName)
         icon.contentTintColor = emphasized ? selectedText : tint
         icon.isHidden = model.status.isRunning

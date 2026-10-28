@@ -7,11 +7,12 @@ import CoincideKit
 /// that folds the turn's tool calls, reasoning and interim replies. Below a message steered into the
 /// turn, "Continued for 20s" folds the work after it.
 final class TranscriptTurnHeaderCell: TranscriptCell {
+    override var railNodeY: CGFloat { Self.contentHeight / 2 }
+
     private static let contentHeight: CGFloat = 28
 
     private let label = NSTextField(labelWithString: "")
     private let chevron = NSImageView()
-    private let separator = NSBox()
     private var startedAt: Date?
     private var isToggle = false
     private var isHovered = false
@@ -19,8 +20,7 @@ final class TranscriptTurnHeaderCell: TranscriptCell {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         label.textColor = .secondaryLabelColor
-        separator.boxType = .separator
-        for view in [label, chevron, separator] as [NSView] { addSubview(view) }
+        for view in [label, chevron] as [NSView] { addSubview(view) }
         setAccessibilityElement(true)
     }
 
@@ -78,7 +78,6 @@ final class TranscriptTurnHeaderCell: TranscriptCell {
         label.frame = NSRect(
             x: column.x + 4, y: ((Self.contentHeight - size.height) / 2).rounded(), width: ceil(size.width) + 2, height: size.height)
         chevron.frame = NSRect(x: label.frame.maxX + 2, y: (Self.contentHeight - 12) / 2, width: 12, height: 12)
-        separator.frame = NSRect(x: column.x, y: Self.contentHeight + 2, width: column.width, height: 1)
     }
 
     private var toggleRect: NSRect {
@@ -125,6 +124,8 @@ final class TranscriptTurnHeaderCell: TranscriptCell {
 
 /// One tool call: category symbol, title, status and, when expanded, its input and output.
 final class TranscriptToolCell: TranscriptCell {
+    override var railNodeY: CGFloat { TranscriptMetrics.workRowHeight / 2 }
+
     private let header = TranscriptDisclosureHeader()
     private let panel = TranscriptDetailPanel()
     private var item: TranscriptItem?
@@ -371,6 +372,8 @@ enum TranscriptToolDetail {
 /// Consecutive tool calls folded into one line, "Ran 3 commands and read 2 files". While one of
 /// them runs, the line names it instead and shows a spinner.
 final class TranscriptGroupCell: TranscriptCell {
+    override var railNodeY: CGFloat { TranscriptMetrics.workRowHeight / 2 }
+
     private let header = TranscriptDisclosureHeader()
 
     override init(frame frameRect: NSRect) {
@@ -426,6 +429,8 @@ final class TranscriptGroupCell: TranscriptCell {
 
 /// The agent's reasoning: "Thought for 4s" with the first sentence, expanding to the full text.
 final class TranscriptReasoningCell: TranscriptCell {
+    override var railNodeY: CGFloat { TranscriptMetrics.workRowHeight / 2 }
+
     private static let maxTextHeight: CGFloat = 380
 
     private let header = TranscriptDisclosureHeader()
@@ -540,18 +545,15 @@ final class TranscriptReasoningCell: TranscriptCell {
 
 // MARK: - Live status
 
-/// The bottom line while a turn runs and nothing else shows activity: "Thinking…".
+/// The bottom line while a turn runs and nothing else shows activity: "Thinking…", beside the rail's breathing dot.
 final class TranscriptLiveCell: TranscriptCell {
-    private let spinner = NSProgressIndicator()
+    override var railNodeY: CGFloat { TranscriptMetrics.workRowHeight / 2 }
+
     private let label = NSTextField(labelWithString: "")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
         label.textColor = .secondaryLabelColor
-        addSubview(spinner)
         addSubview(label)
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
@@ -570,7 +572,6 @@ final class TranscriptLiveCell: TranscriptCell {
         case .thinking: label.stringValue = String(localized: "Thinking…")
         }
         setAccessibilityLabel(label.stringValue)
-        spinner.startAnimation(nil)
         TranscriptShimmer.set(true, on: label)
     }
 
@@ -581,10 +582,9 @@ final class TranscriptLiveCell: TranscriptCell {
     override func layout() {
         super.layout()
         let column = TranscriptMetrics.column(width: bounds.width)
-        spinner.frame = NSRect(x: column.x + 3, y: (TranscriptMetrics.workRowHeight - 14) / 2, width: 14, height: 14)
         let size = label.intrinsicContentSize
         label.frame = NSRect(
-            x: column.x + 26, y: ((TranscriptMetrics.workRowHeight - size.height) / 2).rounded(), width: ceil(size.width) + 2, height: size.height)
+            x: column.x + 4, y: ((TranscriptMetrics.workRowHeight - size.height) / 2).rounded(), width: ceil(size.width) + 2, height: size.height)
         TranscriptShimmer.layout(label)
     }
 }

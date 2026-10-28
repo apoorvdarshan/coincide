@@ -19,6 +19,15 @@ struct GeneralSettingsView: View {
                     .settingsRevealable(.appearance, highlighted: highlighted)
                     FontSizeRow(size: model.binding(\.fontSize))
                         .settingsRevealable(.fontSize, highlighted: highlighted)
+                    Picker(selection: model.binding(\.replyTypeface)) {
+                        ForEach(ReplyTypeface.allCases, id: \.self) { typeface in
+                            Text(typeface.displayName).tag(typeface)
+                        }
+                    } label: {
+                        Text("Reply font")
+                        Text("The typeface of agents’ replies in the conversation.")
+                    }
+                    .settingsRevealable(.replyTypeface, highlighted: highlighted)
                 }
 
                 Section("Chat") {
@@ -143,6 +152,7 @@ struct GeneralSettingsView: View {
         model.update { settings in
             settings.appearance = defaults.appearance
             settings.fontSize = defaults.fontSize
+            settings.replyTypeface = defaults.replyTypeface
             settings.sendOnReturn = defaults.sendOnReturn
             settings.followUpBehavior = defaults.followUpBehavior
             settings.showReasoning = defaults.showReasoning
@@ -298,15 +308,15 @@ private struct DefaultModelRows: View {
         let selection = model.settings.defaultSelection
         let current = model.defaultModel
         let groups = model.kinds.filter { model.isEnabled($0) && !(model.models[$0] ?? []).isEmpty }
-        // Each item carries its provider's symbol, so models with the same name stay distinguishable.
+        // Each item carries its agent's logo, so models with the same name stay distinguishable.
         Picker(selection: modelBinding) {
             if current == nil {
-                Label(selection.modelID, systemImage: selection.provider.symbolName).tag(selectionID)
+                Label(selection.modelID, image: Theme.logoName(for: selection.provider)).tag(selectionID)
             }
             ForEach(groups, id: \.self) { kind in
                 Section {
                     ForEach(model.models[kind] ?? []) { option in
-                        Label(option.displayName, systemImage: kind.symbolName).tag(option.id)
+                        Label(option.displayName, image: Theme.logoName(for: kind)).tag(option.id)
                     }
                 } header: {
                     Text(groupTitle(kind))

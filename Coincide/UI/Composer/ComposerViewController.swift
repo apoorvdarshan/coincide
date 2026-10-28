@@ -508,8 +508,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             footer.modelButton.configure(
                 title: String(localized: "Set Up a Provider"), symbolName: "exclamationmark.circle", chevron: true)
         } else {
-            footer.modelButton.configure(
-                title: title, symbolName: provider.symbolName, symbolTint: Theme.color(for: provider), chevron: true)
+            footer.modelButton.configure(title: title, agent: provider, chevron: true)
         }
         let keyBindings = KeyBindingsController.shared
         footer.modelButton.toolTip = keyBindings.toolTip(

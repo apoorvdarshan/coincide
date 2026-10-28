@@ -140,6 +140,13 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         scheduleRefine()
     }
 
+    /// Has the cells shown pick up their rails again, after rows came or went around them.
+    func refreshRails() {
+        tableView.enumerateAvailableRowViews { rowView, _ in
+            (rowView.view(atColumn: 0) as? TranscriptCell)?.refreshRail()
+        }
+    }
+
     /// Reconfigures the rows on screen, for state rows do not encode (such as whether a turn runs).
     func reconfigureVisibleCells() {
         guard let host else { return }

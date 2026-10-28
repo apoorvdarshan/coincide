@@ -54,6 +54,18 @@ final class ComposerControlButton: NSButton {
         updateTitle()
     }
 
+    /// Shows the agent's logo in place of a symbol. One-color logos take the title's color.
+    func configure(title: String, agent provider: ProviderKind, chevron: Bool) {
+        let name = "agent." + provider.rawValue
+        guard title != label || name != symbolName || symbolColor != nil || chevron != showsChevron else { return }
+        label = title
+        symbolName = name
+        symbolColor = nil
+        showsChevron = chevron
+        image = Theme.logo(for: provider, size: 13)
+        updateTitle()
+    }
+
     override var intrinsicContentSize: NSSize {
         NSSize(width: width(compact: isCompact), height: 26)
     }

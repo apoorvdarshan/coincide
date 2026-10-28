@@ -7,6 +7,11 @@ struct ChatMarkdownStyle: Hashable {
     var preservesLineBreaks = false
     /// Plans dim the tasks that are done.
     var dimsCompletedTasks = false
+    /// Agents' replies set their prose in New York; code, tables and markers stay in the system fonts.
+    var isSerif = false
+
+    /// Code blocks keep the size they have in the system font's text, since the serif is set a point larger.
+    var codeFontSize: CGFloat { isSerif ? fontSize - 2 : fontSize - 1 }
 }
 
 /// A rendered code block, so its cell can place a copy button over the block's header.
@@ -157,7 +162,8 @@ struct ChatMarkdownRenderer {
 
     private var blockSpacing: CGFloat { (style.fontSize * 0.7).rounded() }
     private var itemSpacing: CGFloat { (style.fontSize * 0.3).rounded() }
-    private var lineSpacing: CGFloat { (style.fontSize * 0.25).rounded() }
+    /// Serif text gets more leading, as it reads better looser.
+    private var lineSpacing: CGFloat { (style.fontSize * (style.isSerif ? 0.38 : 0.25)).rounded() }
 
     /// Space between a block and the one before it; headings sit close to what follows them.
     private static func spacing(after previous: ChatMarkdown.Block, isTight: Bool, style: ChatMarkdownStyle) -> CGFloat {
@@ -190,13 +196,13 @@ struct ChatMarkdownRenderer {
     private mutating func block(_ block: ChatMarkdown.Block, _ context: Context) {
         switch block {
         case .paragraph(let inlines):
-            paragraph(inlines, context, font: ChatFonts.body(style.fontSize))
+            paragraph(inlines, context, font: ChatFonts.body(style.fontSize, serif: style.isSerif))
         case .heading(let level, let inlines):
             var heading = context
             if hasContent { heading.spacingBefore = max(context.spacingBefore, (style.fontSize * 1.1).rounded()) }
             let color = level >= 6 ? NSColor.secondaryLabelColor : context.color
             heading.color = color
-            paragraph(inlines, heading, font: ChatFonts.body(headingSize(level), weight: .semibold))
+            paragraph(inlines, heading, font: ChatFonts.body(headingSize(level), weight: .semibold, serif: style.isSerif))
         case .code(let language, let text):
             code(text, language: language, context)
         case .quote(let children):
@@ -262,7 +268,7 @@ struct ChatMarkdownRenderer {
         paragraph.textBlocks = context.textBlocks + [block]
         paragraph.lineBreakMode = .byCharWrapping
         paragraph.lineSpacing = 1
-        let font = ChatFonts.mono(style.fontSize - 1)
+        let font = ChatFonts.mono(style.codeFontSize)
         let start = output.length
         let body = text.isEmpty ? " " : text
         output.append(
@@ -274,7 +280,7 @@ struct ChatMarkdownRenderer {
     }
 
     private mutating func list(_ list: ChatMarkdown.List, _ context: Context) {
-        let font = ChatFonts.body(style.fontSize)
+        let font = ChatFonts.body(style.fontSize, serif: style.isSerif)
         let markerFont = NSFont.monospacedDigitSystemFont(ofSize: style.fontSize, weight: .regular)
         let lastNumber = list.start + max(0, list.items.count - 1)
         let widestMarker = list.isOrdered ? ("\(lastNumber)." as NSString).size(withAttributes: [.font: markerFont]).width : 0
@@ -405,7 +411,7 @@ struct ChatMarkdownRenderer {
                 if let link { attributes[.link] = link }
                 output.append(NSAttributedString(string: text, attributes: attributes))
             case .code(let code):
-                let codeFont = ChatFonts.mono((base.pointSize * 0.9).rounded())
+                let codeFont = ChatFonts.mono((base.pointSize * (ChatFonts.isSerif(base) ? 0.86 : 0.9)).rounded())
                 // Kerning on the neighbours makes room for the rounded background.
                 let before = output.length
                 if before > 0, output.attribute(.chatInlineCode, at: before - 1, effectiveRange: nil) == nil {
@@ -456,18 +462,24 @@ enum ChatFonts {
         var size: CGFloat
         var weight: CGFloat
         var mono: Bool
+        var serif = false
     }
 
     private static var cache: [Key: NSFont] = [:]
     private static var styledCache: [String: NSFont] = [:]
+    private static var serifNames: Set<String> = []
 
-    static func body(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
-        let key = Key(size: size, weight: weight.rawValue, mono: false)
+    static func body(_ size: CGFloat, weight: NSFont.Weight = .regular, serif: Bool = false) -> NSFont {
+        let key = Key(size: size, weight: weight.rawValue, mono: false, serif: serif)
         if let font = cache[key] { return font }
-        let font = NSFont.systemFont(ofSize: size, weight: weight)
+        let font = serif ? Theme.serifFont(ofSize: size, weight: weight) : NSFont.systemFont(ofSize: size, weight: weight)
+        if serif { serifNames.insert(font.fontName) }
         cache[key] = font
         return font
     }
+
+    /// Whether `font` is one of the serif fonts made here.
+    static func isSerif(_ font: NSFont) -> Bool { serifNames.contains(font.fontName) }
 
     static func mono(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
         let key = Key(size: size, weight: weight.rawValue, mono: true)
@@ -482,7 +494,9 @@ enum ChatFonts {
         if let font = styledCache[key] { return font }
         var font = base
         if bold {
-            font = base.isFixedPitch ? mono(base.pointSize, weight: .semibold) : body(base.pointSize, weight: .semibold)
+            font =
+                base.isFixedPitch
+                ? mono(base.pointSize, weight: .semibold) : body(base.pointSize, weight: .semibold, serif: isSerif(base))
         }
         if italic {
             let descriptor = font.fontDescriptor.withSymbolicTraits(font.fontDescriptor.symbolicTraits.union(.italic))
