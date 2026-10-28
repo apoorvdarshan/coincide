@@ -6,22 +6,26 @@ struct SettingsRootView: View {
     @FocusState private var isSearchFocused: Bool
 
     var body: some View {
-        NavigationSplitView {
-            SettingsSidebar(model: model)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
-                .scrollContentBackground(.hidden)
-                .background(Color(nsColor: Theme.sidebarBackground))
-        } detail: {
+        // The sections take the thread list's place beside the rail, and the page the conversation's.
+        HStack(spacing: 0) {
+            VStack(spacing: 8) {
+                SettingsSearchField(text: $model.searchText, isFocused: $isSearchFocused)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 8)
+                SettingsSidebar(model: model)
+                    .scrollContentBackground(.hidden)
+            }
+            .frame(width: 252)
+            .background(Color(nsColor: Theme.sidebarBackground))
             detail
                 .scrollContentBackground(.hidden)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(nsColor: Theme.contentBackground))
         }
         .toggleStyle(ThemedSwitchToggleStyle())
         .buttonStyle(ThemedButtonStyle())
         .tint(Color(nsColor: Theme.ink))
-        .toolbar(removing: .sidebarToggle)
-        .searchable(text: $model.searchText, placement: .sidebar, prompt: Text("Search"))
-        .searchFocused($isSearchFocused)
+        .onExitCommand { model.onClose?() }
         .background {
             // Command-F jumps to the search field, as in System Settings.
             Button("Search Settings") { isSearchFocused = true }
@@ -39,6 +43,38 @@ struct SettingsRootView: View {
         case .section(.about): AboutSettingsView()
         case .provider(let kind): ProviderSettingsView(model: model, kind: kind).id(kind)
         }
+    }
+}
+
+/// The settings search, as a row in the sidebar like the thread list's.
+private struct SettingsSearchField: View {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+            TextField("Search", text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .focused(isFocused)
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Clear"))
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(nsColor: isFocused.wrappedValue || !text.isEmpty ? Theme.sidebarSelection : Theme.sidebarHover)))
     }
 }
 

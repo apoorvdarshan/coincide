@@ -175,7 +175,7 @@ struct PaletteCatalog {
         items.append(
             PaletteItem(
                 id: "action:settings", title: String(localized: "Open Settings"), icon: symbol("gearshape"), trailing: "⌘,",
-                keywords: ["settings", "preferences", "configuration"], behavior: .run { SettingsWindowController.shared.show() }))
+                keywords: ["settings", "preferences", "configuration"], behavior: .run { SettingsController.shared.show() }))
         return (core, items)
     }
 
@@ -228,7 +228,7 @@ struct PaletteCatalog {
         return sections.map { section, title, icon, keywords in
             PaletteItem(
                 id: "setting:\(section.rawValue)", title: title, subtitle: String(localized: "Settings"), icon: symbol(icon),
-                keywords: keywords, behavior: .run { SettingsWindowController.shared.show(section: section) })
+                keywords: keywords, behavior: .run { SettingsController.shared.show(section: section) })
         }
     }
 

@@ -1,11 +1,46 @@
 import AppKit
 import CoincideKit
+import SwiftUI
 
 /// The window's content: the navigation rail, then the split view of the thread list, chat and diff. The rail stays
 /// when the thread list closes.
 final class MainRootViewController: NSViewController {
     let rail = NavigationRailViewController()
     let split: MainSplitViewController
+    private var settingsPage: NSHostingController<SettingsRootView>?
+
+    /// Whether settings fill the window right of the rail in place of the thread list and conversation.
+    var isShowingSettings: Bool { settingsPage.map { !$0.view.isHidden } ?? false }
+
+    func showSettings(model: SettingsModel) {
+        let page = settingsPage ?? makeSettingsPage(model: model)
+        page.view.isHidden = false
+        split.view.isHidden = true
+        view.window?.makeFirstResponder(page.view)
+    }
+
+    func hideSettings() {
+        guard let page = settingsPage, !page.view.isHidden else { return }
+        page.view.isHidden = true
+        split.view.isHidden = false
+    }
+
+    private func makeSettingsPage(model: SettingsModel) -> NSHostingController<SettingsRootView> {
+        let page = NSHostingController(rootView: SettingsRootView(model: model))
+        page.sizingOptions = []
+        addChild(page)
+        page.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(page.view)
+        NSLayoutConstraint.activate([
+            page.view.leadingAnchor.constraint(equalTo: rail.view.trailingAnchor),
+            page.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            // Below the title bar, which keeps showing the page's title.
+            page.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            page.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        settingsPage = page
+        return page
+    }
 
     init(split: MainSplitViewController) {
         self.split = split
@@ -17,7 +52,7 @@ final class MainRootViewController: NSViewController {
     }
 
     override func loadView() {
-        let root = NSView()
+        let root = SolidBackgroundView(color: Theme.contentBackground)
         addChild(rail)
         addChild(split)
         for view in [rail.view, split.view] {
@@ -66,7 +101,7 @@ final class NavigationRailViewController: NSViewController {
         symbol: "cpu", label: String(localized: "Agents"), command: nil, action: #selector(showAgents(_:)), target: self)
     private lazy var settingsButton = RailButton(
         symbol: "gearshape", label: String(localized: "Settings"), command: nil,
-        action: #selector(AppDelegate.showSettings(_:)))
+        action: #selector(MainWindowController.toggleSettingsPage(_:)))
 
     override func loadView() {
         let root = RailBackgroundView()
@@ -117,11 +152,12 @@ final class NavigationRailViewController: NSViewController {
     }
 
     /// Lights the buttons of the panels that are open, and enables Open In only when there is a folder to open.
-    func update(threadsOpen: Bool, terminalOpen: Bool, diffOpen: Bool, canOpenFolder: Bool) {
-        threadsButton.isActive = threadsOpen
-        terminalButton.isActive = terminalOpen
-        diffButton.isActive = diffOpen
+    func update(threadsOpen: Bool, terminalOpen: Bool, diffOpen: Bool, canOpenFolder: Bool, settingsOpen: Bool) {
+        threadsButton.isActive = threadsOpen && !settingsOpen
+        terminalButton.isActive = terminalOpen && !settingsOpen
+        diffButton.isActive = diffOpen && !settingsOpen
         openInButton.isEnabled = canOpenFolder
+        settingsButton.isActive = settingsOpen
     }
 
     @objc private func updateShortcuts() {

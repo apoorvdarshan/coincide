@@ -55,6 +55,8 @@ final class SettingsModel {
 
     /// Lets the window controller keep the window title in sync.
     @ObservationIgnored var onPaneChange: ((SettingsPane) -> Void)?
+    /// Goes back from the settings page to the conversation.
+    @ObservationIgnored var onClose: (() -> Void)?
     @ObservationIgnored private let store: AppStore
     @ObservationIgnored private let registry: ProviderRegistry
     @ObservationIgnored private var token: ObservationToken?

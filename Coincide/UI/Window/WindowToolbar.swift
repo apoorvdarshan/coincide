@@ -158,7 +158,7 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
     func updateRail() {
         rail.update(
             threadsOpen: splitController.isSidebarOpen, terminalOpen: splitController.content.isTerminalOpen,
-            diffOpen: splitController.isDiffOpen, canOpenFolder: openFolder != nil)
+            diffOpen: splitController.isDiffOpen, canOpenFolder: openFolder != nil, settingsOpen: isShowingSettings)
     }
 
     /// Shows the preferred app's icon and name on the "Open in" button.

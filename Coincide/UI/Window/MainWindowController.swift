@@ -7,6 +7,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let splitController = MainSplitViewController()
     private(set) lazy var root = MainRootViewController(split: splitController)
     var rail: NavigationRailViewController { root.rail }
+    var isShowingSettings: Bool { root.isShowingSettings }
+
+    // MARK: Settings page
+
+    func showSettingsPage(model: SettingsModel) {
+        showWindow(nil)
+        model.onClose = { [weak self] in self?.hideSettingsPage() }
+        model.onPaneChange = { [weak self] _ in self?.updateTitle() }
+        root.showSettings(model: model)
+        updateTitle()
+        updateRail()
+    }
+
+    /// Back to the thread list and conversation as they were.
+    func hideSettingsPage() {
+        guard isShowingSettings else { return }
+        root.hideSettings()
+        SettingsController.shared.model.searchText = ""
+        updateTitle()
+        updateRail()
+        if selectedThreadID != nil { splitController.content.chat.focusComposer() }
+    }
+
+    @objc func toggleSettingsPage(_ sender: Any?) {
+        SettingsController.shared.toggle()
+    }
     let runStatus = RunStatusView()
     var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     let threadTitle = ThreadTitleView()
@@ -83,6 +109,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     /// Shows a thread in the chat, terminal and diff panes, and highlights it in the sidebar.
     /// As in T3, the composer takes focus, unless the user is working in the sidebar, terminal or diff.
     func open(_ threadID: UUID?) {
+        hideSettingsPage()
         let threadID = threadID.flatMap { store.hasThread($0) ? $0 : nil }
         guard threadID != selectedThreadID || !hasOpenedThread else { return }
         hasOpenedThread = true
@@ -146,7 +173,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         if window.title != title { window.title = title }
         if window.subtitle != subtitle { window.subtitle = subtitle }
-        threadTitle.set(title: title, subtitle: subtitle)
+        if isShowingSettings {
+            threadTitle.set(title: SettingsController.shared.model.pane.title, subtitle: String(localized: "Settings"))
+        } else {
+            threadTitle.set(title: title, subtitle: subtitle)
+        }
         if window.representedURL != folder { window.representedURL = folder }
     }
 
@@ -183,6 +214,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func newThread(in projectID: UUID?) {
         showWindow(nil)
+        hideSettingsPage()
         guard let project = projectID ?? currentProjectID else {
             ThreadActions.addProject(in: window)
             return
@@ -206,6 +238,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc func toggleSidebarPanel(_ sender: Any?) {
+        // From settings, the threads button goes back to the threads.
+        if isShowingSettings {
+            hideSettingsPage()
+            if !splitController.isSidebarOpen { splitController.toggleSidebarPanel() }
+            return
+        }
         splitController.toggleSidebarPanel()
     }
 

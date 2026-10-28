@@ -31,23 +31,38 @@ nonisolated enum SettingsSection: String, CaseIterable, Sendable {
     }
 }
 
-/// The settings window: a SwiftUI sidebar of panes with one page per provider.
-final class SettingsWindowController: NSWindowController, NSWindowDelegate {
-    static let shared = SettingsWindowController(window: nil)
+/// Settings, shown as a page in the main window rather than a window of their own: the rail's gear, ⌘, the command
+/// palette and every link to settings open it there, on the page they name.
+final class SettingsController {
+    static let shared = SettingsController()
 
-    private let model = SettingsModel()
+    let model = SettingsModel()
     private var requestObserver: NSObjectProtocol?
 
-    /// Opens the settings window, optionally on a section.
+    private var mainWindow: MainWindowController? {
+        NSApp.windows.lazy.compactMap { $0.windowController as? MainWindowController }.first
+    }
+
+    /// Opens settings, optionally on a section.
     func show(section: SettingsSection? = nil) {
         if let section { model.navigate(to: .section(section)) }
         present()
     }
 
-    /// Opens the settings window on one provider's page.
+    /// Opens settings on one provider's page.
     func show(provider: ProviderKind) {
         model.navigate(to: .provider(provider))
         present()
+    }
+
+    /// Opens settings, or goes back to the conversation when they are open (⌘, and the rail's gear).
+    func toggle() {
+        guard let mainWindow else { return }
+        if mainWindow.isShowingSettings {
+            mainWindow.hideSettingsPage()
+        } else {
+            present()
+        }
     }
 
     /// Handles `.coincideShowSettings` requests: `userInfo["section"]` is a `SettingsSection` raw value,
@@ -69,39 +84,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// Shows the window without activating the app: it opens from the app's own menus and buttons, so the
-    /// app is already active.
     private func present() {
-        if window == nil { window = makeWindow() }
         model.resync()
-        showWindow(nil)
-    }
-
-    private func makeWindow() -> NSWindow {
-        let hosting = NSHostingController(rootView: SettingsRootView(model: model))
-        // The window owns its size; SwiftUI content adapts to it.
-        hosting.sizingOptions = []
-        hosting.sceneBridgingOptions = [.toolbars]
-        let window = NSWindow(contentViewController: hosting)
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        window.toolbarStyle = .unified
-        window.backgroundColor = Theme.contentBackground
-        window.titlebarAppearsTransparent = true
-        window.tabbingMode = .disallowed
-        window.collectionBehavior.insert(.fullScreenNone)
-        window.isReleasedWhenClosed = false
-        window.identifier = NSUserInterfaceItemIdentifier("settings")
-        window.contentMinSize = NSSize(width: 760, height: 500)
-        window.setContentSize(NSSize(width: 860, height: 640))
-        window.delegate = self
-        window.title = model.pane.title
-        model.onPaneChange = { [weak window] pane in window?.title = pane.title }
-        if !window.setFrameUsingName("CoincideSettings") { window.center() }
-        window.setFrameAutosaveName("CoincideSettings")
-        return window
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        model.searchText = ""
+        mainWindow?.showSettingsPage(model: model)
     }
 }

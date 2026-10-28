@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !Self.isHostingTests else { return }
         ThemeController.shared.start()
         AppearanceController.shared.start()
-        SettingsWindowController.shared.startHandlingRequests()
+        SettingsController.shared.startHandlingRequests()
         ThreadActivity.shared.start()
         AgentTurns.shared.start()
         NotificationController.shared.start()
@@ -112,6 +112,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showSettings(_ sender: Any?) {
-        SettingsWindowController.shared.show()
+        SettingsController.shared.toggle()
     }
 }

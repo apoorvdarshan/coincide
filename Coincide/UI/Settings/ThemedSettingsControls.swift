@@ -189,14 +189,19 @@ final class ThemedPopupField: NSControl {
     }
 }
 
-/// A switch in the app's theme: a capsule that fills with the conversation's text color when on.
+/// A switch in the app's theme: a capsule that fills with the conversation's text color when on. Without its label it
+/// is just the switch, for rows that lay out their own text.
 struct ThemedSwitchToggleStyle: ToggleStyle {
+    var showsLabel = true
+
     func makeBody(configuration: Configuration) -> some View {
         HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                configuration.label
+            if showsLabel {
+                VStack(alignment: .leading, spacing: 2) {
+                    configuration.label
+                }
+                Spacer(minLength: 12)
             }
-            Spacer(minLength: 12)
             ThemedSwitch(isOn: configuration.$isOn)
         }
         .accessibilityRepresentation {
@@ -244,5 +249,37 @@ struct ThemedButtonStyle: ButtonStyle {
                     .strokeBorder(Color(nsColor: Theme.surfaceBorder), lineWidth: 1))
             .opacity(isEnabled ? 1 : 0.5)
             .contentShape(Rectangle())
+    }
+}
+
+/// A checkbox in the app's theme: a rounded square that fills with the text color and shows a check when on.
+struct ThemedCheckboxToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                    .fill(Color(nsColor: configuration.isOn ? Theme.ink : Theme.raisedFill))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                            .strokeBorder(Color(nsColor: Theme.surfaceBorder), lineWidth: configuration.isOn ? 0 : 1)
+                    )
+                    .overlay {
+                        if configuration.isOn {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color(nsColor: Theme.contentBackground))
+                        }
+                    }
+                    .frame(width: 16, height: 16)
+                configuration.label
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+        }
     }
 }
