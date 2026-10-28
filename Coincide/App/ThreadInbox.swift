@@ -11,10 +11,13 @@ final class ThreadInbox {
     let undoManager = UndoManager()
     private let store: AppStore
     private let ui: UIState
+    private let isRunning: (UUID) -> Bool
 
-    init(store: AppStore = .shared, ui: UIState = .shared) {
+    init(store: AppStore = .shared, ui: UIState = .shared,
+         isRunning: @escaping (UUID) -> Bool = { ThreadRunner.shared.isRunning($0) }) {
         self.store = store
         self.ui = ui
+        self.isRunning = isRunning
         undoManager.levelsOfUndo = 20
         undoManager.groupsByEvent = false
     }
@@ -33,12 +36,14 @@ final class ThreadInbox {
     func archive(_ ids: [UUID], archived: Bool) {
         applyArchive(ids.compactMap { id in
             guard let thread = store.summary(id), thread.isArchived != archived,
-                !archived || !ThreadRunner.shared.isRunning(id) else { return nil }
+                !archived || !isRunning(id) else { return nil }
             return (id, archived)
         })
     }
 
     private func applyArchive(_ values: [(UUID, Bool)]) {
+        // Undo/Redo can be invoked after a restored conversation starts new work.
+        let values = values.filter { id, archived in !archived || !isRunning(id) }
         let previous = values.compactMap { id, _ in store.summary(id).map { (id, $0.isArchived) } }
         guard !previous.isEmpty else { return }
         register(String(localized: "Archive Threads")) { $0.applyArchive(previous) }
@@ -51,7 +56,7 @@ final class ThreadInbox {
     func settle(_ ids: [UUID], settled: Bool) {
         let now = Date()
         applySettled(ids.compactMap { id in
-            guard store.hasThread(id), !settled || (!ThreadRunner.shared.isRunning(id)
+            guard store.hasThread(id), !settled || (!isRunning(id)
                 && ThreadActivity.shared.pendingApprovalCount(id) == 0
                 && ThreadActivity.shared.pendingQuestionCount(id) == 0) else { return nil }
             return (id, settled ? now : nil)
@@ -94,7 +99,7 @@ final class ThreadInbox {
         guard !restored.isEmpty else { return }
         register(String(localized: "Delete Threads")) { inbox in
             // Redo does not silently stop new work started since Undo.
-            let idle = restored.filter { !ThreadRunner.shared.isRunning($0) && !ThreadActions.hasBusyTerminals($0) }
+            let idle = restored.filter { !inbox.isRunning($0) && !ThreadActions.hasBusyTerminals($0) }
             do { try inbox.delete(idle) } catch { NSApp.presentError(error) }
         }
         changed()
