@@ -255,11 +255,15 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
     /// The home of chats: threads started without a project, like a chat app's (T3 Code's scratch project). Its folder
     /// is Coincide's own, and the sidebar lists it last, as Chats.
     public var isChats: Bool
+    /// The home of bots' conversations (`AppStore.botsProject`). It is not among the user's projects; each bot
+    /// runs its conversations in its own folder (`Bot.workingDirectory`).
+    public var isBots: Bool
     public var threadDefaults: ProjectThreadDefaults?
 
     public nonisolated init(
         id: UUID = UUID(), name: String, path: String, createdAt: Date = Date(), isExpanded: Bool = true,
-        scripts: [ProjectScript] = [], isChats: Bool = false, threadDefaults: ProjectThreadDefaults? = nil
+        scripts: [ProjectScript] = [], isChats: Bool = false, isBots: Bool = false,
+        threadDefaults: ProjectThreadDefaults? = nil
     ) {
         self.id = id
         self.name = name
@@ -268,6 +272,7 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
         self.isExpanded = isExpanded
         self.scripts = scripts
         self.isChats = isChats
+        self.isBots = isBots
         self.threadDefaults = threadDefaults
     }
 
@@ -282,6 +287,7 @@ public struct Project: Codable, Hashable, Sendable, Identifiable {
         isExpanded = container.lenient(Bool.self, forKey: .isExpanded) ?? true
         scripts = container.lenientArray(ProjectScript.self, forKey: .scripts)
         isChats = container.lenient(Bool.self, forKey: .isChats) ?? false
+        isBots = container.lenient(Bool.self, forKey: .isBots) ?? false
         threadDefaults = container.lenient(ProjectThreadDefaults.self, forKey: .threadDefaults)
     }
 }
@@ -619,13 +625,16 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     /// was sent before follow-up titles existed, or that came with its messages (an import, a fork): those keep
     /// their titles.
     public var titleRefreshes: [TitleRefresh]?
+    /// The bot whose conversation this is (`Bot.id`), in the Bots container. Nil for every other thread, so their
+    /// files are written as before.
+    public var botID: UUID?
 
     public nonisolated init(
         id: UUID = UUID(), projectID: UUID, title: String = String(localized: "New thread"),
         selection: ModelSelection, accessMode: AccessMode = .fullAccess, interactionMode: InteractionMode = .build,
         items: [TranscriptItem] = [], sessions: [ProviderKind: ProviderSessionRef] = [:], isPinned: Bool = false,
         isArchived: Bool = false, worktreePath: String? = nil, branch: String? = nil, draft: String? = nil, draftContext: [MessageContext]? = nil,
-        createdAt: Date = Date()
+        botID: UUID? = nil, createdAt: Date = Date()
     ) {
         self.id = id
         self.projectID = projectID
@@ -644,6 +653,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         self.branch = branch
         self.draft = draft
         self.draftContext = draftContext
+        self.botID = botID
     }
 
     public nonisolated var hasUserMessages: Bool { items.contains { $0.kind == .user } }
@@ -718,6 +728,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         titleRefreshes =
             container.contains(.titleRefreshes) && !((try? container.decodeNil(forKey: .titleRefreshes)) ?? true)
             ? container.lenientArray(TitleRefresh.self, forKey: .titleRefreshes) : nil
+        botID = container.lenient(UUID.self, forKey: .botID)
     }
 }
 

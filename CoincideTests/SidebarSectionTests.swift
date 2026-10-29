@@ -283,7 +283,8 @@ struct SidebarSectionTests {
         #expect(sidebar.outlineView(outline, validateDrop: drag, proposedItem: pinnedNode, proposedChildIndex: -1) == .move)
         #expect(sidebar.outlineView(outline, acceptDrop: drag, item: nil, childIndex: 0))
         #expect(kinds() == [.chats(chats.id), .pinned, .header])
-        #expect(UIState.shared.values.sidebarSections == ["chats", "pinned", "projects"])
+        // Bots, hidden without any bots, keeps its place too.
+        #expect(UIState.shared.values.sidebarSections == ["bots", "chats", "pinned", "projects"])
 
         // With nothing pinned, Pinned goes but keeps its place for later.
         store.updateThread(pinnedID) { $0.isPinned = false }
@@ -298,6 +299,41 @@ struct SidebarSectionTests {
         #expect(sidebar.outlineView(outline, validateDrop: projectDrag, proposedItem: projectRow, proposedChildIndex: 0) == .move)
         #expect(sidebar.outlineView(outline, acceptDrop: projectDrag, item: nil, childIndex: 3))
         #expect(kinds() == [.pinned, .header, .chats(chats.id)])
+    }
+
+    @Test func botsAreTheFirstSectionWithOneRowPerBotThatHighlightsForItsConversations() throws {
+        let store = AppStore.shared
+        let saved = UIState.shared.values.sidebarSections
+        UIState.shared.update { $0.sidebarSections = [] }
+        let bot = store.addBot(
+            Bot(name: "Pebbles", avatar: BotAvatar(shape: .pebble, tint: .sage), persona: "Be brief.",
+                selection: ModelSelection(provider: .claude, modelID: "default")))
+        let first = try #require(store.startConversation(with: bot.id))
+        let second = try #require(store.startConversation(with: bot.id))
+        store.append(TranscriptItem(kind: .assistant, text: "Hello there"), to: second.id)
+        defer {
+            store.deleteBot(bot.id, deletingConversations: true)
+            UIState.shared.update { $0.sidebarSections = saved }
+        }
+
+        let sidebar = SidebarViewController()
+        let outline = try #require(firstView(of: NSOutlineView.self, in: sidebar.view))
+        sidebar.select(threadID: first.id)
+        let roots = rootSections(sidebar, outline)
+        let botsSection = try #require(roots.first)
+        #expect(botsSection.kind == .bots)
+        #expect(sidebar.outlineView(outline, isGroupItem: botsSection))
+        // One row for the bot, however many conversations it has; they are not listed as threads.
+        let row = try #require(botsSection.children.first { $0.kind == .bot(bot.id) })
+        #expect(botsSection.children.filter { $0.kind == .bot(bot.id) }.count == 1)
+        #expect(!roots.flatMap(\.children).contains { $0.threadID == first.id || $0.threadID == second.id })
+        #expect(sidebar.outlineView(outline, shouldSelectItem: row))
+        #expect(outline.selectedRow == outline.row(forItem: row))
+        let cell = try #require(sidebar.outlineView(outline, viewFor: nil, item: row) as? BotCell)
+        #expect(cell.accessibilityLabel()?.contains("Pebbles") == true)
+        #expect(cell.accessibilityLabel()?.contains("Hello there") == true)
+        // Conversations of bots stay put when dragged elsewhere.
+        #expect(!store.canMoveThread(second.id, to: store.ensureChatsProject().id))
     }
 
     private func rootSections(_ sidebar: SidebarViewController, _ outline: NSOutlineView) -> [SidebarNode] {

@@ -304,7 +304,7 @@ final class ClaudeSession: AgentSession {
         func config(_ identity: ClaudeLaunchConfig.Identity) -> ClaudeLaunchConfig {
             ClaudeLaunchConfig(
                 identity: identity, model: settings.model, effort: settings.effort, permissionMode: settings.permissionMode,
-                allowsBypass: settings.allowsBypass, fastMode: settings.fastMode)
+                allowsBypass: settings.allowsBypass, fastMode: settings.fastMode, instructions: launch.instructions)
         }
         do {
             try await spawn(config(identity))

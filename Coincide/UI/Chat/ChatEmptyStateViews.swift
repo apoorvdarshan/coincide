@@ -74,6 +74,8 @@ final class ChatNoThreadView: NSView {
 /// The start of a new thread: what to build, which agents are ready, and how to set up the rest.
 final class ChatWelcomeView: NSView {
     private let headline = NSTextField(labelWithString: "")
+    /// A bot's avatar above the headline, in its conversations.
+    private let botAvatar = BotAvatarView(size: 52)
     private let selectionLabel = NSTextField(labelWithString: "")
     private let providerRow = NSStackView()
     private let hintsStack = NSStackView()
@@ -137,10 +139,12 @@ final class ChatWelcomeView: NSView {
         missingRow.spacing = 8
         missingRow.setViews([warning, missingLabel, locateButton], in: .center)
         missingRow.isHidden = true
-        let stack = NSStackView(views: [headline, selectionLabel, missingRow, providerRow])
+        botAvatar.isHidden = true
+        let stack = NSStackView(views: [botAvatar, headline, selectionLabel, missingRow, providerRow])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 8
+        stack.setCustomSpacing(12, after: botAvatar)
         stack.setCustomSpacing(6, after: headline)
         stack.setCustomSpacing(26, after: selectionLabel)
         stack.setCustomSpacing(18, after: missingRow)
@@ -172,8 +176,17 @@ final class ChatWelcomeView: NSView {
         let name = project?.name ?? String(localized: "this project")
         // One sentence, so each language can place the project name where it belongs. Set in New York, the serif of
         // the agents' replies. A chat has no project to name.
+        let bot = thread.botID.flatMap { AppStore.shared.bot($0) }
         let sentence =
-            project?.isChats == true ? String(localized: "What can I help with?") : String(localized: "What should we build in \(name)?")
+            if let bot {
+                String(localized: "Hi, I’m \(bot.displayName). What can I do for you?")
+            } else if project?.isChats == true || project?.isBots == true {
+                String(localized: "What can I help with?")
+            } else {
+                String(localized: "What should we build in \(name)?")
+            }
+        botAvatar.isHidden = bot == nil
+        if let bot { botAvatar.avatar = bot.avatar }
         let text = NSMutableAttributedString(
             string: sentence, attributes: [.font: Theme.serifFont(ofSize: 30), .foregroundColor: NSColor.labelColor])
         let centered = NSMutableParagraphStyle()
@@ -181,10 +194,10 @@ final class ChatWelcomeView: NSView {
         centered.lineBreakMode = .byTruncatingMiddle
         text.addAttribute(.paragraphStyle, value: centered, range: NSRange(location: 0, length: text.length))
         headline.attributedStringValue = text
-        headline.toolTip = project?.path
+        headline.toolTip = bot?.workingDirectory.path ?? project?.path
 
         projectID = project?.id
-        if let project, !FileManager.default.fileExists(atPath: project.path) {
+        if bot == nil, let project, !FileManager.default.fileExists(atPath: project.path) {
             missingLabel.stringValue = String(localized: "The project folder was moved or deleted.")
             missingLabel.toolTip = Formatting.abbreviatedPath(project.path)
             missingRow.setAccessibilityElement(true)

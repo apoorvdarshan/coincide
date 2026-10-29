@@ -51,6 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow?.showWindow(nil)
         Task {
             await ProviderRegistry.shared.refresh()
+            // Once, on the default agent or the first one set up, now that the registry knows which are.
+            BotActions.addStartersIfNeeded()
             ScheduledTasks.shared.start()
         }
         #if DEBUG

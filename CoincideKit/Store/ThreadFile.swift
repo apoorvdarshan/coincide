@@ -67,7 +67,7 @@ struct ThreadFile: Decodable {
     /// it does not know.
     private nonisolated static func readsThreadField(_ container: Container, _ key: FileKey) -> Bool {
         switch key.stringValue {
-        case "id", "projectID": container.reads(UUID.self, key)
+        case "id", "projectID", "botID": container.reads(UUID.self, key)
         case "title", "worktreePath", "branch", "draft": container.reads(String.self, key)
         case "createdAt", "updatedAt", "snoozedUntil": container.reads(Date.self, key)
         case "accessMode": container.reads(AccessMode.self, key)

@@ -30,14 +30,17 @@ enum CodexProtocol {
         "mcp_optional_startup_grace_ms": 10_000,
     ]
 
-    static func threadStartParams(cwd: String, model: String?) -> JSONValue {
+    /// `instructions` become the thread's developer instructions (`AgentLaunch.instructions`), which Codex sends the
+    /// model alongside its own. A resumed thread is given them again, so an edited persona applies from then on.
+    static func threadStartParams(cwd: String, model: String?, instructions: String? = nil) -> JSONValue {
         var params: [String: JSONValue] = ["cwd": .string(cwd), "config": threadConfig]
         if let model { params["model"] = .string(model) }
+        if let instructions, !instructions.isEmpty { params["developerInstructions"] = .string(instructions) }
         return .object(params)
     }
 
-    static func threadResumeParams(threadID: String, cwd: String, model: String?) -> JSONValue {
-        var params = threadStartParams(cwd: cwd, model: model).object ?? [:]
+    static func threadResumeParams(threadID: String, cwd: String, model: String?, instructions: String? = nil) -> JSONValue {
+        var params = threadStartParams(cwd: cwd, model: model, instructions: instructions).object ?? [:]
         params["threadId"] = .string(threadID)
         // Coincide keeps its own transcript.
         params["excludeTurns"] = true
