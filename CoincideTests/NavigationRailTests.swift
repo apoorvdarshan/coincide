@@ -17,7 +17,7 @@ struct NavigationRailTests {
             view.subviews.forEach(collect)
         }
         collect(rail.view)
-        #expect(buttons.count == 11)
+        #expect(buttons.count == 12)
         let frames = buttons.map { $0.convert($0.bounds, to: rail.view) }.sorted { $0.minY < $1.minY }
         for frame in frames {
             #expect(frame.width == RailButton.side)
