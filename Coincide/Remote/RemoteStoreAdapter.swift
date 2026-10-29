@@ -388,8 +388,10 @@ final class RemoteStoreAdapter {
             }
             imagePaths.append(path)
         }
-        let behavior = ComposerDispatch.followUpBehavior(
-            store.settings.followUpBehavior, approvalShown: !runner.pendingApprovals(threadID).isEmpty)
+        let chosen = store.thread(threadID).map {
+            ComposerDispatch.effective(store.followUpBehavior(of: $0), for: $0.selection.provider)
+        } ?? store.settings.followUpBehavior
+        let behavior = ComposerDispatch.followUpBehavior(chosen, approvalShown: !runner.pendingApprovals(threadID).isEmpty)
         let dispatch = ComposerDispatch.resolve(
             running: runner.isRunning(threadID), canSteer: runner.canSteer(threadID), alternate: request.delivery == .alternate,
             behavior: behavior)
@@ -398,6 +400,10 @@ final class RemoteStoreAdapter {
         case .steer:
             let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths)
             return Self.name(delivery)
+        case .interrupt:
+            return Self.name(await runner.interrupt(threadID: threadID, text: text, imagePaths: imagePaths))
+        case .queue where ComposerDispatch.meansToSteer(alternate: request.delivery == .alternate, behavior: behavior):
+            return Self.name(await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths))
         case .send, .queue:
             let queues = runner.isRunning(threadID)
             await runner.send(threadID: threadID, text: text, imagePaths: imagePaths)
@@ -409,6 +415,7 @@ final class RemoteStoreAdapter {
         switch delivery {
         case .steered?: "steered"
         case .queued?: "queued"
+        case .interrupting?: "interrupting"
         case .sent?, nil: "sent"
         }
     }

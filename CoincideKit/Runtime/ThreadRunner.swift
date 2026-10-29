@@ -53,6 +53,9 @@ public final class ThreadRunner {
         public var imagePaths: [String]
         public var context: [MessageContext] = []
         public var createdAt: Date
+        /// The user asked for it to go into the running turn, which could not take it: it is sent when that turn
+        /// ends however it ends, including when it is stopped, rather than waiting for the user.
+        public var sendsAfterStop = false
     }
 
     /// What became of a message the user sent (T3 Code's steer and queue).
@@ -63,6 +66,8 @@ public final class ThreadRunner {
         case steered
         /// It waits for the running turn to finish.
         case queued
+        /// The running turn is being stopped, and the message goes as the next turn once it has.
+        case interrupting
     }
 
     /// A session whose `start()` is still running. Concurrent sends wait for it instead of spawning another.
@@ -433,9 +438,54 @@ public final class ThreadRunner {
         return await steerOrQueue(message, threadID: threadID, queueIndex: index)
     }
 
+    /// Sends a queued message right away (the queue's "Send now"): into the running turn when it takes it, otherwise
+    /// by stopping that turn and sending the message as the next one. Nil when no such message is queued.
+    @discardableResult
+    public func sendQueuedNow(threadID: UUID, id: UUID) async -> FollowUpDelivery? {
+        let delivery = await steerQueued(threadID: threadID, id: id)
+        guard delivery == .queued else { return delivery }
+        return interruptAndSend(threadID: threadID, id: id)
+    }
+
+    /// Sends a message by stopping the running turn first (the composer's Interrupt): it goes as the next turn once
+    /// the turn has stopped, ahead of anything queued. With no turn running it is sent at once, as `send` does.
+    /// Nil when there is nothing to send.
+    @discardableResult
+    public func interrupt(threadID: UUID, text: String, imagePaths: [String] = [], context: [MessageContext] = []) async
+        -> FollowUpDelivery?
+    {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || !imagePaths.isEmpty || !context.isEmpty else { return nil }
+        guard isRunning(threadID) else {
+            await send(threadID: threadID, text: trimmed, imagePaths: imagePaths, context: context)
+            return .sent
+        }
+        let message = QueuedMessage(id: UUID(), text: trimmed, imagePaths: imagePaths, context: context, createdAt: Date())
+        enqueue(message, threadID: threadID, at: 0)
+        return interruptAndSend(threadID: threadID, id: message.id)
+    }
+
+    /// Stops the running turn and sends the queued message as the next turn once it has stopped. With no turn
+    /// running, it is sent at once. Nil when no such message is queued.
+    @discardableResult
+    public func interruptAndSend(threadID: UUID, id: UUID) -> FollowUpDelivery? {
+        guard var message = queues[threadID]?.first(where: { $0.id == id }) else { return nil }
+        removeQueued(threadID: threadID, id: id)
+        guard isRunning(threadID) else {
+            Task { await send(threadID: threadID, text: message.text, imagePaths: message.imagePaths, context: message.context) }
+            return .sent
+        }
+        message.sendsAfterStop = true
+        enqueue(message, threadID: threadID, at: 0)
+        stop(threadID: threadID)
+        return .interrupting
+    }
+
     /// Hands the message to the running turn's session, recording it as a user item of that turn once taken.
     /// A message the session refuses waits for the turn to end, or starts a turn if it already has.
     private func steerOrQueue(_ message: QueuedMessage, threadID: UUID, queueIndex: Int?) async -> FollowUpDelivery {
+        var message = message
+        message.sendsAfterStop = true
         guard canSteer(threadID), let turn = turns[threadID], let session = sessions[threadID]?[turn.provider],
             let thread = store.thread(threadID)
         else {
@@ -506,10 +556,15 @@ public final class ThreadRunner {
         return message
     }
 
-    /// Stops the running turn on the thread.
+    /// Whether the running turn is being stopped: the user asked, and its agent has not confirmed yet.
+    public func isStopping(_ threadID: UUID) -> Bool { turns[threadID]?.interruptRequested == true }
+
+    /// Stops the running turn on the thread. The thread shows it as stopping at once; the agent is asked to stop
+    /// right away, and the turn ends anyway if it does not confirm within `stopTimeout`.
     public func stop(threadID: UUID) {
         guard let turn = turns[threadID], !turn.interruptRequested else { return }
         turns[threadID]?.interruptRequested = true
+        store.notify(.runState(threadID))
         // The session cancels the turn's open prompts when interrupted, so they must not stay clickable.
         declineOpenPrompts(threadID, provider: turn.provider, since: turn.userItemID)
         if turn.promptSent, let session = sessions[threadID]?[turn.provider] {
@@ -1151,7 +1206,10 @@ public final class ThreadRunner {
             name: Self.turnFinishedNotification, object: self, userInfo: ["threadID": threadID, "outcome": outcome])
         // Queued follow-ups only continue a turn that finished normally; after a stop or error the user decides.
         // Messages typed while the agent worked on its own are sent unless the user stopped it.
-        let proceed = outcome == .completed || (turn.isAgentInitiated && !turn.interruptRequested)
+        // A message the user meant for the turn itself is sent even after a stop: it was never meant to wait.
+        let proceed =
+            outcome == .completed || (turn.isAgentInitiated && !turn.interruptRequested)
+            || (outcome == .interrupted && queues[threadID]?.first?.sendsAfterStop == true)
         if proceed, let next = queues[threadID]?.first {
             removeQueued(threadID: threadID, id: next.id)
             Task { await send(threadID: threadID, text: next.text, imagePaths: next.imagePaths, context: next.context) }

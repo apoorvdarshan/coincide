@@ -2169,6 +2169,118 @@
         }
       }
     },
+    "%@ can’t take messages while it works." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ kann während der Arbeit keine Nachrichten annehmen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ no puede recibir mensajes mientras trabaja."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ no puede recibir mensajes mientras trabaja."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ ne peut pas recevoir de messages pendant qu’il travaille."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ काम करते समय संदेश नहीं ले सकता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ tidak bisa menerima pesan saat bekerja."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ non può ricevere messaggi mentre lavora."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ は作業中にメッセージを受け取れません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@은(는) 작업 중에 메시지를 받을 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ kan geen berichten aannemen terwijl het werkt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ nie przyjmuje wiadomości podczas pracy."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ não pode receber mensagens enquanto trabalha."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ не может принимать сообщения во время работы."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ çalışırken mesaj alamaz."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ не може приймати повідомлення під час роботи."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ không thể nhận tin nhắn khi đang làm việc."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 在工作时无法接收消息。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 在工作時無法接收訊息。"
+          }
+        }
+      }
+    },
     "%@ changed on disk since you opened it." : {
       "localizations" : {
         "de" : {
@@ -4551,120 +4663,114 @@
         }
       }
     },
-    "%@ is working in the background: %@" : {
+    "%@ is working in the background" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ arbeitet im Hintergrund: %2$@"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@ is working in the background: %2$@"
+            "value" : "%@ arbeitet im Hintergrund"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ está trabajando en segundo plano: %2$@"
+            "value" : "%@ está trabajando en segundo plano"
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ está trabajando en segundo plano: %2$@"
+            "value" : "%@ está trabajando en segundo plano"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ travaille en arrière-plan : %2$@"
+            "value" : "%@ travaille en arrière-plan"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ पृष्ठभूमि में काम कर रहा है: %2$@"
+            "value" : "%@ पृष्ठभूमि में काम कर रहा है"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ bekerja di latar belakang: %2$@"
+            "value" : "%@ bekerja di latar belakang"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ sta lavorando in background: %2$@"
+            "value" : "%@ sta lavorando in background"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@がバックグラウンドで作業中：%2$@"
+            "value" : "%@がバックグラウンドで作業中"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@이(가) 백그라운드에서 작업 중: %2$@"
+            "value" : "%@이(가) 백그라운드에서 작업 중"
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ werkt op de achtergrond: %2$@"
+            "value" : "%@ werkt op de achtergrond"
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ pracuje w tle: %2$@"
+            "value" : "%@ pracuje w tle"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ está trabalhando em segundo plano: %2$@"
+            "value" : "%@ está trabalhando em segundo plano"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ работает в фоне: %2$@"
+            "value" : "%@ работает в фоне"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ arka planda çalışıyor: %2$@"
+            "value" : "%@ arka planda çalışıyor"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ працює у фоні: %2$@"
+            "value" : "%@ працює у фоні"
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ đang làm việc trong nền: %2$@"
+            "value" : "%@ đang làm việc trong nền"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ 正在后台工作：%2$@"
+            "value" : "%@ 正在后台工作"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ 正在背景工作：%2$@"
+            "value" : "%@ 正在背景工作"
           }
         }
       }
@@ -38407,6 +38513,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "背景"
+          }
+        }
+      }
+    },
+    "Background work" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hintergrundarbeit"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trabajo en segundo plano"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trabajo en segundo plano"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Travail en arrière-plan"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पृष्ठभूमि का काम"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pekerjaan latar belakang"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Attività in background"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "バックグラウンド作業"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "백그라운드 작업"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Achtergrondwerk"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Praca w tle"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trabalho em segundo plano"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Фоновая работа"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arka plan işi"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Фонова робота"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Công việc nền"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "后台工作"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "背景工作"
           }
         }
       }
@@ -118831,6 +119049,118 @@
         }
       }
     },
+    "Interrupt" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Unterbrechen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrumpir"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrumpir"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrompre"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बीच में रोकें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sela"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrompi"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "中断"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "중단"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Onderbreken"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przerwij"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interromper"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Прервать"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Böl"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перервати"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ngắt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打断"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打斷"
+          }
+        }
+      }
+    },
     "Interrupt a subagent" : {
       "localizations" : {
         "de" : {
@@ -118939,6 +119269,236 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "中斷子代理程式"
+          }
+        }
+      }
+    },
+    "Interrupt: stop the current turn and send this now (%@). %@ queues it for after the turn." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Unterbrechen: aktuellen Durchgang stoppen und dies jetzt senden (%1$@). %2$@ reiht es für nach dem Durchgang ein."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Interrupt: stop the current turn and send this now (%1$@). %2$@ queues it for after the turn."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrumpir: detener el turno actual y enviar esto ahora (%1$@). %2$@ lo pone en cola para después del turno."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrumpir: detener el turno actual y enviar esto ahora (%1$@). %2$@ lo pone en cola para después del turno."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrompre : arrêter le tour en cours et envoyer ceci maintenant (%1$@). %2$@ le met en file pour après le tour."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बीच में रोकें: मौजूदा टर्न रोकें और इसे अभी भेजें (%1$@)। %2$@ इसे टर्न के बाद के लिए कतार में रखता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sela: hentikan giliran saat ini dan kirim ini sekarang (%1$@). %2$@ mengantrekannya untuk setelah giliran."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrompi: ferma il turno corrente e invia ora (%1$@). %2$@ lo mette in coda per dopo il turno."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "中断: 現在のターンを停止して今すぐ送信 (%1$@)。%2$@ でターン後に送るようキューに入れます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "중단: 현재 턴을 중지하고 지금 보내기 (%1$@). %2$@은(는) 턴 이후로 대기열에 넣습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Onderbreken: stop de huidige beurt en verstuur dit nu (%1$@). %2$@ zet het in de wachtrij voor na de beurt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przerwij: zatrzymaj bieżącą turę i wyślij to teraz (%1$@). %2$@ dodaje to do kolejki na po turze."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interromper: parar o turno atual e enviar isto agora (%1$@). %2$@ coloca na fila para depois do turno."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Прервать: остановить текущий ход и отправить сейчас (%1$@). %2$@ ставит в очередь на после хода."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Böl: geçerli turu durdur ve bunu şimdi gönder (%1$@). %2$@ turdan sonrası için sıraya alır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перервати: зупинити поточний хід і надіслати зараз (%1$@). %2$@ ставить у чергу на після ходу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ngắt: dừng lượt hiện tại và gửi ngay (%1$@). %2$@ đưa vào hàng đợi sau lượt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打断：停止当前轮次并立即发送（%1$@）。%2$@ 会将其排到本轮之后。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打斷：停止目前的回合並立即傳送（%1$@）。%2$@ 會將其排到本回合之後。"
+          }
+        }
+      }
+    },
+    "Interrupt: stop the current turn and send this now. %@ queues it for after the turn." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Unterbrechen: aktuellen Durchgang stoppen und dies jetzt senden. %@ reiht es für nach dem Durchgang ein."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrumpir: detener el turno actual y enviar esto ahora. %@ lo pone en cola para después del turno."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrumpir: detener el turno actual y enviar esto ahora. %@ lo pone en cola para después del turno."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrompre : arrêter le tour en cours et envoyer ceci maintenant. %@ le met en file pour après le tour."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बीच में रोकें: मौजूदा टर्न रोकें और इसे अभी भेजें। %@ इसे टर्न के बाद के लिए कतार में रखता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sela: hentikan giliran saat ini dan kirim ini sekarang. %@ mengantrekannya untuk setelah giliran."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrompi: ferma il turno corrente e invia ora. %@ lo mette in coda per dopo il turno."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "中断: 現在のターンを停止して今すぐ送信。%@ でターン後に送るようキューに入れます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "중단: 현재 턴을 중지하고 지금 보내기. %@은(는) 턴 이후로 대기열에 넣습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Onderbreken: stop de huidige beurt en verstuur dit nu. %@ zet het in de wachtrij voor na de beurt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przerwij: zatrzymaj bieżącą turę i wyślij to teraz. %@ dodaje to do kolejki na po turze."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interromper: parar o turno atual e enviar isto agora. %@ coloca na fila para depois do turno."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Прервать: остановить текущий ход и отправить сейчас. %@ ставит в очередь на после хода."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Böl: geçerli turu durdur ve bunu şimdi gönder. %@ turdan sonrası için sıraya alır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перервати: зупинити поточний хід і надіслати зараз. %@ ставить у чергу на після ходу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ngắt: dừng lượt hiện tại và gửi ngay. %@ đưa vào hàng đợi sau lượt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打断：停止当前轮次并立即发送。%@ 会将其排到本轮之后。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打斷：停止目前的回合並立即傳送。%@ 會將其排到本回合之後。"
           }
         }
       }
@@ -131668,6 +132228,230 @@
         }
       }
     },
+    "Messages sent while an agent works stop its current turn and go next. Command-Return queues one for after the turn instead." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nachrichten, die während der Arbeit eines Agenten gesendet werden, stoppen seinen aktuellen Durchgang und kommen als Nächstes. Befehl-Return reiht eine stattdessen für nach dem Durchgang ein."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los mensajes enviados mientras un agente trabaja detienen su turno actual y van a continuación. Comando-Retorno pone uno en cola para después del turno."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los mensajes enviados mientras un agente trabaja detienen su turno actual y van a continuación. Comando-Retorno pone uno en cola para después del turno."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les messages envoyés pendant qu’un agent travaille arrêtent son tour en cours et passent ensuite. Commande-Retour en met un en file pour après le tour."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "किसी एजेंट के काम करते समय भेजे गए संदेश उसका मौजूदा टर्न रोककर अगले भेजे जाते हैं। Command-Return किसी संदेश को टर्न के बाद के लिए कतार में रखता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pesan yang dikirim saat agen bekerja menghentikan giliran saat ini dan dikirim berikutnya. Command-Return mengantrekan satu pesan untuk setelah giliran."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I messaggi inviati mentre un agente lavora interrompono il suo turno corrente e vanno subito dopo. Comando-Invio ne mette uno in coda per dopo il turno."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントの作業中に送ったメッセージは、現在のターンを停止して次に送られます。Command-Return でターン後に送るようキューに入れられます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 작업하는 동안 보낸 메시지는 현재 턴을 중지하고 다음으로 보내집니다. Command-Return은 메시지를 턴 이후로 대기열에 넣습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berichten die je stuurt terwijl een agent werkt, stoppen zijn huidige beurt en gaan als volgende. Command-Return zet er een in de wachtrij voor na de beurt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wiadomości wysłane podczas pracy agenta zatrzymują jego bieżącą turę i idą jako następne. Command-Return dodaje wiadomość do kolejki na po turze."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mensagens enviadas enquanto um agente trabalha param o turno atual e vão em seguida. Command-Return coloca uma na fila para depois do turno."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сообщения, отправленные во время работы агента, останавливают его текущий ход и уходят следующими. Command-Return ставит сообщение в очередь на после хода."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir ajan çalışırken gönderilen mesajlar geçerli turunu durdurur ve sıradaki olarak gider. Command-Return bir mesajı turdan sonrası için sıraya alır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Повідомлення, надіслані під час роботи агента, зупиняють його поточний хід і йдуть наступними. Command-Return ставить повідомлення в чергу на після ходу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tin nhắn gửi khi tác tử đang làm việc sẽ dừng lượt hiện tại và được gửi tiếp theo. Command-Return đưa một tin nhắn vào hàng đợi sau lượt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作时发送的消息会停止当前轮次并接着发送。Command-Return 会将消息排到本轮之后。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作時傳送的訊息會停止目前的回合並接著傳送。Command-Return 會將訊息排到本回合之後。"
+          }
+        }
+      }
+    },
+    "Messages sent while an agent works stop its current turn and go next. Shift-Command-Return queues one for after the turn instead." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nachrichten, die während der Arbeit eines Agenten gesendet werden, stoppen seinen aktuellen Durchgang und kommen als Nächstes. Umschalt-Befehl-Return reiht eine stattdessen für nach dem Durchgang ein."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los mensajes enviados mientras un agente trabaja detienen su turno actual y van a continuación. Mayúsculas-Comando-Retorno pone uno en cola para después del turno."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los mensajes enviados mientras un agente trabaja detienen su turno actual y van a continuación. Mayúsculas-Comando-Retorno pone uno en cola para después del turno."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les messages envoyés pendant qu’un agent travaille arrêtent son tour en cours et passent ensuite. Maj-Commande-Retour en met un en file pour après le tour."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "किसी एजेंट के काम करते समय भेजे गए संदेश उसका मौजूदा टर्न रोककर अगले भेजे जाते हैं। Shift-Command-Return किसी संदेश को टर्न के बाद के लिए कतार में रखता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pesan yang dikirim saat agen bekerja menghentikan giliran saat ini dan dikirim berikutnya. Shift-Command-Return mengantrekan satu pesan untuk setelah giliran."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I messaggi inviati mentre un agente lavora interrompono il suo turno corrente e vanno subito dopo. Maiusc-Comando-Invio ne mette uno in coda per dopo il turno."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントの作業中に送ったメッセージは、現在のターンを停止して次に送られます。Shift-Command-Return でターン後に送るようキューに入れられます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 작업하는 동안 보낸 메시지는 현재 턴을 중지하고 다음으로 보내집니다. Shift-Command-Return은 메시지를 턴 이후로 대기열에 넣습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berichten die je stuurt terwijl een agent werkt, stoppen zijn huidige beurt en gaan als volgende. Shift-Command-Return zet er een in de wachtrij voor na de beurt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wiadomości wysłane podczas pracy agenta zatrzymują jego bieżącą turę i idą jako następne. Shift-Command-Return dodaje wiadomość do kolejki na po turze."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mensagens enviadas enquanto um agente trabalha param o turno atual e vão em seguida. Shift-Command-Return coloca uma na fila para depois do turno."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сообщения, отправленные во время работы агента, останавливают его текущий ход и уходят следующими. Shift-Command-Return ставит сообщение в очередь на после хода."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir ajan çalışırken gönderilen mesajlar geçerli turunu durdurur ve sıradaki olarak gider. Shift-Command-Return bir mesajı turdan sonrası için sıraya alır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Повідомлення, надіслані під час роботи агента, зупиняють його поточний хід і йдуть наступними. Shift-Command-Return ставить повідомлення в чергу на після ходу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tin nhắn gửi khi tác tử đang làm việc sẽ dừng lượt hiện tại và được gửi tiếp theo. Shift-Command-Return đưa một tin nhắn vào hàng đợi sau lượt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作时发送的消息会停止当前轮次并接着发送。Shift-Command-Return 会将消息排到本轮之后。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作時傳送的訊息會停止目前的回合並接著傳送。Shift-Command-Return 會將訊息排到本回合之後。"
+          }
+        }
+      }
+    },
     "Messages sent while an agent works wait until its turn ends. Command-Return sends one into the current turn instead." : {
       "localizations" : {
         "de" : {
@@ -131888,6 +132672,342 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "代理程式工作期間傳送的訊息會等到其回合結束後傳送。按 Shift-Command-Return 則會將訊息送入目前的回合。"
+          }
+        }
+      }
+    },
+    "Messages sent while the agent works go into its current turn." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nachrichten, die während der Arbeit des Agenten gesendet werden, gehen in seinen aktuellen Durchgang."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los mensajes enviados mientras el agente trabaja entran en su turno actual."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los mensajes enviados mientras el agente trabaja entran en su turno actual."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les messages envoyés pendant que l’agent travaille vont dans son tour en cours."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एजेंट के काम करते समय भेजे गए संदेश उसके मौजूदा टर्न में जाते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pesan yang dikirim saat agen bekerja masuk ke gilirannya saat ini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I messaggi inviati mentre l’agente lavora entrano nel suo turno corrente."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントの作業中に送ったメッセージは、現在のターンに入ります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 작업하는 동안 보낸 메시지는 현재 턴에 들어갑니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berichten die je stuurt terwijl de agent werkt, gaan naar zijn huidige beurt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wiadomości wysłane podczas pracy agenta trafiają do jego bieżącej tury."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mensagens enviadas enquanto o agente trabalha entram no turno atual."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сообщения, отправленные во время работы агента, попадают в его текущий ход."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajan çalışırken gönderilen mesajlar geçerli turuna girer."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Повідомлення, надіслані під час роботи агента, потрапляють у його поточний хід."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tin nhắn gửi khi tác tử đang làm việc sẽ vào lượt hiện tại của nó."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作时发送的消息会进入当前轮次。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作時傳送的訊息會進入目前的回合。"
+          }
+        }
+      }
+    },
+    "Messages sent while the agent works stop its turn and go next." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nachrichten, die während der Arbeit des Agenten gesendet werden, stoppen seinen Durchgang und kommen als Nächstes."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los mensajes enviados mientras el agente trabaja detienen su turno y van a continuación."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los mensajes enviados mientras el agente trabaja detienen su turno y van a continuación."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les messages envoyés pendant que l’agent travaille arrêtent son tour et passent ensuite."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एजेंट के काम करते समय भेजे गए संदेश उसका टर्न रोककर अगले भेजे जाते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pesan yang dikirim saat agen bekerja menghentikan gilirannya dan dikirim berikutnya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I messaggi inviati mentre l’agente lavora interrompono il suo turno e vanno subito dopo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントの作業中に送ったメッセージは、ターンを停止して次に送られます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 작업하는 동안 보낸 메시지는 턴을 중지하고 다음으로 보내집니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berichten die je stuurt terwijl de agent werkt, stoppen zijn beurt en gaan als volgende."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wiadomości wysłane podczas pracy agenta zatrzymują jego turę i idą jako następne."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mensagens enviadas enquanto o agente trabalha param o turno e vão em seguida."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сообщения, отправленные во время работы агента, останавливают его ход и уходят следующими."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajan çalışırken gönderilen mesajlar turunu durdurur ve sıradaki olarak gider."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Повідомлення, надіслані під час роботи агента, зупиняють його хід і йдуть наступними."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tin nhắn gửi khi tác tử đang làm việc sẽ dừng lượt của nó và được gửi tiếp theo."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作时发送的消息会停止本轮并接着发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作時傳送的訊息會停止本回合並接著傳送。"
+          }
+        }
+      }
+    },
+    "Messages sent while the agent works wait for its turn to end." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nachrichten, die während der Arbeit des Agenten gesendet werden, warten, bis sein Durchgang endet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los mensajes enviados mientras el agente trabaja esperan a que termine su turno."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los mensajes enviados mientras el agente trabaja esperan a que termine su turno."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les messages envoyés pendant que l’agent travaille attendent la fin de son tour."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एजेंट के काम करते समय भेजे गए संदेश उसके टर्न के खत्म होने का इंतज़ार करते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pesan yang dikirim saat agen bekerja menunggu gilirannya selesai."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I messaggi inviati mentre l’agente lavora attendono la fine del suo turno."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントの作業中に送ったメッセージは、ターンの終了を待ちます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 작업하는 동안 보낸 메시지는 턴이 끝날 때까지 기다립니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berichten die je stuurt terwijl de agent werkt, wachten tot zijn beurt voorbij is."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wiadomości wysłane podczas pracy agenta czekają na koniec jego tury."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mensagens enviadas enquanto o agente trabalha esperam o fim do turno."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сообщения, отправленные во время работы агента, ждут конца его хода."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajan çalışırken gönderilen mesajlar turunun bitmesini bekler."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Повідомлення, надіслані під час роботи агента, чекають завершення його ходу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tin nhắn gửi khi tác tử đang làm việc sẽ chờ đến khi lượt của nó kết thúc."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作时发送的消息会等到本轮结束。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作時傳送的訊息會等到本回合結束。"
           }
         }
       }
@@ -140524,6 +141644,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "新對話會使用此模型開始。在任一對話中選擇模型、推理強度、速度或取用權限後，它就會成為新的預設設定。"
+          }
+        }
+      }
+    },
+    "New threads start with this; each thread keeps its own choice, set in its composer." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neue Threads beginnen damit; jeder Thread behält seine eigene Wahl, die du in seinem Eingabefeld triffst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los hilos nuevos empiezan con esto; cada hilo conserva su propia elección, que se cambia en su redactor."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los hilos nuevos empiezan con esto; cada hilo conserva su propia elección, que se cambia en su redactor."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les nouveaux fils commencent ainsi ; chaque fil garde son propre choix, réglé dans sa zone de saisie."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "नए थ्रेड इसी से शुरू होते हैं; हर थ्रेड अपनी पसंद रखता है, जो उसके कंपोज़र में सेट होती है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utas baru dimulai dengan ini; setiap utas menyimpan pilihannya sendiri, yang diatur di penyusunnya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I nuovi thread partono con questa scelta; ogni thread mantiene la propria, impostata nel suo compositore."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新しいスレッドはこの設定で始まります。各スレッドは、入力欄で選んだ独自の設定を保ちます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "새 스레드는 이 설정으로 시작합니다. 각 스레드는 작성기에서 정한 자체 선택을 유지합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nieuwe threads beginnen hiermee; elke thread houdt zijn eigen keuze, ingesteld in zijn invoerveld."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nowe wątki zaczynają z tym ustawieniem; każdy wątek zachowuje własny wybór, ustawiany w jego edytorze."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Novas conversas começam com isso; cada conversa mantém sua própria escolha, definida no seu editor."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Новые треды начинаются с этого; каждый тред хранит свой выбор, заданный в его поле ввода."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yeni ileti dizileri bununla başlar; her dizi kendi seçimini korur, bu seçim dizinin yazma alanından yapılır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нові треди починаються з цього; кожен тред зберігає свій вибір, заданий у його полі введення."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Luồng mới bắt đầu với lựa chọn này; mỗi luồng giữ lựa chọn riêng, đặt trong khung soạn của nó."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新会话以此开始；每个会话保留自己的选择，可在其输入框中设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新對話以此開始；每個對話保留自己的選擇，可在其輸入框中設定。"
           }
         }
       }
@@ -213685,6 +214917,118 @@
         }
       }
     },
+    "Stop the current turn and send this now" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktuellen Durchgang stoppen und dies jetzt senden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Detener el turno actual y enviar esto ahora"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Detener el turno actual y enviar esto ahora"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrêter le tour en cours et envoyer ceci maintenant"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "मौजूदा टर्न रोकें और इसे अभी भेजें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hentikan giliran saat ini dan kirim ini sekarang"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrompi il turno corrente e invia ora"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "現在のターンを停止して今すぐ送信"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "현재 턴을 중지하고 지금 보내기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stop de huidige beurt en verstuur dit nu"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zatrzymaj bieżącą turę i wyślij to teraz"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Parar o turno atual e enviar isto agora"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Остановить текущий ход и отправить сейчас"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçerli turu durdur ve bunu şimdi gönder"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зупинити поточний хід і надіслати зараз"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dừng lượt hiện tại và gửi ngay"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "停止当前轮次并立即发送"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "停止目前的回合並立即傳送"
+          }
+        }
+      }
+    },
     "Stop the running agent first" : {
       "localizations" : {
         "de" : {
@@ -213905,6 +215249,342 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "請先停止對話，再將其封存。"
+          }
+        }
+      }
+    },
+    "Stop the turn and send message" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Durchgang stoppen und Nachricht senden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Detener el turno y enviar el mensaje"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Detener el turno y enviar el mensaje"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrêter le tour et envoyer le message"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "टर्न रोकें और संदेश भेजें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hentikan giliran dan kirim pesan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrompi il turno e invia il messaggio"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ターンを停止してメッセージを送信"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "턴을 중지하고 메시지 보내기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stop de beurt en verstuur het bericht"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zatrzymaj turę i wyślij wiadomość"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Parar o turno e enviar a mensagem"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Остановить ход и отправить сообщение"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Turu durdur ve mesajı gönder"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зупинити хід і надіслати повідомлення"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dừng lượt và gửi tin nhắn"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "停止本轮并发送消息"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "停止本回合並傳送訊息"
+          }
+        }
+      }
+    },
+    "Stopping the current turn to send it" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der aktuelle Durchgang wird gestoppt, um sie zu senden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deteniendo el turno actual para enviarlo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deteniendo el turno actual para enviarlo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrêt du tour en cours pour l’envoyer"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इसे भेजने के लिए मौजूदा टर्न रोका जा रहा है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menghentikan giliran saat ini untuk mengirimnya"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interruzione del turno corrente per inviarlo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "送信するために現在のターンを停止しています"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "보내기 위해 현재 턴을 중지하는 중"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De huidige beurt wordt gestopt om het te versturen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zatrzymywanie bieżącej tury, aby to wysłać"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Parando o turno atual para enviar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Текущий ход останавливается, чтобы отправить сообщение"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Göndermek için geçerli tur durduruluyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поточний хід зупиняється, щоб надіслати повідомлення"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đang dừng lượt hiện tại để gửi"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在停止当前轮次以发送此消息"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在停止目前的回合以傳送此訊息"
+          }
+        }
+      }
+    },
+    "Stopping…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird gestoppt …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deteniendo…"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deteniendo…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrêt en cours…"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "रोका जा रहा है…"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menghentikan…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interruzione in corso…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "停止中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "중지하는 중…"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bezig met stoppen…"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zatrzymywanie…"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Parando…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Остановка…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Durduruluyor…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зупинка…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đang dừng…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在停止…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在停止…"
           }
         }
       }
@@ -252840,6 +254520,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "終端機為焦點時，這些按鍵會作用於終端機，而非與其共用按鍵的選單指令，與 T3 Code 相同。"
+          }
+        }
+      }
+    },
+    "While the agent works: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Während der Agent arbeitet: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mientras el agente trabaja: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mientras el agente trabaja: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pendant que l’agent travaille : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जब एजेंट काम कर रहा हो: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saat agen bekerja: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mentre l’agente lavora: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントの作業中: %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 작업하는 동안: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Terwijl de agent werkt: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gdy agent pracuje: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enquanto o agente trabalha: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пока агент работает: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajan çalışırken: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поки агент працює: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khi tác tử đang làm việc: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作时：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理工作時：%@"
           }
         }
       }

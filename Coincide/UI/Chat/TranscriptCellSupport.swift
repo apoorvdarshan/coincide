@@ -36,6 +36,15 @@ protocol TranscriptHost: AnyObject {
     func rail(for id: TranscriptRowID) -> TranscriptRail?
     /// The find bar's matches in an item, while the find bar shows some.
     func findHighlights(for itemID: UUID) -> TranscriptFindHighlights?
+    /// The transcript item of a provider's tool call, such as the one that started a background task.
+    func toolCallItem(_ toolCallID: String, provider: ProviderKind) -> UUID?
+    /// Scrolls to an item, opening whatever folds it away.
+    func reveal(_ itemID: UUID)
+}
+
+extension TranscriptHost {
+    func toolCallItem(_ toolCallID: String, provider: ProviderKind) -> UUID? { nil }
+    func reveal(_ itemID: UUID) {}
 }
 
 /// Shared transcript geometry. Everything lays out in a centered column, with the agent rail in a gutter on its left.

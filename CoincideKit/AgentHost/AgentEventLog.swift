@@ -31,7 +31,9 @@ public final class AgentEventLog {
         var last: Int
     }
 
-    init(key: AgentSessionKey, directory: URL) {
+    /// `startingAfter` is the last sequence an earlier log of the key handed out in this run of the host, so a
+    /// session started again after its log was removed never reuses a number the app already applied.
+    init(key: AgentSessionKey, directory: URL, startingAfter: Int = 0) {
         self.key = key
         eventsURL = directory.appendingPathComponent("\(key).jsonl")
         metaURL = directory.appendingPathComponent("\(key).meta.json")
@@ -48,7 +50,7 @@ public final class AgentEventLog {
         let applied = meta?.acknowledged ?? 0
         appliedInFile = events.count { $0.sequence <= applied }
         backlog = events.filter { $0.sequence > applied }
-        lastSequence = max(meta?.last ?? 0, applied, events.last?.sequence ?? 0)
+        lastSequence = max(meta?.last ?? 0, applied, events.last?.sequence ?? 0, startingAfter)
     }
 
     isolated deinit {
@@ -150,7 +152,19 @@ public final class AgentEventLogStore {
             at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     }
 
-    public func open(_ key: AgentSessionKey) -> AgentEventLog { AgentEventLog(key: key, directory: directory) }
+    /// Removed logs' last sequences: a key's numbers only go up for as long as the host runs, as an app connected
+    /// to it remembers how far it got by number.
+    private var retiredSequences: [AgentSessionKey: Int] = [:]
+
+    public func open(_ key: AgentSessionKey) -> AgentEventLog {
+        AgentEventLog(key: key, directory: directory, startingAfter: retiredSequences[key] ?? 0)
+    }
+
+    /// Deletes the log's files, keeping its last sequence for the next log of its key.
+    public func remove(_ log: AgentEventLog) {
+        retiredSequences[log.key] = max(retiredSequences[log.key] ?? 0, log.lastSequence)
+        log.remove()
+    }
 
     /// The sessions with a log on disk, as an earlier run of the host left them.
     public func existingKeys() -> [AgentSessionKey] {

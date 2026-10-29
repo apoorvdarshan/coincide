@@ -61,6 +61,7 @@ public final class AgentHostCore {
         var turnActive = false
         var pendingApprovals: [ApprovalRequest] = []
         var pendingQuestions: [UserInputRequest] = []
+        var backgroundTasks: [BackgroundTask] = []
 
         init(key: AgentSessionKey, log: AgentEventLog, thread: AgentHostThreadInfo) {
             self.key = key
@@ -104,7 +105,7 @@ public final class AgentHostCore {
             let log = logs.open(key)
             // Without a session, a log the app has applied entirely has nothing left to give.
             guard !log.backlog.isEmpty else {
-                log.remove()
+                logs.remove(log)
                 continue
             }
             let record = Hosted(key: key, log: log, thread: AgentHostThreadInfo(title: "", projectName: nil))
@@ -198,7 +199,7 @@ public final class AgentHostCore {
                 record.starting?.cancel()
                 record.session?.shutdown()
                 record.session = nil
-                record.log.remove()
+                logs.remove(record.log)
             }
             evaluateLifecycle()
             return .ok
@@ -226,7 +227,7 @@ public final class AgentHostCore {
         record.log.acknowledge(sequence)
         // An ended session whose every event the app applied has nothing left to keep.
         if record.session == nil, record.log.backlog.isEmpty {
-            record.log.remove()
+            logs.remove(record.log)
             hosted[key] = nil
         }
     }
@@ -268,7 +269,7 @@ public final class AgentHostCore {
                 record.session = nil
                 session.shutdown()
                 if record.log.backlog.isEmpty, hosted[key] === record {
-                    record.log.remove()
+                    logs.remove(record.log)
                     hosted[key] = nil
                 }
             }
@@ -302,10 +303,13 @@ public final class AgentHostCore {
             record.turnActive = false
             record.pendingApprovals = []
             record.pendingQuestions = []
+        case .backgroundWork(let tasks):
+            record.backgroundTasks = tasks
         case .sessionExited:
             record.turnActive = false
             record.pendingApprovals = []
             record.pendingQuestions = []
+            record.backgroundTasks = []
             record.session = nil
         default:
             break
@@ -373,7 +377,8 @@ public final class AgentHostCore {
             hasBackgroundWork: (record.session as? BackgroundWorkReporting)?.hasBackgroundWork ?? false,
             lastSequence: record.log.lastSequence, acknowledgedSequence: record.log.acknowledgedSequence,
             turnWasActiveAtAcknowledged: record.log.turnWasActiveAtAcknowledged, isTurnActive: record.turnActive,
-            pendingApprovals: record.pendingApprovals, pendingQuestions: record.pendingQuestions)
+            pendingApprovals: record.pendingApprovals, pendingQuestions: record.pendingQuestions,
+            backgroundTasks: record.session == nil ? [] : record.backgroundTasks)
     }
 
     // MARK: Lifecycle

@@ -185,8 +185,12 @@ private func mapLines(_ lines: [String], into mapper: inout ClaudeEventMapper) -
 private func testMapper() -> ClaudeEventMapper {
     var mapper = ClaudeEventMapper(workingDirectory: ClaudeFixture.cwd, contextWindow: 1_000_000)
     mapper.fileContents = { _ in nil }
+    mapper.now = { mapperClock }
     return mapper
 }
+
+/// What the test mapper's clock reads.
+private let mapperClock = Date(timeIntervalSince1970: 1_800_000_000)
 
 // MARK: - Mapper
 
@@ -597,11 +601,75 @@ struct ClaudeMapperTests {
         #expect(
             events == [
                 .backgroundWork([
-                    BackgroundTask(id: "a1", title: "Audit the port", kind: .agent, toolCallID: "toolu_1"),
-                    BackgroundTask(id: "b1", title: "npm run dev", kind: .command),
+                    BackgroundTask(id: "a1", title: "Audit the port", kind: .agent, toolCallID: "toolu_1", startedAt: mapperClock),
+                    BackgroundTask(id: "b1", title: "npm run dev", kind: .command, startedAt: mapperClock),
                 ]),
                 .backgroundWork([]),
             ])
+    }
+
+    /// Frames as Claude Code 2.1.308 sends them for a background command and a background subagent: the list names
+    /// each task, and `task_started`, sent just after it, says which tool call started it.
+    @Test func backgroundWorkTakesItsToolCallAndProgressFromTaskFrames() {
+        var mapper = testMapper()
+        func system(_ subtype: String, _ fields: String) -> String {
+            #"{"type":"system","subtype":"\#(subtype)",\#(fields),"uuid":"u","session_id":"s"}"#
+        }
+        let bash = #"{"task_id":"b2","run_id":"r1","task_type":"local_bash","description":"Sleep then echo"}"#
+        let agent = #"{"task_id":"a1","run_id":"r2","task_type":"local_agent","subagent_type":"general-purpose","description":"Tiny sleeper"}"#
+        let command = BackgroundTask(id: "b2", title: "Sleep then echo", kind: .command, startedAt: mapperClock)
+        var started = command
+        started.toolCallID = "toolu_bash"
+        var sleeper = BackgroundTask(
+            id: "a1", title: "Tiny sleeper", kind: .agent, toolCallID: "toolu_agent", startedAt: mapperClock, agentType: "general-purpose")
+        var unstarted = sleeper
+        unstarted.toolCallID = nil
+
+        #expect(mapLines([system("background_tasks_changed", #""tasks":[\#(bash)]"#)], into: &mapper) == [.backgroundWork([command])])
+        #expect(
+            mapLines(
+                [system("task_started", #""task_id":"b2","tool_use_id":"toolu_bash","description":"Sleep then echo","is_backgrounded":true,"task_type":"local_bash""#)],
+                into: &mapper) == [.backgroundWork([started])])
+        #expect(
+            mapLines(
+                [
+                    system("background_tasks_changed", #""tasks":[\#(bash),\#(agent)]"#),
+                    system(
+                        "task_started",
+                        #""task_id":"a1","tool_use_id":"toolu_agent","description":"Tiny sleeper","subagent_type":"general-purpose","is_backgrounded":true,"task_type":"local_agent""#
+                    ),
+                ], into: &mapper) == [.backgroundWork([started, unstarted]), .backgroundWork([started, sleeper])])
+
+        // What the subagent does now; its own commands are not background work.
+        let progress = mapLines(
+            [
+                system(
+                    "task_progress",
+                    #""task_id":"a1","tool_use_id":"toolu_agent","description":"Running Sleep for 20 seconds","subagent_type":"general-purpose","last_tool_name":"Bash""#
+                ),
+                system(
+                    "task_started",
+                    #""task_id":"b9","owned_by_subagent":true,"tool_use_id":"toolu_inner","description":"Sleep for 20 seconds","is_backgrounded":false,"parent_task_id":"a1","task_type":"local_bash""#
+                ),
+                system("task_notification", #""task_id":"b9","tool_use_id":"toolu_inner","status":"completed","summary":"Sleep for 20 seconds""#),
+            ], into: &mapper)
+        sleeper.progress = "Running Sleep for 20 seconds"
+        #expect(progress == [.backgroundWork([started, sleeper])])
+        #expect(mapper.backgroundReport == [started, sleeper])
+
+        // Each leaves the list as it finishes; a task seen again later is new work.
+        #expect(
+            mapLines(
+                [
+                    system("task_updated", #""task_id":"a1","patch":{"status":"completed"}"#),
+                    system("task_notification", #""task_id":"a1","tool_use_id":"toolu_agent","status":"completed","summary":"hi""#),
+                    system("background_tasks_changed", #""tasks":[\#(bash)]"#),
+                ], into: &mapper) == [.backgroundWork([started])])
+        #expect(mapLines([system("background_tasks_changed", #""tasks":[]"#)], into: &mapper) == [.backgroundWork([])])
+        mapper.now = { mapperClock.addingTimeInterval(60) }
+        var again = command
+        again.startedAt = mapperClock.addingTimeInterval(60)
+        #expect(mapLines([system("background_tasks_changed", #""tasks":[\#(bash)]"#)], into: &mapper) == [.backgroundWork([again])])
     }
 
     @Test func initializeCommandsAreDedupedAndSplitIntoBuiltInsAndSkills() {

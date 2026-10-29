@@ -132,7 +132,7 @@ extension AppStore {
         let thread = ChatThread(
             projectID: Self.botsProjectID, title: String(localized: "New conversation"),
             selection: selection ?? bot.selection, accessMode: bot.accessMode, interactionMode: bot.interactionMode,
-            botID: bot.id)
+            botID: bot.id, followUpBehavior: settings.followUpBehavior)
         insert(thread)
         return thread
     }

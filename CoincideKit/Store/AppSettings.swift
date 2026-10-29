@@ -29,23 +29,28 @@ public enum ReplyTypeface: String, Codable, CaseIterable, Sendable {
 }
 
 /// What sending does while the agent works, as T3 Code's `followUpBehavior`: steer the message into the running turn,
-/// or queue it for after the turn. The alternate send does the other for one message.
+/// queue it for after the turn, or interrupt the turn and send it now. The alternate send does the other for one
+/// message. Each thread keeps its own (`ChatThread.followUpBehavior`); the last one picked is the default for new
+/// threads (`AppSettings.followUpBehavior`).
 public enum FollowUpBehavior: String, Codable, CaseIterable, Sendable {
     case steer
     case queue
+    case interrupt
 
     public nonisolated var displayName: String {
         switch self {
         case .steer: String(localized: "Steer")
         case .queue: String(localized: "Queue")
+        case .interrupt: String(localized: "Interrupt")
         }
     }
 
-    /// The other behavior, which the alternate send uses.
+    /// The other behavior, which the alternate send uses: steer and queue swap, and an interrupt waits instead.
     public nonisolated var opposite: FollowUpBehavior {
         switch self {
         case .steer: .queue
         case .queue: .steer
+        case .interrupt: .queue
         }
     }
 }
@@ -97,8 +102,12 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var appearance: AppearanceMode
     /// Return sends; Shift-Return inserts a newline. When false, Command-Return sends.
     public var sendOnReturn: Bool
-    /// Whether a message sent while the agent works steers its turn or waits for it to end.
+    /// What a message sent while the agent works does in new threads: the last choice made in a thread's composer
+    /// (`AppStore.setFollowUpBehavior`) or here. Each thread keeps its own.
     public var followUpBehavior: FollowUpBehavior
+    /// What threads without a choice of their own do: those made before each thread kept one, which go on as the
+    /// app-wide setting had them.
+    public var existingThreadsFollowUpBehavior: FollowUpBehavior
     public var showReasoning: Bool
     public var confirmBeforeDeletingThreads: Bool
     /// ⌘Q quits only when held or pressed twice (`QuitShortcutGuard`); a single press shows a hint. Quitting from the
@@ -157,6 +166,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         appearance = .system
         sendOnReturn = true
         followUpBehavior = .steer
+        existingThreadsFollowUpBehavior = .steer
         showReasoning = true
         confirmBeforeDeletingThreads = true
         holdToQuit = true
@@ -200,6 +210,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         appearance = value(.appearance, defaults.appearance)
         sendOnReturn = value(.sendOnReturn, defaults.sendOnReturn)
         followUpBehavior = value(.followUpBehavior, defaults.followUpBehavior)
+        // Settings from before threads kept their own: the app-wide setting carries on for the threads there were.
+        existingThreadsFollowUpBehavior = value(.existingThreadsFollowUpBehavior, followUpBehavior)
         showReasoning = value(.showReasoning, defaults.showReasoning)
         confirmBeforeDeletingThreads = value(.confirmBeforeDeletingThreads, defaults.confirmBeforeDeletingThreads)
         holdToQuit = value(.holdToQuit, defaults.holdToQuit)

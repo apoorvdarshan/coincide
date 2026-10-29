@@ -243,6 +243,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         footer.effortButton.menuProvider = { [weak self] in self?.effortMenu() }
         footer.speedButton.menuProvider = { [weak self] in self?.speedMenu() }
         footer.accessButton.menuProvider = { [weak self] in self?.accessMenu() }
+        footer.followUpButton.menuProvider = { [weak self] in self?.followUpMenu() }
         footer.modeButton.target = self
         footer.modeButton.action = #selector(toggleInteractionMode)
         footer.attachButton.target = self
@@ -561,9 +562,12 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         return ComposerSendKeys(sendOnReturn: store.settings.sendOnReturn, menuHas: { keyBindings.menuBarHas($0) })
     }
 
-    /// What send does while a turn runs: the follow-up behavior setting, or steer while an approval is shown.
+    /// What send does while a turn runs: the thread's follow-up behavior as its agent can do it, or steer while an
+    /// approval is shown.
     private var followUpBehavior: FollowUpBehavior {
-        ComposerDispatch.followUpBehavior(store.settings.followUpBehavior, approvalShown: hasPendingApproval)
+        guard let thread else { return store.settings.followUpBehavior }
+        let chosen = ComposerDispatch.effective(store.followUpBehavior(of: thread), for: thread.selection.provider)
+        return ComposerDispatch.followUpBehavior(chosen, approvalShown: hasPendingApproval)
     }
 
     private func refreshStopToolTip() {
@@ -577,8 +581,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         let enabled = thread != nil
         textView.isEditable = enabled
         for control in [
-            footer.modelButton, footer.effortButton, footer.speedButton, footer.accessButton, footer.modeButton,
-            footer.attachButton,
+            footer.modelButton, footer.effortButton, footer.speedButton, footer.accessButton, footer.followUpButton,
+            footer.modeButton, footer.attachButton,
         ] {
             control.isEnabled = enabled
         }
@@ -647,6 +651,13 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         footer.accessButton.toolTip = keyBindings.toolTip(ComposerMenus.summary(for: thread.accessMode), for: .accessMode)
         footer.accessButton.setAccessibilityLabel(String(localized: "Access: \(thread.accessMode.displayName)"))
 
+        // The thread's own choice; Steer shows as Queue for an agent that can't take a message mid-turn.
+        let followUp = ComposerDispatch.effective(store.followUpBehavior(of: thread), for: provider)
+        footer.followUpButton.configure(
+            title: followUp.displayName, symbolName: ComposerMenus.symbolName(for: followUp), chevron: true)
+        footer.followUpButton.toolTip = String(localized: "While the agent works: \(ComposerMenus.summary(for: followUp))")
+        footer.followUpButton.setAccessibilityLabel(String(localized: "While the agent works: \(followUp.displayName)"))
+
         let planning = thread.interactionMode == .plan
         footer.modeButton.configure(
             title: thread.interactionMode.displayName, symbolName: planning ? "pencil.and.ruler" : "hammer",
@@ -669,7 +680,11 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             return
         }
         let queued = runner.queuedMessages(threadID)
-        if !queued.isEmpty { queueBanner.show(queued, canSteer: runner.canSteer(threadID), steerKey: sendKeys.steerQueued) }
+        if !queued.isEmpty {
+            queueBanner.show(
+                queued, isRunning: runner.isRunning(threadID) && !runner.isStopping(threadID),
+                canSteer: runner.canSteer(threadID), steerKey: sendKeys.steerQueued)
+        }
         queueBanner.isHidden = queued.isEmpty
 
         // Usage belongs to whichever agent ran last; after a switch it says nothing about the new one.
@@ -934,6 +949,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             hasContent && importingImages == 0 && isUsable(thread.selection.provider)
             && !WorktreeService.shared.isPreparing(threadID) && missingFolder == nil
         footer.stopButton.isHidden = !running
+        // A stop shows at once, while the agent is still confirming it.
+        let stopping = runner.isStopping(threadID)
+        footer.stopButton.isEnabled = !stopping
+        footer.stopButton.setAccessibilityLabel(stopping ? String(localized: "Stopping…") : String(localized: "Stop"))
+        footer.stopButton.toolTip =
+            stopping
+            ? String(localized: "Stopping…")
+            : KeyBindingsController.shared.toolTip(String(localized: "Stop"), for: .stopTurn)
         footer.implementButton.isHidden = !(proposedPlan != nil && !hasContent && !running)
         send.isHidden = !footer.implementButton.isHidden
         send.isEnabled = canSend
@@ -947,6 +970,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         case .queue:
             send.mode = .queue
             send.setAccessibilityLabel(String(localized: "Queue message"))
+        case .interrupt:
+            send.mode = .interrupt
+            send.setAccessibilityLabel(String(localized: "Stop the turn and send message"))
         case .send:
             send.mode = .send
             send.setAccessibilityLabel(String(localized: "Send message"))
@@ -1355,6 +1381,25 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         return ComposerMenus.accessMenu(current: thread.accessMode, target: self, action: #selector(chooseAccess(_:)))
     }
 
+    private func followUpMenu() -> NSMenu? {
+        guard let thread else { return nil }
+        let provider = thread.selection.provider
+        return ComposerMenus.followUpMenu(
+            current: ComposerDispatch.effective(store.followUpBehavior(of: thread), for: provider), provider: provider,
+            target: self, action: #selector(chooseFollowUp(_:)))
+    }
+
+    @objc private func chooseFollowUp(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let behavior = FollowUpBehavior(rawValue: raw) else { return }
+        setFollowUpBehavior(behavior)
+    }
+
+    /// The thread keeps what a message sent while its agent works does, and it becomes the default for new threads.
+    func setFollowUpBehavior(_ behavior: FollowUpBehavior) {
+        guard let threadID, let thread, ComposerDispatch.isAvailable(behavior, for: thread.selection.provider) else { return }
+        store.setFollowUpBehavior(behavior, for: threadID)
+    }
+
     /// Picking a model from another provider switches the thread's agent; that agent's native session
     /// continues and it gets a recap of the turns it missed (see `Handoff`). The effort and speed carry
     /// over when the new model supports them.
@@ -1486,8 +1531,20 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         let imagePaths = attachments.map(\.path)
         let context = attachedContext
         clearComposer()
+        let behavior = followUpBehavior
         switch dispatch {
         case .steer:
+            Task {
+                let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths, context: context)
+                announce(delivery)
+            }
+        case .interrupt:
+            Task {
+                let delivery = await runner.interrupt(threadID: threadID, text: text, imagePaths: imagePaths, context: context)
+                announce(delivery)
+            }
+        case .queue where ComposerDispatch.meansToSteer(alternate: alternate, behavior: behavior):
+            // Meant for the turn, which can't take it right now: it goes next, even if the turn is stopped.
             Task {
                 let delivery = await runner.steer(threadID: threadID, text: text, imagePaths: imagePaths, context: context)
                 announce(delivery)
@@ -1508,6 +1565,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         switch delivery {
         case .steered?: message = String(localized: "Sent into the current turn")
         case .queued?: message = String(localized: "Queued for after the current turn")
+        case .interrupting?: message = String(localized: "Stopping the current turn to send it")
         case .sent?, nil: return
         }
         NSAccessibility.post(
@@ -1515,18 +1573,21 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
     }
 
-    /// Sends a queued message into the running turn now, or as a new turn when none runs.
+    /// Sends a queued message now: into the running turn when it takes it, otherwise by stopping that turn and
+    /// sending the message next. As a new turn when none runs.
     private func steerQueued(_ id: UUID) {
         guard let threadID else { return }
         Task {
-            let delivery = await runner.steerQueued(threadID: threadID, id: id)
+            let delivery = await runner.sendQueuedNow(threadID: threadID, id: id)
             announce(delivery)
         }
     }
 
-    /// Sends the oldest queued message into the running turn. False when there is none or the turn can't take it.
+    /// Sends the oldest queued message now. False when there is none, or the turn is already being stopped.
     private func steerNextQueued() -> Bool {
-        guard let threadID, runner.canSteer(threadID), let next = runner.queuedMessages(threadID).first else { return false }
+        guard let threadID, runner.isRunning(threadID), !runner.isStopping(threadID),
+            let next = runner.queuedMessages(threadID).first
+        else { return false }
         steerQueued(next.id)
         return true
     }

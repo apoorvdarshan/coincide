@@ -57,6 +57,20 @@ struct AgentEventLogTests {
         #expect(again.append(.notice("next"), turnActive: false).sequence == 4)
     }
 
+    /// An app remembers how far it got by number, so a removed log's numbers are not handed out again: the next
+    /// session of the key would otherwise have its events taken for ones the app already applied.
+    @Test func aLogOpenedAgainAfterBeingRemovedKeepsCounting() {
+        let store = AgentEventLogStore(directory: directory)
+        let log = store.open(key)
+        log.append(.sessionStarted(id: "s1"), turnActive: false)
+        log.append(.turnCompleted(.completed), turnActive: false)
+        log.acknowledge(2)
+        store.remove(log)
+        #expect(store.existingKeys().isEmpty)
+        let next = store.open(key)
+        #expect(next.append(.sessionStarted(id: "s1"), turnActive: false).sequence == 3)
+    }
+
     @Test func skipsALineCutShortByACrash() throws {
         let log = AgentEventLogStore(directory: directory).open(key)
         log.append(.notice("one"), turnActive: false)
@@ -302,6 +316,45 @@ struct AgentHostCoreTests {
         claude.last?.hasBackgroundWork = false
         core.evaluateLifecycle(now: Date().addingTimeInterval(3_600))
         #expect(exited)
+    }
+
+    @Test func theSessionInfoListsTheBackgroundWorkLastReported() async throws {
+        let core = makeCore()
+        let client = core.connect(Recorder())
+        _ = await core.perform(.start(key: key, launch: launch, account: .defaultAccount(for: .claude), thread: thread), from: client)
+        let task = BackgroundTask(
+            id: "a1", title: "Audit the port", kind: .agent, toolCallID: "toolu_1", startedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            agentType: "general-purpose", progress: "Running the tests")
+        claude.last?.emit(.backgroundWork([task]))
+        #expect(core.sessionInfos.first?.backgroundTasks == [task])
+        // It reaches an app over the wire, details and all.
+        let info = try #require(core.sessionInfos.first)
+        #expect(try AgentHostWire.decode(AgentHostSessionInfo.self, from: AgentHostWire.encode(info)) == info)
+        claude.last?.emit(.backgroundWork([]))
+        #expect(core.sessionInfos.first?.backgroundTasks == [])
+        claude.last?.emit(.backgroundWork([task]))
+        claude.last?.emit(.sessionExited(error: nil))
+        #expect(core.sessionInfos.first?.backgroundTasks == [])
+    }
+
+    @Test func anOlderHostsSessionInfoSaysOnlyWhetherWorkRuns() throws {
+        let key = AgentSessionKey(threadID: UUID(), provider: .claude)
+        var info = AgentHostSessionInfo(
+            key: key, isLive: true, sessionID: "s", supportsSteering: true, hasBackgroundWork: true, lastSequence: 3,
+            acknowledgedSequence: 3, turnWasActiveAtAcknowledged: false, isTurnActive: false, pendingApprovals: [],
+            pendingQuestions: [])
+        var json = try #require(JSONSerialization.jsonObject(with: AgentHostWire.encode(info)) as? [String: Any])
+        json["backgroundTasks"] = nil
+        let older = try AgentHostWire.decode(AgentHostSessionInfo.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(older.backgroundTasks == nil)
+        // Shown as one unnamed task until the session reports its work again.
+        #expect(AgentHostClient.backgroundTasks(of: older).map(\.kind) == [.other])
+        info.hasBackgroundWork = false
+        #expect(AgentHostClient.backgroundTasks(of: info).isEmpty)
+        info.backgroundTasks = [BackgroundTask(id: "b", title: "npm run dev", kind: .command)]
+        #expect(AgentHostClient.backgroundTasks(of: info).map(\.title) == ["npm run dev"])
+        info.isLive = false
+        #expect(AgentHostClient.backgroundTasks(of: info).isEmpty)
     }
 
     @Test func retiringWaitsForTheTurnEvenWithTheAppConnected() async throws {

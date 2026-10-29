@@ -163,7 +163,7 @@ final class ChatViewController: NSViewController {
             composerView.bottomAnchor.constraint(equalTo: composerContainer.bottomAnchor),
 
             jumpButton.centerXAnchor.constraint(equalTo: list.scrollView.centerXAnchor),
-            jumpButton.bottomAnchor.constraint(equalTo: composerContainer.topAnchor, constant: -12),
+            jumpButton.bottomAnchor.constraint(equalTo: composerContainer.topAnchor, constant: -Self.jumpButtonGap),
 
             findBar.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 10),
             findBar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
@@ -177,6 +177,9 @@ final class ChatViewController: NSViewController {
         ])
         jumpButton.isHidden = true
         jumpButton.alphaValue = 0
+        // The pill floats over the bottom of the conversation; the space below the last row keeps it clear of the
+        // last message or notice once the reader is at the bottom.
+        list.scrollView.contentInsets.bottom = Self.jumpButtonClearance(pillHeight: jumpButton.fittingSize.height)
         // Placed by frame over the transcript, under the find bar.
         root.addSubview(replyButton.button, positioned: .below, relativeTo: findBar)
         NotificationCenter.default.addObserver(
@@ -316,7 +319,7 @@ final class ChatViewController: NSViewController {
         builder.runningProvider = turn?.provider ?? thread.selection.provider
         let background = runner.backgroundTasks(thread.id)
         if let first = background.first {
-            builder.backgroundWork = (first.provider, background.map(\.task.title))
+            builder.backgroundWork = (first.provider, background.map(\.task))
         }
         builder.showReasoning = store.settings.showReasoning
         builder.expanded = expanded[thread.id] ?? []
@@ -492,8 +495,9 @@ final class ChatViewController: NSViewController {
         scheduleFindRefresh()
     }
 
+    /// Ticks the live rows' clocks: the running turn's, and each background task's.
     private func updateLiveTimer() {
-        let running = displayedThreadID.map(runner.isRunning) ?? false
+        let running = displayedThreadID.map { runner.isRunning($0) || !runner.backgroundTasks($0).isEmpty } ?? false
         guard running else {
             liveTimer?.invalidate()
             liveTimer = nil
@@ -556,6 +560,14 @@ final class ChatViewController: NSViewController {
             }
         }
     }
+
+    /// The space kept below the last row: the pill, its distance from the composer, and a little air above it.
+    nonisolated static func jumpButtonClearance(pillHeight: CGFloat) -> CGFloat {
+        jumpButtonGap + pillHeight + 6
+    }
+
+    /// How far the pill floats above the composer.
+    nonisolated static let jumpButtonGap: CGFloat = 12
 
     @objc private func jumpToLatest() {
         list.scrollToBottom(animated: true)
@@ -1101,6 +1113,15 @@ extension ChatViewController: TranscriptHost {
 
     func findHighlights(for itemID: UUID) -> TranscriptFindHighlights? {
         findBar.isHidden ? nil : finder.highlights(for: itemID)
+    }
+
+    func toolCallItem(_ toolCallID: String, provider: ProviderKind) -> UUID? {
+        guard let threadID = displayedThreadID, let thread = store.thread(threadID) else { return nil }
+        return thread.items.last { $0.kind == .tool && $0.externalID == toolCallID && $0.provider == provider }?.id
+    }
+
+    func reveal(_ itemID: UUID) {
+        revealItem(itemID)
     }
 }
 
