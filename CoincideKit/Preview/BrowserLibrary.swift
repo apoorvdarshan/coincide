@@ -199,7 +199,7 @@ public final class BrowserLibrary {
     // MARK: Storage
 
     /// The address kept for `url`: http(s) only, without a fragment or credentials.
-    public static func address(_ url: URL) -> String? {
+    public nonisolated static func address(_ url: URL) -> String? {
         guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme), url.host?.isEmpty == false,
             var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         else { return nil }

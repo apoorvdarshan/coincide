@@ -60,7 +60,10 @@ final class BrowserProfile {
         if history {
             library.clearHistory()
             library.flush()
-            UIState.shared.update { $0.previewAddresses.removeAll() }
+            UIState.shared.update { state in
+                state.previewAddresses.removeAll()
+                state.previewTabs.removeAll()
+            }
         }
     }
 
@@ -81,7 +84,7 @@ final class BrowserProfile {
     func removeProfile() async {
         let id = settings.settings.profileID
         sharedStore = nil
-        for _ in 0..<20 {
+        for _ in 0..<5 {
             do {
                 try await WKWebsiteDataStore.remove(forIdentifier: id)
                 return

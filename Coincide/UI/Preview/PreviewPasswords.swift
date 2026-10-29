@@ -18,7 +18,7 @@ final class LoginSubmitHandler: NSObject, WKScriptMessageHandler {
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame, let session, let body = message.body as? [String: Any],
             let password = body["password"] as? String, !password.isEmpty, password.utf8.count <= 4096,
-            let url = session.webView.url, PreviewCommand.url(url.absoluteString) != nil
+            let url = message.webView?.url, PreviewCommand.url(url.absoluteString) != nil
         else { return }
         let username = String((body["username"] as? String ?? "").prefix(500))
         session.onLoginSubmitted?(url, username, password)
