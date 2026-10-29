@@ -126,6 +126,11 @@ final class DiffCommentEditor: NSViewController, ThemedPopupContent, NSTextViewD
     }
 
     func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        // Escape closes the popup, as it does every other one; a text view would show word completions instead.
+        if selector == #selector(NSResponder.cancelOperation(_:)), !textView.hasMarkedText() {
+            cancel()
+            return true
+        }
         guard selector == #selector(NSResponder.insertNewline(_:)), !textView.hasMarkedText() else { return false }
         let flags = NSApp.currentEvent?.modifierFlags.intersection(.deviceIndependentFlagsMask) ?? []
         guard flags.isDisjoint(with: [.shift, .option]) else {
