@@ -68,7 +68,7 @@ struct ComposerView: View {
     private var placeholder: String {
         model.turn.isRunning
             ? (client.server?.followUpBehavior == "queue" ? String(localized: "Queue a follow-up") : String(localized: "Steer the agent"))
-            : String(localized: "Ask \(summary.map { AgentLogo.name($0.selection.provider) } ?? "the agent")")
+            : summary.map { String(localized: "Ask \(AgentLogo.name($0.selection.provider))") } ?? String(localized: "Ask the agent")
     }
 
     @ViewBuilder private var sendButton: some View {

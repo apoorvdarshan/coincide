@@ -5,6 +5,10 @@
   scripts/translations.py check <lang> <in.json>      validates a translation file against the catalog
   scripts/translations.py import <lang> <in.json>     writes a validated file into the catalog (state needs_review)
 
+The catalog is the Mac app's (Coincide/Resources/Localizable.xcstrings) unless the command starts with
+--catalog <path>: CoincideRemote/Localizable.xcstrings for Coincide Remote on iOS, or an InfoPlist.xcstrings for
+the permission texts.
+
 A translation file maps catalog keys to a string, or to {"plural": {"one": "...", "other": "..."}} for a string with
 exactly one integer placeholder, using only the CLDR plural categories of the language. Placeholders must match the
 English source: the same specifiers and types, reordered only with numbers (%2$@ … %1$@). Run scripts/sync-strings.sh
@@ -132,6 +136,9 @@ def import_(lang, path):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--catalog"] and len(sys.argv) > 2:
+        CATALOG = Path(sys.argv[2]).resolve()
+        del sys.argv[1:3]
     commands = {"missing": missing, "check": lambda lang, path: sys.exit(0 if check(lang, path) else 1), "import": import_}
     if len(sys.argv) < 3 or sys.argv[1] not in commands:
         sys.exit(__doc__)
