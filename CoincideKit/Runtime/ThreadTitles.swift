@@ -69,7 +69,8 @@ enum ThreadTitles {
     @discardableResult
     static func refreshIfDue(threadID: UUID, store: AppStore, registry: ProviderRegistry) -> TitleRefresh? {
         guard store.settings.generatesThreadTitles, let thread = store.thread(threadID),
-            let due = dueRefresh(for: thread), let cwd = store.workingDirectory(for: threadID),
+            let due = dueRefresh(for: thread, isFork: store.lineage(of: threadID) != nil),
+            let cwd = store.workingDirectory(for: threadID),
             let parts = RefreshParts(thread)
         else { return nil }
         // Counted when asked, so a relaunch, a failure or a quick next turn never asks twice.
@@ -91,10 +92,14 @@ enum ThreadTitles {
     }
 
     /// The refresh a thread is due after a completed turn, if any: the first after its first completed turn, the
-    /// second after its fifth, each once. None for a thread the user named, an archived one, or one from before
-    /// refreshes (`titleRefreshes` is nil).
-    static func dueRefresh(for thread: ChatThread) -> TitleRefresh? {
-        guard !thread.isTitleCustom, !thread.isArchived, let done = thread.titleRefreshes else { return nil }
+    /// second after its fifth, each once. None for a thread the user named or an archived one.
+    ///
+    /// A thread from before refreshes (`titleRefreshes` is nil) joins in at its next completed turn, never at launch:
+    /// it gets the first look then if it has not reached its fifth turn, and otherwise only the later one. Imports
+    /// and forks (`isFork`) came with their messages and the titles that went with them, and keep those.
+    static func dueRefresh(for thread: ChatThread, isFork: Bool) -> TitleRefresh? {
+        guard !thread.isTitleCustom, !thread.isArchived else { return nil }
+        guard let done = thread.titleRefreshes ?? (thread.importedSession == nil && !isFork ? [] : nil) else { return nil }
         let due: TitleRefresh = thread.items.count(where: \.opensUserTurn) >= laterRefreshTurns ? .fifthTurn : .firstReply
         return done.contains(due) ? nil : due
     }

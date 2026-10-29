@@ -72,6 +72,7 @@ final class TranscriptUserCell: TranscriptCell {
         self.item = item
         textView.setText(TranscriptText.markdown(item, .user, cache: host.textCache))
         textView.onOpenLink = { [weak host] link in host?.openLink(link) ?? false }
+        textView.onQuote = { [weak host] text in host?.quote(text, from: id) }
         let highlights = findHighlights
         textView.setFindHighlights(highlights.ranges(in: .body), current: highlights.currentRange(in: .body))
         let attachments = item.attachments ?? []
