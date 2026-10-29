@@ -154,7 +154,7 @@ final class RemoteStoreAdapter {
 
     private func handle(_ change: StoreChange) {
         switch change {
-        case .projects, .threadList, .providers:
+        case .projects, .threadList, .providers, .bots:
             emit(.workspace)
         case .thread(let id):
             emit(.workspace)
@@ -207,7 +207,11 @@ final class RemoteStoreAdapter {
         }
         let pinned = SidebarOrdering.pinnedOrder(saved: layout.pinned, pinned: threads.filter(\.isPinned))
         return RemoteWorkspace(
-            projects: projects, threads: threads.map(summary), bots: nil, providers: providers(), sections: layout.sections,
+            projects: projects, threads: threads.map(summary), bots: store.bots.map { bot in
+                RemoteBot(
+                    id: bot.id, name: bot.name, projectID: store.botsProject.id,
+                    threadIDs: store.conversations(of: bot.id).map(\.id))
+            }, providers: providers(), sections: layout.sections,
             pinnedOrder: pinned)
     }
 
