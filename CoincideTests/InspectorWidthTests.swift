@@ -60,7 +60,8 @@ struct InspectorWidthTests {
 }
 
 /// The main window's split view, offscreen: the inspector opens at its share, the divider drags and resets, and the
-/// share holds as the window and the thread list change.
+/// share holds as the window and the thread list change. The window is off every screen, so the split view opens and
+/// closes panels in place (`showsPanelChanges`) and every check reads the finished layout, however busy the Mac is.
 @MainActor @Suite(.serialized) struct InspectorLayoutTests {
     /// The window's layout with its own interface state, as a fresh launch would build it.
     @MainActor final class Harness {
@@ -82,27 +83,24 @@ struct InspectorWidthTests {
             split = MainSplitViewController(state: state)
             root = MainRootViewController(split: split)
             window = NSWindow(
-                contentRect: NSRect(x: -8000, y: -8000, width: width, height: 800), styleMask: [.borderless], backing: .buffered,
-                defer: false)
+                contentRect: NSRect(x: -20000, y: -20000, width: width, height: 800), styleMask: [.borderless],
+                backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
+            window.alphaValue = 0
             window.contentViewController = root
             resize(to: width)
             window.orderBack(nil)
+            settle()
+            #expect(!split.showsPanelChanges, "panels would animate, and the checks race the animation")
         }
 
         func resize(to width: CGFloat) {
-            window.setFrame(NSRect(x: -8000, y: -8000, width: width, height: 800), display: false)
+            window.setFrame(NSRect(x: -20000, y: -20000, width: width, height: 800), display: false)
             settle()
         }
 
         func settle() {
             window.contentView?.layoutSubtreeIfNeeded()
-        }
-
-        /// Lets animations and the work they queue finish.
-        func wait() async {
-            try? await Task.sleep(for: .milliseconds(450))
-            settle()
         }
 
         var sidebarWidth: CGFloat { split.sidebar.view.frame.width }
@@ -119,16 +117,16 @@ struct InspectorWidthTests {
         }
     }
 
-    @Test func theInspectorOpensAtHalfOfTheSpaceRightOfTheThreadList() async {
+    @Test func theInspectorOpensAtHalfOfTheSpaceRightOfTheThreadList() {
         let harness = Harness()
         defer { harness.close() }
-        await harness.wait()
+        harness.settle()
         let sidebar = harness.sidebarWidth
         #expect(sidebar == 288)
         let chatBefore = harness.chatWidth
 
         harness.split.toggleDiffPanel()
-        await harness.wait()
+        harness.settle()
         #expect(harness.split.isDiffOpen)
         #expect(harness.sidebarWidth == sidebar, "opening the panel must not move the thread list")
         #expect(abs(harness.chatWidth - harness.panelWidth) <= 1)
@@ -137,21 +135,21 @@ struct InspectorWidthTests {
 
         // Every panel uses the same share.
         harness.split.togglePullRequestsPanel()
-        await harness.wait()
+        harness.settle()
         #expect(harness.split.isPullRequestsOpen && abs(harness.share - 0.5) < 0.01)
         harness.split.togglePullRequestsPanel()
-        await harness.wait()
+        harness.settle()
         #expect(!harness.split.isInspectorOpen)
         #expect(harness.split.dividerHandle.isHidden)
         #expect(harness.sidebarWidth == sidebar, "closing the panel must not move the thread list")
         #expect(abs(harness.chatWidth - chatBefore) <= 1)
     }
 
-    @Test func draggingTheDividerChangesTheShareAndItSurvivesARelaunch() async {
+    @Test func draggingTheDividerChangesTheShareAndItSurvivesARelaunch() {
         let harness = Harness(width: 1600)
-        await harness.wait()
+        harness.settle()
         harness.split.togglePreviewPanel()
-        await harness.wait()
+        harness.settle()
         let available = harness.chatWidth + harness.panelWidth
         // Drag the divider 150 points left: the panel takes them from the chat.
         let start = harness.dividerX
@@ -170,18 +168,18 @@ struct InspectorWidthTests {
         // The next launch, in a wider window, opens at the same share.
         let relaunched = Harness(folder: folder, width: 1800) { $0.isInspectorOpen = true }
         defer { relaunched.close() }
-        await relaunched.wait()
+        relaunched.settle()
         #expect(relaunched.split.isInspectorOpen)
         #expect(abs(relaunched.share - share) < 0.01)
         #expect(relaunched.sidebarWidth == 288)
     }
 
-    @Test func aDragStopsAtBothMinimums() async {
+    @Test func aDragStopsAtBothMinimums() {
         let harness = Harness()
         defer { harness.close() }
-        await harness.wait()
+        harness.settle()
         harness.split.toggleDiffPanel()
-        await harness.wait()
+        harness.settle()
         harness.split.dragDivider(to: harness.dividerX - 2000)
         harness.settle()
         #expect(abs(harness.chatWidth - CGFloat(InspectorWidth.minimumChatWidth)) <= 1)
@@ -191,10 +189,10 @@ struct InspectorWidthTests {
         #expect(harness.sidebarWidth == 288)
     }
 
-    @Test func doubleClickingTheDividerRestoresTheDefault() async {
+    @Test func doubleClickingTheDividerRestoresTheDefault() {
         let harness = Harness { $0.inspectorFraction = 0.3; $0.isInspectorOpen = true }
         defer { harness.close() }
-        await harness.wait()
+        harness.settle()
         #expect(abs(harness.share - 0.3) < 0.01)
         harness.split.resetInspectorWidth()
         harness.settle()
@@ -202,10 +200,10 @@ struct InspectorWidthTests {
         #expect(harness.state.values.inspectorFraction == nil)
     }
 
-    @Test func resizingTheWindowKeepsTheShareAndTheThreadListsWidth() async {
+    @Test func resizingTheWindowKeepsTheShareAndTheThreadListsWidth() {
         let harness = Harness(width: 1600) { $0.inspectorFraction = 0.4; $0.isInspectorOpen = true }
         defer { harness.close() }
-        await harness.wait()
+        harness.settle()
         #expect(abs(harness.share - 0.4) < 0.01)
         for width in [2400, 1900, 1400] as [CGFloat] {
             harness.resize(to: width)
@@ -217,10 +215,10 @@ struct InspectorWidthTests {
         #expect(abs(harness.share - 0.4) < 0.01)
     }
 
-    @Test func aNarrowingWindowShrinksThePanelBeforeTheChat() async {
+    @Test func aNarrowingWindowShrinksThePanelBeforeTheChat() {
         let harness = Harness(width: 1600) { $0.inspectorFraction = 0.6; $0.isInspectorOpen = true }
         defer { harness.close() }
-        await harness.wait()
+        harness.settle()
         #expect(abs(harness.share - 0.6) < 0.01)
         for width in [1150, 1100] as [CGFloat] {
             harness.resize(to: width)
@@ -235,37 +233,37 @@ struct InspectorWidthTests {
         #expect(abs(harness.share - 0.6) < 0.01)
     }
 
-    @Test func hidingTheThreadListKeepsTheShare() async {
+    @Test func hidingTheThreadListKeepsTheShare() {
         let harness = Harness { $0.inspectorFraction = 0.45; $0.isInspectorOpen = true }
         defer { harness.close() }
-        await harness.wait()
+        harness.settle()
         let before = harness.panelWidth
         harness.split.toggleSidebarPanel()
-        await harness.wait()
+        harness.settle()
         #expect(!harness.split.isSidebarOpen)
         #expect(abs(harness.share - 0.45) < 0.01)
         #expect(harness.panelWidth > before)
         harness.split.toggleSidebarPanel()
-        await harness.wait()
+        harness.settle()
         #expect(abs(harness.share - 0.45) < 0.01)
         #expect(abs(harness.panelWidth - before) <= 1)
     }
 
-    @Test func openingInANarrowWindowWidensItRatherThanShrinkTheThreadList() async {
+    @Test func openingInANarrowWindowWidensItRatherThanShrinkTheThreadList() {
         let harness = Harness(width: 900)
         defer { harness.close() }
-        await harness.wait()
+        harness.settle()
         harness.split.toggleDiffPanel()
-        await harness.wait()
+        harness.settle()
         #expect(harness.sidebarWidth == 288)
         #expect(harness.chatWidth >= CGFloat(InspectorWidth.minimumChatWidth) - 0.5)
         #expect(harness.panelWidth >= CGFloat(InspectorWidth.minimumPanelWidth) - 0.5)
     }
 
-    @Test func theHandleTakesClicksOnEitherSideOfTheDivider() async throws {
+    @Test func theHandleTakesClicksOnEitherSideOfTheDivider() throws {
         let harness = Harness { $0.isInspectorOpen = true }
         defer { harness.close() }
-        await harness.wait()
+        harness.settle()
         let container = try #require(harness.split.view.superview)
         for offset in [-4, 0, 4] as [CGFloat] {
             let point = NSPoint(x: harness.dividerX + offset, y: harness.split.view.bounds.midY)

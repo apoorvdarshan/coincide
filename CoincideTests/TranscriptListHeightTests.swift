@@ -6,15 +6,17 @@ import Testing
 
 /// A transcript host with fixed items and nothing to act on.
 @MainActor
-private final class StubTranscriptHost: TranscriptHost {
+final class StubTranscriptHost: TranscriptHost {
     var items: [UUID: TranscriptItem] = [:]
     var files: [UUID: [ChangedFile]] = [:]
+    var rails: [TranscriptRowID: TranscriptRail] = [:]
+    var expanded: Set<TranscriptRowID> = []
     let textCache = TranscriptTextCache()
     var threadID: UUID? { nil }
     var isThreadRunning: Bool { false }
 
     func item(_ id: UUID) -> TranscriptItem? { items[id] }
-    func isExpanded(_ id: TranscriptRowID) -> Bool { false }
+    func isExpanded(_ id: TranscriptRowID) -> Bool { expanded.contains(id) }
     func toggle(_ id: TranscriptRowID) {}
     func copyToPasteboard(_ text: String) {}
     func rewindTurn(_ itemID: UUID) {}
@@ -29,7 +31,7 @@ private final class StubTranscriptHost: TranscriptHost {
     func changedFiles(for turnID: UUID) -> [ChangedFile] { files[turnID] ?? [] }
     func modelLabel(for meta: AssistantMeta) -> String { "" }
     func modelName(for meta: AssistantMeta) -> String? { nil }
-    func rail(for id: TranscriptRowID) -> TranscriptRail? { nil }
+    func rail(for id: TranscriptRowID) -> TranscriptRail? { rails[id] }
     func findHighlights(for itemID: UUID) -> TranscriptFindHighlights? { nil }
 }
 
@@ -42,11 +44,14 @@ private final class StubTranscriptHost: TranscriptHost {
     private let host = StubTranscriptHost()
     private let list = TranscriptListController()
     private let window = NSWindow(
-        contentRect: NSRect(x: -5000, y: -5000, width: 720, height: 480), styleMask: [.borderless], backing: .buffered, defer: false)
+        contentRect: NSRect(x: -20000, y: -20000, width: 720, height: 480), styleMask: [.borderless], backing: .buffered, defer: false)
 
     init() {
         list.host = host
         window.contentView = list.scrollView
+        // The list follows AppKit's layout and display passes, which only a window in the window list gets. It goes
+        // in behind everything, transparent and far offscreen, so nothing ever shows on a display.
+        window.alphaValue = 0
         window.orderBack(nil)
     }
 
@@ -237,5 +242,192 @@ private final class StubTranscriptHost: TranscriptHost {
         change(nextReply) { $0.status = .completed }
         running = nil
         await apply("new turn ended")
+    }
+
+    // MARK: The user's messages
+
+    private func userMessage(_ index: Int) -> TranscriptRow {
+        let texts = [
+            "Short one",
+            String(repeating: "A message long enough to wrap over a few lines of its card. ", count: 1 + index % 5),
+            "Here is the trace:\n\n```swift\nlet rows = builder.build()\nprint(rows.count)\n```\n\nand " + "https://example.com/"
+                + String(repeating: "segment", count: 30),
+            String(repeating: "x", count: 300),
+            "مرحبا، هل يمكنك نقل رسائلي إلى اليمين؟\nAnd an English line under it.",
+        ]
+        let item = TranscriptItem(
+            kind: .user, text: texts[index % texts.count], attachments: index % 4 == 1 ? ["/nonexistent/a.png", "/nonexistent/b.png"] : nil,
+            steered: index % 6 == 5 ? true : nil)
+        host.items[item.id] = item
+        return TranscriptRow(id: .item(item.id), kind: .user, revision: 0)
+    }
+
+    /// Messages of the user's on either side measure as tall as they draw, at every width, and switching sides keeps
+    /// the reader at the bottom when following, or on the row they were reading.
+    @Test func userMessagesStayInPlaceOnEitherSide() async {
+        let saved = AppStore.shared.settings.userMessageSide
+        defer { AppStore.shared.updateSettings { $0.userMessageSide = saved } }
+        var rows: [TranscriptRow] = []
+        for index in 0..<30 {
+            rows.append(userMessage(index))
+            rows.append(reply(20 + (index * 37) % 160, seed: index))
+        }
+        AppStore.shared.updateSettings { $0.userMessageSide = .right }
+        list.update(rows, reload: true)
+        list.scrollToBottom()
+        await settle()
+        expectRowsInPlace("right")
+        #expect(list.isPinnedToBottom)
+        let bottom = list.distanceFromBottom
+
+        // As the Settings switch does (`ChatViewController.settingsChanged`): every height measured again.
+        func switchSide(to side: UserMessageSide) async {
+            AppStore.shared.updateSettings { $0.userMessageSide = side }
+            list.invalidateHeights()
+            list.update(rows, reload: true)
+            await settle()
+            await settle()
+        }
+        for side in [UserMessageSide.left, .right] {
+            await switchSide(to: side)
+            // Still following, as far from the end as before.
+            #expect(list.isPinnedToBottom, "following after switching to \(side)")
+            #expect(abs(list.distanceFromBottom - bottom) <= 1, "following after switching to \(side): \(list.distanceFromBottom)")
+            expectRowsInPlace("following after switching to \(side)")
+            for width in [360, 1100, 720] as [CGFloat] {
+                window.setContentSize(NSSize(width: width, height: 480))
+                await settle()
+                await settle()
+                expectRowsInPlace("\(side) at \(width)")
+            }
+        }
+
+        // Scrolled up to a message, the switch keeps it where it was.
+        let rowID = rows[24].id
+        list.restore(.anchor(rowID, offset: 40))
+        await settle()
+        let clip = list.scrollView.contentView
+        func offset() -> CGFloat? {
+            guard let index = list.rows.firstIndex(where: { $0.id == rowID }) else { return nil }
+            return list.tableView.rect(ofRow: index).minY - clip.bounds.minY
+        }
+        let before = offset()
+        for side in [UserMessageSide.left, .right] {
+            await switchSide(to: side)
+            if let before, let after = offset() {
+                #expect(abs(after - before) <= 1, "row moved switching to \(side): \(before) -> \(after)")
+            }
+            expectRowsInPlace("scrolled up, \(side)")
+        }
+    }
+
+    /// Draws a transcript with every kind of message of the user's, on either side, in light and dark, narrow and
+    /// wide, when `COINCIDE_TRANSCRIPT_PNG_DIR` names a folder (`TEST_RUNNER_COINCIDE_TRANSCRIPT_PNG_DIR` on the
+    /// command line). The suite's window stays transparent and far offscreen.
+    @Test func rendersUserMessagesForReview() async throws {
+        guard let folder = ProcessInfo.processInfo.environment["COINCIDE_TRANSCRIPT_PNG_DIR"], !folder.isEmpty else { return }
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        let images = TemporaryDirectory("user-message-images")
+        var paths: [String] = []
+        for (index, color) in [NSColor.systemTeal, .systemOrange].enumerated() {
+            let image = NSImage(size: NSSize(width: 160, height: 120), flipped: false) { rect in
+                color.setFill()
+                rect.fill()
+                return true
+            }
+            let url = images.url.appendingPathComponent("shot-\(index).png")
+            let rep = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+            try #require(rep.representation(using: .png, properties: [:])).write(to: url)
+            paths.append(url.path)
+        }
+        let date = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        func user(_ text: String, attachments: [String]? = nil, context: [MessageContext]? = nil, steered: Bool = false) -> TranscriptItem {
+            TranscriptItem(kind: .user, text: text, attachments: attachments, context: context, steered: steered ? true : nil, createdAt: date)
+        }
+        func reply(_ text: String, _ provider: ProviderKind) -> TranscriptItem {
+            TranscriptItem(kind: .assistant, text: text, status: .completed, provider: provider, createdAt: date, completedAt: date)
+        }
+        let quote = MessageContext(.quote(MessageContext.Quote(text: "The rail runs down the transcript's left gutter", provider: .claude)))
+        let file = MessageContext(.file(MessageContext.AttachedFile(path: "/tmp/Coincide/UI/Chat/TranscriptRows.swift")))
+        let items = [
+            user("Can my messages sit on the right, like a normal chat?"),
+            reply("Yes. Your messages now sit on the **right**, across from my replies, and hug their text up to three quarters of the column.", .claude),
+            user("Also keep the time under the card.", steered: true),
+            user(
+                "Here is the trace:\n\n```swift\nlet rows = builder.build()\nprint(rows.count)\n```\n\nand the link https://example.com/"
+                    + String(repeating: "segment", count: 18) + "?q=1"),
+            reply("The code block and the long link wrap inside the card.", .codex),
+            user("What about these?", attachments: paths, context: [quote, file]),
+            user("مرحبا، هل يمكنك نقل رسائلي إلى اليمين؟\nAnd an English line under it."),
+            user(String(repeating: "x", count: 160)),
+            user(String(repeating: "A long message that wraps over several lines of its card, to show the widest it gets. ", count: 4)),
+            reply("Done.", .codex),
+        ]
+        for item in items { host.items[item.id] = item }
+        let rows = TranscriptBuilder(items: items).build()
+        let providers = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.provider ?? .claude) })
+        // The user's messages take the color of the agent they go to.
+        var provider: [UUID: ProviderKind] = [:]
+        for (index, item) in items.enumerated() {
+            provider[item.id] = item.kind == .user ? (items[index...].first { $0.provider != nil }?.provider ?? .claude) : providers[item.id]
+        }
+        host.rails = TranscriptRail.rails(for: rows, provider: { provider[$0] }, runningProvider: nil)
+
+        let background = RenderBackground()
+        background.frame = NSRect(x: 0, y: 0, width: 720, height: 1600)
+        list.scrollView.frame = background.bounds
+        list.scrollView.autoresizingMask = [.width, .height]
+        background.addSubview(list.scrollView)
+        window.contentView = background
+        defer { window.contentView = list.scrollView }
+        let saved = AppStore.shared.settings.userMessageSide
+        defer { AppStore.shared.updateSettings { $0.userMessageSide = saved } }
+        for side in UserMessageSide.allCases {
+            AppStore.shared.updateSettings { $0.userMessageSide = side }
+            for width in [460, 1100] as [CGFloat] {
+                window.setContentSize(NSSize(width: width, height: 1700))
+                list.invalidateHeights()
+                list.update(rows, reload: true)
+                await settle()
+                list.restore(.anchor(rows[0].id, offset: 0))
+                await settle()
+                try? await Task.sleep(for: .milliseconds(200))
+                for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                    window.appearance = NSAppearance(named: appearance)
+                    await settle()
+                    let view = background
+                    view.needsDisplay = true
+                    view.layoutSubtreeIfNeeded()
+                    let rep = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+                    view.effectiveAppearance.performAsCurrentDrawingAppearance { view.cacheDisplay(in: view.bounds, to: rep) }
+                    try #require(rep.representation(using: .png, properties: [:]))
+                        .write(to: URL(fileURLWithPath: "\(folder)/\(side)-\(Int(width))-\(name).png"))
+                }
+                // The same rows laid out right to left, as a right-to-left interface would.
+                window.appearance = NSAppearance(named: .aqua)
+                list.tableView.enumerateAvailableRowViews { rowView, _ in
+                    guard let cell = rowView.view(atColumn: 0) as? NSView else { return }
+                    cell.userInterfaceLayoutDirection = .rightToLeft
+                    cell.needsLayout = true
+                }
+                await settle()
+                background.layoutSubtreeIfNeeded()
+                let rep = try #require(background.bitmapImageRepForCachingDisplay(in: background.bounds))
+                background.effectiveAppearance.performAsCurrentDrawingAppearance { background.cacheDisplay(in: background.bounds, to: rep) }
+                try #require(rep.representation(using: .png, properties: [:]))
+                    .write(to: URL(fileURLWithPath: "\(folder)/\(side)-\(Int(width))-rtl.png"))
+                list.tableView.enumerateAvailableRowViews { rowView, _ in
+                    (rowView.view(atColumn: 0) as? NSView)?.userInterfaceLayoutDirection = .leftToRight
+                }
+            }
+        }
+    }
+}
+
+/// The conversation's background, under the transcript in renders.
+private final class RenderBackground: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        Theme.contentBackground.setFill()
+        dirtyRect.fill()
     }
 }
