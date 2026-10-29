@@ -22,8 +22,18 @@ extension MessageContext {
         case .quote: "text.quote"
         case .terminal: "apple.terminal"
         case .diffComment: "text.bubble"
-        case .file(let file): URL(fileURLWithPath: file.path).pathExtension.lowercased() == "pdf" ? "doc.richtext" : "doc.text"
+        case .file(let file):
+            if Self.isFolder(file.path) {
+                "folder"
+            } else {
+                URL(fileURLWithPath: file.path).pathExtension.lowercased() == "pdf" ? "doc.richtext" : "doc.text"
+            }
         }
+    }
+
+    private static func isFolder(_ path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
     /// What the card is called: whose reply, which terminal and lines, which file and lines, or the file's name.

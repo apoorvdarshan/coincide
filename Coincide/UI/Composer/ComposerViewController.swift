@@ -1518,19 +1518,6 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         refreshAttachments()
     }
 
-    /// Mentions dropped or pasted folders by path, relative to the working directory when inside it.
-    private func mention(_ urls: [URL]) {
-        let root = threadID.flatMap { store.workingDirectory(for: $0) }?.standardizedFileURL.path
-        let paths = urls.map { url -> String in
-            let path = url.standardizedFileURL.path
-            if let root, path.hasPrefix(root + "/") { return String(path.dropFirst(root.count + 1)) }
-            return path
-        }
-        textView.insertText(
-            paths.map(ComposerTrigger.mention).joined(separator: " ") + " ", replacementRange: textView.selectedRange())
-        focus()
-    }
-
     // MARK: Context
 
     /// Attaches context to the message (a quote from the transcript, terminal output, a diff comment or a file) as a
@@ -1575,19 +1562,11 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         refreshAttachments()
     }
 
-    /// Files dropped, pasted or chosen become cards; folders are mentioned in the text, as before.
+    /// Files and folders dropped, pasted or chosen become cards; agents get each as an `@path` mention.
     private func addFiles(_ urls: [URL]) {
-        var folders: [URL] = []
-        for url in urls {
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { continue }
-            if isDirectory.boolValue {
-                folders.append(url)
-            } else {
-                addContext(MessageContext(.file(.init(path: url.standardizedFileURL.path))))
-            }
+        for url in urls where FileManager.default.fileExists(atPath: url.path) {
+            addContext(MessageContext(.file(.init(path: url.standardizedFileURL.path))))
         }
-        if !folders.isEmpty { mention(folders) }
     }
 
     private func openContext(_ context: MessageContext, from anchor: NSView) {
