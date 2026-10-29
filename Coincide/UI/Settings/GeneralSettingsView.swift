@@ -139,7 +139,8 @@ struct GeneralSettingsView: View {
                         .settingsRevealable(.backgroundAgents, highlighted: highlighted)
                 }
 
-                Section("Remote") {
+                // Its own key: "Remote" alone is also the git remote branches header, which reads differently.
+                Section(String(localized: "settings.remote", defaultValue: "Remote", comment: "Settings › General section that lets Coincide Remote on iPhone and iPad connect")) {
                     RemoteSettingsRows()
                         .settingsRevealable(.remote, highlighted: highlighted)
                 }

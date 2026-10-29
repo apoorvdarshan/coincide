@@ -72,9 +72,9 @@ Write user-facing text with `String(localized:)` (or a localized SwiftUI/AppKit 
 scripts/sync-strings.sh
 ```
 
-It builds the app and syncs `Coincide/Resources/Localizable.xcstrings` with every string in use.
+It builds both apps and syncs `Coincide/Resources/Localizable.xcstrings` (the Mac app) and `CoincideRemote/Localizable.xcstrings` (Coincide Remote on iOS) with every string in use; `scripts/sync-strings.sh mac` or `ios` syncs one. CoincideRemoteKit is a Swift package, which reports no strings to the sync, so its few strings are kept in the iOS catalog by hand (marked "manual"). Permission texts live in each app's `InfoPlist.xcstrings`, keyed by their Info.plist key.
 
-Coincide ships in 18 languages besides English. New or changed strings fall back to English until they are translated, so translate them for every language in the same pull request:
+Coincide and Coincide Remote ship in the same 18 languages besides English, and follow the language the user picked for the device or for the app. New or changed strings fall back to English until they are translated, so translate them for every language in the same pull request:
 
 ```sh
 scripts/translations.py missing de > de.json   # the strings German lacks, with their English text
@@ -82,6 +82,8 @@ scripts/translations.py missing de > de.json   # the strings German lacks, with 
 scripts/translations.py check de de-translated.json
 scripts/translations.py import de de-translated.json
 ```
+
+For another catalog, start the command with `--catalog <path>`, for example `scripts/translations.py --catalog CoincideRemote/Localizable.xcstrings missing de`.
 
 `check` refuses a translation whose placeholders don't match the English, or whose plural forms aren't the language's own. Imported strings are marked "needs review" in the catalog. Write whole sentences with placeholders rather than joining pieces in code, so each language can order the words its own way.
 
