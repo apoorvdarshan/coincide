@@ -37,8 +37,8 @@ public final class UsageInsights {
     /// The accounts whose logs were read, by provider.
     public private(set) var scannedSources: [UsageLogSource] = []
 
-    private let store: AppStore
-    private let registry: ProviderRegistry
+    let store: AppStore
+    let registry: ProviderRegistry
     private let runner: ThreadRunner
     private let scanner: UsageLogScanner
     /// The highest each bare balance has been, which its bar measures against.
@@ -78,7 +78,7 @@ public final class UsageInsights {
         pendingTurnScan?.cancel()
     }
 
-    private func changed() {
+    func changed() {
         NotificationCenter.default.post(name: Self.didChange, object: self)
     }
 
@@ -217,6 +217,7 @@ public final class UsageInsights {
                     base.notes.removeAll { unanswered.contains($0) }
                     limits = base.adding(admin)
                 }
+                limits = addingBrowserDetails(to: limits, provider: kind, account: account, accounts: accounts)
                 let current = limits?.current(at: now)
                 return AccountLimits(
                     provider: kind, account: account, showsAccountName: accounts.count > 1,
@@ -272,6 +273,24 @@ public final class UsageInsights {
     private var adminReading: Set<String> = []
     /// Sends the report reads; tests answer them without the network.
     var adminFetch: UsageLimitsFetch = UsageLimitsHTTP.live
+
+    // MARK: Browser sign-in (state; see UsageInsights+Browser.swift)
+
+    /// A site's reads go again at most this often, unless the user refreshes or the last read failed.
+    public var browserUsageInterval: TimeInterval = 15 * 60
+    /// The `Cookie` header for a site from Coincide's browser profile, nil when it has none. Set by the app, which owns
+    /// the profile; without it nothing is read.
+    public var browserCookies: (@MainActor (BrowserUsageSource) async -> String?)?
+    /// Reads the credits usage history table from chatgpt.com's analytics page in a hidden browser. Set by the app;
+    /// without it the history is left out.
+    public var creditHistoryReader: (@MainActor () async -> ChatGPTCodexBilling.HistoryOutcome)?
+    /// Sends the sites' requests; tests answer them without the network.
+    var browserFetch: UsageLimitsFetch = UsageLimitsHTTP.live
+    /// How each site's reads stand.
+    public internal(set) var browserStates: [BrowserUsageSource: BrowserUsageState] = [:]
+    /// The credits usage history of the last read that found it, and why the last read didn't, if it didn't.
+    public internal(set) var creditHistory: [ChatGPTCodexBilling.CreditUse]?
+    public internal(set) var creditHistoryProblem: BrowserUsageProblem?
 
     /// Whether the account is an Anthropic API-key account, which can hold an Admin API key.
     public nonisolated static func takesAdminKey(_ account: ProviderAccount) -> Bool {
@@ -351,7 +370,8 @@ public final class UsageInsights {
             async let scan: Void = scan()
             async let limits: Void = checkLimits()
             async let admin: Void = readAdminReports()
-            _ = await (scan, limits, admin)
+            async let browser: Void = readBrowserUsage()
+            _ = await (scan, limits, admin, browser)
         }
     }
 
@@ -360,7 +380,8 @@ public final class UsageInsights {
         async let scan: Void = scan(force: true)
         async let limits: Void = checkLimits(force: true)
         async let admin: Void = readAdminReports(force: true)
-        _ = await (scan, limits, admin)
+        async let browser: Void = readBrowserUsage(force: true)
+        _ = await (scan, limits, admin, browser)
     }
 
     /// The most used window across `accounts`: the one closest to its limit, which the menu bar shows. Model-specific
