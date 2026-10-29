@@ -168,12 +168,13 @@ final class ThemedPopupField: NSControl {
 
     private func open() {
         guard let menu = menuProvider?() else { return }
-        isOpen = true
-        needsDisplay = true
-        ThemedPopup.show(menu: menu, from: self, preferAbove: false) { [weak self] in
+        let popup = ThemedPopup.show(menu: menu, from: self, preferAbove: false) { [weak self] in
             self?.isOpen = false
             self?.needsDisplay = true
         }
+        // Set once it opened, as a popup it replaces clears it on closing.
+        isOpen = popup != nil
+        needsDisplay = true
     }
 
     override var wantsUpdateLayer: Bool { true }
