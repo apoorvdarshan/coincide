@@ -37,6 +37,7 @@ struct SettingsRootView: View {
         case .section(.providers): ProvidersSettingsView(model: model)
         case .section(.models): ModelsSettingsView(model: model)
         case .section(.usage): UsageSettingsView()
+        case .section(.instructions): InstructionsSettingsView()
         case .section(.keyboard): KeyboardSettingsView(model: model)
         case .section(.about): AboutSettingsView()
         case .provider(let kind): ProviderSettingsView(model: model, kind: kind).id(kind)
@@ -63,6 +64,7 @@ private struct SettingsSidebar: View {
                     row(.general)
                     row(.models)
                     row(.usage)
+                    row(.instructions)
                     row(.keyboard)
                 }
                 Section("Providers") {
@@ -132,6 +134,7 @@ extension SettingsSection {
         case .providers: .indigo
         case .models: .purple
         case .usage: .green
+        case .instructions: .teal
         case .keyboard: Color(nsColor: .darkGray)
         case .about: .blue
         }
@@ -192,7 +195,8 @@ private struct SettingsSearchResults: View {
         let general = SettingsPane.section(.general)
         var entries: [SettingsSearchEntry] = [
             SettingsSearchEntry(title: String(localized: "Usage"), pane: .section(.usage),
-                keywords: [String(localized: "Account limits"), String(localized: "Recent turns")]),
+                keywords: [String(localized: "Account limits"), String(localized: "Tokens"), String(localized: "Cost"),
+                           String(localized: "Credits"), String(localized: "Menu bar")]),
             SettingsSearchEntry(
                 title: String(localized: "Appearance"), pane: general, setting: .appearance,
                 keywords: [String(localized: "Dark mode"), String(localized: "Light mode"), String(localized: "Theme")]),
@@ -264,6 +268,9 @@ private struct SettingsSearchResults: View {
             SettingsSearchEntry(
                 title: String(localized: "Models"), pane: .section(.models),
                 keywords: [String(localized: "Custom model"), String(localized: "Context window")]),
+            SettingsSearchEntry(
+                title: String(localized: "Instructions"), pane: .section(.instructions),
+                keywords: ["AGENTS.md", "CLAUDE.md", "GEMINI.md", String(localized: "Rules"), String(localized: "Memory")]),
             SettingsSearchEntry(
                 title: String(localized: "Keyboard shortcuts"), pane: .section(.keyboard),
                 keywords: [String(localized: "Keybindings"), String(localized: "Hotkeys")]),

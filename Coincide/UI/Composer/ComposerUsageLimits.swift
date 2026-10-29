@@ -128,6 +128,11 @@ enum ComposerUsageDetails {
             text.textColor = warning.blocksWork ? .systemRed : .systemOrange
             rows.append(text)
         }
+        let open = PickerTextButton(title: String(localized: "Open Usage"), symbol: "chart.bar") {
+            UsageNavigation.show(provider: provider)
+        }
+        open.toolTip = String(localized: "Tokens, costs and every account’s limits in Settings › Usage")
+        rows.append(open)
         let stack = NSStackView(views: rows)
         stack.orientation = .vertical
         stack.alignment = .leading
