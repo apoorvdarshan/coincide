@@ -99,6 +99,8 @@ targets:
       Release: Signing.xcconfig
     sources:
       - path: Coincide
+        excludes:
+          - Info.plist
       # Registered with SMAppService.agent(plistName:), which looks for it here.
       - path: CoincideAgentHost/LaunchAgents
         buildPhase:
@@ -129,6 +131,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide
         PRODUCT_NAME: Coincide
+        # Keys the generated Info.plist can't express (App Transport Security for the browser preview).
+        INFOPLIST_FILE: Coincide/Info.plist
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Coincide
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
