@@ -57,6 +57,20 @@ struct AgentEventLogTests {
         #expect(again.append(.notice("next"), turnActive: false).sequence == 4)
     }
 
+    /// An app remembers how far it got by number, so a removed log's numbers are not handed out again: the next
+    /// session of the key would otherwise have its events taken for ones the app already applied.
+    @Test func aLogOpenedAgainAfterBeingRemovedKeepsCounting() {
+        let store = AgentEventLogStore(directory: directory)
+        let log = store.open(key)
+        log.append(.sessionStarted(id: "s1"), turnActive: false)
+        log.append(.turnCompleted(.completed), turnActive: false)
+        log.acknowledge(2)
+        store.remove(log)
+        #expect(store.existingKeys().isEmpty)
+        let next = store.open(key)
+        #expect(next.append(.sessionStarted(id: "s1"), turnActive: false).sequence == 3)
+    }
+
     @Test func skipsALineCutShortByACrash() throws {
         let log = AgentEventLogStore(directory: directory).open(key)
         log.append(.notice("one"), turnActive: false)

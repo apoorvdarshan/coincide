@@ -712,6 +712,78 @@ struct ThreadRunnerTests {
         #expect(!items.contains { $0.text == "two" })
     }
 
+    @Test func aSteerQueuedBehindAStopIsSentOnceTheTurnStops() async {
+        runner.stopTimeout = 5
+        let session = await startRunningTurn()
+        session.onInterrupt = { _ in }
+        runner.stop(threadID: threadID)
+        // Being stopped, the turn can't take it; it waits rather than being lost.
+        #expect(await runner.steer(threadID: threadID, text: "do this instead") == .queued)
+        // A message only queued for after the turn still waits for the user after a stop.
+        runner.enqueue(threadID: threadID, text: "later")
+        session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) }
+        session.emit(.turnCompleted(.interrupted))
+        #expect(items.contains { $0.kind == .notice && $0.text == "Interrupted" })
+        // Its turn completes normally, so the plain follow-up goes after it.
+        #expect(await eventually { session.sent.count == 3 && !runner.isRunning(threadID) })
+        #expect(session.sent.map(\.message) == ["one", "do this instead", "later"])
+        #expect(items.contains { $0.kind == .user && $0.text == "do this instead" && $0.opensUserTurn })
+    }
+
+    @Test func aStoppedTurnKeepsPlainQueuedMessagesForTheUser() async {
+        let session = await startRunningTurn()
+        runner.enqueue(threadID: threadID, text: "later")
+        runner.stop(threadID: threadID)
+        #expect(!runner.isRunning(threadID))
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(session.sent.count == 1)
+        #expect(runner.queuedMessages(threadID).map(\.text) == ["later"])
+    }
+
+    @Test func aStopShowsAtOnceAndSendNowStopsTheTurnForTheMessage() async {
+        runner.stopTimeout = 5
+        let session = await startRunningTurn(steering: false)
+        session.onInterrupt = { _ in }
+        runner.enqueue(threadID: threadID, text: "first")
+        runner.enqueue(threadID: threadID, text: "urgent")
+        let urgent = runner.queuedMessages(threadID)[1].id
+        // The agent can't take it mid-turn, so sending it now stops the turn first.
+        #expect(await runner.sendQueuedNow(threadID: threadID, id: urgent) == .interrupting)
+        #expect(runner.isStopping(threadID))
+        #expect(!runner.canSteer(threadID))
+        #expect(session.interrupts == 1)
+        #expect(runner.queuedMessages(threadID).map(\.text) == ["urgent", "first"])
+        session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) }
+        session.emit(.turnCompleted(.interrupted))
+        #expect(await eventually { session.sent.count == 3 })
+        #expect(session.sent.map(\.message) == ["one", "urgent", "first"])
+    }
+
+    @Test func aStopShowsAtOnceBeforeTheAgentConfirms() async {
+        runner.stopTimeout = 5
+        let session = await startRunningTurn()
+        session.onInterrupt = { _ in }
+        var changes = 0
+        let observation = store.observe { change in if case .runState = change { changes += 1 } }
+        runner.stop(threadID: threadID)
+        withExtendedLifetime(observation) {}
+        #expect(changes == 1)
+        #expect(runner.isStopping(threadID) && runner.isRunning(threadID))
+        #expect(session.interrupts == 1)
+        session.emit(.turnCompleted(.interrupted))
+        #expect(!runner.isStopping(threadID) && !runner.isRunning(threadID))
+    }
+
+    @Test func sendNowPutsTheMessageIntoATurnThatTakesIt() async {
+        let session = await startRunningTurn()
+        runner.enqueue(threadID: threadID, text: "now")
+        #expect(await runner.sendQueuedNow(threadID: threadID, id: runner.queuedMessages(threadID)[0].id) == .steered)
+        #expect(session.steered.map(\.message) == ["now"])
+        #expect(session.interrupts == 0)
+        #expect(runner.queuedMessages(threadID).isEmpty)
+        #expect(items.last?.text == "now" && items.last?.steered == true)
+    }
+
     @Test func aMessageRefusedBecauseTheTurnEndedStartsTheNextTurn() async {
         let session = await startRunningTurn()
         session.onSteer = { session, _ in
