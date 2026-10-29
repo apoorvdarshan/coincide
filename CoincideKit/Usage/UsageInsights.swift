@@ -41,6 +41,8 @@ public final class UsageInsights {
     private let registry: ProviderRegistry
     private let runner: ThreadRunner
     private let scanner: UsageLogScanner
+    /// The highest each bare balance has been, which its bar measures against.
+    public let balanceMarks: UsageBalanceMarks
     private var scanTask: Task<Void, Never>?
     private var pendingTurnScan: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
@@ -52,6 +54,7 @@ public final class UsageInsights {
         self.registry = registry
         self.runner = runner
         self.scanner = scanner ?? UsageLogScanner(cacheFile: store.directory.appendingPathComponent("usage-log-cache.plist"))
+        balanceMarks = UsageBalanceMarks(directory: store.directory)
         observers.append(
             NotificationCenter.default.addObserver(forName: ThreadRunner.usageLimitsChangedNotification, object: runner, queue: .main) {
                 [weak self] _ in MainActor.assumeIsolated { self?.changed() }
@@ -180,16 +183,21 @@ public final class UsageInsights {
         public var showsAccountName: Bool
         public var status: ProviderStatus
         public var limits: UsageLimits?
+        /// The highest each of its bare balances has been, as Coincide saw them, by figure ID
+        /// (`UsageBalanceMarks.creditsID` for its credits).
+        public var balanceMarks: [String: UsageBalanceMark]
         public var id: String { provider.rawValue + "/" + account.id }
 
         public nonisolated init(
-            provider: ProviderKind, account: ProviderAccount, showsAccountName: Bool, status: ProviderStatus, limits: UsageLimits?
+            provider: ProviderKind, account: ProviderAccount, showsAccountName: Bool, status: ProviderStatus, limits: UsageLimits?,
+            balanceMarks: [String: UsageBalanceMark] = [:]
         ) {
             self.provider = provider
             self.account = account
             self.showsAccountName = showsAccountName
             self.status = status
             self.limits = limits
+            self.balanceMarks = balanceMarks
         }
     }
 
@@ -209,9 +217,11 @@ public final class UsageInsights {
                     base.notes.removeAll { unanswered.contains($0) }
                     limits = base.adding(admin)
                 }
+                let current = limits?.current(at: now)
                 return AccountLimits(
                     provider: kind, account: account, showsAccountName: accounts.count > 1,
-                    status: registry.status(kind, account: account.id), limits: limits?.current(at: now))
+                    status: registry.status(kind, account: account.id), limits: current,
+                    balanceMarks: current.map { balanceMarks.observe($0, provider: kind, account: account.id, at: $0.checkedAt) } ?? [:])
             }
         }
     }
