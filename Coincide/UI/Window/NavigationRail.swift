@@ -58,7 +58,10 @@ final class NavigationRailViewController: NSViewController {
     private lazy var terminalButton = RailButton(
         symbol: "terminal", label: String(localized: "Terminal"), command: .toggleTerminal,
         action: #selector(MainWindowController.toggleTerminalPanel(_:)))
-    private lazy var openInButton = RailButton(
+    /// The Open In button's right-click menu of apps.
+    let openInChooser: OpenTargetChooser
+    private let store: AppStore
+    private(set) lazy var openInButton = RailButton(
         symbol: "arrow.up.forward.app", label: String(localized: "Open In"), command: .openInEditor,
         action: #selector(MainWindowController.openInPreferred(_:)))
     private lazy var usageButton = RailButton(
@@ -71,6 +74,15 @@ final class NavigationRailViewController: NSViewController {
     private lazy var settingsButton = RailButton(
         symbol: "gearshape", label: String(localized: "Settings"), command: nil,
         action: #selector(AppDelegate.showSettings(_:)))
+
+    init(store: AppStore = .shared, openInChooser: OpenTargetChooser? = nil) {
+        self.store = store
+        self.openInChooser = openInChooser ?? OpenTargetChooser(store: store)
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func loadView() {
         let root = RailBackgroundView()
@@ -99,9 +111,20 @@ final class NavigationRailViewController: NSViewController {
         root.setAccessibilityRole(.toolbar)
         root.setAccessibilityLabel(String(localized: "Navigation"))
         view = root
+        openInButton.hint = String(localized: "Right-click to choose another app")
+        openInButton.contextMenu = { [weak self] in self?.openInChooser.makeMenu() }
+        updateOpenInTarget()
         updateShortcuts()
         NotificationCenter.default.addObserver(
             self, selector: #selector(updateShortcuts), name: KeyBindingsController.didChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(updateOpenInTarget), name: OpenTargets.preferredDidChange, object: nil)
+    }
+
+    /// Names the app Open In uses in its tooltip and accessibility label, as the default changes.
+    @objc func updateOpenInTarget() {
+        let target = OpenTargets.preferred(in: store.settings, among: openInChooser.availableTargets)
+        openInButton.label = target.map { String(localized: "Open in \($0.name)") } ?? String(localized: "Open In")
     }
 
     private func stack(_ buttons: [RailButton]) -> NSStackView {
@@ -128,7 +151,8 @@ final class NavigationRailViewController: NSViewController {
         set { terminalButton.isHidden = !newValue }
     }
 
-    /// Lights the buttons of the panels that are open, and enables Open In only when there is a folder to open.
+    /// Lights the buttons of the panels that are open, and enables Open In only when there is a folder to open. Its
+    /// right-click menu works either way, so the default app can be changed before a thread has a folder.
     func update(threadsOpen: Bool, terminalOpen: Bool, canOpenFolder: Bool) {
         threadsButton.isActive = threadsOpen
         terminalButton.isActive = terminalOpen
@@ -167,8 +191,27 @@ final class RailButton: NSButton {
         }
     }
 
-    private let label: String
+    /// What the button does, for its tooltip and accessibility label.
+    var label: String {
+        didSet {
+            guard label != oldValue else { return }
+            setAccessibilityLabel(label)
+            updateToolTip()
+        }
+    }
+    /// A second line for the tooltip, such as what a right-click does.
+    var hint: String? {
+        didSet {
+            setAccessibilityHelp(hint)
+            updateToolTip()
+        }
+    }
+    /// The menu a right-click or Control-click shows, as a themed popup; nil for none. It opens even while the button
+    /// is disabled.
+    var contextMenu: (() -> NSMenu?)?
     private let command: KeyCommand?
+    /// The event whose menu is up, so the window asking for the menu and the click itself don't open it twice.
+    private var menuEventNumber: Int?
     private var isHovered = false
 
     init(symbol: String, label: String, command: KeyCommand?, action: Selector, target: AnyObject? = nil) {
@@ -209,7 +252,37 @@ final class RailButton: NSButton {
     }
 
     func updateToolTip() {
-        toolTip = command.map { KeyBindingsController.shared.toolTip(label, for: $0) } ?? label
+        let title = command.map { KeyBindingsController.shared.toolTip(label, for: $0) } ?? label
+        toolTip = hint.map { title + "\n" + $0 } ?? title
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        if !showContextMenu(for: event) { super.rightMouseDown(with: event) }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control), showContextMenu(for: event) { return }
+        super.mouseDown(with: event)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        showContextMenu(for: event) ? nil : super.menu(for: event)
+    }
+
+    override func accessibilityPerformShowMenu() -> Bool {
+        guard let menu = contextMenu?() else { return super.accessibilityPerformShowMenu() }
+        ThemedPopup.show(menu: menu, from: self, preferAbove: false)
+        return true
+    }
+
+    /// Opens `contextMenu` under the pointer, once per event. False when the button has none.
+    private func showContextMenu(for event: NSEvent) -> Bool {
+        guard contextMenu != nil else { return false }
+        guard menuEventNumber != event.eventNumber else { return true }
+        guard let window, let menu = contextMenu?() else { return false }
+        menuEventNumber = event.eventNumber
+        ThemedPopup.show(contextMenu: menu, for: event, in: window)
+        return true
     }
 
     override func updateTrackingAreas() {

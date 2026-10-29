@@ -63,6 +63,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         splitController.onPanelsChanged = { [weak self] in self?.updatePanelItems() }
         runStatus.onStop = { [weak self] in self?.stopTurn(nil) }
         panelButtons.target = self
+        rail.openInChooser.folder = { [weak self] in self?.openFolder }
         projectScripts.onVisibilityChange = { [weak self] visible in
             self?.toolbarItems[.projectScripts]?.isHidden = !visible
         }
@@ -164,6 +165,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             updateTitle()
         case .settings:
             updateTerminalPlacement()
+            // Settings › General's "Open project folders in", or Restore Defaults, may have changed the app.
+            updateOpenInItem()
         default:
             break
         }
@@ -464,7 +467,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func openInPreferred(_ sender: Any?) {
         guard let folder = openFolder, let target = OpenTargets.preferred else { return }
-        OpenTargets.open(folder, with: target)
+        OpenTargets.open(folder, with: target, remember: false)
     }
 
     @objc func openInApp(_ sender: NSMenuItem) {

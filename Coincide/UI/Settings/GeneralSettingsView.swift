@@ -53,6 +53,8 @@ struct GeneralSettingsView: View {
                                 : String(localized: "The terminal opens on the right, beside the diff and the browser preview. Its button is with theirs at the top right."))
                     }
                     .settingsRevealable(.terminalPlacement, highlighted: highlighted)
+                    OpenInSettingsRow(selection: model.binding(\.preferredOpenTarget))
+                        .settingsRevealable(.openIn, highlighted: highlighted)
                 }
 
                 Section("Chat") {
@@ -230,6 +232,7 @@ struct GeneralSettingsView: View {
         settings.darkTheme = defaults.darkTheme
         settings.lightTheme = defaults.lightTheme
         settings.terminalPlacement = defaults.terminalPlacement
+        settings.preferredOpenTarget = defaults.preferredOpenTarget
         settings.sendOnReturn = defaults.sendOnReturn
         settings.followUpBehavior = defaults.followUpBehavior
         settings.generatesThreadTitles = defaults.generatesThreadTitles
