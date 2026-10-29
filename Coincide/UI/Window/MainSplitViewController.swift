@@ -143,7 +143,7 @@ final class MainSplitViewController: NSSplitViewController {
     }
 
     /// Closes the inspector when it shows `panel`, otherwise shows `panel` in it, opening it if it is closed: the
-    /// rail's diff and pull request buttons work like tabs of one column.
+    /// toolbar's diff, pull request and preview buttons (`InspectorPanelButtons`) work like tabs of one column.
     private func toggleInspector(_ panel: UIState.InspectorPanel) {
         if !inspectorItem.isCollapsed, inspector.panel == panel {
             closeInspector()
@@ -289,7 +289,7 @@ final class MainSplitViewController: NSSplitViewController {
 }
 
 /// The inspector column: the diff or the pull requests, one at a time, as T3 Code's right panel switches between
-/// them. It has no tabs of its own; the rail's buttons choose. A panel not showing is out of the window, so it loads
+/// them. It has no tabs of its own; the toolbar's buttons (`InspectorPanelButtons`) choose. A panel not showing is out of the window, so it loads
 /// nothing until it shows again.
 final class InspectorViewController: NSTabViewController {
     init(diff: DiffViewController, pullRequests: PullRequestsViewController, preview: PreviewViewController = PreviewViewController()) {

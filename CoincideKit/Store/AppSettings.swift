@@ -155,6 +155,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var menuBarUsage: MenuBarUsageChoice
     /// A second figure shown beside the first, such as Codex next to Claude; nil for none.
     public var menuBarSecondaryUsage: MenuBarUsageChoice?
+    /// Whether usage figures read as what is used or what is left, in the menu bar, its popover and Settings › Usage.
+    public var usageDisplayMode: UsageDisplayMode
     /// Models the user starred (T3 Code's favorites), in the order they were starred. The model picker lists them
     /// first, and together in its Favorites tab.
     public var favoriteModels: [ModelReference]
@@ -193,6 +195,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showsUsageInMenuBar = true
         menuBarUsage = .lastActive
         menuBarSecondaryUsage = nil
+        usageDisplayMode = .used
         favoriteModels = []
         hiddenModels = []
     }
@@ -241,6 +244,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showsUsageInMenuBar = value(.showsUsageInMenuBar, defaults.showsUsageInMenuBar)
         menuBarUsage = value(.menuBarUsage, defaults.menuBarUsage)
         menuBarSecondaryUsage = value(.menuBarSecondaryUsage, defaults.menuBarSecondaryUsage)
+        usageDisplayMode = value(.usageDisplayMode, defaults.usageDisplayMode)
         // Models of agents this version does not know are skipped, not the whole list.
         favoriteModels = container.lenientArray(ModelReference.self, forKey: .favoriteModels)
         hiddenModels = container.lenientArray(ModelReference.self, forKey: .hiddenModels)

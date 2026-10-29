@@ -60,6 +60,8 @@ final class SettingsModel {
     private(set) var accountStatuses: [String: ProviderStatus] = [:]
     /// Accounts with an API key in the Keychain. The Keychain is only asked whether a key exists, never for it.
     private(set) var accountsWithKeys: Set<String> = []
+    /// Anthropic API-key accounts with an optional Admin API key in the Keychain; again only asked whether one exists.
+    private(set) var accountsWithAdminKeys: Set<String> = []
     /// Accounts being checked or having their key saved.
     private(set) var busyAccounts: Set<String> = []
     private(set) var isCheckingAll = false
@@ -267,9 +269,35 @@ final class SettingsModel {
             update { $0.defaultSelection.accountID = nil }
         }
         try? registry.secrets.removeAPIKey(for: account)
+        try? registry.secrets.removeAdminKey(for: account)
         try? FileManager.default.removeItem(at: account.home(in: store.directory))
         registry.forgetAccount(account.id)
         accountsWithKeys.remove(account.id)
+        accountsWithAdminKeys.remove(account.id)
+        Task { await UsageInsights.shared.readAdminReport(account) }
+    }
+
+    func hasAdminKey(_ account: ProviderAccount) -> Bool { accountsWithAdminKeys.contains(account.id) }
+
+    /// Saves the account's Admin API key to the Keychain and reads its reports; returns a message when saving failed.
+    func saveAdminKey(_ key: String, for account: ProviderAccount) async -> String? {
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard UsageInsights.takesAdminKey(account), !key.isEmpty else { return nil }
+        do {
+            try registry.secrets.setAdminKey(key, for: account)
+        } catch {
+            syncKeys()
+            return error.localizedDescription
+        }
+        syncKeys()
+        await UsageInsights.shared.readAdminReport(account, force: true)
+        return nil
+    }
+
+    func removeAdminKey(for account: ProviderAccount) {
+        try? registry.secrets.removeAdminKey(for: account)
+        syncKeys()
+        Task { await UsageInsights.shared.readAdminReport(account) }
     }
 
     /// Saves the account's API key to the Keychain; returns a message when that failed.
@@ -327,6 +355,9 @@ final class SettingsModel {
         let ids = Set(
             kinds.flatMap { accounts($0) }.filter { !$0.isDefault && $0.auth == .apiKey && registry.secrets.hasAPIKey($0) }.map(\.id))
         if ids != accountsWithKeys { accountsWithKeys = ids }
+        let admin = Set(
+            kinds.flatMap { accounts($0) }.filter { UsageInsights.takesAdminKey($0) && registry.secrets.hasAdminKey($0) }.map(\.id))
+        if admin != accountsWithAdminKeys { accountsWithAdminKeys = admin }
     }
 
     // MARK: Sync

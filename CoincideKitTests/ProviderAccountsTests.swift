@@ -264,6 +264,23 @@ struct KeychainStoreTests {
         try keychain.remove("account")
     }
 
+    @Test func anAdminKeyIsKeptApartFromTheAccountsAPIKey() throws {
+        let secrets = ProviderAccountSecrets(keychain: KeychainStore(service: "com.apoorvdarshan.coincide.tests.\(UUID().uuidString)"))
+        let account = ProviderAccount(id: UUID().uuidString, provider: .claude, name: "API", auth: .apiKey)
+        defer {
+            try? secrets.removeAPIKey(for: account)
+            try? secrets.removeAdminKey(for: account)
+        }
+        try secrets.setAPIKey("sk-ant-api03-test", for: account)
+        #expect(!secrets.hasAdminKey(account) && secrets.adminKey(for: account) == nil)
+        try secrets.setAdminKey("sk-ant-admin01-test", for: account)
+        #expect(secrets.adminKey(for: account) == "sk-ant-admin01-test")
+        #expect(secrets.apiKey(for: account) == "sk-ant-api03-test")
+        try secrets.removeAdminKey(for: account)
+        #expect(!secrets.hasAdminKey(account) && secrets.hasAPIKey(account))
+        #expect(secrets.adminKey(for: .defaultAccount(for: .claude)) == nil)
+    }
+
     @Test func secretsAreKeptPerAccountAndNeverForTheDefault() throws {
         let secrets = ProviderAccountSecrets(keychain: KeychainStore(service: "com.apoorvdarshan.coincide.tests.\(UUID().uuidString)"))
         let account = ProviderAccount(id: UUID().uuidString, provider: .claude, name: "API", auth: .apiKey)

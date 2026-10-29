@@ -121,6 +121,52 @@ struct MenuBarUsageTests {
         #expect(!MenuBarUsage.hasBalance(account))
     }
 
+    @Test func showingWhatIsLeftFlipsTheMenuBarText() throws {
+        let weekly = window("seven_day", .weekly, 52)
+        #expect(MenuBarUsage.percentText(weekly) == 0.52.formatted(.percent.precision(.fractionLength(0))))
+        #expect(MenuBarUsage.percentText(weekly, mode: .remaining) == "\(0.48.formatted(.percent.precision(.fractionLength(0)))) left")
+        let last = LastActiveAgent(provider: .claude, accountID: nil, date: now)
+        let left = try #require(MenuBarUsage.reading(for: .lastActive, accounts: accounts, lastActive: last, mode: .remaining))
+        #expect(left.window?.id == "seven_day")
+        #expect(left.text == MenuBarUsage.percentText(weekly, mode: .remaining))
+        // The closest limit across all is still the most used one; only its wording flips.
+        let closest = try #require(MenuBarUsage.reading(for: .closest, accounts: accounts, lastActive: nil, mode: .remaining))
+        #expect(closest.window?.id == "primary")
+        #expect(closest.text == MenuBarUsage.percentText(window("primary", .session, 90), mode: .remaining))
+        // A balance is what is left either way.
+        let router = LastActiveAgent(provider: .opencode, accountID: "router", date: now)
+        #expect(
+            MenuBarUsage.reading(for: .lastActive, accounts: accounts, lastActive: router, mode: .remaining)?.text
+                == MenuBarUsage.reading(for: .lastActive, accounts: accounts, lastActive: router, mode: .used)?.text)
+    }
+
+    @Test func barsDrainAndThePaceMarkMirrorsWhenShowingWhatIsLeft() throws {
+        // A five-hour window with two hours to go: 60% of it has passed.
+        let session = UsageLimitWindow(
+            id: "s", kind: .session, label: "Session", usedPercent: 70, resetsAt: now.addingTimeInterval(2 * 3_600), durationMinutes: 300)
+        #expect(session.shownPercent(.used) == 70 && session.shownPercent(.remaining) == 30)
+        #expect(abs(session.barFill(.used) - 0.7) < 0.0001)
+        #expect(abs(session.barFill(.remaining) - 0.3) < 0.0001)
+        #expect(abs(try #require(session.paceMark(at: now, mode: .used)) - 0.6) < 0.0001)
+        #expect(abs(try #require(session.paceMark(at: now, mode: .remaining)) - 0.4) < 0.0001)
+        #expect(window("w", .weekly, 10).paceMark(at: now, mode: .remaining) == nil)
+    }
+
+    @Test func theDisplayModeDefaultsToUsedAndPersists() throws {
+        #expect(AppSettings().usageDisplayMode == .used)
+        var settings = AppSettings()
+        settings.usageDisplayMode = .remaining
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        #expect(decoded.usageDisplayMode == .remaining)
+        // Settings from before the choice, or with a value this version does not know, read as used.
+        let old = try #require(#"{"showsUsageInMenuBar":false}"#.data(using: .utf8))
+        #expect(try JSONDecoder().decode(AppSettings.self, from: old).usageDisplayMode == .used)
+        let odd = try #require(#"{"usageDisplayMode":"sideways","showsUsageInMenuBar":false}"#.data(using: .utf8))
+        let fallback = try JSONDecoder().decode(AppSettings.self, from: odd)
+        #expect(fallback.usageDisplayMode == .used)
+        #expect(fallback.showsUsageInMenuBar == false)
+    }
+
     @Test func choicesRoundTripThroughSettingsAndDefaultToAuto() throws {
         #expect(AppSettings().menuBarUsage == .lastActive)
         #expect(AppSettings().menuBarSecondaryUsage == nil)
