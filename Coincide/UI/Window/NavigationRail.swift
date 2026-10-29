@@ -107,9 +107,6 @@ final class NavigationRailViewController: NSViewController {
         updateShortcuts()
         NotificationCenter.default.addObserver(
             self, selector: #selector(updateShortcuts), name: KeyBindingsController.didChangeNotification, object: nil)
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(updateUsageBadge), name: UsageInsights.didChange, object: UsageInsights.shared)
-        updateUsageBadge()
     }
 
     private func stack(_ buttons: [RailButton]) -> NSStackView {
@@ -154,23 +151,6 @@ final class NavigationRailViewController: NSViewController {
     @objc private func showUsage(_ sender: Any?) {
         UsageNavigation.show()
     }
-
-    /// Marks the Usage button while an account is close to one of its limits, from the limits Coincide already has.
-    @objc private func updateUsageBadge() {
-        let constrained = UsageInsights.mostConstrained(UsageInsights.shared.accountLimits())
-        let near = constrained.map { $0.window.usedPercent >= RailButton.usageBadgePercent } ?? false
-        usageButton.badgeColor = near ? constrained.map { UsageFormat.color($0.window, provider: $0.account.provider) } : nil
-        let label = String(localized: "Usage")
-        if near, let constrained {
-            let detail = String(
-                localized: "\(UsageFormat.title(constrained.account)) \(constrained.window.label.lowercased()) limit \(Int(constrained.window.usedPercent.rounded()))% used")
-            usageButton.setAccessibilityLabel(label + ", " + detail)
-            usageButton.toolTip = label + " — " + detail
-        } else {
-            usageButton.setAccessibilityLabel(label)
-            usageButton.toolTip = label
-        }
-    }
 }
 
 /// A square button in the rail: a symbol that brightens on hover and sits on a soft fill while its panel is open.
@@ -185,18 +165,9 @@ final class RailButton: NSButton {
         }
     }
 
-    /// From this share of a window used, the Usage button shows a dot.
-    static let usageBadgePercent: Double = 80
-
     private let label: String
     private let command: KeyCommand?
     private var isHovered = false
-    private var badge: CALayer?
-
-    /// A small dot at the button's top right, in this color; nil hides it.
-    var badgeColor: NSColor? {
-        didSet { updateBadge() }
-    }
 
     init(symbol: String, label: String, command: KeyCommand?, action: Selector, target: AnyObject? = nil) {
         self.label = label
@@ -258,32 +229,6 @@ final class RailButton: NSButton {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateTint()
-        updateBadge()
-    }
-
-    override func layout() {
-        super.layout()
-        badge?.frame = CGRect(x: bounds.width - 12, y: isFlipped ? 6 : bounds.height - 12, width: 7, height: 7)
-    }
-
-    private func updateBadge() {
-        guard let badgeColor else {
-            badge?.removeFromSuperlayer()
-            badge = nil
-            return
-        }
-        let dot = badge ?? CALayer()
-        if badge == nil {
-            dot.cornerRadius = 3.5
-            dot.borderWidth = 1.5
-            layer?.addSublayer(dot)
-            badge = dot
-            needsLayout = true
-        }
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            dot.backgroundColor = badgeColor.cgColor
-            dot.borderColor = Theme.sidebarBackground.cgColor
-        }
     }
 
     /// The symbol's color and the fill behind it. The button still draws its own image, so the fill is set on the
