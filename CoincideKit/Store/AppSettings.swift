@@ -113,6 +113,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// ⌘Q quits only when held or pressed twice (`QuitShortcutGuard`); a single press shows a hint. Quitting from the
     /// menu, the Dock, logging out or AppleScript is never held up.
     public var holdToQuit: Bool
+    /// A plain click on a web link opens it in the default browser, and a ⌘-click in Coincide's browser preview. Off
+    /// by default: links open in the preview, and ⌘-click opens the default browser (`LinkRouting`).
+    public var opensLinksInDefaultBrowser: Bool
     /// Have the thread's agent name a new thread from its first message (T3 Code's generated titles).
     public var generatesThreadTitles: Bool
     /// App update checks are opt-in and run at most daily, including across launches.
@@ -170,6 +173,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showReasoning = true
         confirmBeforeDeletingThreads = true
         holdToQuit = true
+        opensLinksInDefaultBrowser = false
         generatesThreadTitles = true
         lastAppUpdateCheck = nil
         checksForAppUpdates = false
@@ -215,6 +219,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showReasoning = value(.showReasoning, defaults.showReasoning)
         confirmBeforeDeletingThreads = value(.confirmBeforeDeletingThreads, defaults.confirmBeforeDeletingThreads)
         holdToQuit = value(.holdToQuit, defaults.holdToQuit)
+        opensLinksInDefaultBrowser = value(.opensLinksInDefaultBrowser, defaults.opensLinksInDefaultBrowser)
         generatesThreadTitles = value(.generatesThreadTitles, defaults.generatesThreadTitles)
         lastAppUpdateCheck = value(.lastAppUpdateCheck, defaults.lastAppUpdateCheck)
         checksForAppUpdates = value(.checksForAppUpdates, defaults.checksForAppUpdates)

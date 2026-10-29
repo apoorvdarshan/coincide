@@ -44,6 +44,10 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
     private var isAnimatingScroll = false
     private var refineScheduled = false
     private var frameChangeScheduled = false
+    /// Where the reader was when the transcript's width started to change (a panel opening beside the chat, a divider
+    /// drag, a window resize), kept until `applyFrameChange` lays the rows out at the new width. Taken before the
+    /// scroll view resizes, since the clip view can shift by a few points while it does.
+    private var placeBeforeResize: (id: TranscriptRowID, offset: CGFloat)?
 
     override init() {
         super.init()
@@ -74,6 +78,7 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentView.postsBoundsChangedNotifications = true
         scrollView.onReaderScroll = { [weak self] upward in self?.readerScrolled(upward: upward) }
+        scrollView.onWidthWillChange = { [weak self] in self?.noteWidthWillChange() }
         tableView.onReaderScroll = { [weak self] in self?.readerScrolledAndSettled() }
         tableView.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(
@@ -498,13 +503,26 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         }
     }
 
+    private func noteWidthWillChange() {
+        guard placeBeforeResize == nil, !isPinnedToBottom, !isAnimatingScroll, case .anchor(let id, let offset) = scrollState()
+        else { return }
+        placeBeforeResize = (id, offset)
+    }
+
     private func applyFrameChange() {
         let newWidth = tableView.bounds.width
+        let place = placeBeforeResize
+        placeBeforeResize = nil
         if abs(newWidth - width) > 0.5 {
             width = newWidth
             guard !rows.isEmpty else { return }
             exactRange = visibleRange(margin: 0)
-            preservingAnchor { noteHeights(IndexSet(integersIn: 0..<rows.count)) }
+            if let place, !isPinnedToBottom, let index = index(of: place.id) {
+                noteHeights(IndexSet(integersIn: 0..<rows.count))
+                scroll(toY: tableView.rect(ofRow: index).minY - place.offset)
+            } else {
+                preservingAnchor { noteHeights(IndexSet(integersIn: 0..<rows.count)) }
+            }
             scheduleRefine()
         } else if isPinnedToBottom && !isAdjustingScroll && !isAnimatingScroll {
             scrollToBottom()
@@ -640,6 +658,13 @@ final class TranscriptTableView: NSTableView {
 final class TranscriptScrollView: NSScrollView {
     /// Called after each wheel or trackpad scroll; the argument is true when scrolling toward older content.
     var onReaderScroll: ((_ upward: Bool) -> Void)?
+    /// Called before the scroll view takes a new width, while what the reader sees is still in place.
+    var onWidthWillChange: (() -> Void)?
+
+    override func setFrameSize(_ newSize: NSSize) {
+        if abs(newSize.width - frame.width) > 0.5 { onWidthWillChange?() }
+        super.setFrameSize(newSize)
+    }
 
     override func scrollWheel(with event: NSEvent) {
         super.scrollWheel(with: event)

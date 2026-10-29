@@ -28,7 +28,10 @@ final class UIState {
         /// dropped so everyone starts from the current default.)
         var listWidth: Double?
         var isSidebarCollapsed = false
-        var inspectorWidth: Double?
+        /// The inspector's share of the space right of the thread list, the same for every panel; nil for the default
+        /// (`InspectorWidth`). (A width saved under the earlier key, `inspectorWidth`, is dropped: the divider could not
+        /// be dragged then, so it was never the user's choice.)
+        var inspectorFraction: Double?
         var isInspectorOpen = false
         var inspectorPanel = InspectorPanel.diff
         var diffLayout: DiffLayout = .unified
@@ -54,7 +57,10 @@ final class UIState {
         var threadSort = ThreadSort.recentActivity
         /// How Chats, the project-free threads, are sorted.
         var chatSort = ThreadSort.recentActivity
-        var botSort = BotSort.manual
+        var botSort = BotSort.recentActivity
+        /// Whether the user picked the bot sort. Files from before it defaulted to recent activity saved the old
+        /// default, manual, which only counts when chosen.
+        var choseBotSort = false
         /// The Pinned section's order (thread ids), most recently pinned first. Threads pinned elsewhere (or before
         /// this order was kept) join at the top as the sidebar notices them.
         var pinnedThreads: [String] = []
@@ -81,7 +87,7 @@ final class UIState {
             selectedThreadID = value(.selectedThreadID, defaults.selectedThreadID)
             listWidth = value(.listWidth, defaults.listWidth)
             isSidebarCollapsed = value(.isSidebarCollapsed, defaults.isSidebarCollapsed)
-            inspectorWidth = value(.inspectorWidth, defaults.inspectorWidth)
+            inspectorFraction = value(.inspectorFraction, defaults.inspectorFraction)
             isInspectorOpen = value(.isInspectorOpen, defaults.isInspectorOpen)
             inspectorPanel = value(.inspectorPanel, defaults.inspectorPanel)
             diffLayout = value(.diffLayout, defaults.diffLayout)
@@ -103,7 +109,8 @@ final class UIState {
             projectSort = value(.projectSort, defaults.projectSort)
             threadSort = value(.threadSort, defaults.threadSort)
             chatSort = value(.chatSort, defaults.chatSort)
-            botSort = value(.botSort, defaults.botSort)
+            choseBotSort = value(.choseBotSort, defaults.choseBotSort)
+            botSort = choseBotSort ? value(.botSort, defaults.botSort) : defaults.botSort
             pinnedThreads = value(.pinnedThreads, defaults.pinnedThreads)
             sidebarSections = value(.sidebarSections, defaults.sidebarSections)
             collapsedSections = value(.collapsedSections, defaults.collapsedSections)

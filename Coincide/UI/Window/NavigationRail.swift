@@ -71,6 +71,9 @@ final class NavigationRailViewController: NSViewController {
         action: #selector(MainWindowController.openInPreferred(_:)))
     private lazy var usageButton = RailButton(
         symbol: "chart.bar", label: String(localized: "Usage"), command: nil, action: #selector(showUsage(_:)), target: self)
+    private lazy var instructionsButton = RailButton(
+        symbol: "text.book.closed", label: String(localized: "Instructions"), command: nil,
+        action: #selector(showInstructions(_:)), target: self)
     private lazy var agentsButton = RailButton(
         symbol: "cpu", label: String(localized: "Agents"), command: nil, action: #selector(showAgents(_:)), target: self)
     private lazy var settingsButton = RailButton(
@@ -81,7 +84,7 @@ final class NavigationRailViewController: NSViewController {
         let root = RailBackgroundView()
         let top = stack([threadsButton, newThreadButton, searchButton])
         let panels = stack([terminalButton, diffButton, pullRequestsButton, previewButton, openInButton])
-        let bottom = stack([usageButton, agentsButton, settingsButton])
+        let bottom = stack([usageButton, instructionsButton, agentsButton, settingsButton])
         let divider = RailDivider()
         for view in [top, divider, panels, bottom] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -146,6 +149,10 @@ final class NavigationRailViewController: NSViewController {
 
     @objc private func showAgents(_ sender: Any?) {
         AppEvents.showSettings(section: .providers)
+    }
+
+    @objc private func showInstructions(_ sender: Any?) {
+        AppEvents.showSettings(section: .instructions)
     }
 
     @objc private func showUsage(_ sender: Any?) {

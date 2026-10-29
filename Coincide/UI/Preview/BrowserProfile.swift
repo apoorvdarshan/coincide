@@ -6,15 +6,19 @@ import WebKit
 /// data last across threads and relaunches, while each thread keeps its own page and back/forward history. With
 /// private sessions on (Settings › Browser), each thread gets temporary storage of its own instead, as before.
 final class BrowserProfile {
-    static let shared = BrowserProfile(directory: AppStore.shared.directory)
+    /// While the app hosts tests, the shared profile is kept in memory, so tests that open a thread's browser leave
+    /// nothing under ~/Library/WebKit. Tests of the persistent profile make one of their own.
+    static let shared = BrowserProfile(directory: AppStore.shared.directory, isPersistent: !AppDelegate.isHostingTests)
 
     let settings: BrowserSettingsStore
     let library: BrowserLibrary
+    private let isPersistent: Bool
     private var sharedStore: WKWebsiteDataStore?
 
-    init(directory: URL) {
+    init(directory: URL, isPersistent: Bool = true) {
         settings = BrowserSettingsStore(directory: directory)
         library = BrowserLibrary(directory: directory)
+        self.isPersistent = isPersistent
     }
 
     var usesPrivateSessions: Bool { settings.settings.usesPrivateSessions }
@@ -22,7 +26,7 @@ final class BrowserProfile {
     /// The shared, persistent profile, named by `BrowserSettings.profileID` (kept under ~/Library/WebKit).
     var sharedDataStore: WKWebsiteDataStore {
         if let sharedStore { return sharedStore }
-        let store = WKWebsiteDataStore(forIdentifier: settings.settings.profileID)
+        let store = isPersistent ? WKWebsiteDataStore(forIdentifier: settings.settings.profileID) : .nonPersistent()
         sharedStore = store
         return store
     }

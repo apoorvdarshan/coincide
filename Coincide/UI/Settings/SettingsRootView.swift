@@ -225,6 +225,9 @@ private struct SettingsSearchResults: View {
                 title: String(localized: "Show reasoning"), pane: general, setting: .showReasoning,
                 keywords: [String(localized: "Thinking")]),
             SettingsSearchEntry(
+                title: String(localized: "Open links in your default browser"), pane: general, setting: .openLinksInBrowser,
+                keywords: [String(localized: "Links"), String(localized: "Browser Preview"), String(localized: "Web links")]),
+            SettingsSearchEntry(
                 title: String(localized: "Default model"), pane: general, setting: .defaultModel,
                 keywords: [String(localized: "New threads"), String(localized: "Reasoning effort")]),
             SettingsSearchEntry(

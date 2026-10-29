@@ -299,6 +299,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         splitController.togglePreviewPanel()
     }
 
+    /// Loads a web link the user opened in the selected thread's browser preview and shows the preview. False when
+    /// there is no thread or the preview cannot load the address, so the caller can open it elsewhere. This is the
+    /// user's own navigation: it does not turn on agent control.
+    func openInBrowserPreview(_ url: URL) -> Bool {
+        guard let id = selectedThreadID, (try? PreviewSessions.shared.session(for: id).navigate(url.absoluteString)) != nil
+        else { return false }
+        splitController.showPreviewPanel()
+        return true
+    }
+
     @objc func togglePullRequestsPanel(_ sender: Any?) {
         showWindow(nil)
         splitController.togglePullRequestsPanel()

@@ -9,6 +9,8 @@ struct ChatMarkdownStyle: Hashable {
     var dimsCompletedTasks = false
     /// Agents' replies set their prose in New York; code, tables and markers stay in the system fonts.
     var isSerif = false
+    /// Added under a web link's address in its tooltip: what a click and a ⌘-click do (`LinkRouting.hint`).
+    var webLinkHint: String?
 
     /// Code blocks keep the size they have in the system font's text, since the serif is set a point larger.
     var codeFontSize: CGFloat { isSerif ? fontSize - 2 : fontSize - 1 }
@@ -433,19 +435,25 @@ struct ChatMarkdownRenderer {
             case .link(let destination, let children):
                 let start = output.length
                 self.inlines(children, font: base, color: color, traits: traits, link: Self.linkValue(destination))
-                if output.length > start { output.addAttribute(.toolTip, value: destination, range: NSRange(location: start, length: output.length - start)) }
+                if output.length > start { output.addAttribute(.toolTip, value: toolTip(destination), range: NSRange(location: start, length: output.length - start)) }
             case .image(let alt, let source):
                 let label = alt.isEmpty ? (source as NSString).lastPathComponent : alt
                 let start = output.length
                 self.inlines([.text(label)], font: base, color: color, traits: traits, link: Self.linkValue(source))
                 // Like a link, it shows where it leads before it is clicked.
-                if output.length > start { output.addAttribute(.toolTip, value: source, range: NSRange(location: start, length: output.length - start)) }
+                if output.length > start { output.addAttribute(.toolTip, value: toolTip(source), range: NSRange(location: start, length: output.length - start)) }
             case .softBreak:
                 output.append(NSAttributedString(string: style.preservesLineBreaks ? "\u{2028}" : " ", attributes: [.font: base]))
             case .lineBreak:
                 output.append(NSAttributedString(string: "\u{2028}", attributes: [.font: base]))
             }
         }
+    }
+
+    /// A link's tooltip: where it leads, and for a web link what clicking it does, when the style says.
+    private func toolTip(_ destination: String) -> String {
+        guard let hint = style.webLinkHint, LinkRouting.webURL(destination) != nil else { return destination }
+        return destination + "\n" + hint
     }
 
     /// Absolute URLs become `URL`s; anything else (usually a file path) stays a string for the cell to resolve.
