@@ -42,7 +42,7 @@ public struct AgentHostLifecycle: Sendable, Hashable {
 /// nothing of XPC (`CoincideAgentHost` wraps it), so tests drive it directly.
 @MainActor
 public final class AgentHostCore {
-    public typealias SessionFactory = @MainActor (AgentLaunch) -> AgentSession?
+    public typealias SessionFactory = @MainActor (AgentLaunch, ProviderAccount) -> AgentSession?
 
     /// One app connection.
     public final class Client {
@@ -144,8 +144,8 @@ public final class AgentHostCore {
 
     public func perform(_ command: AgentHostCommand, from client: Client) async -> AgentHostReply {
         switch command {
-        case .start(let key, let launch, let thread):
-            return await start(key, launch: launch, thread: thread, client: client)
+        case .start(let key, let launch, let account, let thread):
+            return await start(key, launch: launch, account: account, thread: thread, client: client)
         case .send(let key, let input, let thread):
             guard let record = hosted[key], let session = record.session else { return notRunning }
             record.thread = thread
@@ -208,23 +208,28 @@ public final class AgentHostCore {
             }
             return .ok
         case .acknowledge(let key, let sequence):
-            guard let record = hosted[key] else { return .ok }
-            record.log.acknowledge(sequence)
-            // An ended session whose every event the app applied has nothing left to keep.
-            if record.session == nil, record.log.backlog.isEmpty {
-                record.log.remove()
-                hosted[key] = nil
-            }
+            acknowledge(key, through: sequence)
             return .ok
         case .list:
             return .sessions(sessionInfos)
         }
     }
 
+    /// The app applied the session's events up to `sequence`. Synchronous, for an app that is quitting.
+    public func acknowledge(_ key: AgentSessionKey, through sequence: Int) {
+        guard let record = hosted[key] else { return }
+        record.log.acknowledge(sequence)
+        // An ended session whose every event the app applied has nothing left to keep.
+        if record.session == nil, record.log.backlog.isEmpty {
+            record.log.remove()
+            hosted[key] = nil
+        }
+    }
+
     private var notRunning: AgentHostReply { .failure(AgentError.notRunning.localizedDescription) }
 
     private func start(
-        _ key: AgentSessionKey, launch: AgentLaunch, thread: AgentHostThreadInfo, client: Client
+        _ key: AgentSessionKey, launch: AgentLaunch, account: ProviderAccount, thread: AgentHostThreadInfo, client: Client
     ) async -> AgentHostReply {
         // The app gets this session's events from now on; anything older it caught up on when it connected.
         client.attached.insert(key)
@@ -235,7 +240,7 @@ public final class AgentHostCore {
             }
             return hosted[key]?.session == nil ? notRunning : .started(info(record))
         }
-        guard let session = makeSession(launch) else { return .failure(AgentError.notInstalled(key.provider).localizedDescription) }
+        guard let session = makeSession(launch, account) else { return .failure(AgentError.notInstalled(key.provider).localizedDescription) }
         let record = hosted[key] ?? Hosted(key: key, log: logs.open(key), thread: thread)
         record.thread = thread
         record.session = session

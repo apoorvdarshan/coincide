@@ -26,6 +26,8 @@ final class AgentHostController {
     private(set) var transport: XPCAgentHostTransport?
     /// What the host said when the app connected: its version and the sessions it kept running.
     private(set) var welcome: AgentHostWelcome?
+    /// Makes and routes the sessions that run in the host, while connected.
+    private(set) var client: AgentHostClient?
     private var settingsObservation: ObservationToken?
     private var notifiesWhileAppIsClosed: Bool?
 
@@ -136,11 +138,11 @@ final class AgentHostController {
         guard self.transport === transport else { return }
         switch AgentHostCompatibility.evaluate(app: hello, host: welcome) {
         case .use:
-            self.welcome = welcome
+            use(transport, welcome: welcome)
             mode = .background(version: welcome.version, isOtherBuild: false)
         case .useAndReplaceWhenIdle:
             // An update keeps the host it found running mid-turn; it gives way to this build's once idle.
-            self.welcome = welcome
+            use(transport, welcome: welcome)
             transport.retireWhenIdle()
             mode = .background(version: welcome.version, isOtherBuild: true)
         case .replaceNow:
@@ -160,6 +162,53 @@ final class AgentHostController {
         }
     }
 
+    /// Runs new sessions in the host and takes up the ones it kept while the app was away.
+    private func use(_ transport: XPCAgentHostTransport, welcome: AgentHostWelcome) {
+        self.welcome = welcome
+        let client = AgentHostClient(transport: transport)
+        client.onDisconnect = { [weak self, weak transport] in self?.disconnected(transport) }
+        self.client = client
+        let store = AppStore.shared
+        let runner = ThreadRunner.shared
+        // Before their transcripts are read: their unfinished items may still finish.
+        store.threadsWithHostedAgents.formUnion(welcome.sessions.map(\.key.threadID))
+        runner.hostedSession = { [weak client] threadID, launch, account in
+            client?.makeSession(
+                key: AgentSessionKey(threadID: threadID, provider: launch.provider), launch: launch, account: account,
+                thread: { Self.threadInfo(threadID) })
+        }
+        for info in welcome.sessions {
+            let threadID = info.key.threadID
+            guard store.hasThread(threadID) else {
+                // Deleted while its agent went on: nothing to show it in.
+                client.discard(info.key)
+                continue
+            }
+            let session = client.adopt(info, thread: { Self.threadInfo(threadID) })
+            // With events to catch up on, the turn's state is the one the app left off at; otherwise the current one.
+            let turnWasActive = info.hasBacklog ? info.turnWasActiveAtAcknowledged : info.isTurnActive
+            guard runner.adopt(session, threadID: threadID, turnWasActive: turnWasActive) else {
+                // This run already has a session there (a reconnect after the app started one in-process).
+                client.discard(info.key)
+                continue
+            }
+            Task { await client.attach(session) }
+        }
+    }
+
+    /// Names a thread for the host's notifications.
+    private static func threadInfo(_ threadID: UUID) -> AgentHostThreadInfo {
+        let store = AppStore.shared
+        let summary = store.summary(threadID)
+        return AgentHostThreadInfo(
+            title: summary?.title ?? "", projectName: summary.flatMap { store.project($0.projectID)?.name })
+    }
+
+    /// Lets the host know how far the app got before it exits. Call after `ThreadRunner.shutdownAll()`.
+    func prepareToQuit() {
+        client?.flushAcknowledgements()
+    }
+
     private func failToConnect(_ transport: XPCAgentHostTransport) {
         guard self.transport === transport else { return }
         self.transport = nil
@@ -173,11 +222,15 @@ final class AgentHostController {
         guard let transport, self.transport === transport else { return }
         self.transport = nil
         welcome = nil
-        mode = .connecting
+        client = nil
+        ThreadRunner.shared.hostedSession = nil
         guard isTurnedOn else {
+            // Turned off, the host exited once nothing ran in it, so it can go without stopping an agent.
             mode = .inApp(.turnedOff)
+            if registrationStatus == .enabled { Task { [service] in try? await service.unregister() } }
             return
         }
+        mode = .connecting
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self, self.transport == nil, self.isTurnedOn else { return }
             self.connect(waitingForHello: false)
@@ -206,32 +259,19 @@ final class AgentHostController {
         guard isOn != isTurnedOn else { return }
         UserDefaults.standard.set(isOn, forKey: Self.turnedOnKey)
         if isOn {
-            connect(waitingForHello: false)
+            // A host told to retire a moment ago exits once idle; the app connects to a fresh one then.
+            if transport == nil { connect(waitingForHello: false) } else { mode = .connecting }
             return
         }
-        // Agents already in the host finish there, and it exits once idle. Unregistering would stop them at once,
-        // so it waits for a host with nothing running; one that still has work stays listed until a later launch.
+        // Agents already in the host finish there, still answered from here, and it exits once idle; unregistering
+        // now would stop them. Once it exits (`disconnected`), it is unregistered.
         let previous = mode
         mode = .inApp(.turnedOff)
-        welcome = nil
-        guard let transport else {
-            if previous != .inApp(.incompatibleHostBusy), registrationStatus == .enabled { try? service.unregister() }
-            return
-        }
-        self.transport = nil
-        transport.onDisconnect = nil
-        Task { [service] in
-            var isBusy = true
-            if case .sessions(let sessions) = try? await transport.perform(.list) {
-                isBusy = sessions.contains { session in
-                    session.isLive
-                        && (session.isTurnActive || session.hasBackgroundWork || !session.pendingApprovals.isEmpty
-                            || !session.pendingQuestions.isEmpty)
-                }
-            }
+        ThreadRunner.shared.hostedSession = nil
+        if let transport {
             transport.retireWhenIdle()
-            transport.invalidate()
-            if !isBusy { try? await service.unregister() }
+        } else if previous != .inApp(.incompatibleHostBusy), registrationStatus == .enabled {
+            Task { [service] in try? await service.unregister() }
         }
     }
 

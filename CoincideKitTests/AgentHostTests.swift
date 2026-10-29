@@ -184,7 +184,7 @@ struct AgentHostCoreTests {
     private func makeCore(grace: TimeInterval = 30) -> AgentHostCore {
         AgentHostCore(
             logDirectory: directory, build: "1", version: "1.0", lifecycle: AgentHostLifecycle(grace: grace)
-        ) { [claude] launch in claude.makeSession(launch) }
+        ) { [claude] launch, _ in claude.makeSession(launch) }
     }
 
     private var launch: AgentLaunch {
@@ -204,7 +204,7 @@ struct AgentHostCoreTests {
         let core = makeCore()
         let app = Recorder()
         let client = core.connect(app)
-        guard case .started(let info) = await core.perform(.start(key: key, launch: launch, thread: thread), from: client)
+        guard case .started(let info) = await core.perform(.start(key: key, launch: launch, account: .defaultAccount(for: .claude), thread: thread), from: client)
         else { Issue.record("not started"); return }
         #expect(info.isLive)
         #expect(await core.perform(.send(key: key, input: input, thread: thread), from: client).isOK)
@@ -223,7 +223,7 @@ struct AgentHostCoreTests {
         let core = makeCore()
         let first = Recorder()
         let client = core.connect(first)
-        _ = await core.perform(.start(key: key, launch: launch, thread: thread), from: client)
+        _ = await core.perform(.start(key: key, launch: launch, account: .defaultAccount(for: .claude), thread: thread), from: client)
         _ = await core.perform(.send(key: key, input: input, thread: thread), from: client)
         _ = await core.perform(.acknowledge(key: key, sequence: 2), from: client)
         // The app quits mid-turn; the agent keeps going and asks for approval.
@@ -261,7 +261,7 @@ struct AgentHostCoreTests {
         let app = Recorder()
         let client = core.connect(app)
         _ = core.hello(AgentHostHello(build: "1", version: "1.0", notifiesWhileAppIsClosed: true))
-        _ = await core.perform(.start(key: key, launch: launch, thread: thread), from: client)
+        _ = await core.perform(.start(key: key, launch: launch, account: .defaultAccount(for: .claude), thread: thread), from: client)
         _ = await core.perform(.send(key: key, input: input, thread: thread), from: client)
         claude.last?.emit(.approvalRequested(ApprovalRequest(id: "r", category: .command, title: "Allow?", options: [])))
         #expect(attention.isEmpty)
@@ -277,7 +277,7 @@ struct AgentHostCoreTests {
         core.onExit = { exited += 1 }
         let app = Recorder()
         let client = core.connect(app)
-        _ = await core.perform(.start(key: key, launch: launch, thread: thread), from: client)
+        _ = await core.perform(.start(key: key, launch: launch, account: .defaultAccount(for: .claude), thread: thread), from: client)
         _ = await core.perform(.send(key: key, input: input, thread: thread), from: client)
         core.disconnect(client)
         core.evaluateLifecycle(now: Date().addingTimeInterval(3_600))
@@ -294,7 +294,7 @@ struct AgentHostCoreTests {
         core.onExit = { exited = true }
         let app = Recorder()
         let client = core.connect(app)
-        _ = await core.perform(.start(key: key, launch: launch, thread: thread), from: client)
+        _ = await core.perform(.start(key: key, launch: launch, account: .defaultAccount(for: .claude), thread: thread), from: client)
         claude.last?.hasBackgroundWork = true
         core.disconnect(client)
         core.evaluateLifecycle(now: Date().addingTimeInterval(3_600))
@@ -310,7 +310,7 @@ struct AgentHostCoreTests {
         core.onExit = { exited = true }
         let app = Recorder()
         let client = core.connect(app)
-        _ = await core.perform(.start(key: key, launch: launch, thread: thread), from: client)
+        _ = await core.perform(.start(key: key, launch: launch, account: .defaultAccount(for: .claude), thread: thread), from: client)
         _ = await core.perform(.send(key: key, input: input, thread: thread), from: client)
         core.retireWhenIdle()
         #expect(!exited)
@@ -324,7 +324,7 @@ struct AgentHostCoreTests {
         let core = makeCore()
         let crashed = Recorder()
         let client = core.connect(crashed)
-        _ = await core.perform(.start(key: key, launch: launch, thread: thread), from: client)
+        _ = await core.perform(.start(key: key, launch: launch, account: .defaultAccount(for: .claude), thread: thread), from: client)
         _ = await core.perform(.send(key: key, input: input, thread: thread), from: client)
         claude.last?.emit(.assistantTextDelta(itemID: "a", delta: "Half"))
         // The host crashes: a new one finds the log, but not the session.
@@ -349,8 +349,8 @@ struct AgentHostCoreTests {
         let core = makeCore()
         let app = Recorder()
         let client = core.connect(app)
-        _ = await core.perform(.start(key: key, launch: launch, thread: thread), from: client)
-        _ = await core.perform(.start(key: key, launch: launch, thread: thread), from: client)
+        _ = await core.perform(.start(key: key, launch: launch, account: .defaultAccount(for: .claude), thread: thread), from: client)
+        _ = await core.perform(.start(key: key, launch: launch, account: .defaultAccount(for: .claude), thread: thread), from: client)
         #expect(claude.sessions.count == 1)
         _ = await core.perform(.shutdown(key: key), from: client)
         #expect(claude.last?.isShutDown == true)
@@ -362,7 +362,7 @@ struct AgentHostCoreTests {
         let core = makeCore()
         let app = Recorder()
         let client = core.connect(app)
-        let reply = await core.perform(.start(key: key, launch: launch, thread: thread), from: client)
+        let reply = await core.perform(.start(key: key, launch: launch, account: .defaultAccount(for: .claude), thread: thread), from: client)
         guard case .failure(let message) = reply else {
             Issue.record("started")
             return

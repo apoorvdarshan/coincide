@@ -13,27 +13,17 @@ final class AgentHostService: NSObject, NSXPCListenerDelegate {
 
     override init() {
         let info = Bundle.main.infoDictionary ?? [:]
-        let providers = Self.providers()
+        let providers = AgentHostProviders()
         core = AgentHostCore(
             logDirectory: AgentHostPaths.directory(), build: info["CFBundleVersion"] as? String ?? "0",
             version: info["CFBundleShortVersionString"] as? String ?? "0"
-        ) { launch in providers[launch.provider]?.makeSession(launch) }
+        ) { launch, account in providers.provider(for: account)?.makeSession(launch) }
         super.init()
         core.onAttention = { [notifier] in notifier.post($0) }
         core.onExit = {
             AgentHostCore.terminateChildProcesses()
             exit(0)
         }
-    }
-
-    /// The providers Coincide ships. Sessions get everything else (executable, environment, settings) from the
-    /// app in their `AgentLaunch`.
-    private static func providers() -> [ProviderKind: AgentProvider] {
-        let all: [AgentProvider] = [
-            ClaudeProvider(), CodexProvider(), CursorProvider(), ACPProvider(profile: .grok), OpenCodeProvider(),
-            ACPProvider(profile: .antigravity),
-        ]
-        return Dictionary(all.map { ($0.kind, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     func start() {
@@ -63,6 +53,22 @@ final class AgentHostService: NSObject, NSXPCListenerDelegate {
         }
         connection.resume()
         return true
+    }
+}
+
+/// The providers Coincide ships, one per account as the app's registry makes them. Sessions get everything else
+/// (executable, environment, model, access) from the app in their `AgentLaunch`.
+final class AgentHostProviders {
+    private var byAccount: [String: AgentProvider] = [:]
+
+    func provider(for account: ProviderAccount) -> AgentProvider? {
+        let key = "\(account.provider.rawValue)/\(account.id)"
+        if let existing = byAccount[key] { return existing }
+        // Cursor reads the Keychain only to check usage, which the app does; sessions never need it.
+        let made = ProviderRegistry.builtInProvider(
+            for: account, dataDirectory: AppStore.defaultDirectory, cursorKeychainUsageAllowed: { false })
+        byAccount[key] = made
+        return made
     }
 }
 

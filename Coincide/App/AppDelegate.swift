@@ -58,7 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Asks first while agents work or terminal commands run, as Terminal does for running processes.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !Self.isHostingTests else { return .terminateNow }
-        let agents = ThreadRunner.shared.runningThreadIDs.count
+        // Agents in the background agent host keep working after Coincide quits.
+        let agents = ThreadRunner.shared.runningInAppThreadIDs.count
         let jobs = TerminalSessionManager.shared.busySessionCount
         guard agents > 0 || jobs > 0 else { return .terminateNow }
         var reasons: [String] = []
@@ -86,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ScheduledTasks.shared.stop()
         PreviewSessions.shared.stop()
         ThreadRunner.shared.shutdownAll()
+        AgentHostController.shared.prepareToQuit()
         AppStore.shared.flush()
         ThreadRunner.shared.usageHistory.flush()
         if mainWindow?.window?.isVisible == true { mainWindow?.saveLayout() }
