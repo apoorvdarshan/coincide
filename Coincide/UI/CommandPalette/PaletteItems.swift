@@ -129,6 +129,11 @@ struct PaletteCatalog {
         items.append(PaletteItem(id: "action:scheduled-tasks", title: String(localized: "Scheduled Tasks…"),
             icon: symbol("clock"), keywords: ["schedule", "tasks", "automation", "daily", "weekly"],
             behavior: .run { window?.showScheduledTasks(nil) }))
+        items.append(
+            PaletteItem(
+                id: "action:edit-instructions", title: String(localized: "Edit Instructions"), icon: symbol("text.book.closed"),
+                keywords: ["instructions", "agents.md", "claude.md", "gemini.md", "rules", "memory", "prompt"],
+                behavior: .run { window?.editInstructions(nil) }))
         if let split = window?.splitController {
             items.append(
                 PaletteItem(
@@ -260,6 +265,7 @@ struct PaletteCatalog {
             (.general, String(localized: "General Settings"), "gearshape", ["appearance", "notifications", "font", "confirm"]),
             (.providers, String(localized: "Agent Settings"), "person.2", ["providers", "claude", "codex", "cursor", "cli", "login"]),
             (.models, String(localized: "Model Settings"), "cpu", ["models", "effort", "custom", "default"]),
+            (.instructions, String(localized: "Global Instructions"), "text.book.closed", ["agents.md", "claude.md", "rules", "memory"]),
             (.keyboard, String(localized: "Keyboard Shortcuts"), "keyboard", ["shortcuts", "keybindings", "keys"]),
             (.about, String(localized: "About Coincide"), "info.circle", ["version", "license", "credits"]),
         ]
