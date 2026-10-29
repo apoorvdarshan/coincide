@@ -29,6 +29,7 @@ nonisolated enum SettingsRowID: String, Hashable, Sendable {
     case checkpoints
     case branchPrefix
     case idleTimeout
+    case backgroundAgents
 }
 
 /// A request to scroll a pane to a row and highlight it. The id makes repeated requests distinct.

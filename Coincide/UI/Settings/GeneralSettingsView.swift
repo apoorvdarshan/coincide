@@ -130,6 +130,8 @@ struct GeneralSettingsView: View {
                         Text("Agent processes idle this long shut down to free memory. Threads pick up where they left off.")
                     }
                     .settingsRevealable(.idleTimeout, highlighted: highlighted)
+                    BackgroundAgentsRows()
+                        .settingsRevealable(.backgroundAgents, highlighted: highlighted)
                 }
 
                 Section {

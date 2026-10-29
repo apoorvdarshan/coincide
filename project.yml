@@ -54,6 +54,39 @@ targets:
         SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.updater
         SKIP_INSTALL: YES
+  # The background agent host (see AgentHostProtocol.swift): a LaunchAgent inside Coincide.app that owns agent
+  # sessions so they outlive the app. An app bundle without a Dock icon, so it can post notifications.
+  CoincideAgentHost:
+    type: application
+    platform: macOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    sources:
+      - path: CoincideAgentHost
+        excludes:
+          - LaunchAgents
+      # For the app icon on its notifications.
+      - path: Coincide/Resources/Assets.xcassets
+    dependencies:
+      # Loaded from Coincide.app's Frameworks folder (see LD_RUNPATH_SEARCH_PATHS), not a copy of its own.
+      - target: CoincideKit
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.agent-host
+        PRODUCT_NAME: CoincideAgentHost
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Coincide Agents
+        INFOPLIST_KEY_LSUIElement: YES
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Apoorv Darshan"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_APP_SANDBOX: NO
+        SKIP_INSTALL: YES
+        # Contents/Helpers/CoincideAgentHost.app/Contents/MacOS, four folders below Coincide.app/Contents.
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../../../../Frameworks"
   Coincide:
     type: application
     platform: macOS
@@ -62,8 +95,20 @@ targets:
       Release: Signing.xcconfig
     sources:
       - path: Coincide
+      # Registered with SMAppService.agent(plistName:), which looks for it here.
+      - path: CoincideAgentHost/LaunchAgents
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
     dependencies:
       - target: CoincideKit
+      - target: CoincideAgentHost
+        embed: true
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
       - target: CoincideUpdater
         link: false
         embed: false

@@ -247,6 +247,12 @@ private struct SettingsSearchResults: View {
                 title: String(localized: "Close idle agents"), pane: general, setting: .idleTimeout,
                 keywords: [String(localized: "Timeout"), String(localized: "Memory"), String(localized: "Sessions")]),
             SettingsSearchEntry(
+                title: String(localized: "Keep agents running when Coincide quits"), pane: general, setting: .backgroundAgents,
+                keywords: [
+                    String(localized: "Background"), String(localized: "Agent host"), String(localized: "Login Items"),
+                    String(localized: "Quit"),
+                ]),
+            SettingsSearchEntry(
                 title: String(localized: "Providers"), pane: .section(.providers),
                 keywords: [String(localized: "Agents"), String(localized: "Check again"), String(localized: "Status")]),
             SettingsSearchEntry(
