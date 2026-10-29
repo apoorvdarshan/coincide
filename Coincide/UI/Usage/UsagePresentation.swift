@@ -150,6 +150,12 @@ enum UsageFormat {
         return nil
     }
 
+    /// The day Coincide saw a balance's highest: "29 Oct", with the year when it isn't this year's.
+    static func markDate(_ date: Date, now: Date = Date()) -> String {
+        Calendar.current.isDate(date, equalTo: now, toGranularity: .year)
+            ? date.formatted(.dateTime.day().month(.abbreviated)) : date.formatted(.dateTime.day().month(.abbreviated).year())
+    }
+
     /// The figure's extra word when it has amounts too, such as "No cap".
     static func figureDetail(_ figure: UsageFigure) -> String? {
         figure.limit != nil || figure.used != nil || figure.remaining != nil ? figure.detail : nil
@@ -229,6 +235,8 @@ struct UsageRow: Equatable {
     var level = Level.normal
     /// When it resets or expires, the pace, and any word on its state.
     var details: [String] = []
+    /// What the bar measures, when that needs saying, for the row's tooltip.
+    var help: String?
 
     var accessibilityLabel: String { ([title, value] + details).joined(separator: ", ") }
 
@@ -243,9 +251,15 @@ struct UsageRow: Equatable {
 
     /// A figure: with a limit, what is used or left of it over a bar; without one, the amount alone (a balance, a spend
     /// so far) or its state. A figure past its limit fills the bar (or empties it) and turns red.
-    static func figure(_ figure: UsageFigure, mode: UsageDisplayMode, now: Date) -> UsageRow {
+    /// A balance with no total (only what remains) measures against `mark`, the highest Coincide has seen it; without
+    /// a mark it is the amount alone.
+    static func figure(_ figure: UsageFigure, mark: UsageBalanceMark? = nil, mode: UsageDisplayMode, now: Date) -> UsageRow {
         var row = UsageRow(title: figure.label, value: UsageFormat.figureValue(figure))
-        if let limit = figure.limit, limit > 0, let used = figure.used ?? figure.remaining.map({ limit - $0 }) {
+        if let mark, let remaining = figure.remaining, UsageBalanceMarks.isBareBalance(figure) {
+            row = balance(
+                title: figure.label, remaining, mark: mark, mode: mode, amount: { UsageFormat.amount($0, figure.unit) },
+                bare: { UsageFormat.bareAmount($0, figure.unit) })
+        } else if let limit = figure.limit, limit > 0, let used = figure.used ?? figure.remaining.map({ limit - $0 }) {
             let share = max(0, used) / limit
             let left = figure.left ?? max(0, limit - used)
             row.value =
@@ -264,15 +278,57 @@ struct UsageRow: Equatable {
         return row
     }
 
-    /// Credits the account can spend past its plan, such as Codex's: a balance with no total, so no bar. A balance is
-    /// what is left either way; showing what is left says so.
-    static func credits(_ credits: UsageCredits, mode: UsageDisplayMode) -> UsageRow {
-        var row = UsageRow(title: String(localized: "Credits"), value: UsageFormat.creditsValue(credits))
-        if !credits.unlimited, let balance = UsageFormat.creditsBalance(credits) {
+    /// Credits the account can spend past its plan, such as Codex's: a balance with no total of its own, measured
+    /// against `mark` (the highest Coincide has seen it) when there is one. Unlimited credits have no bar.
+    static func credits(_ credits: UsageCredits, mark: UsageBalanceMark? = nil, mode: UsageDisplayMode) -> UsageRow {
+        let title = String(localized: "Credits")
+        if credits.unlimited {
+            return UsageRow(title: title, value: String(localized: "Unlimited", comment: "Credits that never run out"))
+        }
+        if let mark, let amount = credits.balance.flatMap({ Double($0.trimmingCharacters(in: .whitespaces)) }), amount.isFinite {
+            let format = { (value: Double) in value.formatted(.number.precision(.fractionLength(0...2))) }
+            return balance(title: title, amount, mark: mark, mode: mode, amount: format, bare: format)
+        }
+        var row = UsageRow(title: title, value: UsageFormat.creditsValue(credits))
+        if let balance = UsageFormat.creditsBalance(credits) {
             row.value = mode == .used ? balance : String(localized: "\(balance) left")
         } else {
-            row.isState = !credits.unlimited
+            row.isState = true
         }
+        return row
+    }
+
+    /// A balance the provider gives no total for, over a bar against `mark`: the highest Coincide has seen it since it
+    /// last went up. Used fills with what was spent since then; Remaining drains with what is left of it. The detail
+    /// says the total is Coincide's own observation. The bar keeps the provider's color unless nothing is left.
+    static func balance(
+        title: String, _ balance: Double, mark: UsageBalanceMark, mode: UsageDisplayMode, amount: (Double) -> String,
+        bare: (Double) -> String
+    ) -> UsageRow {
+        let left = String(localized: "\(amount(balance)) left")
+        var row = UsageRow(title: title, value: left, level: balance > 0 ? .normal : .critical)
+        row.help = String(
+            localized:
+                "The provider reports no total for this balance. The bar measures it against the highest balance Coincide has seen since it last went up."
+        )
+        let highest = max(mark.highest, balance)
+        guard highest > 0 else {
+            // Nothing to measure against: the balance has never been above zero.
+            row.value = mode == .used ? amount(balance) : left
+            row.bar = Bar(fill: mode == .used ? 1 : 0)
+            return row
+        }
+        let spent = highest - balance
+        let usedShare = min(1, max(0, spent / highest))
+        row.bar = Bar(fill: mode == .used ? usedShare : 1 - usedShare)
+        if mode == .used {
+            row.value = String(localized: "\(bare(spent)) used of \(amount(highest))", comment: "Spent of a balance since its highest")
+            row.details.append(left)
+        }
+        row.details.append(
+            String(
+                localized: "since \(amount(highest)) on \(UsageFormat.markDate(mark.seenAt))",
+                comment: "Since a balance's highest, as Coincide saw it"))
         return row
     }
 
@@ -285,11 +341,14 @@ struct UsageRow: Equatable {
         return row
     }
 
-    /// Every row of an account, in order: its windows, model windows, credits, then figures.
-    static func rows(_ limits: UsageLimits, mode: UsageDisplayMode, now: Date) -> [UsageRow] {
+    /// Every row of an account, in order: its windows, model windows, credits, then figures. `marks` are the highest
+    /// its bare balances have been, by figure ID (`UsageBalanceMarks.creditsID` for credits).
+    static func rows(
+        _ limits: UsageLimits, marks: [String: UsageBalanceMark] = [:], mode: UsageDisplayMode, now: Date
+    ) -> [UsageRow] {
         (limits.windows + limits.modelWindows).map { window($0, mode: mode, now: now) }
-            + [limits.credits].compactMap { $0 }.map { credits($0, mode: mode) }
-            + limits.figures.map { figure($0, mode: mode, now: now) }
+            + [limits.credits].compactMap { $0 }.map { credits($0, mark: marks[UsageBalanceMarks.creditsID], mode: mode) }
+            + limits.figures.map { figure($0, mark: marks[$0.id], mode: mode, now: now) }
     }
 }
 
@@ -491,7 +550,8 @@ struct UsageRowView: View {
         .padding(.vertical, compact ? 0 : 2)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(row.accessibilityLabel)
-        .help(row.bar?.paceMark != nil ? String(localized: "The mark shows where even spending across the window would be.") : "")
+        .help(
+            row.help ?? (row.bar?.paceMark != nil ? String(localized: "The mark shows where even spending across the window would be.") : ""))
     }
 
     private var title: some View {

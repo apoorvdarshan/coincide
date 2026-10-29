@@ -16,6 +16,7 @@ import Testing
         @objc func toggleDiffPanel(_ sender: Any?) { split.toggleDiffPanel() }
         @objc func togglePullRequestsPanel(_ sender: Any?) { split.togglePullRequestsPanel() }
         @objc func togglePreviewPanel(_ sender: Any?) { split.togglePreviewPanel() }
+        @objc func toggleTerminalPanel(_ sender: Any?) { split.toggleTerminalPanel() }
     }
 
     /// The main window on a thread of a project with a script, so the toolbar shows everything it can. The window is
@@ -24,6 +25,7 @@ import Testing
         let saved = UIState.shared.values
         let folder = TemporaryDirectory("toolbar-panels")
         let store = AppStore.shared
+        let savedPlacement = AppStore.shared.settings.terminalPlacement
         let projectID: UUID
         let threadID: UUID
         let controller: MainWindowController
@@ -31,7 +33,10 @@ import Testing
         var window: NSWindow { controller.window! }
         var split: MainSplitViewController { controller.splitController }
 
-        init(width: CGFloat = 1400, sidebarOpen: Bool = true, title: String = "Toolbar buttons") {
+        init(
+            width: CGFloat = 1400, sidebarOpen: Bool = true, title: String = "Toolbar buttons",
+            terminal placement: TerminalPlacement = .bottom, state: (inout UIState.Values) -> Void = { _ in }
+        ) {
             UIState.shared.update {
                 $0.isInspectorOpen = false
                 $0.inspectorPanel = .diff
@@ -40,7 +45,9 @@ import Testing
                 $0.listWidth = 288
                 $0.isTerminalOpen = false
                 $0.windowFrame = nil
+                state(&$0)
             }
+            store.updateSettings { $0.terminalPlacement = placement }
             let project = store.addProject(at: folder.url)
             projectID = project.id
             store.updateProject(project.id) {
@@ -83,6 +90,8 @@ import Testing
 
         func close() {
             #expect(!window.isVisible, "a test put the window on screen")
+            TerminalSessionManager.shared.terminals(for: threadID).closeAll()
+            store.updateSettings { $0.terminalPlacement = savedPlacement }
             window.close()
             store.removeProject(projectID)
             UIState.shared.update { $0 = saved }
@@ -193,16 +202,22 @@ import Testing
         }
     }
 
-    /// In a narrow window the thread title gives way (it truncates) before anything overlaps it, and the group stays.
-    @Test(arguments: [(820.0, true), (820.0, false), (1000.0, true)])
-    func theGroupNeverOverlapsTheThreadTitle(width: CGFloat, sidebarOpen: Bool) async {
+    /// In a narrow window the thread title gives way (it truncates) before anything overlaps it, and the group stays,
+    /// with the terminal's button in it too.
+    @Test(arguments: [
+        (820.0, true, TerminalPlacement.bottom), (820.0, false, .bottom), (1000.0, true, .bottom),
+        (820.0, true, .right), (820.0, false, .right), (1000.0, true, .right),
+    ])
+    func theGroupNeverOverlapsTheThreadTitle(width: CGFloat, sidebarOpen: Bool, placement: TerminalPlacement) async {
         let long = String(repeating: "A very long thread title that goes on ", count: 6)
-        let harness = Harness(width: width, sidebarOpen: sidebarOpen, title: long)
+        let harness = Harness(width: width, sidebarOpen: sidebarOpen, title: long, terminal: placement)
         defer { harness.close() }
         await harness.wait()
+        #expect(harness.buttons.shownButtons.count == (placement == .right ? 4 : 3))
         for inspectorOpen in [false, true] {
             if inspectorOpen {
-                harness.split.togglePullRequestsPanel()
+                // The terminal is the widest-reaching case on the right: its panel opens in the column.
+                if placement == .right { harness.split.toggleTerminalPanel() } else { harness.split.togglePullRequestsPanel() }
                 await harness.wait()
             }
             let title = harness.controller.threadTitle
@@ -210,6 +225,7 @@ import Testing
             #expect(harness.isShown(buttons), "the group went to the overflow menu at \(width)")
             let group = harness.frame(of: buttons)
             #expect(harness.window.frame.width - group.maxX < 24)
+            #expect(abs(group.width - buttons.intrinsicContentSize.width) <= 0.5, "\(group) is not the pill's width")
             // The title truncates rather than going to the toolbar's overflow menu with the scripts.
             #expect(harness.isShown(title), "the title went to the overflow menu at \(width), inspector \(inspectorOpen)")
             let titleFrame = harness.frame(of: title)
@@ -236,16 +252,22 @@ import Testing
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         let selection = ThemeSelection.shared
         defer { selection.set(dark: AppTheme.defaultDarkID, light: AppTheme.defaultLightID) }
-        for (width, sidebarOpen) in [(1400.0, true), (820.0, true), (900.0, false)] {
+        let layouts: [(CGFloat, Bool, TerminalPlacement)] = [
+            (1400, true, .bottom), (820, true, .bottom), (900, false, .bottom), (1400, true, .right), (820, true, .right),
+        ]
+        for (width, sidebarOpen, placement) in layouts {
             let harness = Harness(
-                width: width, sidebarOpen: sidebarOpen, title: "Move the right panel buttons into the toolbar beside the scripts")
+                width: width, sidebarOpen: sidebarOpen, title: "Move the right panel buttons into the toolbar beside the scripts",
+                terminal: placement)
             defer { harness.close() }
             await harness.wait()
-            for state in ["closed", "diff", "pullRequests", "preview"] {
+            let states = placement == .right ? ["closed", "terminal", "diff"] : ["closed", "diff", "pullRequests", "preview"]
+            for state in states {
                 switch state {
                 case "diff": harness.split.toggleDiffPanel()
                 case "pullRequests": harness.split.togglePullRequestsPanel()
                 case "preview": harness.split.togglePreviewPanel()
+                case "terminal": harness.split.toggleTerminalPanel()
                 default: break
                 }
                 await harness.wait()
@@ -254,7 +276,7 @@ import Testing
                     for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
                         harness.window.appearance = NSAppearance(named: appearance)
                         let theme = name == "dark" ? dark.id : light.id
-                        try draw(harness.window, to: "\(folder)/\(Int(width))-\(sidebarOpen ? "list" : "nolist")-\(state)-\(theme).png")
+                        try draw(harness.window, to: "\(folder)/\(placement.rawValue)-\(Int(width))-\(sidebarOpen ? "list" : "nolist")-\(state)-\(theme).png")
                     }
                 }
             }
