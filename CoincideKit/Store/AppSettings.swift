@@ -533,6 +533,7 @@ public struct KeyShortcut: Hashable, Sendable, CustomStringConvertible {
 public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
     // File
     case newThread = "chat.new"
+    case newChat = "chat.newProjectless"
     case addProject = "project.add"
     case openInEditor = "editor.openFavorite"
     case revealInFinder = "project.revealInFinder"
@@ -603,7 +604,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
 
     public nonisolated var menu: Menu {
         switch self {
-        case .newThread, .addProject, .openInEditor, .revealInFinder: .file
+        case .newThread, .newChat, .addProject, .openInEditor, .revealInFinder: .file
         case .addToComposer, .searchThreads: .edit
         case .toggleSidebar, .toggleTerminal, .toggleDiff, .commandPalette, .increaseFontSize, .decreaseFontSize,
             .resetFontSize:
@@ -618,6 +619,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
         if let index = threadJumpIndex { return String(localized: "Go to Thread \(index)") }
         switch self {
         case .newThread: return String(localized: "New Thread")
+        case .newChat: return String(localized: "New Chat")
         case .addProject: return String(localized: "Add Project…")
         case .openInEditor: return String(localized: "Open in Editor")
         case .revealInFinder: return String(localized: "Reveal in Finder")
@@ -651,7 +653,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
 
     private nonisolated static let defaults: [KeyCommand: KeyShortcut] = {
         var defaults: [KeyCommand: String] = [
-            .newThread: "mod+n", .addProject: "mod+shift+o", .openInEditor: "mod+o", .searchThreads: "mod+alt+f",
+            .newThread: "mod+n", .newChat: "mod+shift+n", .addProject: "mod+shift+o", .openInEditor: "mod+o", .searchThreads: "mod+alt+f",
             // As in Cursor and VS Code, which add the selection to the chat with Command-L.
             .addToComposer: "mod+l",
             .toggleSidebar: "mod+b", .toggleTerminal: "mod+j", .toggleDiff: "mod+d", .commandPalette: "mod+k",
