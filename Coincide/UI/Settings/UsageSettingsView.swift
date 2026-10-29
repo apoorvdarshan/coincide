@@ -77,6 +77,16 @@ final class UsageDashboardModel {
         set { store.updateSettings { $0.showsUsageInMenuBar = newValue } }
     }
 
+    var menuBarUsage: MenuBarUsageChoice? {
+        get { store.settings.menuBarUsage }
+        set { store.updateSettings { $0.menuBarUsage = newValue ?? .lastActive } }
+    }
+
+    var menuBarSecondaryUsage: MenuBarUsageChoice? {
+        get { store.settings.menuBarSecondaryUsage }
+        set { store.updateSettings { $0.menuBarSecondaryUsage = newValue } }
+    }
+
     func reload() {
         now = Date()
         accounts = insights.accountLimits(now: now)
@@ -372,7 +382,12 @@ struct UsageSettingsView: View {
             }
             Toggle(isOn: $model.showsInMenuBar) {
                 Text("Show usage in the menu bar")
-                Text("The menu bar shows how much of the closest limit is used; click it for every account.")
+                Text("Click the menu bar item for every account’s limits and today’s usage.")
+            }
+            if model.showsInMenuBar {
+                MenuBarUsagePicker(title: String(localized: "Menu bar shows"), choice: $model.menuBarUsage, accounts: model.accounts)
+                MenuBarUsagePicker(
+                    title: String(localized: "Also show"), choice: $model.menuBarSecondaryUsage, accounts: model.accounts, allowsNone: true)
             }
         }
     }
@@ -456,7 +471,9 @@ private struct UsageAccountLimitsView: View {
     let now: Date
 
     var body: some View {
-        if let limits = account.limits, !limits.windows.isEmpty || !limits.modelWindows.isEmpty || limits.credits != nil {
+        if let limits = account.limits, !limits.windows.isEmpty || !limits.modelWindows.isEmpty || limits.credits != nil
+            || !limits.figures.isEmpty
+        {
             ForEach(limits.windows) { window in
                 UsageWindowRow(window: window, provider: account.provider, now: now)
             }
@@ -468,6 +485,9 @@ private struct UsageAccountLimitsView: View {
                     Text(UsageFormat.creditsValue(credits)).monospacedDigit()
                 }
             }
+            ForEach(limits.figures) { figure in
+                UsageFigureRow(figure: figure, provider: account.provider, now: now)
+            }
             if let warning = limits.warning {
                 Text(UsageLimits.warningText(for: warning, provider: account.provider, at: now))
                     .font(.caption)
@@ -476,6 +496,45 @@ private struct UsageAccountLimitsView: View {
         } else {
             Text(UsageFormat.unavailable(account, settings: settings))
                 .foregroundStyle(.secondary)
+        }
+        ForEach(account.limits?.notes ?? [], id: \.self) { note in
+            Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        if UsageInsights.shared.canCheckRateLimits(account.account) {
+            UsageRateLimitCheck(account: account.account)
+        }
+    }
+}
+
+/// Reads an Anthropic API key's rate limits on request, since that takes a (one-token) model request.
+private struct UsageRateLimitCheck: View {
+    let account: ProviderAccount
+    @State private var isChecking = false
+    @State private var failed = false
+
+    var body: some View {
+        LabeledContent {
+            Button {
+                isChecking = true
+                failed = false
+                Task {
+                    failed = !(await UsageInsights.shared.checkRateLimits(account))
+                    isChecking = false
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    if isChecking { ProgressView().controlSize(.mini) }
+                    Text("Check Rate Limits")
+                }
+            }
+            .buttonStyle(ThemedButtonStyle())
+            .disabled(isChecking)
+        } label: {
+            Text("Rate limits")
+            Text(
+                failed
+                    ? String(localized: "The check failed. Anthropic may have refused the key or the request.")
+                    : String(localized: "Sends a one-token message to read the key’s per-minute limits from Anthropic’s answer. It costs a fraction of a cent."))
         }
     }
 }

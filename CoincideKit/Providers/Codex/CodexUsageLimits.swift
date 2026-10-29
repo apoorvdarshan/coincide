@@ -72,7 +72,51 @@ enum CodexUsageLimits {
         }
         return UsageLimits(
             windows: windows(from: main), checkedAt: date, plan: main?["planType"]?.string.flatMap(plan),
-            credits: credits(main?["credits"]), modelWindows: modelWindows)
+            credits: credits(main?["credits"]), modelWindows: modelWindows, figures: figures(fromRead: result),
+            notes: notes(fromRead: result))
+    }
+
+    /// The amounts a read reports besides its percentages: the workspace's credit limit for this member, used against
+    /// its cap, and the rate-limit resets the account may redeem.
+    nonisolated static func figures(fromRead result: JSONValue) -> [UsageFigure] {
+        var figures: [UsageFigure] = []
+        if let individual = mainSnapshot(fromRead: result)?["individualLimit"], individual.object != nil {
+            func amount(_ key: String) -> Double? { individual[key]?.string.flatMap { Double($0) } ?? individual[key]?.number }
+            let limit = amount("limit")
+            let used = amount("used")
+            if limit != nil || used != nil {
+                figures.append(
+                    UsageFigure(
+                        id: "individual", label: String(localized: "Credit limit"), unit: .credits, used: used, limit: limit,
+                        resetsAt: date(fromEpochSeconds: individual["resetsAt"]?.number)))
+            }
+        }
+        if let resets = result["rateLimitResetCredits"], let count = resets["availableCount"]?.number, count.isFinite, count > 0 {
+            let expiries = (resets["credits"]?.array ?? []).filter { ($0["status"]?.string ?? "available") == "available" }
+                .compactMap { date(fromEpochSeconds: $0["expiresAt"]?.number) }
+            figures.append(
+                UsageFigure(
+                    id: "reset_credits", label: String(localized: "Limit resets available"), unit: .count, remaining: count,
+                    expiresAt: expiries.min()))
+        }
+        return figures
+    }
+
+    /// Why Codex may stop although its windows have room: a workspace out of credits or past its spend control.
+    nonisolated static func notes(fromRead result: JSONValue) -> [String] {
+        let main = mainSnapshot(fromRead: result)
+        var notes: [String] = []
+        switch main?["rateLimitReachedType"]?.string {
+        case "workspace_owner_credits_depleted"?, "workspace_member_credits_depleted"?:
+            notes.append(String(localized: "The workspace is out of credits."))
+        case "workspace_owner_usage_limit_reached"?, "workspace_member_usage_limit_reached"?:
+            notes.append(String(localized: "The workspace’s usage limit is reached."))
+        default:
+            if main?["spendControlReached"]?.bool == true {
+                notes.append(String(localized: "The workspace’s spend control is reached."))
+            }
+        }
+        return notes
     }
 
     /// The plan's name, or nil for one Codex does not know.

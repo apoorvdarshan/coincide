@@ -176,8 +176,14 @@ public enum UsageEvents {
     /// Which Coincide thread ran a provider's native session.
     public struct SessionOwner: Sendable, Hashable {
         public var projectID: UUID
+        /// The account the thread ran the session with, when not the provider's default. An API-key account of Claude
+        /// Code logs into the default account's folder, so this is what tells its requests apart.
+        public var accountID: String?
 
-        public nonisolated init(projectID: UUID) { self.projectID = projectID }
+        public nonisolated init(projectID: UUID, accountID: String? = nil) {
+            self.projectID = projectID
+            self.accountID = ProviderAccount.storedID(accountID)
+        }
     }
 
     /// The events of logged sessions. Claude Code responses logged more than once (in one file or in a resumed or forked
@@ -194,7 +200,7 @@ public enum UsageEvents {
             let scope = session.provider.rawValue + "/" + session.accountID
             for request in session.requests {
                 let event = UsageEvent(
-                    date: request.date, provider: session.provider, accountID: session.accountID, model: request.model,
+                    date: request.date, provider: session.provider, accountID: owner?.accountID ?? session.accountID, model: request.model,
                     tokens: request.tokens, promptTokens: request.promptTokens, projectID: owner?.projectID,
                     isFromCoincide: coincide)
                 guard request.key != 0 else {

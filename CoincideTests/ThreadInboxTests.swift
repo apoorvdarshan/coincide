@@ -77,6 +77,46 @@ struct ThreadInboxTests {
         #expect(ids.allSatisfy { !store.canUndoDeletion(of: $0) })
     }
 
+    /// With the sidebar's Undo bar gone, Edit › Undo (⌘Z) in the main window undoes the last inbox action wherever the
+    /// focus is, unless the focused view has its own edit to undo; in the thread list it always does.
+    @Test func undoInTheMainWindowReachesTheInboxWithoutABar() throws {
+        let folder = TemporaryDirectory("inbox-window-undo")
+        let store = AppStore(directory: folder.url)
+        let ui = UIState(directory: folder.url)
+        let inbox = ThreadInbox(store: store, ui: ui, isRunning: { _ in false }, endSessions: { _ in })
+        let project = store.addProject(at: folder.url)
+        let id = store.createThread(in: project.id).id
+        let window = MainWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        window.inbox = { inbox }
+        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
+        window.contentView?.addSubview(text)
+        window.makeFirstResponder(text)
+        let undo = NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        #expect(!window.validateMenuItem(undo))
+        inbox.archive([id], archived: true)
+        #expect(store.summary(id)?.isArchived == true)
+        #expect(window.validateMenuItem(undo))
+        #expect(undo.title == inbox.undoManager.undoMenuItemTitle)
+        window.undo(nil)
+        #expect(store.summary(id)?.isArchived == false)
+        #expect(window.validateMenuItem(redo))
+        window.redo(nil)
+        #expect(store.summary(id)?.isArchived == true)
+        // The sidebar has no bar left, and keeps routing ⌘Z to the shared inbox itself.
+        let sidebar = SidebarViewController()
+        #expect(findButton(titled: "Undo", in: sidebar.view) == nil)
+        inbox.undoManager.removeAllActions()
+        window.close()
+    }
+
+    private func findButton(titled title: String, in view: NSView) -> NSButton? {
+        if let button = view as? NSButton, button.title == title { return button }
+        return view.subviews.lazy.compactMap { findButton(titled: title, in: $0) }.first
+    }
+
     @Test func settledThreadsStaySettledAfterRelaunchButReturnForNewActivity() throws {
         let folder = TemporaryDirectory("inbox-settle")
         let store = AppStore(directory: folder.url)

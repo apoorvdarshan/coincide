@@ -60,6 +60,10 @@ public final class UsageInsights {
             NotificationCenter.default.addObserver(forName: UsageHistory.didChange, object: runner.usageHistory, queue: .main) {
                 [weak self] _ in MainActor.assumeIsolated { self?.turnFinished() }
             })
+        observers.append(
+            NotificationCenter.default.addObserver(forName: LastActiveAgentStore.didChange, object: runner.lastActiveAgent, queue: .main) {
+                [weak self] _ in MainActor.assumeIsolated { self?.changed() }
+            })
         storeObserver = store.observe { [weak self] change in
             if change == .providers || change == .settings { self?.changed() }
         }
@@ -159,7 +163,8 @@ public final class UsageInsights {
         var owners: [ProviderKind: [String: UsageEvents.SessionOwner]] = [:]
         for summary in store.threadSummaries.values {
             for (provider, sessionID) in summary.nativeSessionIDs where Self.loggedProviders.contains(provider) {
-                owners[provider, default: [:]][sessionID] = UsageEvents.SessionOwner(projectID: summary.projectID)
+                owners[provider, default: [:]][sessionID] = UsageEvents.SessionOwner(
+                    projectID: summary.projectID, accountID: summary.nativeSessionAccounts?[provider])
             }
         }
         return owners
@@ -168,7 +173,7 @@ public final class UsageInsights {
     // MARK: Limits
 
     /// One provider account and what its plan allows.
-    public struct AccountLimits: Sendable, Identifiable {
+    public struct AccountLimits: Sendable, Hashable, Identifiable {
         public var provider: ProviderKind
         public var account: ProviderAccount
         /// Whether the provider has more than one account, so views name this one.
@@ -193,12 +198,49 @@ public final class UsageInsights {
         registry.orderedKinds.filter { store.settings.settings(for: $0).isEnabled }.flatMap { kind in
             let accounts = registry.accounts(for: kind)
             return accounts.map { account in
-                AccountLimits(
+                var limits = runner.usageLimits(for: kind, account: account.id)
+                if let rateLimits = rateLimitReadings[UsageReport.accountKey(kind, account.id)] {
+                    limits = limits.map { $0.adding(rateLimits) } ?? rateLimits
+                }
+                return AccountLimits(
                     provider: kind, account: account, showsAccountName: accounts.count > 1,
-                    status: registry.status(kind, account: account.id),
-                    limits: runner.usageLimits(for: kind, account: account.id)?.current(at: now))
+                    status: registry.status(kind, account: account.id), limits: limits?.current(at: now))
             }
         }
+    }
+
+    /// The agent account of the last turn started in Coincide, which the menu bar follows by default.
+    public var lastActive: LastActiveAgent? { runner.lastActiveAgent.value }
+
+    // MARK: API-key rate limits
+
+    /// Rate limits read on request for API-key accounts (`checkRateLimits`), by `UsageReport.accountKey`.
+    private var rateLimitReadings: [String: UsageLimits] = [:]
+    /// Accounts whose rate limits are being read.
+    public private(set) var checkingRateLimits: Set<String> = []
+    /// Sends the rate-limit reads; tests answer them without the network.
+    var rateLimitFetch: UsageLimitsFetch = UsageLimitsHTTP.live
+
+    /// Whether the account holds an Anthropic API key, whose rate limits `checkRateLimits` can read.
+    public func canCheckRateLimits(_ account: ProviderAccount) -> Bool {
+        account.auth == .apiKey && APIKeyUsage.service(forVariable: account.keyVariable) == .anthropic
+            && registry.secrets.hasAPIKey(account)
+    }
+
+    /// Reads the account's rate limits from the headers of a one-token message, which costs a fraction of a cent.
+    /// Returns whether the read worked; a failed read keeps the last one.
+    @discardableResult
+    public func checkRateLimits(_ account: ProviderAccount) async -> Bool {
+        let key = UsageReport.accountKey(account.provider, account.id)
+        guard canCheckRateLimits(account), !checkingRateLimits.contains(key), let apiKey = registry.secrets.apiKey(for: account)
+        else { return false }
+        checkingRateLimits.insert(key)
+        changed()
+        let outcome = await APIKeyUsage.probeAnthropicRateLimits(key: apiKey, fetch: rateLimitFetch)
+        checkingRateLimits.remove(key)
+        if let limits = outcome.limits { rateLimitReadings[key] = limits }
+        changed()
+        return outcome.limits != nil
     }
 
     /// Checks the providers again when the last check is older than `limitsInterval` (or always, with `force`).

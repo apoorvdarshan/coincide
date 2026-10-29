@@ -207,7 +207,7 @@ enum ClaudeCapabilitiesProbe {
         if includeUsage, let usage = await request(["subtype": "get_usage", "skip_behaviors": true], timeout: 10),
             let windows = ClaudeUsageLimits.windows(fromUsage: usage)
         {
-            info.usageLimits = UsageLimits(windows: windows, checkedAt: Date())
+            info.usageLimits = UsageLimits(windows: windows, checkedAt: Date(), figures: ClaudeUsageLimits.figures(fromUsage: usage))
             info.overageIncludedName = ClaudeUsageLimits.overageIncludedName(fromUsage: usage)
         }
         return info

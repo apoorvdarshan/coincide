@@ -20,7 +20,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     var sidebar: SidebarViewController { splitController.sidebar }
 
     convenience init() {
-        let window = NSWindow(
+        let window = MainWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered,
             defer: false)
