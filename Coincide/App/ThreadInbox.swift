@@ -12,6 +12,7 @@ final class ThreadInbox {
     private let store: AppStore
     private let ui: UIState
     private let isRunning: (UUID) -> Bool
+    private let endSessions: (UUID) -> Void
     private let reportError: (Error) -> Void
     private struct RestoreRetry {
         var snapshots: [AppStore.DeletedThread]
@@ -22,10 +23,12 @@ final class ThreadInbox {
 
     init(store: AppStore = .shared, ui: UIState = .shared,
          isRunning: @escaping (UUID) -> Bool = { ThreadRunner.shared.isRunning($0) },
+         endSessions: @escaping (UUID) -> Void = { ThreadRunner.shared.shutdown(threadID: $0) },
          reportError: @escaping (Error) -> Void = { _ = NSApp.presentError($0) }) {
         self.store = store
         self.ui = ui
         self.isRunning = isRunning
+        self.endSessions = endSessions
         self.reportError = reportError
         undoManager.levelsOfUndo = 20
         undoManager.groupsByEvent = false
@@ -78,6 +81,38 @@ final class ThreadInbox {
         register(String(localized: "Settle Threads")) { $0.applySettled(previous) }
         ui.update { state in
             for (id, date) in values { state.settledThreads[id.uuidString] = date }
+        }
+        changed()
+    }
+
+    /// Moves threads to another project (`AppStore.moveThread`), ending their agents' sessions in the old folder.
+    /// Running threads, and ones that can't move, stay where they are. Returns the threads moved.
+    @discardableResult
+    func move(_ ids: [UUID], to projectID: UUID) -> [UUID] {
+        var moves: [ThreadMove] = []
+        for id in ids where !isRunning(id) && store.canMoveThread(id, to: projectID) {
+            endSessions(id)
+            if let move = store.moveThread(id, to: projectID) { moves.append(move) }
+        }
+        guard !moves.isEmpty else { return [] }
+        register(String(localized: "Move Threads")) { $0.undoMoves(moves) }
+        changed()
+        return moves.map(\.threadID)
+    }
+
+    private func undoMoves(_ moves: [ThreadMove]) {
+        // Undo can come after a moved thread started new work in its new folder.
+        var undone: [ThreadMove] = []
+        for move in moves where !isRunning(move.threadID) && store.summary(move.threadID)?.projectID == move.to
+            && store.canMoveThread(move.threadID, to: move.from)
+        {
+            endSessions(move.threadID)
+            if store.undoMove(move) { undone.append(move) }
+        }
+        guard !undone.isEmpty else { return }
+        register(String(localized: "Move Threads")) { inbox in
+            let byDestination = Dictionary(grouping: undone, by: \.to)
+            for (projectID, moves) in byDestination { inbox.move(moves.map(\.threadID), to: projectID) }
         }
         changed()
     }

@@ -46,8 +46,20 @@ final class UIState {
         var settledThreads: [String: Date] = [:]
         /// The project script run last in each project (ids as strings), which the toolbar runs with one click.
         var lastScripts: [String: String] = [:]
-        /// Threads per project before the sidebar shows "Show more"; 0 shows all.
-        var sidebarThreadLimit = 6
+        /// Threads per project before the sidebar shows "Show more": nil fits the list to the sidebar's height
+        /// (`SidebarOrdering.automaticThreadLimit`), 0 shows all. A limit saved under the earlier key,
+        /// `sidebarThreadLimit`, carries over unless it was that version's default, 6, which few chose.
+        var sidebarThreadsPerProject: Int?
+        var projectSort = ProjectSort.manual
+        var threadSort = ThreadSort.recentActivity
+        /// How Chats, the project-free threads, are sorted.
+        var chatSort = ThreadSort.recentActivity
+        /// The Pinned section's order (thread ids), most recently pinned first. Threads pinned elsewhere (or before
+        /// this order was kept) join at the top as the sidebar notices them.
+        var pinnedThreads: [String] = []
+        /// The sidebar's sections in the order the user dragged them into (`SidebarSection` raw values); empty until
+        /// they do, so new sections take their default place (`SidebarOrdering.sectionOrder`).
+        var sidebarSections: [String] = []
         /// Keyed by thread id.
         var unseen: [String: Unseen] = [:]
         /// Ids of the notices that opened turns an agent started on its own, keyed by thread id (see `AgentTurns`).
@@ -78,9 +90,23 @@ final class UIState {
             showsSettledThreads = value(.showsSettledThreads, defaults.showsSettledThreads)
             settledThreads = value(.settledThreads, defaults.settledThreads)
             lastScripts = value(.lastScripts, defaults.lastScripts)
-            sidebarThreadLimit = value(.sidebarThreadLimit, defaults.sidebarThreadLimit)
+            if container.contains(.sidebarThreadsPerProject) {
+                sidebarThreadsPerProject = value(.sidebarThreadsPerProject, defaults.sidebarThreadsPerProject)
+            } else {
+                let legacy = try? decoder.container(keyedBy: LegacyKeys.self).decodeIfPresent(Int.self, forKey: .sidebarThreadLimit)
+                sidebarThreadsPerProject = legacy.flatMap { $0 == 6 || $0 < 0 ? nil : $0 }
+            }
+            projectSort = value(.projectSort, defaults.projectSort)
+            threadSort = value(.threadSort, defaults.threadSort)
+            chatSort = value(.chatSort, defaults.chatSort)
+            pinnedThreads = value(.pinnedThreads, defaults.pinnedThreads)
+            sidebarSections = value(.sidebarSections, defaults.sidebarSections)
             unseen = value(.unseen, defaults.unseen)
             agentTurns = value(.agentTurns, defaults.agentTurns)
+        }
+
+        private enum LegacyKeys: String, CodingKey {
+            case sidebarThreadLimit
         }
     }
 

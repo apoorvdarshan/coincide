@@ -140,7 +140,10 @@ struct UIStateTests {
     @Test func aFreshStateHasDefaults() {
         let folder = TemporaryDirectory("ui")
         let state = UIState(directory: folder.url)
-        #expect(state.values.sidebarThreadLimit == 6)
+        #expect(state.values.sidebarThreadsPerProject == nil)
+        #expect(state.values.projectSort == .manual && state.values.threadSort == .recentActivity)
+        #expect(state.values.chatSort == .recentActivity && state.values.pinnedThreads.isEmpty)
+        #expect(state.values.sidebarSections.isEmpty)
         #expect(!state.values.isTerminalOpen)
         #expect(state.values.unseen.isEmpty)
     }
@@ -172,7 +175,7 @@ struct UIStateTests {
         try Data(json.utf8).write(to: folder.url.appendingPathComponent("ui-state.json"))
         let state = UIState(directory: folder.url)
         #expect(!state.values.isTerminalOpen)
-        #expect(state.values.sidebarThreadLimit == 12)
+        #expect(state.values.sidebarThreadsPerProject == 12)
         #expect(state.values.isSidebarCollapsed)
         // One unreadable entry costs the whole map, not the file.
         #expect(state.values.unseen.isEmpty)
@@ -181,6 +184,41 @@ struct UIStateTests {
     @Test func anUnreadableFileStartsFresh() throws {
         let folder = TemporaryDirectory("ui")
         try Data("{ not json".utf8).write(to: folder.url.appendingPathComponent("ui-state.json"))
-        #expect(UIState(directory: folder.url).values.sidebarThreadLimit == 6)
+        #expect(UIState(directory: folder.url).values.sidebarThreadsPerProject == nil)
+    }
+
+    /// The old fixed cut of six, which nearly everyone kept, gives way to fitting the sidebar; other choices stay.
+    @Test func anEarlierThreadLimitCarriesOverUnlessItWasTheOldDefault() throws {
+        for (stored, expected) in [(6, nil), (3, 3), (0, 0), (20, 20)] as [(Int, Int?)] {
+            let folder = TemporaryDirectory("ui")
+            try Data(#"{"sidebarThreadLimit": \#(stored)}"#.utf8).write(to: folder.url.appendingPathComponent("ui-state.json"))
+            let state = UIState(directory: folder.url)
+            #expect(state.values.sidebarThreadsPerProject == expected, "stored \(stored)")
+            // Written back under the new key, a choice of six now stays six.
+            state.update { $0.sidebarThreadsPerProject = 6 }
+            state.flush()
+            #expect(UIState(directory: folder.url).values.sidebarThreadsPerProject == 6)
+        }
+    }
+
+    @Test func sortsSectionOrderAndThePinnedOrderSurviveAReload() {
+        let folder = TemporaryDirectory("ui")
+        let state = UIState(directory: folder.url)
+        let pinned = [UUID().uuidString, UUID().uuidString]
+        state.update { values in
+            values.projectSort = .name
+            values.threadSort = .created
+            values.chatSort = .name
+            values.pinnedThreads = pinned
+            values.sidebarSections = ["chats", "bots", "projects"]
+        }
+        state.flush()
+        let reloaded = UIState(directory: folder.url).values
+        #expect(reloaded.projectSort == .name && reloaded.threadSort == .created && reloaded.chatSort == .name)
+        #expect(reloaded.pinnedThreads == pinned)
+        // Kept as saved, a section from a newer version included; the sidebar skips what it doesn't know.
+        #expect(reloaded.sidebarSections == ["chats", "bots", "projects"])
+        #expect(SidebarOrdering.sectionOrder(saved: reloaded.sidebarSections) == [.chats, .projects, .pinned])
+        #expect(reloaded.sidebarThreadsPerProject == nil)
     }
 }
