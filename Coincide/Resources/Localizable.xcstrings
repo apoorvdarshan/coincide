@@ -92947,6 +92947,118 @@
         }
       }
     },
+    "Drag to resize the panel. Double-click to restore its default width." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ziehen, um die Größe des Bereichs zu ändern. Doppelklicken, um die Standardbreite wiederherzustellen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrastra para cambiar el tamaño del panel. Haz doble clic para restaurar su ancho predeterminado."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrastra para cambiar el tamaño del panel. Haz doble clic para restaurar su ancho predeterminado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Faites glisser pour redimensionner le panneau. Double-cliquez pour rétablir sa largeur par défaut."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पैनल का आकार बदलने के लिए खींचें। इसकी डिफ़ॉल्ट चौड़ाई वापस लाने के लिए डबल-क्लिक करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seret untuk mengubah ukuran panel. Klik dua kali untuk mengembalikan lebar bawaannya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trascina per ridimensionare il pannello. Fai doppio clic per ripristinare la larghezza predefinita."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ドラッグしてパネルのサイズを変更します。ダブルクリックするとデフォルトの幅に戻ります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "드래그하여 패널 크기를 조절합니다. 두 번 클릭하면 기본 너비로 돌아갑니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sleep om het formaat van het paneel te wijzigen. Dubbelklik om de standaardbreedte te herstellen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przeciągnij, aby zmienić rozmiar panelu. Kliknij dwukrotnie, aby przywrócić domyślną szerokość."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arraste para redimensionar o painel. Clique duas vezes para restaurar a largura padrão."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перетащите, чтобы изменить размер панели. Дважды щёлкните, чтобы вернуть ширину по умолчанию."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Paneli yeniden boyutlandırmak için sürükleyin. Varsayılan genişliğe döndürmek için çift tıklayın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перетягніть, щоб змінити розмір панелі. Двічі клацніть, щоб повернути типову ширину."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kéo để đổi kích thước bảng. Bấm đúp để khôi phục độ rộng mặc định."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "拖移以调整面板大小。连按两次可恢复默认宽度。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "拖移以調整面板大小。按兩下可回復預設寬度。"
+          }
+        }
+      }
+    },
     "Drive Coincide from your iPhone or iPad on this network or your Tailscale network. Paired devices connect over an encrypted connection; nothing goes through the internet." : {
       "localizations" : {
         "de" : {
@@ -162378,6 +162490,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "配對碼"
+          }
+        }
+      }
+    },
+    "Panel Divider" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bereichstrenner"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Divisor del panel"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Divisor del panel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Séparateur du panneau"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पैनल विभाजक"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pemisah Panel"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Divisore del pannello"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "パネルの区切り"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "패널 구분선"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Paneelscheiding"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Separator panelu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Divisor do painel"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разделитель панели"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Panel Ayırıcı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Роздільник панелі"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Thanh chia bảng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "面板分隔线"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "面板分隔線"
           }
         }
       }

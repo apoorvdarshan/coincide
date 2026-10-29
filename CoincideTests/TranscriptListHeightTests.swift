@@ -128,6 +128,42 @@ private final class StubTranscriptHost: TranscriptHost {
         expectRowsInPlace("after a reply above the view grew")
     }
 
+    /// Opening or closing the panel beside the chat, or dragging its divider, narrows or widens the transcript: the
+    /// reader stays at the same row, or at the bottom when following.
+    @Test func aPanelOpeningBesideTheChatKeepsTheReadersPlace() async {
+        let rows = (0..<40).map { reply(30 + ($0 * 37) % 160, seed: $0) }
+        list.update(rows, reload: true)
+        list.scrollToBottom()
+        await settle()
+        for width in [360, 720] as [CGFloat] {
+            window.setContentSize(NSSize(width: width, height: 480))
+            await settle()
+            await settle()
+            #expect(list.distanceFromBottom <= 1, "following at \(width)")
+        }
+
+        // Scrolled up to a row, the row stays at the top through the narrowing and back.
+        let rowID = rows[12].id
+        let clip = list.scrollView.contentView
+        list.restore(.anchor(rowID, offset: 0))
+        await settle()
+        #expect(!list.isPinnedToBottom)
+        func offset() -> CGFloat? {
+            guard let index = list.rows.firstIndex(where: { $0.id == rowID }) else { return nil }
+            return list.tableView.rect(ofRow: index).minY - clip.bounds.minY
+        }
+        let before = offset()
+        for width in [360, 520, 720] as [CGFloat] {
+            window.setContentSize(NSSize(width: width, height: 480))
+            await settle()
+            await settle()
+            if let before, let after = offset() {
+                #expect(abs(after - before) <= 1, "row moved at \(width): \(before) -> \(after)")
+            }
+            expectRowsInPlace("at \(width)")
+        }
+    }
+
     @Test func aNewTurnAfterAStreamedReplyAndItsChangedFiles() async {
         var items: [TranscriptItem] = []
         var revisions: [UUID: Int] = [:]
