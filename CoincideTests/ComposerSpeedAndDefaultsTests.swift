@@ -170,6 +170,55 @@ struct ComposerSpeedAndDefaultsTests {
         #expect(store.settings.defaultSelection == before.0 && store.settings.defaultAccessMode == before.1)
     }
 
+    // MARK: While the agent works
+
+    @Test func eachThreadKeepsItsFollowUpBehaviorAndTheLastChoiceIsTheNewThreadDefault() async throws {
+        let setup = try await Setup()
+        let store = setup.store
+        store.updateSettings {
+            $0.followUpBehavior = .steer
+            $0.existingThreadsFollowUpBehavior = .queue
+        }
+        // A thread from before threads kept their own goes on as the app-wide setting had it.
+        let legacy = store.createThread(in: setup.project.id)
+        store.updateThread(legacy.id) { $0.followUpBehavior = nil }
+        let other = store.createThread(in: setup.project.id)
+        #expect(other.followUpBehavior == .steer)
+        let thread = store.createThread(in: setup.project.id)
+        let composer = setup.composer(for: thread.id)
+        #expect(composer.footer.followUpButton.accessibilityLabel() == "While the agent works: Steer")
+
+        composer.setFollowUpBehavior(.interrupt)
+        #expect(store.thread(thread.id)?.followUpBehavior == .interrupt)
+        #expect(store.settings.followUpBehavior == .interrupt)
+        #expect(composer.footer.followUpButton.accessibilityLabel() == "While the agent works: Interrupt")
+        // New threads, in a project or not, start with it; existing ones keep theirs.
+        #expect(store.createThread(in: setup.project.id).followUpBehavior == .interrupt)
+        #expect(store.createThread(in: store.ensureChatsProject().id).followUpBehavior == .interrupt)
+        #expect(store.thread(other.id)?.followUpBehavior == .steer)
+        #expect(store.followUpBehavior(of: try #require(store.thread(legacy.id))) == .queue)
+
+        // The thread keeps its choice when the default moves on from another thread.
+        let second = setup.composer(for: other.id)
+        second.setFollowUpBehavior(.queue)
+        #expect(store.settings.followUpBehavior == .queue)
+        #expect(store.thread(thread.id)?.followUpBehavior == .interrupt)
+        #expect(store.followUpBehavior(of: try #require(store.thread(legacy.id))) == .queue)
+    }
+
+    @Test func steerCantBePickedForAnAgentThatCantTakeMessagesMidTurn() async throws {
+        let setup = try await Setup()
+        let store = setup.store
+        let thread = store.createThread(in: setup.project.id, selection: ModelSelection(provider: .cursor, modelID: "default"))
+        store.updateThread(thread.id) { $0.followUpBehavior = .queue }
+        let composer = setup.composer(for: thread.id)
+        composer.setFollowUpBehavior(.steer)
+        #expect(store.thread(thread.id)?.followUpBehavior == .queue)
+        // A thread that chose Steer before switching to such an agent queues, and shows it.
+        store.updateThread(thread.id) { $0.followUpBehavior = .steer }
+        #expect(composer.footer.followUpButton.accessibilityLabel() == "While the agent works: Queue")
+    }
+
     // MARK: Setup
 
     private struct Setup {

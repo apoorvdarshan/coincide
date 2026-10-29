@@ -774,6 +774,33 @@ struct ThreadRunnerTests {
         #expect(!runner.isStopping(threadID) && !runner.isRunning(threadID))
     }
 
+    @Test(arguments: [false, true])
+    func interruptStopsTheTurnAndSendsTheMessageNext(steering: Bool) async {
+        runner.stopTimeout = 5
+        let session = await startRunningTurn(steering: steering)
+        session.onInterrupt = { _ in }
+        runner.enqueue(threadID: threadID, text: "later")
+        #expect(await runner.interrupt(threadID: threadID, text: " change of plan ") == .interrupting)
+        #expect(runner.isStopping(threadID))
+        #expect(session.interrupts == 1)
+        #expect(session.steered.isEmpty)
+        // It goes ahead of what was queued, which still waits for the user after the stop.
+        #expect(runner.queuedMessages(threadID).map(\.text) == ["change of plan", "later"])
+        session.onSend = { _, _ in }
+        session.emit(.turnCompleted(.interrupted))
+        #expect(await eventually { session.sent.count == 2 })
+        #expect(session.sent.last?.message == "change of plan")
+        #expect(runner.isRunning(threadID) && !runner.isStopping(threadID))
+        #expect(runner.queuedMessages(threadID).map(\.text) == ["later"])
+        // With no turn running it is simply sent.
+        session.emit(.turnCompleted(.completed))
+        #expect(await eventually { session.sent.count == 3 })
+        session.emit(.turnCompleted(.completed))
+        #expect(await eventually { !runner.isRunning(threadID) })
+        #expect(await runner.interrupt(threadID: threadID, text: "next") == .sent)
+        #expect(session.sent.last?.message == "next")
+    }
+
     @Test func sendNowPutsTheMessageIntoATurnThatTakesIt() async {
         let session = await startRunningTurn()
         runner.enqueue(threadID: threadID, text: "now")
