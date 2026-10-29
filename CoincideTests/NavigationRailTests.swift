@@ -17,7 +17,11 @@ struct NavigationRailTests {
             view.subviews.forEach(collect)
         }
         collect(rail.view)
-        #expect(buttons.count == 12)
+        #expect(buttons.count == 9)
+        // The panels that open on the right have their buttons on the right, in the toolbar (`InspectorPanelButtons`).
+        let labels = Set(buttons.compactMap { $0.accessibilityLabel() })
+        #expect(labels.isDisjoint(with: ["Diff", "Pull Requests", "Browser Preview"]))
+        #expect(labels.isSuperset(of: ["Terminal", "Open In"]))
         let frames = buttons.map { $0.convert($0.bounds, to: rail.view) }.sorted { $0.minY < $1.minY }
         for frame in frames {
             #expect(frame.width == RailButton.side)
@@ -29,11 +33,12 @@ struct NavigationRailTests {
     }
 }
 
-/// The diff and the pull requests share the inspector column; the rail's buttons switch it like tabs.
+/// The diff, the pull requests and the browser preview share the inspector column; the toolbar's buttons switch it like
+/// tabs.
 @MainActor
 @Suite(.serialized)
 struct InspectorPanelTests {
-    @Test func theRailSwitchesTheInspectorBetweenTheDiffAndThePullRequests() {
+    @Test func theInspectorSwitchesBetweenItsPanels() {
         let saved = UIState.shared.values
         defer { UIState.shared.update { $0 = saved } }
         UIState.shared.update {
