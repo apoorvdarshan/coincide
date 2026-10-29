@@ -46,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ThreadSnooze.shared.start()
         PreviewSessions.shared.start()
         AppUpdates.shared.start()
+        // Off unless the user turned on Settings › General › Remote.
+        RemoteServer.shared.startIfEnabled()
         // Chats are always listed, so the first one can be started from the sidebar.
         AppStore.shared.ensureChatsProject()
         mainWindow?.showWindow(nil)
@@ -90,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         guard !Self.isHostingTests else { return }
         ScheduledTasks.shared.stop()
+        RemoteServer.shared.stop()
         PreviewSessions.shared.stop()
         ThreadRunner.shared.shutdownAll()
         AgentHostController.shared.prepareToQuit()
