@@ -100,3 +100,48 @@ struct OpensLinksInDefaultBrowserSettingsTests {
         #expect(settings.sendOnReturn == false)
     }
 }
+
+/// Where the user's messages sit in the conversation: on the right by default, across from the agents' replies, with
+/// the left (the layout from before the setting) a choice that lasts across launches.
+struct UserMessageSideSettingsTests {
+    private func decode(_ json: String) throws -> AppSettings {
+        try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+    }
+
+    @Test func theRightIsTheDefault() throws {
+        #expect(AppSettings().userMessageSide == .right)
+        // Settings written before the choice existed get the new layout too.
+        #expect(try decode(#"{"fontSize": 15}"#).userMessageSide == .right)
+        #expect(UserMessageSide.allCases == [.right, .left])
+        #expect(UserMessageSide.right.displayName == "Right")
+        #expect(UserMessageSide.left.displayName == "Left")
+    }
+
+    @Test func theChoiceSavesAndReadsBack() throws {
+        var settings = AppSettings()
+        settings.userMessageSide = .left
+        let data = try JSONEncoder().encode(settings)
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["userMessageSide"] as? String == "left")
+        #expect(try JSONDecoder().decode(AppSettings.self, from: data) == settings)
+    }
+
+    @Test(arguments: [#""middle""#, "0", "null", #"["left"]"#])
+    func anUnreadableValueFallsBackToTheRightAndKeepsTheOtherSettings(value: String) throws {
+        let settings = try decode(#"{"userMessageSide": \#(value), "sendOnReturn": false, "fontSize": 15}"#)
+        #expect(settings.userMessageSide == .right)
+        #expect(settings.sendOnReturn == false)
+        #expect(settings.fontSize == 15)
+    }
+
+    @MainActor @Test func theStoreKeepsTheChoiceAcrossLaunches() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-user-side-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AppStore(directory: directory)
+        #expect(store.settings.userMessageSide == .right)
+        store.updateSettings { $0.userMessageSide = .left }
+        store.flush()
+        #expect(AppStore(directory: directory).settings.userMessageSide == .left)
+    }
+}

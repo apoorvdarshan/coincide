@@ -4,10 +4,36 @@ import QuartzCore
 
 // MARK: - User message
 
-/// The user's message: a quiet card on the rail with image thumbnails, pills for the context attached to it (quotes,
-/// terminal output, diff comments, files), long text folded behind "Show full message", and T3's "Edit from here" and
-/// copy actions that appear on hover. A message steered into a running turn carries T3's "Steer" mark above the card.
+extension UserMessageSide {
+    /// Whether messages on this side sit on the transcript's right. A right-to-left interface mirrors the sides, as
+    /// chat apps do there: the user's messages go to the left by default.
+    func isOnRight(in direction: NSUserInterfaceLayoutDirection) -> Bool {
+        (self == .right) == (direction == .leftToRight)
+    }
+
+    /// The side's name as it shows in an interface laid out in `direction`.
+    func title(in direction: NSUserInterfaceLayoutDirection) -> String {
+        isOnRight(in: direction) ? UserMessageSide.right.displayName : UserMessageSide.left.displayName
+    }
+}
+
+/// The user's message: a quiet card with image thumbnails, pills for the context attached to it (quotes, terminal
+/// output, diff comments, files), long text folded behind "Show full message", and T3's "Edit from here" and copy
+/// actions that appear on hover. A message steered into a running turn carries T3's "Steer" mark above the card.
+///
+/// The card hugs its content and, by default, sits on the right across from the agents' replies, as in a chat app
+/// (Settings › General › Your messages); the actions and the "Steer" mark line up with the card's outer edge. On the
+/// left it sits on the agent rail, which marks it with a ring. The card's text keeps its own alignment wherever the
+/// card sits.
 final class TranscriptUserCell: TranscriptCell {
+    /// The widest the card gets on the right, as a share of the column, so a long message still reads as a reply's
+    /// counterpart rather than a page of its own.
+    static let maxWidthFraction: CGFloat = 0.75
+    /// The widest the card gets on the rail, as before the setting.
+    static let railMaxWidthFraction: CGFloat = 0.8
+    /// Below this column width the card on the right may take the whole column: a narrower card would wrap a few
+    /// words a line.
+    static let narrowColumnWidth: CGFloat = 440
     private static let padding: CGFloat = 12
     private static let collapsedTextHeight: CGFloat = 176
     private static let thumbnailGap: CGFloat = 8
@@ -120,6 +146,9 @@ final class TranscriptUserCell: TranscriptCell {
         return (item.map(Self.steerMarkSpace) ?? 0) + Self.padding + (lineHeight / 2).rounded()
     }
 
+    /// The rail rings the message only while the card sits on it.
+    override var showsRailNode: Bool { !Theme.userMessageSide.isOnRight(in: userInterfaceLayoutDirection) }
+
     override class func height(for row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> CGFloat {
         guard let id = row.itemID, let item = host.item(id) else { return 0 }
         return layout(for: item, row: row, width: width, host: host).height
@@ -127,7 +156,7 @@ final class TranscriptUserCell: TranscriptCell {
 
     override class func estimatedHeight(for row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> CGFloat {
         guard let id = row.itemID, let item = host.item(id) else { return 0 }
-        let content = TranscriptMetrics.column(width: width).width * 0.8 - padding * 2
+        let content = maxBubbleWidth(column: TranscriptMetrics.column(width: width).width, side: Theme.userMessageSide) - padding * 2
         let text = TranscriptEstimate.textHeight(item.text, width: content)
         let images = (item.attachments ?? []).isEmpty ? 0 : CGFloat(((item.attachments?.count ?? 0) + 1) / 2) * 86
         let context = (item.context ?? []).isEmpty ? 0 : MessageContextPill.height + pillGap
@@ -141,8 +170,9 @@ final class TranscriptUserCell: TranscriptCell {
         match.field == .body ? findTarget(match.range, in: textView) : nil
     }
 
-    private struct Layout {
-        /// The "Steer" mark's line, above the bubble.
+    /// Where the row's parts go. The bubble's contents are in the bubble's coordinates.
+    struct Layout {
+        /// The "Steer" mark's line, above the bubble, across the column.
         var steerMark: NSRect?
         var bubble: NSRect
         var thumbnails: [NSRect]
@@ -152,6 +182,19 @@ final class TranscriptUserCell: TranscriptCell {
         var actionsY: CGFloat
         var height: CGFloat
         var isCollapsed: Bool
+        /// Whether the card sits on the transcript's right; the actions and the "Steer" mark line up with its right
+        /// edge then.
+        var isOnRight: Bool
+        /// Whether the card's contents and its rows of actions run right to left, mirrored.
+        var isRightToLeft: Bool
+    }
+
+    /// The widest the card gets in a column `column` points wide.
+    static func maxBubbleWidth(column: CGFloat, side: UserMessageSide) -> CGFloat {
+        switch side {
+        case .left: (column * railMaxWidthFraction).rounded(.down)
+        case .right: column < narrowColumnWidth ? column : (column * maxWidthFraction).rounded(.down)
+        }
     }
 
     private static func steerMarkSpace(_ item: TranscriptItem) -> CGFloat {
@@ -171,9 +214,14 @@ final class TranscriptUserCell: TranscriptCell {
         return rect.maxY > collapsedTextHeight - 24
     }
 
-    private static func layout(for item: TranscriptItem, row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> Layout {
+    /// The row's layout at `width`. Only the card's side and the direction move things sideways; heights depend on
+    /// the side alone, through the card's widest.
+    static func layout(
+        for item: TranscriptItem, row: TranscriptRow, width: CGFloat, host: TranscriptHost,
+        side: UserMessageSide = Theme.userMessageSide, direction: NSUserInterfaceLayoutDirection = .leftToRight
+    ) -> Layout {
         let column = TranscriptMetrics.column(width: width)
-        let maxBubble = (column.width * 0.8).rounded(.down)
+        let maxBubble = maxBubbleWidth(column: column.width, side: side)
         let maxContent = maxBubble - padding * 2
         let attachments = item.attachments ?? []
         let thumbWidth = min(104, ((maxContent - thumbnailGap) / 2).rounded(.down))
@@ -191,10 +239,10 @@ final class TranscriptUserCell: TranscriptCell {
         let context = item.context ?? []
         var y = padding
         if let last = thumbnails.last { y = last.maxY + (hasText || !context.isEmpty ? thumbnailGap : 0) }
-        let pills = pillFrames(for: context, x: padding, y: y, maxWidth: maxContent)
+        var pills = pillFrames(for: context, x: padding, y: y, maxWidth: maxContent)
         if let bottom = pills.map(\.maxY).max() { y = bottom + (hasText ? thumbnailGap : 0) }
         let textHeight = isCollapsed ? collapsedTextHeight : textSize.height
-        let text = NSRect(x: padding, y: y, width: min(maxContent, textSize.width + 1), height: textHeight)
+        var text = NSRect(x: padding, y: y, width: min(maxContent, textSize.width + 1), height: textHeight)
         y += hasText ? textHeight : 0
         var toggle: NSRect?
         var contentWidth = max(text.width, (thumbnails + pills).map { $0.maxX - padding }.max() ?? 0)
@@ -204,13 +252,43 @@ final class TranscriptUserCell: TranscriptCell {
             contentWidth = max(contentWidth, 126)
         }
         let bubbleWidth = min(maxBubble, ceil(contentWidth) + padding * 2)
+        let isOnRight = side.isOnRight(in: direction)
+        let isRightToLeft = direction == .rightToLeft
+        if isRightToLeft {
+            // The card's contents run from its right edge.
+            func mirror(_ rect: NSRect) -> NSRect {
+                NSRect(x: bubbleWidth - rect.maxX, y: rect.minY, width: rect.width, height: rect.height)
+            }
+            thumbnails = thumbnails.map(mirror)
+            pills = pills.map(mirror)
+            text = mirror(text)
+            toggle = toggle.map(mirror)
+        }
         let top = steerMarkSpace(item)
-        let bubble = NSRect(x: column.x, y: top, width: bubbleWidth, height: y + padding)
+        let x = isOnRight ? column.x + column.width - bubbleWidth : column.x
+        let bubble = NSRect(x: x, y: top, width: bubbleWidth, height: y + padding)
         let actionsY = bubble.maxY + 4
         let steerMark = item.isSteered ? NSRect(x: column.x, y: 0, width: column.width, height: steerMarkHeight) : nil
         return Layout(
             steerMark: steerMark, bubble: bubble, thumbnails: thumbnails, pills: pills, text: text, toggle: toggle,
-            actionsY: actionsY, height: actionsY + 20 + bottomSpacing(for: row) - 12, isCollapsed: isCollapsed)
+            actionsY: actionsY, height: actionsY + 20 + bottomSpacing(for: row) - 12, isCollapsed: isCollapsed,
+            isOnRight: isOnRight, isRightToLeft: isRightToLeft)
+    }
+
+    /// The left edges of a row of items `widths` wide, in reading order, with `gaps[i]` between the `i`th and the
+    /// next. The row starts at `edge`, or ends there when it `alignsRight`; right to left, the first item is the
+    /// rightmost.
+    static func rowOrigins(widths: [CGFloat], gaps: [CGFloat], edge: CGFloat, alignsRight: Bool, rightToLeft: Bool) -> [CGFloat] {
+        let total = widths.reduce(0, +) + gaps.prefix(max(0, widths.count - 1)).reduce(0, +)
+        var x = alignsRight ? edge - total : edge
+        var origins = [CGFloat](repeating: 0, count: widths.count)
+        let order = rightToLeft ? Array(widths.indices.reversed()) : Array(widths.indices)
+        for (position, index) in order.enumerated() {
+            origins[index] = x
+            x += widths[index]
+            if position < order.count - 1 { x += gaps[rightToLeft ? index - 1 : index] }
+        }
+        return origins
     }
 
     /// The context pills, left to right from (`x`, `y`), wrapping to a new line at `maxWidth`.
@@ -231,7 +309,7 @@ final class TranscriptUserCell: TranscriptCell {
     override func layout() {
         super.layout()
         guard let row, let item, let host else { return }
-        let layout = Self.layout(for: item, row: row, width: bounds.width, host: host)
+        let layout = Self.layout(for: item, row: row, width: bounds.width, host: host, direction: userInterfaceLayoutDirection)
         bubble.frame = layout.bubble
         textView.frame = layout.text
         for (index, frame) in layout.thumbnails.enumerated() where index < thumbnails.count {
@@ -244,27 +322,35 @@ final class TranscriptUserCell: TranscriptCell {
         if let toggle = layout.toggle {
             toggleButton.frame = toggle
             toggleButton.title = layout.isCollapsed ? String(localized: "Show full message") : String(localized: "Show less")
-            toggleButton.alignment = .left
+            toggleButton.alignment = layout.isRightToLeft ? .right : .left
         }
         updateFade(collapsed: layout.isCollapsed)
         if let mark = layout.steerMark {
-            // Over the card, at its leading edge.
+            // Over the card, at its outer edge: the icon, then the label.
             let iconSize: CGFloat = 12
-            steerIcon.frame = NSRect(x: mark.minX + 2, y: mark.minY + (mark.height - iconSize) / 2, width: iconSize, height: iconSize)
             steerLabel.sizeToFit()
-            let labelHeight = ceil(steerLabel.frame.height)
+            let labelSize = NSSize(width: ceil(steerLabel.frame.width), height: ceil(steerLabel.frame.height))
+            let origins = Self.rowOrigins(
+                widths: [iconSize, labelSize.width], gaps: [3],
+                edge: layout.isOnRight ? layout.bubble.maxX - 2 : layout.bubble.minX + 2,
+                alignsRight: layout.isOnRight, rightToLeft: layout.isRightToLeft)
+            steerIcon.frame = NSRect(x: origins[0], y: mark.minY + (mark.height - iconSize) / 2, width: iconSize, height: iconSize)
             steerLabel.frame = NSRect(
-                x: steerIcon.frame.maxX + 3, y: mark.minY + ((mark.height - labelHeight) / 2).rounded(),
-                width: ceil(steerLabel.frame.width), height: labelHeight)
+                x: origins[1], y: mark.minY + ((mark.height - labelSize.height) / 2).rounded(),
+                width: labelSize.width, height: labelSize.height)
         }
-        // The actions line up under the card's leading edge: edit, copy, then the time.
-        var x = layout.bubble.minX - 3
-        for button in [rewindButton, copyButton] where !button.isHidden {
-            button.frame = NSRect(x: x, y: layout.actionsY, width: 22, height: 20)
-            x += 22
-        }
+        // The actions line up under the card's outer edge: edit, copy, then the time, in reading order. A button's
+        // symbol sits inside its frame, so a button at the edge reaches 3 points past it.
         timeLabel.sizeToFit()
-        timeLabel.frame = NSRect(x: x + 4, y: layout.actionsY + 2, width: ceil(timeLabel.frame.width), height: 16)
+        let timeWidth = ceil(timeLabel.frame.width)
+        let overhang: CGFloat = layout.isOnRight == layout.isRightToLeft ? 3 : 0
+        let origins = Self.rowOrigins(
+            widths: [22, 22, timeWidth], gaps: [0, 4],
+            edge: layout.isOnRight ? layout.bubble.maxX + overhang : layout.bubble.minX - overhang,
+            alignsRight: layout.isOnRight, rightToLeft: layout.isRightToLeft)
+        rewindButton.frame = NSRect(x: origins[0], y: layout.actionsY, width: 22, height: 20)
+        copyButton.frame = NSRect(x: origins[1], y: layout.actionsY, width: 22, height: 20)
+        timeLabel.frame = NSRect(x: origins[2], y: layout.actionsY + 2, width: timeWidth, height: 16)
     }
 
     private func updateFade(collapsed: Bool) {
