@@ -266,6 +266,12 @@ final class ChatViewController: NSViewController {
     /// are looked up again and only the last turn's rows are rebuilt, however long the thread is.
     private func rebuild(reload: Bool = false, keeping anchor: TranscriptRowID? = nil) {
         guard let threadID, let thread = store.thread(threadID) else { return }
+        // Store changes still waiting for `applyPendingUpdate` show from here on too (a turn starting or ending
+        // rebuilds at once), so their revisions move with them: a row whose cell shows newer content than its
+        // cached height was measured for would draw over the rows below it.
+        if needsFullReload { for item in thread.items { revisions[item.id, default: 0] += 1 } }
+        for id in pendingItemIDs { bumpRevision(id) }
+        pendingItemIDs.removeAll()
         if reload || needsFullReload {
             itemsByID = Dictionary(thread.items.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             settledRows = nil
@@ -430,8 +436,6 @@ final class ChatViewController: NSViewController {
             for item in thread.items { revisions[item.id, default: 0] += 1 }
             changedFileSignatures = changedFileSignatures.filter { id, _ in thread.items.contains { $0.id == id } }
         }
-        for id in pendingItemIDs { bumpRevision(id) }
-        pendingItemIDs.removeAll()
         needsFullReload = false
         // A rewind can cut the turn a fork divider followed.
         if reload { refreshForkMarkers() }
