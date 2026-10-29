@@ -119,6 +119,8 @@ final class ChatViewController: NSViewController {
         findBar.isHidden = true
 
         addChild(composer)
+        composer.onRevealItem = { [weak self] itemID in self?.revealItem(itemID) }
+        composer.onOpenLink = { [weak self] link in self?.openLink(link) ?? false }
         welcomeView.onChooseAgent = { [weak self] kind in self?.switchAgent(to: kind) }
         for subview in [list.scrollView, welcomeView, welcomeView.setupView, composerContainer, jumpButton, findBar, noThreadView] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
@@ -765,6 +767,19 @@ final class ChatViewController: NSViewController {
         default:
             return false
         }
+    }
+
+    /// Scrolls the conversation to an item, opening the turn or group that folds it away, as the plan card's
+    /// "Open in Transcript" asks.
+    private func revealItem(_ itemID: UUID) {
+        guard let threadID = displayedThreadID, let thread = store.thread(threadID), itemsByID[itemID] != nil else { return }
+        let open = rowsOpened(toShow: itemID, in: thread)
+        if open != (expanded[threadID] ?? []) {
+            expanded[threadID] = open
+            rebuild()
+        }
+        guard let index = list.index(of: .item(itemID)) else { return }
+        list.reveal(row: index)
     }
 
     /// Escape in the conversation closes the find bar first, then returns to the composer.
