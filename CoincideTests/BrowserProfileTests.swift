@@ -127,8 +127,19 @@ import WebKit
             let page = try await client.send(["action": "read"])
             #expect(page["title"]?.string == "Headless")
             #expect(!page.compactJSON.contains("hidden-password-value"))
+            #expect(session.webView.window?.isVisible == false)
             let shot = try await client.send(["action": "screenshot"])
-            #expect(shot["path"]?.string.map { FileManager.default.fileExists(atPath: $0) } == true)
+            let png = try Data(contentsOf: URL(fileURLWithPath: try #require(shot["path"]?.string)))
+            // The parked page really rendered: the picture isn't one flat color.
+            let bitmap = try #require(NSBitmapImageRep(data: png))
+            var colors = Set<String>()
+            for x in stride(from: 0, to: bitmap.pixelsWide, by: 7) {
+                for y in stride(from: 0, to: min(bitmap.pixelsHigh, 200), by: 7) {
+                    colors.insert(bitmap.colorAt(x: x, y: y)?.description ?? "")
+                }
+            }
+            #expect(colors.count > 1)
+            #expect(session.webView.window?.isVisible == false)
             #expect(session.lastAgentUse != nil)
 
             // Turning Agent Control off for the thread revokes the capability and stops the instructions.

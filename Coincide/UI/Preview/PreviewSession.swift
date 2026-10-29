@@ -85,7 +85,7 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
             if webView.superview == nil { PreviewParking.shared.park(webView) }
             let scale = webView.window?.backingScaleFactor ?? 2
             configuration.snapshotWidth = min(1600 / scale, webView.bounds.width) as NSNumber
-            let image = try await webView.takeSnapshot(configuration: configuration)
+            let image = try await PreviewParking.shared.rendering(webView) { try await webView.takeSnapshot(configuration: configuration) }
             guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
                 let png = bitmap.representation(using: .png, properties: [:]) else { throw PreviewError.unavailable }
             // A fixed path bounds disk usage; no path supplied by the caller is accepted.

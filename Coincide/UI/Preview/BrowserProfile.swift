@@ -77,8 +77,9 @@ final class BrowserProfile {
     }
 }
 
-/// Keeps thread browsers that aren't in the panel alive and rendering in a window that is never shown on screen, so
-/// agents can drive them headless. The panel takes a browser out when it shows that thread and returns it here.
+/// Keeps thread browsers that aren't in the panel alive in a window that is never shown, so agents can drive them
+/// headless. The panel takes a browser out when it shows that thread and returns it here. The window is ordered in,
+/// far off every screen, only for the moment a screenshot needs it rendered.
 final class PreviewParking {
     static let shared = PreviewParking()
     static let defaultSize = NSSize(width: 1280, height: 860)
@@ -93,7 +94,6 @@ final class PreviewParking {
         window.ignoresMouseEvents = true
         window.hasShadow = false
         window.contentView = NSView(frame: NSRect(origin: .zero, size: Self.defaultSize))
-        window.orderBack(nil)
         return window
     }()
 
@@ -107,4 +107,12 @@ final class PreviewParking {
     }
 
     func isParked(_ view: WKWebView) -> Bool { view.superview === window.contentView }
+
+    /// Runs `body` with the parking window ordered in (off screen), so a parked page renders for a snapshot.
+    func rendering<T>(_ view: WKWebView, _ body: () async throws -> T) async rethrows -> T {
+        guard isParked(view) else { return try await body() }
+        window.orderBack(nil)
+        defer { window.orderOut(nil) }
+        return try await body()
+    }
 }
