@@ -24,6 +24,9 @@ final class TerminalViewController: NSViewController {
     private var isShown = false
     private var windowJustChanged = false
     private var visibilityCheckScheduled = false
+    /// Closes the panel the terminal shows in, the drawer or the inspector, once its last terminal closes. Not the
+    /// window's toggle action, which would also bring back a window that was closed or minimized.
+    var onLastTerminalClosed: (() -> Void)?
 
     override func loadView() {
         let root = TerminalContainerView()
@@ -45,7 +48,9 @@ final class TerminalViewController: NSViewController {
         root.addSubview(header)
         root.addSubview(body)
         NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: root.topAnchor),
+            // Below the toolbar when the terminal is in the inspector, as the other panels' headers are; in the drawer
+            // the safe area starts at the top.
+            header.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             header.heightAnchor.constraint(equalToConstant: TerminalHeaderView.height),
@@ -101,13 +106,10 @@ final class TerminalViewController: NSViewController {
         case .tabs:
             let hadTabs = shownTabCount > 0
             reloadTabs()
-            // As in T3 Code, closing the last terminal closes the panel. It collapses in place: the window's
-            // toggle action would also bring back a window that was closed or minimized, as when a shell
-            // exits by itself.
-            if hadTabs, terminals.tabs.isEmpty, isShown, canCreateTerminals,
-                let drawer = parent as? ChatTerminalSplitViewController, drawer.isTerminalOpen
-            {
-                drawer.toggleTerminal()
+            // As in T3 Code, closing the last terminal closes the panel, in place (`onLastTerminalClosed`), as when
+            // a shell exits by itself.
+            if hadTabs, terminals.tabs.isEmpty, isShown, canCreateTerminals {
+                onLastTerminalClosed?()
             }
         case .session(let session):
             if let tab = terminals.tab(containing: session) { header.updateTab(headerTab(for: tab)) }
