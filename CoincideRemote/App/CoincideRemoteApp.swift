@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct CoincideRemoteApp: App {
+    @UIApplicationDelegateAdaptor(RemoteAppDelegate.self) private var appDelegate
     @State private var client = RemoteClient()
     @State private var appearance = AppearanceSettings()
     @State private var navigator = Navigator()
@@ -12,6 +13,7 @@ struct CoincideRemoteApp: App {
         WindowGroup {
             ThemedRoot(appearance: appearance, server: client.server) {
                 RootView()
+                    .modifier(AlertsCoordinator())
             }
             .environment(client)
             .environment(appearance)
@@ -32,6 +34,20 @@ struct CoincideRemoteApp: App {
                     .keyboardShortcut("r")
             }
         }
+    }
+}
+
+/// Becomes the notification delegate before launch finishes, so a tapped alert that launched the app opens its thread.
+final class RemoteAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        PhoneAlerts.shared.start()
+        return true
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        PhoneAlerts.shared.registrationFailed(error)
     }
 }
 

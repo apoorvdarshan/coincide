@@ -46,6 +46,19 @@ final class RemoteClient {
     @ObservationIgnored private var retryDelay: Duration = .seconds(1)
     @ObservationIgnored private var generation = 0
 
+    /// What this phone reports about itself (`RemotePresence`); set by the app.
+    @ObservationIgnored var presenceSource: (() -> RemotePresence)?
+    /// An alert the Mac sent, and a thread the user saw somewhere.
+    @ObservationIgnored var onNotify: ((RemoteNotification) -> Void)?
+    @ObservationIgnored var onClearNotifications: ((UUID) -> Void)?
+    /// Called after pairing with a Mac, the moment to ask for notification permission.
+    @ObservationIgnored var onPaired: ((RemoteServerInfo) -> Void)?
+    /// When the user last touched the app.
+    @ObservationIgnored private(set) var lastInteraction = Date()
+    @ObservationIgnored private var lastPresenceSentAt: Date?
+    /// The Mac answered `presence` with `unsupported`: it's older than notification routing.
+    @ObservationIgnored private var macIgnoresPresence = false
+
     var isConnected: Bool {
         if case .connected = phase { return true }
         return false
@@ -218,6 +231,8 @@ final class RemoteClient {
                 saved.save(updated)
                 self.mac = updated
                 phase = .connected(info.name)
+                macIgnoresPresence = false
+                sendPresence()
                 await refreshAfterConnecting()
                 return .connected
             } catch let error as RemoteError where error.code == .unauthorized {
@@ -340,6 +355,9 @@ final class RemoteClient {
                 self.mac = mac
                 server = paired.server
                 phase = .connected(paired.server.name)
+                macIgnoresPresence = false
+                sendPresence()
+                onPaired?(paired.server)
                 await refreshAfterConnecting()
                 return
             } catch let error as RemoteError {
@@ -430,6 +448,10 @@ final class RemoteClient {
             threads[threadID]?.turn = state
         case .threadRemoved(let id):
             threads[id]?.isRemoved = true
+        case .notify(let notification):
+            onNotify?(notification)
+        case .clearNotifications(let threadID):
+            onClearNotifications?(threadID)
         case .revoked:
             if let mac {
                 saved.deleteToken(for: mac.serverID)
@@ -442,6 +464,30 @@ final class RemoteClient {
     private func apply(_ workspace: RemoteWorkspace) {
         self.workspace = workspace
         for thread in workspace.threads { threads[thread.id]?.summary = thread }
+    }
+
+    // MARK: Presence
+
+    /// Tells the Mac whether the app is in front, what it shows and how long since it was touched, so the Mac sends
+    /// alerts where the user is. Returns the request, for a caller that must wait for it (going to the background).
+    @discardableResult
+    func sendPresence() -> Task<Void, Never>? {
+        guard isConnected, !macIgnoresPresence, let presence = presenceSource?() else { return nil }
+        lastPresenceSentAt = Date()
+        return Task {
+            do {
+                try await request(.presence(presence), timeout: .seconds(10))
+            } catch let error as RemoteError where error.code == .unsupported {
+                macIgnoresPresence = true
+            } catch {}
+        }
+    }
+
+    /// The user touched the app: the Mac hears about it soon, so it knows which device was used last.
+    func noteInteraction() {
+        lastInteraction = Date()
+        if let sent = lastPresenceSentAt, Date().timeIntervalSince(sent) < 15 { return }
+        sendPresence()
     }
 
     // MARK: Workspace and threads

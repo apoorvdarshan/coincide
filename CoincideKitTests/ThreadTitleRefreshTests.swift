@@ -4,6 +4,7 @@ import Testing
 @testable import CoincideKit
 
 /// The agent looks at a thread's title again after its first reply and its fifth turn, never once the user named it.
+/// Threads from before refreshes join in at their next completed turn; imports and forks keep their titles.
 @MainActor
 struct ThreadTitleRefreshTests {
     private let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-titles-\(UUID().uuidString)")
@@ -76,9 +77,65 @@ struct ThreadTitleRefreshTests {
         // Never more than two: one that missed its first look gets only the later one.
         #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 5, refreshes: [])) == .fifthTurn)
         #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 9, refreshes: [.fifthTurn])) == nil)
-        // Threads from before refreshes, imports and forks keep their titles.
-        #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 1, refreshes: nil)) == nil)
-        #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 5, refreshes: nil)) == nil)
+    }
+
+    @Test func threadsFromBeforeRefreshesGetTheLooksTheyHaveNotHadAtTheirNextTurn() {
+        // Short of five turns, the first look comes at the next completed turn, and the later one at the fifth.
+        #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 1, refreshes: nil)) == .firstReply)
+        #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 3, refreshes: nil)) == .firstReply)
+        // Past the fifth turn only the later look is left, once.
+        #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 5, refreshes: nil)) == .fifthTurn)
+        #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 40, refreshes: nil)) == .fifthTurn)
+        // Still never one the user named or archived.
+        var named = makeThread(userTurns: 8, refreshes: nil)
+        named.titledByUser = true
+        #expect(ThreadTitles.dueRefresh(for: named) == nil)
+        var archived = makeThread(userTurns: 8, refreshes: nil)
+        archived.isArchived = true
+        #expect(ThreadTitles.dueRefresh(for: archived) == nil)
+    }
+
+    @Test func importsAndForksKeepTheTitlesTheyCameWith() {
+        var imported = makeThread(userTurns: 1, refreshes: nil)
+        imported.importedSession = ImportedSession(provider: .claude, sessionID: "s", sourcePath: "/tmp/s.jsonl")
+        #expect(ThreadTitles.dueRefresh(for: imported) == nil)
+        imported.items += makeThread(userTurns: 5, refreshes: nil).items
+        #expect(ThreadTitles.dueRefresh(for: imported) == nil)
+        #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 1, refreshes: nil), isFork: true) == nil)
+        #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 6, refreshes: nil), isFork: true) == nil)
+    }
+
+    @Test func anOldThreadIsLookedAtWhenItsNextTurnCompletesAndAForkIsNot() throws {
+        let registry = ProviderRegistry(store: store, providers: [ScriptedProvider(kind: .claude)])
+        let selection = ModelSelection(provider: .claude, modelID: "m")
+        let old = store.createThread(in: projectID, selection: selection).id
+        for turn in 0..<3 {
+            store.append(TranscriptItem(kind: .user, text: "message \(turn)"), to: old)
+            store.append(TranscriptItem(kind: .assistant, text: "reply \(turn)"), to: old)
+        }
+        #expect(store.thread(old)?.titleRefreshes == nil)
+        // Loading the store looks at nothing: only a completed turn asks.
+        store.flush()
+        let reloaded = AppStore(directory: directory)
+        #expect(reloaded.thread(old)?.items.count == 6)
+        #expect(reloaded.thread(old)?.titleRefreshes == nil)
+
+        #expect(ThreadTitles.refreshIfDue(threadID: old, store: store, registry: registry) == .firstReply)
+        #expect(store.thread(old)?.titleRefreshes == [.firstReply])
+        #expect(ThreadTitles.refreshIfDue(threadID: old, store: store, registry: registry) == nil)
+        for turn in 3..<5 {
+            store.append(TranscriptItem(kind: .user, text: "message \(turn)"), to: old)
+            store.append(TranscriptItem(kind: .assistant, text: "reply \(turn)"), to: old)
+        }
+        #expect(ThreadTitles.refreshIfDue(threadID: old, store: store, registry: registry) == .fifthTurn)
+        #expect(store.thread(old)?.titleRefreshes == [.firstReply, .fifthTurn])
+        #expect(ThreadTitles.refreshIfDue(threadID: old, store: store, registry: registry) == nil)
+
+        // A fork carries its parent's messages and title, and keeps that title.
+        let fork = try #require(store.forkThread(old)).thread.id
+        #expect(store.thread(fork)?.titleRefreshes == nil)
+        #expect(ThreadTitles.refreshIfDue(threadID: fork, store: store, registry: registry) == nil)
+        #expect(store.thread(fork)?.titleRefreshes == nil)
     }
 
     @Test func messagesSteeredIntoATurnDoNotCountAsTurns() {
@@ -92,6 +149,8 @@ struct ThreadTitleRefreshTests {
         named.titledByUser = true
         #expect(ThreadTitles.dueRefresh(for: named) == nil)
         named.items += makeThread(userTurns: 4, refreshes: nil).items
+        #expect(ThreadTitles.dueRefresh(for: named) == nil)
+        named.titleRefreshes = nil
         #expect(ThreadTitles.dueRefresh(for: named) == nil)
         var archived = makeThread(userTurns: 1, refreshes: [])
         archived.isArchived = true
@@ -294,4 +353,11 @@ struct ThreadTitleRefreshTests {
 @MainActor
 private final class PromptRecorder {
     var prompts: [String] = []
+}
+
+private extension ThreadTitles {
+    /// A thread that is not a fork.
+    static func dueRefresh(for thread: ChatThread) -> TitleRefresh? {
+        dueRefresh(for: thread, isFork: false)
+    }
 }

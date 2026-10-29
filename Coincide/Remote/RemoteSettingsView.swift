@@ -7,6 +7,7 @@ import SwiftUI
 /// Settings › General › Remote: lets Coincide Remote on iPhone and iPad connect, pairs devices, and lists them.
 struct RemoteSettingsRows: View {
     @State private var server = RemoteServer.shared
+    @State private var cloud = CloudKitAlertPusher.shared
     @State private var showsPairing = false
     @State private var confirmingReset = false
     @State private var revoking: RemoteDevice?
@@ -59,6 +60,7 @@ struct RemoteSettingsRows: View {
                                 Text(device.name)
                             }
                             Text(deviceDetail(device))
+                            Text(alertDetail(device))
                         }
                         .accessibilityElement(children: .combine)
                     }
@@ -136,6 +138,13 @@ struct RemoteSettingsRows: View {
         case .tailscaleName: String(localized: "MagicDNS")
         case .manual, .unknown: ""
         }
+    }
+
+    /// The phone's "Notify this iPhone when it's locked" setting, which needs iCloud on both devices.
+    private func alertDetail(_ device: RemoteDevice) -> String {
+        guard server.alertTargets[device.id] != nil else { return String(localized: "Lock-screen alerts off") }
+        return cloud.isAvailable
+            ? String(localized: "Lock-screen alerts on") : String(localized: "Lock-screen alerts need iCloud on this Mac")
     }
 
     private func deviceDetail(_ device: RemoteDevice) -> String {

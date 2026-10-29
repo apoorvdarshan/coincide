@@ -36,7 +36,7 @@ T3 Code is an Electron app with a Node server behind a web UI. Coincide is built
 - **Usage dashboard** in Settings, with provider account limits, activity charts and local history of the latest 10,000 finished turns. Provider token snapshots and reported session costs are shown with their scope; they are not added together as billing totals.
 - **Custom keyboard shortcuts** for every menu command, with conflict warnings.
 - Fast with long histories: thread lists load from a small index and transcripts load only when opened.
-- Notifications when a turn finishes or needs you while Coincide is in the background.
+- Notifications when a turn finishes or needs you while Coincide is in the background. With Coincide Remote in use and the Mac idle, they go to the iPhone or iPad instead, never to both, and seeing a thread anywhere clears them everywhere. Optional lock-screen alerts reach a locked phone through your own iCloud account, in Mac builds signed for iCloud (see `Signing.xcconfig`).
 - **19 languages:** English, Chinese (Simplified and Traditional), Dutch, French, German, Hindi, Indonesian, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Spanish (Spain and Latin America), Turkish, Ukrainian and Vietnamese. The translations are machine-made and marked for review; corrections are welcome.
 
 ### Import earlier CLI conversations

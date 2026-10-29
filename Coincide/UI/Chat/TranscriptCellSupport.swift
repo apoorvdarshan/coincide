@@ -23,7 +23,8 @@ protocol TranscriptHost: AnyObject {
     func showDiff(turnID: UUID, path: String?)
     func openLink(_ link: Any) -> Bool
     func previewAttachments(_ paths: [String], selected: Int)
-    /// Attaches text selected in an agent's reply or plan to the composer's message, as a quote.
+    /// Attaches text selected in an agent's reply or plan, or in a message of the user's, to the composer's message,
+    /// as a quote (Reply).
     func quote(_ text: String, from itemID: UUID)
     /// Shows the whole of context attached to a message of the user's, beside its pill.
     func openContext(_ context: MessageContext, from anchor: NSView)
