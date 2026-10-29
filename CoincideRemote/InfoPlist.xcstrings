@@ -1,0 +1,363 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NSCameraUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote verwendet die Kamera, um den Kopplungscode zu scannen, den dein Mac anzeigt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincide Remote uses the camera to scan the pairing code your Mac shows."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote usa la cámara para escanear el código de enlace que muestra tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote usa la cámara para escanear el código de enlace que muestra tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote utilise l'appareil photo pour scanner le code de jumelage affiché par votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote आपके Mac पर दिख रहा पेयरिंग कोड स्कैन करने के लिए कैमरे का इस्तेमाल करता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote menggunakan kamera untuk memindai kode pemasangan yang ditampilkan Mac Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote usa la fotocamera per scansionare il codice di abbinamento mostrato dal Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remoteは、Macに表示されたペアリングコードをスキャンするためにカメラを使用します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote는 Mac에 표시된 페어링 코드를 스캔하기 위해 카메라를 사용합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote gebruikt de camera om de koppelcode te scannen die je Mac toont."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote używa aparatu do skanowania kodu parowania wyświetlanego na Macu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide Remote usa a câmera para escanear o código de emparelhamento exibido no seu Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote использует камеру, чтобы сканировать код привязки, показанный на Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote, Mac'inizin gösterdiği eşleştirme kodunu taramak için kamerayı kullanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote використовує камеру, щоб сканувати код прив’язки, який показує ваш Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote dùng camera để quét mã ghép đôi mà máy Mac của bạn hiển thị."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote 使用相机扫描 Mac 显示的配对码。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote 會使用相機掃描 Mac 顯示的配對碼。"
+          }
+        }
+      }
+    },
+    "NSLocalNetworkUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote findet Coincide auf deinen Macs im lokalen Netzwerk und verbindet sich damit."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincide Remote finds and connects to Coincide on your Macs over the local network."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote encuentra Coincide en tus Macs y se conecta a él a través de la red local."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote encuentra Coincide en tus Macs y se conecta a él a través de la red local."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote trouve Coincide sur vos Mac et s'y connecte via le réseau local."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote स्थानीय नेटवर्क पर आपके Mac में Coincide को ढूँढता है और उससे कनेक्ट करता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote menemukan dan terhubung ke Coincide di Mac Anda melalui jaringan lokal."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote trova Coincide sui tuoi Mac e si connette tramite la rete locale."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remoteは、ローカルネットワーク経由でMac上のCoincideを見つけて接続します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote는 로컬 네트워크에서 Mac의 Coincide를 찾아 연결합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote vindt Coincide op je Macs via het lokale netwerk en maakt er verbinding mee."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote wyszukuje Coincide na Twoich Makach i łączy się z nim przez sieć lokalną."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide Remote encontra o Coincide nos seus Macs e se conecta a ele pela rede local."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote находит Coincide на ваших компьютерах Mac и подключается к нему через локальную сеть."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote, Mac'lerinizdeki Coincide'ı yerel ağ üzerinden bulur ve ona bağlanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote знаходить Coincide на ваших комп’ютерах Mac і підключається до нього через локальну мережу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote tìm và kết nối với Coincide trên các máy Mac của bạn qua mạng cục bộ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote 通过本地网络查找并连接你 Mac 上的 Coincide。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote 會透過區域網路尋找並連線至你 Mac 上的 Coincide。"
+          }
+        }
+      }
+    },
+    "NSPhotoLibraryUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote hängt die Fotos, die du auswählst, an deine Nachrichten an."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincide Remote attaches the photos you pick to your messages."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote adjunta a tus mensajes las fotos que elijas."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote adjunta a tus mensajes las fotos que elijas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote joint à vos messages les photos que vous choisissez."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote आपके चुने हुए फ़ोटो आपके संदेशों में अटैच करता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote melampirkan foto yang Anda pilih ke pesan Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote allega ai tuoi messaggi le foto che scegli."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remoteは、選択した写真をメッセージに添付します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote는 선택한 사진을 메시지에 첨부합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote voegt de foto's die je kiest toe aan je berichten."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote dołącza wybrane przez Ciebie zdjęcia do Twoich wiadomości."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide Remote anexa às suas mensagens as fotos que você escolher."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote прикрепляет выбранные вами фото к сообщениям."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote, seçtiğiniz fotoğrafları mesajlarınıza ekler."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote прикріплює вибрані вами фото до повідомлень."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote đính kèm những ảnh bạn chọn vào tin nhắn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote 会将你选择的照片附加到消息中。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote 會將你選擇的照片附加到訊息中。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

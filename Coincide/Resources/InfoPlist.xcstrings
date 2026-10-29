@@ -1,0 +1,125 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NSLocalNetworkUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide ermöglicht Coincide Remote auf deinem iPhone oder iPad, sich über das lokale Netzwerk zu verbinden."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincide lets Coincide Remote on your iPhone or iPad connect over the local network."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide permite que Coincide Remote se conecte desde tu iPhone o iPad a través de la red local."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide permite que Coincide Remote se conecte desde tu iPhone o iPad a través de la red local."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide permet à Coincide Remote sur votre iPhone ou iPad de se connecter via le réseau local."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide आपके iPhone या iPad पर Coincide Remote को स्थानीय नेटवर्क से कनेक्ट करने देता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide memungkinkan Coincide Remote di iPhone atau iPad Anda terhubung melalui jaringan lokal."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide consente a Coincide Remote su iPhone o iPad di connettersi tramite la rete locale."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideは、iPhoneまたはiPadのCoincide Remoteがローカルネットワーク経由で接続できるようにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide는 iPhone 또는 iPad의 Coincide Remote가 로컬 네트워크를 통해 연결할 수 있도록 합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide laat Coincide Remote op je iPhone of iPad verbinding maken via het lokale netwerk."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide pozwala Coincide Remote na iPhonie lub iPadzie łączyć się przez sieć lokalną."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide permite que o Coincide Remote no seu iPhone ou iPad se conecte pela rede local."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide позволяет Coincide Remote на iPhone или iPad подключаться через локальную сеть."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide, iPhone veya iPad'inizdeki Coincide Remote'un yerel ağ üzerinden bağlanmasını sağlar."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide дозволяє Coincide Remote на iPhone або iPad підключатися через локальну мережу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide cho phép Coincide Remote trên iPhone hoặc iPad của bạn kết nối qua mạng cục bộ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 让你 iPhone 或 iPad 上的 Coincide Remote 能够通过本地网络进行连接。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 讓你 iPhone 或 iPad 上的 Coincide Remote 能透過區域網路連線。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

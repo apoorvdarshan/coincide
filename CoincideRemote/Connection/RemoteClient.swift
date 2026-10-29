@@ -222,7 +222,7 @@ final class RemoteClient {
             do {
                 let result = try await request(
                     .hello(RemoteHello(deviceID: mac.deviceID, token: token, appVersion: Self.appVersion)), timeout: .seconds(8))
-                guard case .server(let info) = result else { throw RemoteError(.failed, "Unexpected reply.") }
+                guard case .server(let info) = result else { throw RemoteError(.failed, String(localized: "Unexpected reply.")) }
                 server = info
                 var updated = mac
                 updated.lastHost = host
@@ -343,7 +343,7 @@ final class RemoteClient {
             do {
                 let result = try await request(
                     .pair(RemotePairRequest(secret: payload.secret, deviceName: UIDevice.current.name)), timeout: .seconds(10))
-                guard case .paired(let paired) = result else { throw RemoteError(.failed, "Unexpected reply.") }
+                guard case .paired(let paired) = result else { throw RemoteError(.failed, String(localized: "Unexpected reply.")) }
                 saved.setToken(paired.token, for: payload.serverID)
                 let mac = SavedMac(
                     serverID: payload.serverID, name: paired.server.name, hosts: payload.hosts, port: payload.port,

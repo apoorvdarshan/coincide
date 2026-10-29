@@ -68,7 +68,7 @@ struct ComposerView: View {
     private var placeholder: String {
         model.turn.isRunning
             ? (client.server?.followUpBehavior == "queue" ? String(localized: "Queue a follow-up") : String(localized: "Steer the agent"))
-            : String(localized: "Ask \(summary.map { AgentLogo.name($0.selection.provider) } ?? "the agent")")
+            : summary.map { String(localized: "Ask \(AgentLogo.name($0.selection.provider))") } ?? String(localized: "Ask the agent")
     }
 
     @ViewBuilder private var sendButton: some View {
@@ -233,14 +233,14 @@ struct ComposerControls: View {
         if let efforts = currentModel?.efforts, !efforts.isEmpty {
             Menu {
                 Picker("Effort", selection: setting(thread.selection.effort ?? "") { RemoteThreadSettings(threadID: thread.id, effort: $0) }) {
-                    ForEach(efforts, id: \.self) { Text($0.capitalized).tag($0) }
+                    ForEach(efforts, id: \.self) { Text(Self.effortTitle($0)).tag($0) }
                 }
             } label: {
-                Label((thread.selection.effort ?? currentModel?.defaultEffort ?? "").capitalized, systemImage: "gauge.with.dots.needle.50percent")
+                Label(Self.effortTitle(thread.selection.effort ?? currentModel?.defaultEffort ?? ""), systemImage: "gauge.with.dots.needle.50percent")
                     .font(.callout)
             }
             .buttonStyle(.glass)
-            .accessibilityLabel(Text("Effort: \(thread.selection.effort ?? "")"))
+            .accessibilityLabel(Text("Effort: \(Self.effortTitle(thread.selection.effort ?? currentModel?.defaultEffort ?? ""))"))
         }
 
         if let speeds = currentModel?.speeds, !speeds.isEmpty {
@@ -281,8 +281,23 @@ struct ComposerControls: View {
         }
         .buttonStyle(.glass)
         .tint(thread.interactionMode == "plan" ? theme.accent : nil)
-        .accessibilityLabel(Text("Mode: \(thread.interactionMode == "plan" ? "Plan" : "Build")"))
+        .accessibilityLabel(Text("Mode: \(thread.interactionMode == "plan" ? String(localized: "Plan") : String(localized: "Build"))"))
         .accessibilityHint(Text("Switches between building and planning"))
+    }
+
+    /// An effort level as the Mac's composer names it (`ComposerMenus.effortTitle`), in the phone's language.
+    static func effortTitle(_ effort: String) -> String {
+        switch effort.lowercased() {
+        case "none", "off": String(localized: "Off")
+        case "auto": String(localized: "Auto")
+        case "minimal": String(localized: "Minimal")
+        case "low": String(localized: "Low")
+        case "medium": String(localized: "Medium")
+        case "high": String(localized: "High")
+        case "xhigh", "extra-high", "extra_high": String(localized: "Extra High")
+        case "max", "maximum": String(localized: "Max")
+        default: effort.prefix(1).uppercased() + effort.dropFirst()
+        }
     }
 
     @ViewBuilder
