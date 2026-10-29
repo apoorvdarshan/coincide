@@ -2,20 +2,48 @@ import AppKit
 import CoincideKit
 import WebKit
 
-/// Each thread owns a WebKit session with ephemeral storage; switching panels never retargets an agent's commands.
+/// Each thread owns a browser: its own WebKit view with its page and back/forward history, over the shared profile or
+/// a private store (`BrowserProfile`). Switching panels never retargets an agent's commands. A browser not shown in the
+/// panel stays alive offscreen (`PreviewParking`), so agents can use it headless.
 final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     let webView: WKWebView
+    /// Whether the session uses temporary storage of its own rather than the shared profile.
+    let isPrivate: Bool
+    /// The agent's open "your turn" request, shown as a banner in the panel.
+    let userTurn = UserTurnGate()
+    /// An agent's request to sign in with a saved login, waiting on the user.
+    let loginApproval = LoginApprovalGate()
+    /// A sign-in the user just submitted, which the panel offers to save. Held in memory only until answered.
+    var savePrompt: SavePrompt? { didSet { onChange?() } }
+    /// Called with the page, username and password when the user submits a sign-in form.
+    var onLoginSubmitted: ((URL, String, String) -> Void)?
+    /// When an agent last sent this browser a command, for the panel's footer.
+    var lastAgentUse: Date?
+    /// When the session was last shown or used, so the least recently used one can be closed first.
+    var lastUse = Date()
     var onChange: (() -> Void)?
-    var onNavigate: ((URL) -> Void)?
+    var onNavigate: ((URL, String?) -> Void)?
     private(set) var error: String?
     private var observations: [NSKeyValueObservation] = []
 
-    override init() {
+    convenience override init() {
+        self.init(dataStore: .nonPersistent(), isPrivate: true)
+    }
+
+    init(dataStore: WKWebsiteDataStore, isPrivate: Bool) {
+        self.isPrivate = isPrivate
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
+        configuration.websiteDataStore = dataStore
         configuration.mediaTypesRequiringUserActionForPlayback = .all
+        // Notices sign-ins the user submits, to offer saving them. It runs in Coincide's own script world, which the
+        // page can't see or call.
+        let loginWatcher = LoginSubmitHandler()
+        configuration.userContentController.addUserScript(
+            WKUserScript(source: Self.loginWatcherScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        configuration.userContentController.add(loginWatcher, contentWorld: .defaultClient, name: LoginSubmitHandler.name)
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
         super.init()
+        loginWatcher.session = self
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
@@ -27,6 +55,17 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         observations.append(webView.observe(\.url, options: [.new]) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.onChange?() }
         })
+        userTurn.onChange = { [weak self] in self?.onChange?() }
+        loginApproval.onChange = { [weak self] in self?.onChange?() }
+    }
+
+    /// Ends the session: stops loading and lets an agent waiting on the user go.
+    func close() {
+        userTurn.finish(.cancelled)
+        loginApproval.answer(.deny)
+        savePrompt = nil
+        webView.stopLoading()
+        webView.removeFromSuperview()
     }
 
     func navigate(_ address: String) throws {
@@ -37,7 +76,13 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func perform(_ command: PreviewCommand, directory: URL) async throws -> JSONValue {
+        lastAgentUse = Date()
+        lastUse = Date()
+        defer { onChange?() }
         switch command {
+        case .show, .askUser, .fillLogin:
+            // The panel's commands; `PreviewSessions` answers them.
+            throw PreviewError.invalidCommand
         case .navigate(let url):
             try navigate(url.absoluteString)
             return ["loading": true, "url": .string(url.absoluteString)]
@@ -53,9 +98,13 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
             return try await script(Self.inputScript, arguments: ["selector": selector, "text": text])
         case .screenshot:
             let configuration = WKSnapshotConfiguration()
+            if webView.superview == nil { PreviewParking.shared.park(webView) }
+            // Codes Coincide typed into ordinary fields are drawn as dots in the picture, like passwords.
+            _ = try? await webView.callAsyncJavaScript(Self.maskScript, arguments: ["mask": true], in: nil, contentWorld: .defaultClient)
+            defer { Task { _ = try? await webView.callAsyncJavaScript(Self.maskScript, arguments: ["mask": false], in: nil, contentWorld: .defaultClient) } }
             let scale = webView.window?.backingScaleFactor ?? 2
             configuration.snapshotWidth = min(1600 / scale, webView.bounds.width) as NSNumber
-            let image = try await webView.takeSnapshot(configuration: configuration)
+            let image = try await PreviewParking.shared.rendering(webView) { try await webView.takeSnapshot(configuration: configuration) }
             guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
                 let png = bitmap.representation(using: .png, properties: [:]) else { throw PreviewError.unavailable }
             // A fixed path bounds disk usage; no path supplied by the caller is accepted.
@@ -80,7 +129,7 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if let url = webView.url { onNavigate?(url) }
+        if let url = webView.url { onNavigate?(url, webView.title) }
         onChange?()
     }
 
@@ -138,7 +187,8 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
             .filter(el => el.getClientRects().length).slice(0, 200).map(el => ({
                 selector: selectorFor(el).slice(0, 4096), tag: el.tagName.toLowerCase(), type: el.type || '',
                 label: (el.getAttribute('aria-label') || el.innerText || el.getAttribute('placeholder') || '').slice(0, 300),
-                value: el.type === 'password' || el.type === 'file' ? '' : String(el.value || '').slice(0, 1000),
+                value: el.type === 'password' || el.type === 'file' || el.autocomplete === 'one-time-code'
+                    || (window.__coincideSecretFields && window.__coincideSecretFields.has(el)) ? '' : String(el.value || '').slice(0, 1000),
                 disabled: !!el.disabled
             }));
         return {url: location.href.slice(0, 8192), title: document.title.slice(0, 1000), text: (document.body?.innerText || '').slice(0, 30000), elements};

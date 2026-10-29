@@ -7,6 +7,23 @@ public enum PreviewCommand: Sendable, Equatable {
     case click(String)
     case input(selector: String, text: String)
     case screenshot
+    /// Opens the browser panel on this thread so the user can see the page.
+    case show
+    /// Shows the user a short "your turn" message with a Done button and waits for them, up to `timeout` seconds.
+    case askUser(message: String, timeout: TimeInterval)
+    /// Has Coincide sign in on the current page with a saved login (optionally named by `item`), after the user allows
+    /// it. Coincide types the secrets itself; the reply carries the username at most.
+    case fillLogin(item: String?)
+
+    /// How long the app lets the command run before answering with an error.
+    public var timeout: TimeInterval {
+        switch self {
+        case .askUser(_, let timeout): return timeout + 5
+        // The user's approval, then the password manager (which may ask for Touch ID).
+        case .fillLogin: return LoginApprovalGate.timeout + 90
+        default: return 30
+        }
+    }
 
     public init(json: JSONValue) throws {
         switch json["action"]?.string {
@@ -21,6 +38,16 @@ public enum PreviewCommand: Sendable, Equatable {
             guard let text = json["text"]?.string, text.utf8.count <= 65_536 else { throw PreviewError.invalidCommand }
             self = .input(selector: try Self.selector(json), text: text)
         case "screenshot": self = .screenshot
+        case "show": self = .show
+        case "fill-login":
+            let item = json["item"]?.string
+            guard (item?.utf8.count ?? 0) <= 200 else { throw PreviewError.invalidCommand }
+            self = .fillLogin(item: item)
+        case "ask-user":
+            guard let message = json["message"]?.string, message.utf8.count <= 4096 else { throw PreviewError.invalidCommand }
+            let timeout = json["timeout"]?.number ?? UserTurnGate.defaultTimeout
+            guard timeout.isFinite, timeout >= 1, timeout <= UserTurnGate.maximumTimeout else { throw PreviewError.invalidCommand }
+            self = .askUser(message: message, timeout: timeout)
         default: throw PreviewError.invalidCommand
         }
     }
@@ -62,7 +89,7 @@ public enum PreviewCommand: Sendable, Equatable {
 }
 
 public enum PreviewError: LocalizedError {
-    case invalidAddress, invalidCommand, unavailable, connection
+    case invalidAddress, invalidCommand, unavailable, connection, timedOut
 
     public var errorDescription: String? {
         switch self {
@@ -70,6 +97,7 @@ public enum PreviewError: LocalizedError {
         case .invalidCommand: String(localized: "The preview command is invalid or too large.")
         case .unavailable: String(localized: "Agent control is off for this preview.")
         case .connection: String(localized: "The preview connection could not be started.")
+        case .timedOut: String(localized: "The browser didn't finish the command in time.")
         }
     }
 }

@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationController.shared.start()
         ProjectScripts.shared.start()
         ThreadSnooze.shared.start()
+        PreviewSessions.shared.connectToApp { [weak self] in self?.mainWindow }
         PreviewSessions.shared.start()
         AppUpdates.shared.start()
         // ⌘W deletes the open thread in the main window; elsewhere it still closes the window.
