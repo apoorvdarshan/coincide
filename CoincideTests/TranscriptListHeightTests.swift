@@ -39,7 +39,7 @@ final class StubTranscriptHost: TranscriptHost {
 /// what it draws, so no row draws over another.
 ///
 /// The list finishes its work (measuring rows on screen, following a width change) on the main queue after
-/// each change, so the tests wait with `Task.sleep` rather than spinning the run loop, which would not run it.
+/// each change, so the tests wait for the main queue rather than spinning the run loop, which would not run it.
 @MainActor @Suite(.serialized) struct TranscriptListHeightTests {
     private let host = StubTranscriptHost()
     private let list = TranscriptListController()
@@ -55,9 +55,14 @@ final class StubTranscriptHost: TranscriptHost {
 
     private func settle() async {
         try? await Task.sleep(for: .milliseconds(30))
-        // A window that is never ordered in gets no layout or display passes of its own.
-        window.contentView?.layoutSubtreeIfNeeded()
-        window.displayIfNeeded()
+        // The list's queued work (measuring, following a width change) queues more as it goes; let it all run, however
+        // busy the main queue is with other suites. A window that is never ordered in gets no layout or display passes
+        // of its own, so lay it out and draw it after each round.
+        for _ in 0..<8 {
+            await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+            window.contentView?.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+        }
     }
 
     private func reply(_ words: Int, seed: Int = 0) -> TranscriptRow {
