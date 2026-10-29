@@ -336,6 +336,149 @@ struct SidebarSectionTests {
         #expect(!store.canMoveThread(second.id, to: store.ensureChatsProject().id))
     }
 
+    @Test func collapsedSectionsKeepTheirHeaderHideTheirRowsAndShowWhatTheyHide() throws {
+        let folder = TemporaryDirectory("sidebar-collapse")
+        let store = AppStore.shared
+        let project = store.addProject(at: folder.url)
+        let hadChats = store.chatsProject != nil
+        let chats = store.ensureChatsProject()
+        let threadID = store.createThread(in: project.id).id
+        let otherID = store.createThread(in: project.id).id
+        let chatID = store.createThread(in: chats.id).id
+        let query = "collapseneedle" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        store.updateThread(chatID) { $0.title = query }
+        let saved = (UIState.shared.values.collapsedSections, UIState.shared.values.sidebarSections)
+        defer {
+            ThreadActivity.shared.markSeen(otherID)
+            store.deleteThread(chatID)
+            store.removeProject(project.id)
+            if !hadChats { store.removeProject(chats.id) }
+            UIState.shared.update { values in
+                values.collapsedSections = saved.0
+                values.sidebarSections = saved.1
+            }
+        }
+        UIState.shared.update { values in
+            values.collapsedSections = []
+            values.sidebarSections = []
+        }
+        let sidebar = SidebarViewController()
+        let outline = try #require(firstView(of: NSOutlineView.self, in: sidebar.view))
+        sidebar.select(threadID: threadID)
+        let section = { (kind: SidebarNode.Kind) in self.rootSections(sidebar, outline).first { $0.kind == kind } }
+        let projectsNode = try #require(section(.header))
+        let projectNode = try #require(projectsNode.children.first { $0.kind == .project(project.id) })
+        #expect(outline.row(forItem: projectNode) >= 0)
+        let headerCell = { (node: SidebarNode) in sidebar.outlineView(outline, viewFor: nil, item: node) as? SidebarHeaderCell }
+        let projectsHeader = try #require(headerCell(projectsNode))
+        #expect(projectsHeader.toggleActionName == String(localized: "Collapse Projects"))
+
+        // Collapsing Projects (VoiceOver's action, as a click on the header) keeps its header and drops its rows.
+        let collapse = try #require(projectsHeader.accessibilityCustomActions()?.first?.handler)
+        #expect(collapse())
+        #expect(UIState.shared.values.collapsedSections == ["projects"])
+        #expect(section(.header) === projectsNode)
+        #expect(projectsNode.children.isEmpty)
+        #expect(outline.row(forItem: projectsNode) >= 0)
+        #expect(outline.row(forItem: projectNode) < 0)
+        #expect(!sidebar.visibleThreadIDs.contains(threadID) && sidebar.visibleThreadIDs.contains(chatID))
+        // The project's own expansion is left as it was.
+        #expect(store.project(project.id)?.isExpanded == true)
+        let collapsedHeader = try #require(headerCell(projectsNode))
+        #expect(collapsedHeader.toggleActionName == String(localized: "Expand Projects"))
+        // An unread thread inside shows on the collapsed header (unless other tests' threads already show something
+        // more pressing in the shared store).
+        let before = collapsedHeader.accessibilityLabel()
+        ThreadActivity.shared.markUnread(otherID)
+        let after = try #require(headerCell(projectsNode)).accessibilityLabel()
+        if before == String(localized: "Projects") {
+            #expect(after == String(localized: "Projects") + ", " + String(localized: "Completed"))
+        } else {
+            #expect(after != String(localized: "Projects"))
+        }
+
+        // The state is kept for the next launch.
+        let relaunched = SidebarViewController()
+        let relaunchedOutline = try #require(firstView(of: NSOutlineView.self, in: relaunched.view))
+        #expect(rootSections(relaunched, relaunchedOutline).first { $0.kind == .header }?.children.isEmpty == true)
+
+        // A search lists every match, collapsed or not, and its headers don't collapse.
+        let search = try #require(firstView(of: NSSearchField.self, in: sidebar.view))
+        UIState.shared.update { $0.collapsedSections = ["projects", "chats"] }
+        search.stringValue = query
+        #expect(search.sendAction(search.action, to: search.target))
+        let chatsNode = try #require(section(.chats(chats.id)))
+        #expect(chatsNode.children.contains { $0.threadID == chatID })
+        #expect(try #require(headerCell(chatsNode)).toggleActionName == nil)
+        search.stringValue = ""
+        #expect(search.sendAction(search.action, to: search.target))
+        #expect(section(.chats(chats.id))?.children.isEmpty == true)
+
+        // Opening a thread of a collapsed section expands it.
+        sidebar.select(threadID: chatID)
+        #expect(UIState.shared.values.collapsedSections == ["projects"])
+        #expect(section(.chats(chats.id))?.children.contains { $0.threadID == chatID } == true)
+        #expect(outline.row(forItem: try #require(section(.chats(chats.id))?.children.first { $0.threadID == chatID })) >= 0)
+        let expand = try #require(headerCell(projectsNode)?.accessibilityCustomActions()?.first?.handler)
+        #expect(expand())
+        #expect(UIState.shared.values.collapsedSections.isEmpty)
+        #expect(projectsNode.children.contains(projectNode) && outline.row(forItem: projectNode) >= 0)
+        #expect(sidebar.visibleThreadIDs.contains(threadID))
+    }
+
+    @Test func botsFollowTheChosenSortAndDragIntoANewManualOrder() throws {
+        let store = AppStore.shared
+        let saved = (UIState.shared.values.botSort, UIState.shared.values.collapsedSections)
+        let selection = ModelSelection(provider: .claude, modelID: "default")
+        let made = ["Zeta", "Alpha", "Mid"].map { name in
+            store.addBot(Bot(name: name, avatar: BotAvatar(shape: .pebble, tint: .sage), persona: "", selection: selection))
+        }
+        let ids = made.map(\.id)
+        let conversation = try #require(store.startConversation(with: ids[2]))
+        store.append(TranscriptItem(kind: .assistant, text: "Latest"), to: conversation.id)
+        defer {
+            for id in ids { store.deleteBot(id, deletingConversations: true) }
+            UIState.shared.update { values in
+                values.botSort = saved.0
+                values.collapsedSections = saved.1
+            }
+        }
+        UIState.shared.update { $0.collapsedSections = [] }
+        func listed(_ sort: BotSort) throws -> (SidebarViewController, NSOutlineView, SidebarNode, [UUID]) {
+            UIState.shared.update { $0.botSort = sort }
+            let sidebar = SidebarViewController()
+            let outline = try #require(firstView(of: NSOutlineView.self, in: sidebar.view))
+            let bots = try #require(rootSections(sidebar, outline).first { $0.kind == .bots })
+            return (sidebar, outline, bots, bots.children.compactMap(\.botID).filter(ids.contains))
+        }
+        #expect(try listed(.manual).3 == ids)
+        #expect(try listed(.name).3 == [ids[1], ids[2], ids[0]])
+        #expect(try listed(.recentActivity).3.first == ids[2])
+
+        // Sorted by name, there's no order of the user's to drag into.
+        let (named, namedOutline, namedBots, _) = try listed(.name)
+        let row = try #require(namedBots.children.first { $0.botID == ids[1] })
+        let writer = try #require(named.outlineView(namedOutline, pasteboardWriterForItem: row) as? NSPasteboardItem)
+        #expect(writer.string(forType: .coincideBot) == ids[1].uuidString)
+        let namedDrag = FakeDrag(source: namedOutline, ids: [], bot: ids[1])
+        #expect(named.outlineView(namedOutline, validateDrop: namedDrag, proposedItem: namedBots, proposedChildIndex: 0) == [])
+
+        // By hand, dropping Mid before Zeta moves it there, in bots.json's order too.
+        let (sidebar, outline, bots, _) = try listed(.manual)
+        let drag = FakeDrag(source: outline, ids: [], bot: ids[2])
+        let zeta = try #require(bots.children.firstIndex { $0.botID == ids[0] })
+        #expect(sidebar.outlineView(outline, validateDrop: drag, proposedItem: bots, proposedChildIndex: zeta) == .move)
+        // Dropped on Zeta's row, it goes before Zeta too; elsewhere, nowhere.
+        #expect(sidebar.outlineView(outline, validateDrop: drag, proposedItem: bots.children[zeta], proposedChildIndex: -1) == .move)
+        #expect(sidebar.outlineView(outline, validateDrop: drag, proposedItem: nil, proposedChildIndex: 0) == [])
+        #expect(sidebar.outlineView(outline, acceptDrop: drag, item: bots, childIndex: zeta))
+        #expect(store.bots.map(\.id).filter(ids.contains) == [ids[2], ids[0], ids[1]])
+        #expect(bots.children.compactMap(\.botID).filter(ids.contains) == [ids[2], ids[0], ids[1]])
+        // To the end.
+        #expect(sidebar.outlineView(outline, acceptDrop: drag, item: bots, childIndex: bots.children.count))
+        #expect(store.bots.map(\.id).filter(ids.contains) == [ids[0], ids[1], ids[2]])
+    }
+
     private func rootSections(_ sidebar: SidebarViewController, _ outline: NSOutlineView) -> [SidebarNode] {
         (0..<sidebar.outlineView(outline, numberOfChildrenOfItem: nil)).compactMap {
             sidebar.outlineView(outline, child: $0, ofItem: nil) as? SidebarNode
@@ -351,12 +494,12 @@ struct SidebarSectionTests {
     }
 }
 
-/// A drag from the sidebar itself, carrying threads, a project or a section, for its drop validation.
+/// A drag from the sidebar itself, carrying threads, a project, a section or a bot, for its drop validation.
 private final class FakeDrag: NSObject, NSDraggingInfo {
     let draggingSource: Any?
     let draggingPasteboard = NSPasteboard(name: NSPasteboard.Name("coincide-tests-\(UUID().uuidString)"))
 
-    init(source: NSOutlineView, ids: [UUID], project: UUID? = nil, section: SidebarSection? = nil) {
+    init(source: NSOutlineView, ids: [UUID], project: UUID? = nil, section: SidebarSection? = nil, bot: UUID? = nil) {
         draggingSource = source
         super.init()
         draggingPasteboard.clearContents()
@@ -373,6 +516,11 @@ private final class FakeDrag: NSObject, NSDraggingInfo {
         if let section {
             let item = NSPasteboardItem()
             item.setString(section.rawValue, forType: .coincideSection)
+            items.append(item)
+        }
+        if let bot {
+            let item = NSPasteboardItem()
+            item.setString(bot.uuidString, forType: .coincideBot)
             items.append(item)
         }
         draggingPasteboard.writeObjects(items)
