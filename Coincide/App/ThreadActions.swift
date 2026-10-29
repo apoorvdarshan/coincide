@@ -72,6 +72,31 @@ enum ThreadActions {
         store.updateThread(threadID) { $0.isPinned.toggle() }
     }
 
+    /// Why the thread can't move to another project now, or nil when it can. A running agent works in the old folder,
+    /// so it is stopped (or allowed to finish) first.
+    static func moveBlocker(_ threadID: UUID) -> String? {
+        guard let thread = store.summary(threadID) else { return nil }
+        if thread.worktreePath != nil { return String(localized: "Threads in a worktree stay with their project") }
+        let runner = ThreadRunner.shared
+        if runner.isRunning(threadID) || !runner.backgroundTasks(threadID).isEmpty {
+            return String(localized: "Stop the running agent first")
+        }
+        return nil
+    }
+
+    static func canMove(_ threadIDs: [UUID], to projectID: UUID) -> Bool {
+        !threadIDs.isEmpty && threadIDs.allSatisfy { moveBlocker($0) == nil && store.canMoveThread($0, to: projectID) }
+    }
+
+    /// Moves threads to another project or to Chats, undoably. Their next turns start new agent sessions there.
+    static func move(_ threadIDs: [UUID], to projectID: UUID) {
+        let movable = threadIDs.filter { moveBlocker($0) == nil }
+        guard !ThreadInbox.shared.move(movable, to: projectID).isEmpty else { return }
+        if store.project(projectID)?.isExpanded == false {
+            store.updateProject(projectID) { $0.isExpanded = true }
+        }
+    }
+
     /// Archiving a running thread is not allowed, as in T3; stop it first.
     static func canArchive(_ threadID: UUID) -> Bool {
         store.summary(threadID)?.isArchived == true || !ThreadRunner.shared.isRunning(threadID)
