@@ -10,7 +10,9 @@ import WebKit
         let fixture = try await PreviewFixture.start()
         defer { fixture.stop() }
         let session = PreviewSession()
-        let window = NSWindow(contentRect: NSRect(x: -5000, y: -5000, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        // Headless: far off every screen and fully transparent, never activated.
+        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.alphaValue = 0
         window.contentView = session.webView
         window.orderBack(nil)
         defer { window.orderOut(nil) }

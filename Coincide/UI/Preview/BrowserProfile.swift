@@ -93,6 +93,7 @@ final class PreviewParking {
         window.collectionBehavior = [.transient, .ignoresCycle, .stationary, .fullScreenNone]
         window.ignoresMouseEvents = true
         window.hasShadow = false
+        window.alphaValue = 0
         window.contentView = NSView(frame: NSRect(origin: .zero, size: Self.defaultSize))
         return window
     }()
