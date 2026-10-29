@@ -101,9 +101,13 @@ final class UsageDashboardModel {
         set { store.updateSettings { $0.menuBarSecondaryUsage = newValue } }
     }
 
+    /// Coincide's turns with each Anthropic API-key account over the last 30 days, by `UsageReport.accountKey`.
+    private(set) var tracked: [String: UsageReport] = [:]
+
     func reload() {
         now = Date()
         accounts = insights.accountLimits(now: now)
+        tracked = UsageRow.trackedReports(accounts, events: insights.events, now: now)
         records = insights.records
         isScanning = insights.isScanning
         isCheckingLimits = insights.isCheckingLimits
@@ -360,7 +364,10 @@ struct UsageSettingsView: View {
         }
         ForEach(accounts) { account in
             Section {
-                UsageAccountLimitsView(account: account, settings: model.settings, mode: model.displayMode, now: model.now)
+                UsageAccountLimitsView(
+                    account: account, settings: model.settings, mode: model.displayMode, now: model.now,
+                    tracked: model.tracked[UsageReport.accountKey(account.provider, account.account.id)],
+                    adminReport: model.insights.adminReport(for: account.account))
                 UsageAccountTotalsRow(
                     account: account, totals: model.report.accounts[UsageReport.accountKey(account.provider, account.account.id)],
                     periodName: periodName)
@@ -492,6 +499,10 @@ private struct UsageAccountLimitsView: View {
     let settings: AppSettings
     let mode: UsageDisplayMode
     let now: Date
+    /// Coincide's own turns with the account, for an API key with no balance to show.
+    var tracked: UsageReport?
+    /// The organization's reports, for an Anthropic key with an Admin API key.
+    var adminReport: AnthropicAdminUsage.Report?
 
     var body: some View {
         if let limits = account.limits, !limits.windows.isEmpty || !limits.modelWindows.isEmpty || limits.credits != nil
@@ -505,9 +516,15 @@ private struct UsageAccountLimitsView: View {
                     .font(.caption)
                     .foregroundStyle(Color(nsColor: warning.blocksWork ? Theme.failure : Theme.warning))
             }
-        } else {
+        } else if tracked == nil {
             Text(UsageFormat.unavailable(account, settings: settings))
                 .foregroundStyle(.secondary)
+        }
+        if let adminReport, !adminReport.models.isEmpty {
+            AnthropicAdminModelsView(report: adminReport)
+        }
+        if let tracked {
+            UsageTrackedRows(report: tracked)
         }
         ForEach(account.limits?.notes ?? [], id: \.self) { note in
             Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

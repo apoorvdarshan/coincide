@@ -213,6 +213,48 @@ struct UsageRowTests {
         #expect(UsageStatusItem.image(for: readings, mode: .remaining).size.width > usedImage.size.width)
     }
 
+    // MARK: Anthropic API keys
+
+    @Test func anAPIKeyCardShowsItsOwnTurnsByPeriodOrSaysThereAreNone() throws {
+        var key = ProviderAccount(id: "key", provider: .claude, name: "API", auth: .apiKey)
+        key.apiKeyVariable = "ANTHROPIC_API_KEY"
+        let card = UsageInsights.AccountLimits(
+            provider: .claude, account: key, showsAccountName: true, status: ProviderStatus(state: .ready), limits: nil)
+        let login = UsageInsights.AccountLimits(
+            provider: .claude, account: .defaultAccount(for: .claude), showsAccountName: true, status: ProviderStatus(state: .ready),
+            limits: nil)
+        let tokens = TokenTotals(input: 1_000, cacheRead: 4_000, cacheWrite: 500, output: 2_000)
+        let events = [
+            UsageEvent(date: now.addingTimeInterval(-60), provider: .claude, accountID: "key", model: "claude-opus-5-5", tokens: tokens, isFromCoincide: true),
+            UsageEvent(date: now.addingTimeInterval(-10 * 86_400), provider: .claude, accountID: "key", model: nil, tokens: tokens, isFromCoincide: true),
+            // Another account's turn stays on its own card.
+            UsageEvent(date: now, provider: .claude, accountID: ProviderAccount.defaultID, model: nil, tokens: tokens, isFromCoincide: true),
+        ]
+        let reports = UsageRow.trackedReports([card, login], events: events, now: now)
+        #expect(Array(reports.keys) == [UsageReport.accountKey(.claude, "key")])
+        let report = try #require(reports.values.first)
+        let rows = try #require(UsageRow.tracked(report))
+        #expect(rows.map(\.title) == ["Today", "Last 7 days", "Last 30 days"])
+        #expect(rows[0].value.hasPrefix("7.5K tokens · ≈ $"))
+        #expect(rows[2].value.hasPrefix("15K tokens · ≈ $"))
+        #expect(rows[0].details == ["Input 1K · output 2K · cache 4.5K"])
+        #expect(rows.allSatisfy { $0.bar == nil })
+        #expect(UsageRow.tracked(UsageReport.make([], periodDays: 30, now: now)) == nil)
+    }
+
+    @Test func adminReportModelsListTokensAndTheOrganizationsCost() {
+        let line = AnthropicAdminUsage.ModelLine(
+            model: "claude-opus-5-5", tokens: AnthropicAdminUsage.Tokens(uncachedInput: 1_000, cacheRead: 3_000, cacheCreation: 500, output: 500),
+            cost: 12.345)
+        let row = AnthropicAdminModelsView.row(line)
+        #expect(row.title == "claude-opus-5-5")
+        #expect(row.value == "5K tokens · \(dollars(12.345))")
+        #expect(row.details == ["Input 1K · output 500 · cache 3.5K"])
+        let tokensOnly = AnthropicAdminModelsView.row(AnthropicAdminUsage.ModelLine(model: "m", tokens: .init(output: 10), cost: nil))
+        #expect(tokensOnly.value == "10 tokens")
+        #expect(AnthropicAdminModelsView.scope(AnthropicAdminUsage.Report(tokenScope: .organization, checkedAt: now)).contains("whole organization"))
+    }
+
     @Test func theModesHaveNames() {
         #expect(UsageFormat.displayModeName(.used) == "Used")
         #expect(UsageFormat.displayModeName(.remaining) == "Remaining")

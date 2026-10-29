@@ -191,6 +191,8 @@ private final class UsageMenuModel {
     private(set) var accounts: [UsageInsights.AccountLimits] = []
     private(set) var report = UsageReport()
     private(set) var closest: (account: UsageInsights.AccountLimits, window: UsageLimitWindow)?
+    /// Coincide's turns with each Anthropic API-key account, by `UsageReport.accountKey`.
+    private(set) var tracked: [String: UsageReport] = [:]
     private(set) var isRefreshing = false
     private(set) var lastScan: Date?
     private(set) var now = Date()
@@ -234,6 +236,7 @@ private final class UsageMenuModel {
         now = Date()
         accounts = insights.accountLimits(now: now)
         closest = UsageInsights.mostConstrained(accounts)
+        tracked = UsageRow.trackedReports(accounts, events: insights.events, now: now)
         report = UsageReport.make(insights.events, periodDays: 30, now: now)
         isRefreshing = insights.isScanning || insights.isCheckingLimits
         lastScan = insights.lastScan
@@ -272,7 +275,10 @@ private struct UsageMenuView: View {
                             .padding(.horizontal, 14)
                     }
                     ForEach(model.accounts) { account in
-                        UsageMenuAccountRow(account: account, mode: model.displayMode, now: model.now) {
+                        UsageMenuAccountRow(
+                            account: account, mode: model.displayMode, now: model.now,
+                            tracked: model.tracked[UsageReport.accountKey(account.provider, account.account.id)]
+                        ) {
                             close()
                             NSApp.activate()
                             UsageNavigation.show(provider: account.provider)
@@ -372,6 +378,8 @@ private struct UsageMenuAccountRow: View {
     let account: UsageInsights.AccountLimits
     let mode: UsageDisplayMode
     let now: Date
+    /// Coincide's own turns with the account, for an API key with no balance to show.
+    var tracked: UsageReport?
     let open: () -> Void
     @State private var isHovered = false
 
@@ -387,7 +395,7 @@ private struct UsageMenuAccountRow: View {
                     Spacer(minLength: 0)
                 }
                 let rows = account.limits.map { UsageRow.rows($0, mode: mode, now: now) } ?? []
-                if rows.isEmpty && (account.limits?.notes ?? []).isEmpty {
+                if rows.isEmpty && (account.limits?.notes ?? []).isEmpty && tracked == nil {
                     Text(UsageFormat.unavailable(account, settings: AppStore.shared.settings))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -395,6 +403,9 @@ private struct UsageMenuAccountRow: View {
                 }
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     UsageRowView(row: row, provider: account.provider, compact: true)
+                }
+                if let tracked {
+                    UsageTrackedRows(report: tracked, compact: true)
                 }
                 ForEach(account.limits?.notes ?? [], id: \.self) { note in
                     Text(note).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

@@ -293,6 +293,115 @@ struct UsageRow: Equatable {
     }
 }
 
+extension UsageRow {
+    /// Turns Coincide ran with an account over a period: "1.2M tokens · ≈ $3.40", split by kind underneath. No bar: an
+    /// API key has no total to measure against.
+    static func tracked(_ title: String, _ totals: UsageTotals) -> UsageRow {
+        let tokens = totals.tokens
+        var value = UsageFormat.amount(Double(tokens.total), .tokens)
+        if totals.hasPricedTokens { value += " · ≈ " + UsageFormat.cost(totals.cost) }
+        let cache = UsageFormat.tokens(tokens.cacheRead + tokens.cacheWrite)
+        return UsageRow(
+            title: title, value: value,
+            details: [
+                String(localized: "Input \(UsageFormat.tokens(tokens.input)) · output \(UsageFormat.tokens(tokens.output)) · cache \(cache)")
+            ])
+    }
+
+    /// Today, the last 7 days and the last 30 of Coincide's turns with an account; nil when it has none, so the card
+    /// says so instead.
+    static func tracked(_ report: UsageReport) -> [UsageRow]? {
+        guard report.lastMonth.tokens.total > 0 else { return nil }
+        return [
+            tracked(String(localized: "Today"), report.today), tracked(String(localized: "Last 7 days"), report.lastWeek),
+            tracked(String(localized: "Last 30 days"), report.lastMonth),
+        ]
+    }
+
+    /// Whether the account's card shows Coincide's own turns: Anthropic API keys, which report no balance of their own.
+    static func showsTracked(_ account: ProviderAccount) -> Bool {
+        UsageInsights.takesAdminKey(account)
+    }
+
+    /// Each such account's own turns over the last 30 days, by `UsageReport.accountKey`.
+    static func trackedReports(
+        _ accounts: [UsageInsights.AccountLimits], events: [UsageEvent], now: Date
+    ) -> [String: UsageReport] {
+        var reports: [String: UsageReport] = [:]
+        for account in accounts where showsTracked(account.account) {
+            let own = events.filter { $0.provider == account.provider && $0.accountID == account.account.id }
+            reports[UsageReport.accountKey(account.provider, account.account.id)] = UsageReport.make(own, periodDays: 30, now: now)
+        }
+        return reports
+    }
+}
+
+/// Coincide's turns with one account, by period, for an account card.
+struct UsageTrackedRows: View {
+    let report: UsageReport
+    var compact = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 6 : 8) {
+            Text("Turns in Coincide with this key")
+                .font(compact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if let rows = UsageRow.tracked(report) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    UsageRowView(row: row, provider: .claude, compact: compact)
+                }
+            } else {
+                Text("No turns recorded with this key yet.")
+                    .font(compact ? .caption : .body)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// This month by model from an Admin API report: each model's tokens and the organization's cost for it.
+struct AnthropicAdminModelsView: View {
+    let report: AnthropicAdminUsage.Report
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("This month by model")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(Self.scope(report))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(report.models) { line in
+                UsageRowView(row: Self.row(line), provider: .claude, compact: true)
+            }
+        }
+    }
+
+    static func row(_ line: AnthropicAdminUsage.ModelLine) -> UsageRow {
+        var value = UsageFormat.amount(Double(line.tokens.total), .tokens)
+        if let cost = line.cost { value += " · " + UsageFormat.cost(cost) }
+        return UsageRow(
+            title: line.model, value: value,
+            details: [
+                String(
+                    localized:
+                        "Input \(UsageFormat.tokens(line.tokens.uncachedInput)) · output \(UsageFormat.tokens(line.tokens.output)) · cache \(UsageFormat.tokens(line.tokens.cacheRead + line.tokens.cacheCreation))"
+                )
+            ])
+    }
+
+    /// Whose tokens and costs the lines are.
+    static func scope(_ report: AnthropicAdminUsage.Report) -> String {
+        switch report.tokenScope {
+        case .apiKey(let name):
+            String(localized: "Tokens of the key “\(name)”; costs are the organization’s, as Anthropic reports costs only for the whole organization. Days in UTC.")
+        case .organization:
+            String(localized: "Tokens and costs of the whole organization: Anthropic’s key list didn’t identify this key. Days in UTC.")
+        }
+    }
+}
+
 extension UsageFormat {
     /// "Used" or "Remaining", for the setting and the popover's switch.
     static func displayModeName(_ mode: UsageDisplayMode) -> String {
