@@ -47,6 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ThreadSnooze.shared.start()
         PreviewSessions.shared.connectToApp { [weak self] in self?.mainWindow }
         PreviewSessions.shared.start()
+        // Settings › Usage may read sites the user turned on with their sign-in in the shared browser profile.
+        BrowserUsageBridge.connect()
         AppUpdates.shared.start()
         // ⌘W deletes the open thread in the main window; elsewhere it still closes the window.
         CloseShortcut.start { [weak self] in self?.mainWindow?.window }

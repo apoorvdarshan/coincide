@@ -175,6 +175,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var menuBarSecondaryUsage: MenuBarUsageChoice?
     /// Whether usage figures read as what is used or what is left, in the menu bar, its popover and Settings › Usage.
     public var usageDisplayMode: UsageDisplayMode
+    /// Sites whose usage pages Settings › Usage may read with the user's sign-in in Coincide's browser, for details
+    /// the agents' APIs don't give. None by default.
+    public var usageBrowserSignIn: [BrowserUsageSource]
     /// Models the user starred (T3 Code's favorites), in the order they were starred. The model picker lists them
     /// first, and together in its Favorites tab.
     public var favoriteModels: [ModelReference]
@@ -215,6 +218,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         menuBarUsage = .lastActive
         menuBarSecondaryUsage = nil
         usageDisplayMode = .used
+        usageBrowserSignIn = []
         favoriteModels = []
         hiddenModels = []
     }
@@ -265,6 +269,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         menuBarUsage = value(.menuBarUsage, defaults.menuBarUsage)
         menuBarSecondaryUsage = value(.menuBarSecondaryUsage, defaults.menuBarSecondaryUsage)
         usageDisplayMode = value(.usageDisplayMode, defaults.usageDisplayMode)
+        // A site this version doesn't know is dropped rather than failing the whole list.
+        usageBrowserSignIn = value(.usageBrowserSignIn, [String]()).compactMap(BrowserUsageSource.init(rawValue:))
         // Models of agents this version does not know are skipped, not the whole list.
         favoriteModels = container.lenientArray(ModelReference.self, forKey: .favoriteModels)
         hiddenModels = container.lenientArray(ModelReference.self, forKey: .hiddenModels)

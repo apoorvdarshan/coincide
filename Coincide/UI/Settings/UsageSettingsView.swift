@@ -104,6 +104,21 @@ final class UsageDashboardModel {
     /// Coincide's turns with each Anthropic API-key account over the last 30 days, by `UsageReport.accountKey`.
     private(set) var tracked: [String: UsageReport] = [:]
 
+    /// Sites the user lets Coincide read with their browser sign-in, and how their reads stand.
+    private(set) var browserSignIn: [BrowserUsageSource] = []
+    private(set) var browserStates: [BrowserUsageSource: BrowserUsageState] = [:]
+    /// The accounts each site's details go to.
+    private(set) var browserAccounts: [BrowserUsageSource: [ProviderAccount]] = [:]
+
+    func setBrowserSignIn(_ source: BrowserUsageSource, enabled: Bool) {
+        insights.setBrowserSignIn(source, enabled: enabled)
+        reload()
+    }
+
+    func checkBrowserUsage(_ source: BrowserUsageSource) {
+        Task { await insights.readBrowserUsage(source, force: true) }
+    }
+
     func reload() {
         now = Date()
         accounts = insights.accountLimits(now: now)
@@ -113,6 +128,9 @@ final class UsageDashboardModel {
         isCheckingLimits = insights.isCheckingLimits
         lastScan = insights.lastScan
         historyError = insights.historyError
+        browserSignIn = store.settings.usageBrowserSignIn
+        browserStates = insights.browserStates
+        browserAccounts = Dictionary(uniqueKeysWithValues: BrowserUsageSource.allCases.map { ($0, insights.browserAccounts(for: $0)) })
         let source = (insights.eventsVersion, records.count, store.settings.usageIncludesOtherSessions)
         if builtFrom.map({ $0 != source }) ?? true { rebuild() }
     }
@@ -181,6 +199,7 @@ struct UsageSettingsView: View {
             accountSections
             activitySection
             optionsSection
+            browserSignInSection
             Section {
                 notes
             }
@@ -418,6 +437,27 @@ struct UsageSettingsView: View {
                 MenuBarUsagePicker(
                     title: String(localized: "Also show"), choice: $model.menuBarSecondaryUsage, accounts: model.accounts, allowsNone: true)
             }
+        }
+    }
+
+    private var browserSignInSection: some View {
+        Section {
+            ForEach(BrowserUsageSource.allCases) { source in
+                BrowserSignInRow(
+                    source: source,
+                    isOn: Binding(
+                        get: { model.browserSignIn.contains(source) }, set: { model.setBrowserSignIn(source, enabled: $0) }),
+                    state: model.browserStates[source], accounts: model.browserAccounts[source] ?? [], now: model.now,
+                    check: { model.checkBrowserUsage(source) })
+            }
+        } header: {
+            Text("Browser Sign-in")
+        } footer: {
+            Text(
+                "Your sign-in stays on this Mac, and Coincide uses it only to read your own usage pages on the sites you turn on. These are the sites’ internal pages, not official APIs, so they may stop working; Coincide then shows its own record and says why."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -813,5 +853,75 @@ private struct UsageDailyChart: View {
         .frame(minWidth: 180)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: Theme.floatingFill)))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: Theme.surfaceBorder), lineWidth: 1))
+    }
+}
+
+/// One site Coincide may read with the user's browser sign-in: the switch, how the last read went, and a way to sign in.
+private struct BrowserSignInRow: View {
+    let source: BrowserUsageSource
+    @Binding var isOn: Bool
+    let state: BrowserUsageState?
+    /// The accounts its details go to.
+    let accounts: [ProviderAccount]
+    let now: Date
+    let check: () -> Void
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            Text(title)
+            Text(detail)
+        }
+        if isOn {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(state?.problem == nil ? Color.secondary : Color(nsColor: Theme.warning))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if state?.isReading == true { ProgressView().controlSize(.mini) }
+                if state?.reading == nil {
+                    Button(String(localized: "Sign In…")) { BrowserUsageSignIn.open(source) }
+                        .buttonStyle(ThemedButtonStyle())
+                }
+                Button(String(localized: "Check Again"), action: check)
+                    .buttonStyle(ThemedButtonStyle())
+                    .disabled(state?.isReading == true)
+            }
+        }
+    }
+
+    private var title: String {
+        switch source {
+        case .chatGPT: String(localized: "Codex: Use my browser sign-in for extra details")
+        case .claudeConsole: String(localized: "Claude: Use my browser sign-in for extra details")
+        }
+    }
+
+    private var detail: String {
+        switch source {
+        case .chatGPT:
+            String(localized: "Reads your credit limit and credit usage history from chatgpt.com, with your sign-in in Coincide’s browser.")
+        case .claudeConsole:
+            String(
+                localized:
+                    "Reads your prepaid API credit balance from the Claude Console (platform.claude.com), with your sign-in in Coincide’s browser."
+            )
+        }
+    }
+
+    private var status: String {
+        guard let state else { return String(localized: "Not read yet.") }
+        if state.isReading, state.reading == nil, state.problem == nil { return String(localized: "Reading \(source.host)…") }
+        if let problem = state.problem { return problem.note(source) }
+        guard let reading = state.reading else { return String(localized: "Not read yet.") }
+        let when = reading.checkedAt.formatted(.relative(presentation: .named))
+        if source == .chatGPT, accounts.isEmpty {
+            return String(
+                localized:
+                    "Signed in to chatgpt.com as \(reading.identity ?? "?"), which isn’t a Codex account in Coincide, so nothing is added."
+            )
+        }
+        if let identity = reading.identity { return String(localized: "Signed in as \(identity). Read \(when).") }
+        return String(localized: "Read \(source.host) \(when).")
     }
 }
