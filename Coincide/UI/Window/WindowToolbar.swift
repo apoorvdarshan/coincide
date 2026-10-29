@@ -29,8 +29,8 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         return toolbar
     }
 
-    /// The navigation rail has the buttons of the places and of the terminal; the panels that open on the right have
-    /// theirs on the right, after the inspector's tracking separator. That keeps them at the window's top-right corner
+    /// The navigation rail has the buttons of the places and of the terminal in its drawer; the panels that open on the
+    /// right (the terminal too, when Settings › General puts it there) have theirs on the right, after the inspector's tracking separator. That keeps them at the window's top-right corner
     /// whether the inspector is open (they sit over its top edge) or closed (they follow the scripts and status), so
     /// they don't move when it opens. The flexible space before them pushes them to the trailing edge.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -166,7 +166,7 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         let keyBindings = KeyBindingsController.shared
         updateRail()
         if let item = toolbarItems[.toggleTerminal] {
-            let open = splitController.content.isTerminalOpen
+            let open = splitController.isTerminalOpen
             item.toolTip = keyBindings.toolTip(
                 open ? String(localized: "Hide Terminal") : String(localized: "Show Terminal"), for: .toggleTerminal)
             item.image = NSImage(systemSymbolName: open ? "terminal.fill" : "terminal", accessibilityDescription: item.label)
@@ -187,10 +187,19 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
 
     /// Lights the rail's and the toolbar's buttons for the open panels and enables Open In when there is a folder.
     func updateRail() {
-        rail.update(
-            threadsOpen: splitController.isSidebarOpen, terminalOpen: splitController.content.isTerminalOpen,
-            canOpenFolder: openFolder != nil)
+        let terminalOpen = splitController.isTerminalOpen
+        rail.update(threadsOpen: splitController.isSidebarOpen, terminalOpen: terminalOpen, canOpenFolder: openFolder != nil)
         panelButtons.update(open: splitController.isInspectorOpen ? splitController.inspector.panel : nil)
+    }
+
+    /// Follows Settings › General's terminal placement, live: the terminal moves, shells and all, between the drawer
+    /// below the chat (its button in the rail) and the inspector (its button in the top-right group).
+    func updateTerminalPlacement() {
+        let placement = AppStore.shared.settings.terminalPlacement
+        splitController.setTerminalPlacement(placement)
+        rail.showsTerminalButton = placement == .bottom
+        panelButtons.showsTerminal = placement == .right
+        updatePanelItems()
     }
 
     /// Shows the preferred app's icon and name on the "Open in" button.

@@ -125,6 +125,7 @@ private struct AddedAccountRow: View {
     let account: ProviderAccount
     @State private var name = ""
     @State private var key = ""
+    @State private var adminKey = ""
     @State private var problem: String?
     @State private var confirmsRemoval = false
     @FocusState private var nameFocused: Bool
@@ -234,6 +235,44 @@ private struct AddedAccountRow: View {
                     .disabled(model.isBusy(account))
             }
         }
+        if UsageInsights.takesAdminKey(account) {
+            adminKeyControls
+        }
+    }
+
+    /// The optional Admin API key, which reads the organization's usage and cost reports for Settings › Usage.
+    @ViewBuilder private var adminKeyControls: some View {
+        let hasAdminKey = model.hasAdminKey(account)
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Admin API key (optional)")
+                .font(.callout)
+            HStack(spacing: 6) {
+                SecureField(
+                    "Admin API key", text: $adminKey,
+                    prompt: Text(hasAdminKey ? String(localized: "Saved in the Keychain") : String(localized: "Paste an Admin API key"))
+                )
+                .labelsHidden()
+                .font(.callout.monospaced())
+                .onSubmit(saveAdminKey)
+                .onChange(of: adminKey) { problem = nil }
+                Button(hasAdminKey ? String(localized: "Replace") : String(localized: "Save"), action: saveAdminKey)
+                    .disabled(adminKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if hasAdminKey {
+                    Button(String(localized: "Remove Admin Key"), role: .destructive) { model.removeAdminKey(for: account) }
+                }
+            }
+            Text("Read-only access to your organization’s usage and cost reports, shown in Settings › Usage. Kept in the Keychain and sent only to Anthropic.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func saveAdminKey() {
+        let value = adminKey
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        adminKey = ""
+        Task { problem = await model.saveAdminKey(value, for: account) }
     }
 
     private func saveKey() {

@@ -87,6 +87,9 @@ enum UsageFormat {
         return credits.hasCredits ? String(localized: "Credits available") : String(localized: "No credits")
     }
 
+    /// The credits balance as a number, "1,250.5", when the provider reported one.
+    static func creditsBalance(_ credits: UsageCredits) -> String? { balance(credits) }
+
     private static func balance(_ credits: UsageCredits) -> String? {
         credits.balance.map { balance in Double(balance).map { $0.formatted(.number.precision(.fractionLength(0...2))) } ?? balance }
     }
@@ -152,11 +155,6 @@ enum UsageFormat {
         figure.limit != nil || figure.used != nil || figure.remaining != nil ? figure.detail : nil
     }
 
-    /// The color of a window's bar: the provider's, turning orange near the limit and red at it.
-    static func color(_ window: UsageLimitWindow, provider: ProviderKind) -> NSColor {
-        ComposerUsageDetails.color(for: window, provider: provider)
-    }
-
     /// The account's name for headers: "Claude Code", or "Claude Code · Work" when the provider has several.
     static func title(_ account: UsageInsights.AccountLimits) -> String {
         account.showsAccountName && !account.account.isDefault
@@ -191,27 +189,265 @@ enum UsageFormat {
     }
 }
 
-/// A window's bar in SwiftUI, drawn like the composer's meter: a thin rounded track filled with what is used in the
-/// provider's color, with a mark where even spending across the window would be.
-struct UsageWindowBar: View {
-    let window: UsageLimitWindow
-    let provider: ProviderKind
-    var now = Date()
+/// One usage row as the menu bar popover and Settings › Usage draw it, for a limit window, a figure or credits: the
+/// title with the value on the right, a bar when there is a real total to measure against, and when it resets or
+/// expires underneath. Read as `UsageDisplayMode` says: what is used (bars fill up) or what is left (bars drain). The
+/// color warns as the limit nears either way. Nothing is estimated: a figure without a total gets no bar.
+struct UsageRow: Equatable {
+    /// How close the row is to its limit, which colors its bar and value like the composer's meter.
+    enum Level: Equatable {
+        case normal
+        /// At or past the warning level (`UsageLimitWindow.warningPercent`).
+        case near
+        /// At 95% used, or the limit reached or passed.
+        case critical
+
+        /// The level for a share used, 0–1, or past 1 when over the limit.
+        init(usedShare: Double) {
+            if usedShare >= 0.95 {
+                self = .critical
+            } else if usedShare * 100 >= UsageLimitWindow.warningPercent {
+                self = .near
+            } else {
+                self = .normal
+            }
+        }
+    }
+
+    struct Bar: Equatable {
+        /// How much of the track is filled, 0–1: what is used, or what is left.
+        var fill: Double
+        /// Where even spending across the period would put the fill, 0–1; nil when the period's length is unknown.
+        var paceMark: Double?
+    }
+
+    var title: String
+    var value: String
+    /// The value is a state, such as "Off" or "No limit", rather than an amount.
+    var isState = false
+    var bar: Bar?
+    var level = Level.normal
+    /// When it resets or expires, the pace, and any word on its state.
+    var details: [String] = []
+
+    var accessibilityLabel: String { ([title, value] + details).joined(separator: ", ") }
+
+    /// A limit window: "62% used" or "38% left", its bar with the pace mark, when it resets and the pace.
+    static func window(_ window: UsageLimitWindow, mode: UsageDisplayMode, now: Date) -> UsageRow {
+        UsageRow(
+            title: window.label, value: UsageFormat.shown(window, mode: mode),
+            bar: Bar(fill: window.barFill(mode), paceMark: window.paceMark(at: now, mode: mode)),
+            level: window.isExhausted ? .critical : Level(usedShare: window.usedPercent / 100),
+            details: [UsageFormat.reset(window, now: now), UsageFormat.pace(window, now: now)].compactMap { $0 })
+    }
+
+    /// A figure: with a limit, what is used or left of it over a bar; without one, the amount alone (a balance, a spend
+    /// so far) or its state. A figure past its limit fills the bar (or empties it) and turns red.
+    static func figure(_ figure: UsageFigure, mode: UsageDisplayMode, now: Date) -> UsageRow {
+        var row = UsageRow(title: figure.label, value: UsageFormat.figureValue(figure))
+        if let limit = figure.limit, limit > 0, let used = figure.used ?? figure.remaining.map({ limit - $0 }) {
+            let share = max(0, used) / limit
+            let left = figure.left ?? max(0, limit - used)
+            row.value =
+                mode == .used
+                ? String(localized: "\(UsageFormat.bareAmount(used, figure.unit)) of \(UsageFormat.amount(limit, figure.unit)) used")
+                : String(localized: "\(UsageFormat.bareAmount(left, figure.unit)) of \(UsageFormat.amount(limit, figure.unit)) left")
+            row.bar = Bar(fill: mode == .used ? min(1, share) : max(0, 1 - share))
+            row.level = Level(usedShare: share)
+            if mode == .remaining, used > limit {
+                row.details.append(String(localized: "\(UsageFormat.amount(used - limit, figure.unit)) over the limit"))
+            }
+        } else {
+            row.isState = figure.limit == nil && figure.used == nil && figure.remaining == nil
+        }
+        row.details += [UsageFormat.figureDetail(figure), UsageFormat.figureTiming(figure, now: now)].compactMap { $0 }
+        return row
+    }
+
+    /// Credits the account can spend past its plan, such as Codex's: a balance with no total, so no bar. A balance is
+    /// what is left either way; showing what is left says so.
+    static func credits(_ credits: UsageCredits, mode: UsageDisplayMode) -> UsageRow {
+        var row = UsageRow(title: String(localized: "Credits"), value: UsageFormat.creditsValue(credits))
+        if !credits.unlimited, let balance = UsageFormat.creditsBalance(credits) {
+            row.value = mode == .used ? balance : String(localized: "\(balance) left")
+        } else {
+            row.isState = !credits.unlimited
+        }
+        return row
+    }
+
+    /// The closest limit across all accounts, named with its account: "Claude Code · Weekly".
+    static func closest(
+        _ account: UsageInsights.AccountLimits, _ limit: UsageLimitWindow, mode: UsageDisplayMode, now: Date
+    ) -> UsageRow {
+        var row = window(limit, mode: mode, now: now)
+        row.title = "\(UsageFormat.title(account)) · \(limit.label)"
+        return row
+    }
+
+    /// Every row of an account, in order: its windows, model windows, credits, then figures.
+    static func rows(_ limits: UsageLimits, mode: UsageDisplayMode, now: Date) -> [UsageRow] {
+        (limits.windows + limits.modelWindows).map { window($0, mode: mode, now: now) }
+            + [limits.credits].compactMap { $0 }.map { credits($0, mode: mode) }
+            + limits.figures.map { figure($0, mode: mode, now: now) }
+    }
+}
+
+extension UsageRow {
+    /// Turns Coincide ran with an account over a period: "1.2M tokens · ≈ $3.40", split by kind underneath. No bar: an
+    /// API key has no total to measure against.
+    static func tracked(_ title: String, _ totals: UsageTotals) -> UsageRow {
+        let tokens = totals.tokens
+        var value = UsageFormat.amount(Double(tokens.total), .tokens)
+        if totals.hasPricedTokens { value += " · ≈ " + UsageFormat.cost(totals.cost) }
+        let cache = UsageFormat.tokens(tokens.cacheRead + tokens.cacheWrite)
+        return UsageRow(
+            title: title, value: value,
+            details: [
+                String(localized: "Input \(UsageFormat.tokens(tokens.input)) · output \(UsageFormat.tokens(tokens.output)) · cache \(cache)")
+            ])
+    }
+
+    /// Today, the last 7 days and the last 30 of Coincide's turns with an account; nil when it has none, so the card
+    /// says so instead.
+    static func tracked(_ report: UsageReport) -> [UsageRow]? {
+        guard report.lastMonth.tokens.total > 0 else { return nil }
+        return [
+            tracked(String(localized: "Today"), report.today), tracked(String(localized: "Last 7 days"), report.lastWeek),
+            tracked(String(localized: "Last 30 days"), report.lastMonth),
+        ]
+    }
+
+    /// Whether the account's card shows Coincide's own turns: Anthropic API keys, which report no balance of their own.
+    static func showsTracked(_ account: ProviderAccount) -> Bool {
+        UsageInsights.takesAdminKey(account)
+    }
+
+    /// Each such account's own turns over the last 30 days, by `UsageReport.accountKey`.
+    static func trackedReports(
+        _ accounts: [UsageInsights.AccountLimits], events: [UsageEvent], now: Date
+    ) -> [String: UsageReport] {
+        var reports: [String: UsageReport] = [:]
+        for account in accounts where showsTracked(account.account) {
+            let own = events.filter { $0.provider == account.provider && $0.accountID == account.account.id }
+            reports[UsageReport.accountKey(account.provider, account.account.id)] = UsageReport.make(own, periodDays: 30, now: now)
+        }
+        return reports
+    }
+}
+
+/// Coincide's turns with one account, by period, for an account card.
+struct UsageTrackedRows: View {
+    let report: UsageReport
+    var compact = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 6 : 8) {
+            Text("Turns in Coincide with this key")
+                .font(compact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if let rows = UsageRow.tracked(report) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    UsageRowView(row: row, provider: .claude, compact: compact)
+                }
+            } else {
+                Text("No turns recorded with this key yet.")
+                    .font(compact ? .caption : .body)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// This month by model from an Admin API report: each model's tokens and the organization's cost for it.
+struct AnthropicAdminModelsView: View {
+    let report: AnthropicAdminUsage.Report
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("This month by model")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(Self.scope(report))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(report.models) { line in
+                UsageRowView(row: Self.row(line), provider: .claude, compact: true)
+            }
+        }
+    }
+
+    static func row(_ line: AnthropicAdminUsage.ModelLine) -> UsageRow {
+        var value = UsageFormat.amount(Double(line.tokens.total), .tokens)
+        if let cost = line.cost { value += " · " + UsageFormat.cost(cost) }
+        return UsageRow(
+            title: line.model, value: value,
+            details: [
+                String(
+                    localized:
+                        "Input \(UsageFormat.tokens(line.tokens.uncachedInput)) · output \(UsageFormat.tokens(line.tokens.output)) · cache \(UsageFormat.tokens(line.tokens.cacheRead + line.tokens.cacheCreation))"
+                )
+            ])
+    }
+
+    /// Whose tokens and costs the lines are.
+    static func scope(_ report: AnthropicAdminUsage.Report) -> String {
+        switch report.tokenScope {
+        case .apiKey(let name):
+            String(localized: "Tokens of the key “\(name)”; costs are the organization’s, as Anthropic reports costs only for the whole organization. Days in UTC.")
+        case .organization:
+            String(localized: "Tokens and costs of the whole organization: Anthropic’s key list didn’t identify this key. Days in UTC.")
+        }
+    }
+}
+
+extension UsageFormat {
+    /// "Used" or "Remaining", for the setting and the popover's switch.
+    static func displayModeName(_ mode: UsageDisplayMode) -> String {
+        switch mode {
+        case .used: String(localized: "Used", comment: "Usage shows what is used of each limit")
+        case .remaining: String(localized: "Remaining", comment: "Usage shows what is left of each limit")
+        }
+    }
+
+    /// "62% used", or "38% left" when showing what is left.
+    static func shown(_ window: UsageLimitWindow, mode: UsageDisplayMode) -> String {
+        mode == .used ? used(window) : String(localized: "\(window.shownPercent(.remaining))% left")
+    }
+
+    /// The color of a row's bar, and of its value once near the limit: the provider's, orange near the limit, red at it.
+    static func color(_ level: UsageRow.Level, provider: ProviderKind) -> NSColor {
+        switch level {
+        case .normal: Theme.color(for: provider)
+        case .near: Theme.warning
+        case .critical: Theme.failure
+        }
+    }
+}
+
+/// A usage bar, drawn like the composer's meter: a thin rounded track filled in the row's color, with a mark where even
+/// spending across the period would put the fill.
+struct UsageBar: View {
+    let fill: Double
+    var paceMark: Double?
+    let color: NSColor
     var height: CGFloat = 6
 
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
+            let fill = min(1, max(0, fill))
             ZStack(alignment: .leading) {
                 Capsule().fill(Color(nsColor: .tertiaryLabelColor).opacity(0.3))
                 Capsule()
-                    .fill(Color(nsColor: UsageFormat.color(window, provider: provider)))
-                    .frame(width: window.usedPercent > 0 ? max(height, width * window.usedPercent / 100) : 0)
-                if let elapsed = window.elapsedShare(at: now) {
+                    .fill(Color(nsColor: color))
+                    .frame(width: fill > 0 ? max(height, width * fill) : 0)
+                if let paceMark {
                     RoundedRectangle(cornerRadius: 1)
                         .fill(Color(nsColor: Theme.ink))
                         .frame(width: 2, height: height + 4)
-                        .offset(x: min(max(0, width * elapsed - 1), width - 2))
+                        .offset(x: min(max(0, width * paceMark - 1), width - 2))
                 }
             }
             .frame(height: height + 4)
@@ -221,81 +457,54 @@ struct UsageWindowBar: View {
     }
 }
 
-/// One limit window: its name and how much is used over the bar, then when it resets and the pace.
-struct UsageWindowRow: View {
-    let window: UsageLimitWindow
+/// One `UsageRow`. The title and value share a line when they fit; otherwise the value goes under the title (long
+/// amounts, long languages), so nothing is cut off.
+struct UsageRowView: View {
+    let row: UsageRow
     let provider: ProviderKind
-    let now: Date
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(window.label)
-                Spacer(minLength: 8)
-                Text(UsageFormat.used(window))
-                    .monospacedDigit()
-                    .foregroundStyle(window.isNearLimit ? Color(nsColor: UsageFormat.color(window, provider: provider)) : .primary)
-            }
-            UsageWindowBar(window: window, provider: provider, now: now)
-            let details = [UsageFormat.reset(window, now: now), UsageFormat.pace(window, now: now)].compactMap { $0 }
-            if !details.isEmpty {
-                Text(details.joined(separator: " · "))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 2)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            ([window.label, UsageFormat.used(window)] + [UsageFormat.reset(window, now: now), UsageFormat.pace(window, now: now)]
-                .compactMap { $0 }).joined(separator: ", "))
-        .help(window.elapsedShare(at: now) != nil ? String(localized: "The mark shows where even spending across the window would be.") : "")
-    }
-}
-
-/// One figure of an account: its name and value, then when it resets or expires.
-struct UsageFigureRow: View {
-    let figure: UsageFigure
-    let provider: ProviderKind
-    let now: Date
     var compact = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 3 : 5) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(figure.label).font(compact ? .caption : .body)
-                Spacer(minLength: 8)
-                Text(UsageFormat.figureValue(figure))
-                    .font(compact ? .caption.monospacedDigit() : .body.monospacedDigit())
-                    .foregroundStyle(figure.limit == nil && figure.used == nil && figure.remaining == nil ? .secondary : .primary)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    title.lineLimit(1)
+                    Spacer(minLength: 0)
+                    value.lineLimit(1)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    title.fixedSize(horizontal: false, vertical: true)
+                    value.fixedSize(horizontal: false, vertical: true)
+                }
             }
-            if let percent = figure.usedPercent {
-                UsageFigureBar(percent: percent, provider: provider, height: compact ? 4 : 6)
+            if let bar = row.bar {
+                UsageBar(
+                    fill: bar.fill, paceMark: bar.paceMark, color: UsageFormat.color(row.level, provider: provider), height: compact ? 4 : 6)
             }
-            let details = [UsageFormat.figureDetail(figure), UsageFormat.figureTiming(figure, now: now)].compactMap { $0 }
-            if !details.isEmpty {
-                Text(details.joined(separator: " · "))
+            if !row.details.isEmpty {
+                Text(row.details.joined(separator: " · "))
                     .font(compact ? .caption2 : .caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.vertical, compact ? 0 : 2)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            ([figure.label, UsageFormat.figureValue(figure)]
-                + [UsageFormat.figureDetail(figure), UsageFormat.figureTiming(figure, now: now)].compactMap { $0 }).joined(separator: ", "))
+        .accessibilityLabel(row.accessibilityLabel)
+        .help(row.bar?.paceMark != nil ? String(localized: "The mark shows where even spending across the window would be.") : "")
     }
-}
 
-/// A figure's bar: what is used of its limit, in the provider's color.
-private struct UsageFigureBar: View {
-    let percent: Double
-    let provider: ProviderKind
-    var height: CGFloat
+    private var title: some View {
+        Text(row.title).font(compact ? .caption : .body)
+    }
 
-    var body: some View {
-        UsageWindowBar(
-            window: UsageLimitWindow(id: "figure", kind: .other, label: "", usedPercent: percent), provider: provider, height: height)
+    private var value: some View {
+        Text(row.value)
+            .font(compact ? .caption.monospacedDigit() : .body.monospacedDigit())
+            .foregroundStyle(
+                row.isState
+                    ? Color.secondary
+                    : row.level == .normal ? Color(nsColor: Theme.ink) : Color(nsColor: UsageFormat.color(row.level, provider: provider)))
     }
 }
 

@@ -33,13 +33,23 @@ final class UsageDashboardModel {
 
     @ObservationIgnored let insights: UsageInsights
     @ObservationIgnored private let store: AppStore
+    /// Used or what is left, kept in step with the setting (which the menu bar popover may change while this shows).
+    var displayMode: UsageDisplayMode {
+        didSet {
+            guard store.settings.usageDisplayMode != displayMode else { return }
+            store.updateSettings { $0.usageDisplayMode = displayMode }
+        }
+    }
+
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    @ObservationIgnored private var storeObserver: ObservationToken?
     /// What the report was last made from, so a change elsewhere (a provider check, say) does not make it again.
     @ObservationIgnored private var builtFrom: (version: Int, records: Int, includesOther: Bool)?
 
     init(insights: UsageInsights = .shared, store: AppStore = .shared) {
         self.insights = insights
         self.store = store
+        displayMode = store.settings.usageDisplayMode
         provider = UsageNavigation.requestedProvider
         UsageNavigation.requestedProvider = nil
         observers.append(
@@ -55,6 +65,10 @@ final class UsageDashboardModel {
                     self.provider = requested
                 }
             })
+        storeObserver = store.observe { [weak self] change in
+            guard change == .settings, let self, self.displayMode != self.store.settings.usageDisplayMode else { return }
+            self.displayMode = self.store.settings.usageDisplayMode
+        }
         reload()
     }
 
@@ -87,9 +101,13 @@ final class UsageDashboardModel {
         set { store.updateSettings { $0.menuBarSecondaryUsage = newValue } }
     }
 
+    /// Coincide's turns with each Anthropic API-key account over the last 30 days, by `UsageReport.accountKey`.
+    private(set) var tracked: [String: UsageReport] = [:]
+
     func reload() {
         now = Date()
         accounts = insights.accountLimits(now: now)
+        tracked = UsageRow.trackedReports(accounts, events: insights.events, now: now)
         records = insights.records
         isScanning = insights.isScanning
         isCheckingLimits = insights.isCheckingLimits
@@ -259,7 +277,8 @@ struct UsageSettingsView: View {
                         SettingsProviderIcon(kind: constrained.account.provider, size: 14)
                         Text(UsageFormat.title(constrained.account)).font(.caption).foregroundStyle(.secondary)
                     }
-                    UsageWindowRow(window: constrained.window, provider: constrained.account.provider, now: model.now)
+                    UsageRowView(
+                        row: .window(constrained.window, mode: model.displayMode, now: model.now), provider: constrained.account.provider)
                 }
             }
         } header: {
@@ -345,7 +364,10 @@ struct UsageSettingsView: View {
         }
         ForEach(accounts) { account in
             Section {
-                UsageAccountLimitsView(account: account, settings: model.settings, now: model.now)
+                UsageAccountLimitsView(
+                    account: account, settings: model.settings, mode: model.displayMode, now: model.now,
+                    tracked: model.tracked[UsageReport.accountKey(account.provider, account.account.id)],
+                    adminReport: model.insights.adminReport(for: account.account))
                 UsageAccountTotalsRow(
                     account: account, totals: model.report.accounts[UsageReport.accountKey(account.provider, account.account.id)],
                     periodName: periodName)
@@ -376,6 +398,13 @@ struct UsageSettingsView: View {
 
     private var optionsSection: some View {
         Section {
+            ThemedPicker(
+                selection: $model.displayMode,
+                options: UsageDisplayMode.allCases.map { .init($0, UsageFormat.displayModeName($0)) }
+            ) {
+                Text("Show")
+                Text("Plan limits, credits and the menu bar read as what is used or what is left.")
+            }
             Toggle(isOn: $model.includesOtherSessions) {
                 Text("Include usage from outside Coincide")
                 Text("Also count Claude Code and Codex sessions you ran in a terminal or another app, from their logs on this Mac.")
@@ -464,38 +493,38 @@ private struct UsageAccountHeader: View {
     }
 }
 
-/// A provider account's limit windows, credits, and model-specific limits, or why it has none.
+/// A provider account's limit windows, model-specific limits, credits and figures, each as a row, or why it has none.
 private struct UsageAccountLimitsView: View {
     let account: UsageInsights.AccountLimits
     let settings: AppSettings
+    let mode: UsageDisplayMode
     let now: Date
+    /// Coincide's own turns with the account, for an API key with no balance to show.
+    var tracked: UsageReport?
+    /// The organization's reports, for an Anthropic key with an Admin API key.
+    var adminReport: AnthropicAdminUsage.Report?
 
     var body: some View {
         if let limits = account.limits, !limits.windows.isEmpty || !limits.modelWindows.isEmpty || limits.credits != nil
             || !limits.figures.isEmpty
         {
-            ForEach(limits.windows) { window in
-                UsageWindowRow(window: window, provider: account.provider, now: now)
-            }
-            ForEach(limits.modelWindows) { window in
-                UsageWindowRow(window: window, provider: account.provider, now: now)
-            }
-            if let credits = limits.credits {
-                LabeledContent("Credits") {
-                    Text(UsageFormat.creditsValue(credits)).monospacedDigit()
-                }
-            }
-            ForEach(limits.figures) { figure in
-                UsageFigureRow(figure: figure, provider: account.provider, now: now)
+            ForEach(Array(UsageRow.rows(limits, mode: mode, now: now).enumerated()), id: \.offset) { _, row in
+                UsageRowView(row: row, provider: account.provider)
             }
             if let warning = limits.warning {
                 Text(UsageLimits.warningText(for: warning, provider: account.provider, at: now))
                     .font(.caption)
                     .foregroundStyle(Color(nsColor: warning.blocksWork ? Theme.failure : Theme.warning))
             }
-        } else {
+        } else if tracked == nil {
             Text(UsageFormat.unavailable(account, settings: settings))
                 .foregroundStyle(.secondary)
+        }
+        if let adminReport, !adminReport.models.isEmpty {
+            AnthropicAdminModelsView(report: adminReport)
+        }
+        if let tracked {
+            UsageTrackedRows(report: tracked)
         }
         ForEach(account.limits?.notes ?? [], id: \.self) { note in
             Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

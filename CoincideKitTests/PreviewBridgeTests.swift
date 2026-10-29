@@ -7,6 +7,13 @@ import Testing
         #expect(PreviewCommand.url("localhost:3000/path")?.absoluteString == "http://localhost:3000/path")
         #expect(PreviewCommand.url("https://example.test/page")?.scheme == "https")
         #expect(PreviewCommand.url("http://[::1]:8000")?.host != nil)
+        // Like browsers, typed public names get HTTPS and development servers keep HTTP.
+        #expect(PreviewCommand.url("apoorvdarshan.com")?.absoluteString == "https://apoorvdarshan.com")
+        #expect(PreviewCommand.url("example.test/page?q=1")?.scheme == "https")
+        for address in ["localhost", "127.0.0.1/x", "192.168.1.20", "myapp.local", "api.localhost", "devbox", "example.test:8080", "[::1]"] {
+            #expect(PreviewCommand.url(address)?.scheme == "http", "\(address)")
+        }
+        #expect(PreviewCommand.url("http://example.test")?.scheme == "http")
         for address in ["file:///tmp/private", "file:/tmp/private", "javascript:alert(1)", "data:text/html,test", "about:blank", "https://user:password@example.test"] {
             #expect(PreviewCommand.url(address) == nil)
         }

@@ -42,6 +42,21 @@ public enum UserMessageSide: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Where the terminal opens, and with it where its button sits: in a drawer below the chat, with its button in the
+/// navigation rail on the window's left edge, or in the column on the right beside the diff, the pull requests and the
+/// browser preview, with its button among theirs in the toolbar's top-right corner.
+public enum TerminalPlacement: String, Codable, CaseIterable, Sendable {
+    case bottom
+    case right
+
+    public nonisolated var displayName: String {
+        switch self {
+        case .bottom: String(localized: "Bottom panel")
+        case .right: String(localized: "Right panel")
+        }
+    }
+}
+
 /// What sending does while the agent works, as T3 Code's `followUpBehavior`: steer the message into the running turn,
 /// queue it for after the turn, or interrupt the turn and send it now. The alternate send does the other for one
 /// message. Each thread keeps its own (`ChatThread.followUpBehavior`); the last one picked is the default for new
@@ -152,6 +167,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var replyTypeface: ReplyTypeface
     /// Where the user's messages sit in the conversation; the right by default.
     public var userMessageSide: UserMessageSide
+    /// Where the terminal opens: below the chat (its button in the rail), as it always has, or in the right column (its
+    /// button in the toolbar's top-right group).
+    public var terminalPlacement: TerminalPlacement
     /// The color themes used in dark and light mode, by id. An id this version does not know falls back to the first
     /// theme of its kind.
     public var darkTheme: String
@@ -171,6 +189,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var menuBarUsage: MenuBarUsageChoice
     /// A second figure shown beside the first, such as Codex next to Claude; nil for none.
     public var menuBarSecondaryUsage: MenuBarUsageChoice?
+    /// Whether usage figures read as what is used or what is left, in the menu bar, its popover and Settings › Usage.
+    public var usageDisplayMode: UsageDisplayMode
     /// Models the user starred (T3 Code's favorites), in the order they were starred. The model picker lists them
     /// first, and together in its Favorites tab.
     public var favoriteModels: [ModelReference]
@@ -202,6 +222,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         fontSize = 13
         replyTypeface = .newYork
         userMessageSide = .right
+        terminalPlacement = .bottom
         darkTheme = "carbon"
         lightTheme = "carbon-light"
         shortcutOverrides = [:]
@@ -210,6 +231,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showsUsageInMenuBar = true
         menuBarUsage = .lastActive
         menuBarSecondaryUsage = nil
+        usageDisplayMode = .used
         favoriteModels = []
         hiddenModels = []
     }
@@ -249,6 +271,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         fontSize = value(.fontSize, defaults.fontSize)
         replyTypeface = value(.replyTypeface, defaults.replyTypeface)
         userMessageSide = value(.userMessageSide, defaults.userMessageSide)
+        terminalPlacement = value(.terminalPlacement, defaults.terminalPlacement)
         darkTheme = value(.darkTheme, defaults.darkTheme)
         lightTheme = value(.lightTheme, defaults.lightTheme)
         // A value that is not text stays as written, so the Keyboard pane can point it out.
@@ -259,6 +282,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showsUsageInMenuBar = value(.showsUsageInMenuBar, defaults.showsUsageInMenuBar)
         menuBarUsage = value(.menuBarUsage, defaults.menuBarUsage)
         menuBarSecondaryUsage = value(.menuBarSecondaryUsage, defaults.menuBarSecondaryUsage)
+        usageDisplayMode = value(.usageDisplayMode, defaults.usageDisplayMode)
         // Models of agents this version does not know are skipped, not the whole list.
         favoriteModels = container.lenientArray(ModelReference.self, forKey: .favoriteModels)
         hiddenModels = container.lenientArray(ModelReference.self, forKey: .hiddenModels)

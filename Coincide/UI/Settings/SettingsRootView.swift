@@ -144,7 +144,7 @@ extension SettingsSection {
 // MARK: Search
 
 /// One searchable destination: a pane, a provider page, or a row on the General pane.
-private struct SettingsSearchEntry: Identifiable {
+struct SettingsSearchEntry: Identifiable {
     let title: String
     let pane: SettingsPane
     var setting: SettingsRowID?
@@ -157,7 +157,7 @@ private struct SettingsSearchEntry: Identifiable {
     }
 }
 
-private struct SettingsSearchResults: View {
+struct SettingsSearchResults: View {
     let model: SettingsModel
     @State private var selection: SettingsSearchEntry.ID?
 
@@ -191,7 +191,7 @@ private struct SettingsSearchResults: View {
         .onChange(of: query) { selection = nil }
     }
 
-    private static func entries(kinds: [ProviderKind]) -> [SettingsSearchEntry] {
+    static func entries(kinds: [ProviderKind]) -> [SettingsSearchEntry] {
         let general = SettingsPane.section(.general)
         var entries: [SettingsSearchEntry] = [
             SettingsSearchEntry(title: String(localized: "Usage"), pane: .section(.usage),
@@ -216,6 +216,12 @@ private struct SettingsSearchResults: View {
                 title: String(localized: "Your messages"), pane: general, setting: .userMessageSide,
                 keywords: [String(localized: "Chat layout"), String(localized: "Message alignment"), String(localized: "Right"),
                            String(localized: "Left")]),
+            SettingsSearchEntry(
+                title: String(localized: "Terminal"), pane: general, setting: .terminalPlacement,
+                keywords: [
+                    String(localized: "Bottom panel"), String(localized: "Right panel"), String(localized: "Toolbar"),
+                    String(localized: "Navigation"), String(localized: "Shell"), String(localized: "Layout"),
+                ]),
             SettingsSearchEntry(
                 title: String(localized: "Send messages with"), pane: general, setting: .sendShortcut,
                 keywords: [String(localized: "Return"), String(localized: "Enter"), String(localized: "New line")]),

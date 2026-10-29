@@ -4,17 +4,19 @@ import Observation
 import SwiftUI
 
 /// Coincide's menu bar item. By default it shows the logo of the agent used last with the share used of that account's
-/// most used limit; the popover and Settings › Usage can pin an account's figure instead, show the closest limit across
+/// most used limit; its list and Settings › Usage can pin an account's figure instead, show the closest limit across
 /// all (with a gauge), or add a second figure beside the first (`AppSettings.menuBarUsage`). Clicking it shows the
 /// overall usage and each account's windows, credits and figures. It shows the figures Settings › Usage shows
 /// (`UsageInsights`), so opening it reads nothing the page has not, and it lives only while Coincide runs. Settings ›
 /// Usage turns it off.
 @MainActor
-final class UsageStatusItem: NSObject, NSPopoverDelegate {
+final class UsageStatusItem: NSObject {
     static let shared = UsageStatusItem()
 
     private var item: NSStatusItem?
-    private var popover: NSPopover?
+    /// The list clicking the item drops down, in a panel that opens under the clicked item on whatever display and
+    /// Space the user is on, over full-screen apps too, without activating Coincide.
+    private let dropdown = StatusItemDropdown()
     private var observers: [NSObjectProtocol] = []
     private var storeObserver: ObservationToken?
     private var insights: UsageInsights { .shared }
@@ -34,7 +36,7 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
     private func update() {
         let settings = AppStore.shared.settings
         guard settings.showsUsageInMenuBar else {
-            popover?.close()
+            dropdown.close()
             if let item { NSStatusBar.system.removeStatusItem(item) }
             item = nil
             return
@@ -43,10 +45,10 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
         self.item = item
         guard let button = item.button else { return }
         let readings = Self.readings(settings: settings, accounts: insights.accountLimits(), lastActive: insights.lastActive)
-        button.image = Self.image(for: readings)
+        button.image = Self.image(for: readings, mode: settings.usageDisplayMode)
         button.imagePosition = .imageOnly
         button.title = ""
-        let summary = Self.summary(readings)
+        let summary = Self.summary(readings, mode: settings.usageDisplayMode)
         button.toolTip = summary
         button.setAccessibilityLabel(summary)
     }
@@ -58,7 +60,7 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
         let choices = [settings.menuBarUsage] + [settings.menuBarSecondaryUsage].compactMap { $0 }
         var readings: [MenuBarUsageReading] = []
         for choice in choices {
-            guard let reading = MenuBarUsage.reading(for: choice, accounts: accounts, lastActive: lastActive),
+            guard let reading = MenuBarUsage.reading(for: choice, accounts: accounts, lastActive: lastActive, mode: settings.usageDisplayMode),
                 !readings.contains(where: { $0.provider == reading.provider && $0.account?.id == reading.account?.id && $0.text == reading.text })
             else { continue }
             readings.append(reading)
@@ -75,8 +77,9 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
     }
 
     /// The item's whole image, drawn as one template so the menu bar tints it for light and dark bars and its highlight:
-    /// each reading's logo (or the gauge) followed by its text. With no reading, the gauge alone.
-    static func image(for readings: [MenuBarUsageReading]) -> NSImage {
+    /// each reading's logo (or the gauge) followed by its text. With no reading, the gauge alone. The gauge's needle
+    /// follows what is used, or what is left (like a fuel gauge) when `mode` shows that.
+    static func image(for readings: [MenuBarUsageReading], mode: UsageDisplayMode = .used) -> NSImage {
         let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize - 1, weight: .medium)
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
         let iconSize: CGFloat = 15
@@ -85,7 +88,7 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
             readings.isEmpty
             ? [(gauge(percent: nil), nil)]
             : readings.map { reading in
-                let icon = reading.provider.map { Theme.logo(for: $0) } ?? gauge(percent: reading.window.map { Int($0.usedPercent.rounded()) })
+                let icon = reading.provider.map { Theme.logo(for: $0) } ?? gauge(percent: reading.window.map { $0.shownPercent(mode) })
                 return (icon, reading.text.map { NSAttributedString(string: $0, attributes: attributes) })
             }
         let gap: CGFloat = 3
@@ -122,7 +125,7 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
         return NSRect(x: rect.midX - fitted.width / 2, y: rect.midY - fitted.height / 2, width: fitted.width, height: fitted.height)
     }
 
-    /// A gauge whose needle follows how much is used, drawn as a template so the menu bar tints it.
+    /// A gauge whose needle follows `percent`, drawn as a template so the menu bar tints it.
     static func gauge(percent: Int?) -> NSImage? {
         let name =
             switch percent ?? 0 {
@@ -138,17 +141,22 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
         return image
     }
 
-    /// "Coincide usage: Claude Code weekly limit 62% used, resets in 2d 3h. Codex: $12.40 left".
-    static func summary(_ readings: [MenuBarUsageReading], now: Date = Date()) -> String {
+    /// "Coincide usage: Claude Code weekly limit 62% used, resets in 2d 3h. Codex: $12.40 left" ("38% left" when
+    /// `mode` shows what is left).
+    static func summary(_ readings: [MenuBarUsageReading], mode: UsageDisplayMode = .used, now: Date = Date()) -> String {
         let parts = readings.compactMap { reading -> String? in
             guard let account = reading.account else { return nil }
             if let window = reading.window {
-                var text = String(
-                    localized: "\(UsageFormat.title(account)) \(window.label.lowercased()) limit \(Int(window.usedPercent.rounded()))% used")
+                var text =
+                    mode == .used
+                    ? String(localized: "\(UsageFormat.title(account)) \(window.label.lowercased()) limit \(window.shownPercent(.used))% used")
+                    : String(localized: "\(UsageFormat.title(account)) \(window.label.lowercased()) limit \(window.shownPercent(.remaining))% left")
                 if let reset = window.resetDescription(at: now) { text += ", " + reset }
                 return text
             }
-            if let figure = reading.figure { return "\(UsageFormat.title(account)): \(UsageFormat.figureValue(figure))" }
+            if let figure = reading.figure {
+                return "\(UsageFormat.title(account)): \(UsageRow.figure(figure, mode: mode, now: now).value)"
+            }
             if let credits = reading.credits { return "\(UsageFormat.title(account)): \(UsageFormat.credits(credits))" }
             return String(localized: "\(UsageFormat.title(account)): no limits reported")
         }
@@ -157,25 +165,23 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
     }
 
     @objc private func toggle(_ sender: NSStatusBarButton) {
-        if let popover, popover.isShown {
-            popover.performClose(sender)
+        if dropdown.isShown {
+            dropdown.close()
             return
         }
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        popover.delegate = self
-        let controller = NSHostingController(rootView: UsageMenuView(close: { [weak popover] in popover?.performClose(nil) }))
+        let controller = NSHostingController(rootView: UsageMenuView(close: { [weak dropdown = self.dropdown] in dropdown?.close() }))
         controller.sizingOptions = .preferredContentSize
-        popover.contentViewController = controller
-        self.popover = popover
-        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+        controller.preferredContentSize = controller.sizeThatFits(
+            in: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+        controller.title = String(localized: "Usage")
+        // Where the click was, so the list opens under it even if the item's frame is from another display's menu bar.
+        let mouse = NSApp.currentEvent.flatMap { Self.isMouseClick($0.type) ? NSEvent.mouseLocation : nil }
+        dropdown.show(controller, under: sender, mouse: mouse)
         insights.refreshIfStale()
     }
 
-    func popoverDidClose(_ notification: Notification) {
-        popover = nil
+    private static func isMouseClick(_ type: NSEvent.EventType) -> Bool {
+        [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp].contains(type)
     }
 }
 
@@ -185,14 +191,28 @@ private final class UsageMenuModel {
     private(set) var accounts: [UsageInsights.AccountLimits] = []
     private(set) var report = UsageReport()
     private(set) var closest: (account: UsageInsights.AccountLimits, window: UsageLimitWindow)?
+    /// Coincide's turns with each Anthropic API-key account, by `UsageReport.accountKey`.
+    private(set) var tracked: [String: UsageReport] = [:]
     private(set) var isRefreshing = false
     private(set) var lastScan: Date?
     private(set) var now = Date()
+    /// Used or what is left, kept in step with the setting (which Settings › Usage may change while the list shows).
+    var displayMode: UsageDisplayMode = AppStore.shared.settings.usageDisplayMode {
+        didSet {
+            guard AppStore.shared.settings.usageDisplayMode != displayMode else { return }
+            AppStore.shared.updateSettings { $0.usageDisplayMode = displayMode }
+        }
+    }
     @ObservationIgnored private var observer: NSObjectProtocol?
+    @ObservationIgnored private var storeObserver: ObservationToken?
 
     init() {
         observer = NotificationCenter.default.addObserver(forName: UsageInsights.didChange, object: UsageInsights.shared, queue: .main) {
             [weak self] _ in MainActor.assumeIsolated { self?.reload() }
+        }
+        storeObserver = AppStore.shared.observe { [weak self] change in
+            guard change == .settings, let self, self.displayMode != AppStore.shared.settings.usageDisplayMode else { return }
+            self.displayMode = AppStore.shared.settings.usageDisplayMode
         }
         reload()
     }
@@ -216,6 +236,7 @@ private final class UsageMenuModel {
         now = Date()
         accounts = insights.accountLimits(now: now)
         closest = UsageInsights.mostConstrained(accounts)
+        tracked = UsageRow.trackedReports(accounts, events: insights.events, now: now)
         report = UsageReport.make(insights.events, periodDays: 30, now: now)
         isRefreshing = insights.isScanning || insights.isCheckingLimits
         lastScan = insights.lastScan
@@ -228,14 +249,18 @@ private struct UsageMenuView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Usage").font(.headline)
-                Spacer()
-                if let lastScan = model.lastScan {
-                    Text("Updated \(lastScan.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Usage").font(.headline)
+                    if let lastScan = model.lastScan {
+                        Text("Updated \(lastScan.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
+                Spacer(minLength: 0)
+                UsageDisplayModeToggle(mode: $model.displayMode)
             }
             .padding(.horizontal, 14)
             .padding(.top, 12)
@@ -250,7 +275,10 @@ private struct UsageMenuView: View {
                             .padding(.horizontal, 14)
                     }
                     ForEach(model.accounts) { account in
-                        UsageMenuAccountRow(account: account, now: model.now) {
+                        UsageMenuAccountRow(
+                            account: account, mode: model.displayMode, now: model.now,
+                            tracked: model.tracked[UsageReport.accountKey(account.provider, account.account.id)]
+                        ) {
                             close()
                             NSApp.activate()
                             UsageNavigation.show(provider: account.provider)
@@ -309,25 +337,16 @@ private struct UsageMenuView: View {
                 period(String(localized: "30 days"), model.report.lastMonth)
             }
             if let closest = model.closest {
+                let row = UsageRow.closest(closest.account, closest.window, mode: model.displayMode, now: model.now)
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HStack(spacing: 6) {
                         SettingsProviderIcon(kind: closest.account.provider, size: 14)
-                        Text("Closest limit").font(.caption)
-                        Spacer()
-                        Text("\(UsageFormat.title(closest.account)) · \(closest.window.label) · \(UsageFormat.used(closest.window))")
-                            .font(.caption.monospacedDigit())
-                            .lineLimit(1)
+                        Text("Closest limit").font(.caption).foregroundStyle(.secondary)
                     }
-                    UsageWindowBar(window: closest.window, provider: closest.account.provider, now: model.now, height: 4)
-                    if let reset = closest.window.resetDescription(at: model.now) {
-                        Text(reset).font(.caption2).foregroundStyle(.secondary)
-                    }
+                    UsageRowView(row: row, provider: closest.account.provider, compact: true)
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(
-                    [String(localized: "Closest limit"), UsageFormat.title(closest.account), closest.window.label,
-                     UsageFormat.used(closest.window), closest.window.resetDescription(at: model.now)]
-                        .compactMap { $0 }.joined(separator: ", "))
+                .accessibilityLabel(String(localized: "Closest limit") + ", " + row.accessibilityLabel)
             }
         }
         .padding(.horizontal, 14)
@@ -353,11 +372,14 @@ private struct UsageMenuView: View {
     }
 }
 
-/// One account in the menu: its name and plan, then each window and figure, or why it has none. Clicking opens
-/// Settings › Usage.
+/// One account in the menu: its name and plan, then a row for each window, credits and figure, or why it has none.
+/// Clicking opens Settings › Usage.
 private struct UsageMenuAccountRow: View {
     let account: UsageInsights.AccountLimits
+    let mode: UsageDisplayMode
     let now: Date
+    /// Coincide's own turns with the account, for an API key with no balance to show.
+    var tracked: UsageReport?
     let open: () -> Void
     @State private var isHovered = false
 
@@ -368,40 +390,22 @@ private struct UsageMenuAccountRow: View {
                     SettingsProviderIcon(kind: account.provider, size: 16)
                     Text(UsageFormat.title(account)).fontWeight(.medium).lineLimit(1)
                     if let plan = account.limits?.plan {
-                        Text(UsageFormat.plan(plan)).font(.caption).foregroundStyle(.secondary)
+                        Text(UsageFormat.plan(plan)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    Spacer()
-                    if let credits = account.limits?.credits {
-                        Text(UsageFormat.credits(credits)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
+                    Spacer(minLength: 0)
                 }
-                let windows = MenuBarUsage.allWindows(account)
-                let figures = account.limits?.figures ?? []
-                if windows.isEmpty && figures.isEmpty && (account.limits?.notes ?? []).isEmpty {
+                let rows = account.limits.map { UsageRow.rows($0, mode: mode, now: now) } ?? []
+                if rows.isEmpty && (account.limits?.notes ?? []).isEmpty && tracked == nil {
                     Text(UsageFormat.unavailable(account, settings: AppStore.shared.settings))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                ForEach(windows) { window in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(window.label).font(.caption)
-                            Spacer()
-                            Text(UsageFormat.used(window)).font(.caption.monospacedDigit())
-                        }
-                        UsageWindowBar(window: window, provider: account.provider, now: now, height: 4)
-                        if let reset = UsageFormat.reset(window, now: now) {
-                            Text(reset).font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(
-                        [window.label, UsageFormat.used(window), UsageFormat.reset(window, now: now)].compactMap { $0 }
-                            .joined(separator: ", "))
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    UsageRowView(row: row, provider: account.provider, compact: true)
                 }
-                ForEach(figures) { figure in
-                    UsageFigureRow(figure: figure, provider: account.provider, now: now, compact: true)
+                if let tracked {
+                    UsageTrackedRows(report: tracked, compact: true)
                 }
                 ForEach(account.limits?.notes ?? [], id: \.self) { note in
                     Text(note).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -417,6 +421,42 @@ private struct UsageMenuAccountRow: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .help(String(localized: "Show in Settings › Usage"))
+    }
+}
+
+/// Switches between showing what is used and what is left: a small two-part control for the list's header.
+struct UsageDisplayModeToggle: View {
+    @Binding var mode: UsageDisplayMode
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(UsageDisplayMode.allCases, id: \.self) { option in
+                let isSelected = option == mode
+                Button {
+                    mode = option
+                } label: {
+                    Text(UsageFormat.displayModeName(option))
+                        .font(.caption.weight(isSelected ? .semibold : .regular))
+                        .lineLimit(1)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(isSelected ? Color(nsColor: Theme.sidebarSelection) : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(isSelected ? Color(nsColor: Theme.ink) : .secondary)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color(nsColor: Theme.raisedFill)))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color(nsColor: Theme.surfaceBorder), lineWidth: 1))
+        .fixedSize()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(String(localized: "Show usage as"))
+        .help(String(localized: "Show what is used of each limit, or what is left"))
     }
 }
 

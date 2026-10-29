@@ -50,6 +50,17 @@ struct GeneralSettingsView: View {
                             isRevealed: highlighted == .lightTheme, onPick: showMode(of:))
                             .settingsRevealable(.lightTheme, highlighted: highlighted)
                     }
+                    ThemedPicker(
+                        selection: model.binding(\.terminalPlacement),
+                        options: TerminalPlacement.allCases.map { .init($0, $0.displayName) }
+                    ) {
+                        Text("Terminal")
+                        Text(
+                            model.settings.terminalPlacement == .bottom
+                                ? String(localized: "The terminal opens below the chat. Its button is in the rail on the left.")
+                                : String(localized: "The terminal opens on the right, beside the diff and the browser preview. Its button is with theirs at the top right."))
+                    }
+                    .settingsRevealable(.terminalPlacement, highlighted: highlighted)
                 }
 
                 Section("Chat") {
@@ -215,29 +226,33 @@ struct GeneralSettingsView: View {
     }
 
     private func restoreDefaults() {
+        model.update(Self.restoreDefaults(in:))
+    }
+
+    /// Puts the General pane's settings back to their defaults; providers, custom models and the default model stay.
+    static func restoreDefaults(in settings: inout AppSettings) {
         let defaults = AppSettings()
-        model.update { settings in
-            settings.appearance = defaults.appearance
-            settings.fontSize = defaults.fontSize
-            settings.replyTypeface = defaults.replyTypeface
-            settings.userMessageSide = defaults.userMessageSide
-            settings.darkTheme = defaults.darkTheme
-            settings.lightTheme = defaults.lightTheme
-            settings.sendOnReturn = defaults.sendOnReturn
-            settings.followUpBehavior = defaults.followUpBehavior
-            settings.generatesThreadTitles = defaults.generatesThreadTitles
-            settings.newThreadStartsChat = defaults.newThreadStartsChat
-            settings.resumesAfterUsageLimit = defaults.resumesAfterUsageLimit
-            settings.showReasoning = defaults.showReasoning
-            settings.opensLinksInDefaultBrowser = defaults.opensLinksInDefaultBrowser
-            settings.confirmBeforeDeletingThreads = defaults.confirmBeforeDeletingThreads
-            settings.holdToQuit = defaults.holdToQuit
-            settings.defaultAccessMode = defaults.defaultAccessMode
-            settings.notifyWhenInBackground = defaults.notifyWhenInBackground
-            settings.checkpointsEnabled = defaults.checkpointsEnabled
-            settings.worktreeBranchPrefix = defaults.worktreeBranchPrefix
-            settings.idleSessionTimeoutMinutes = defaults.idleSessionTimeoutMinutes
-        }
+        settings.appearance = defaults.appearance
+        settings.fontSize = defaults.fontSize
+        settings.replyTypeface = defaults.replyTypeface
+        settings.userMessageSide = defaults.userMessageSide
+        settings.darkTheme = defaults.darkTheme
+        settings.lightTheme = defaults.lightTheme
+        settings.terminalPlacement = defaults.terminalPlacement
+        settings.sendOnReturn = defaults.sendOnReturn
+        settings.followUpBehavior = defaults.followUpBehavior
+        settings.generatesThreadTitles = defaults.generatesThreadTitles
+        settings.newThreadStartsChat = defaults.newThreadStartsChat
+        settings.resumesAfterUsageLimit = defaults.resumesAfterUsageLimit
+        settings.showReasoning = defaults.showReasoning
+        settings.opensLinksInDefaultBrowser = defaults.opensLinksInDefaultBrowser
+        settings.confirmBeforeDeletingThreads = defaults.confirmBeforeDeletingThreads
+        settings.holdToQuit = defaults.holdToQuit
+        settings.defaultAccessMode = defaults.defaultAccessMode
+        settings.notifyWhenInBackground = defaults.notifyWhenInBackground
+        settings.checkpointsEnabled = defaults.checkpointsEnabled
+        settings.worktreeBranchPrefix = defaults.worktreeBranchPrefix
+        settings.idleSessionTimeoutMinutes = defaults.idleSessionTimeoutMinutes
     }
 }
 
