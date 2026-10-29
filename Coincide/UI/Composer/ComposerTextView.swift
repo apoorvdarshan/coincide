@@ -36,6 +36,8 @@ final class ComposerTextView: NSTextView {
         isAutomaticLinkDetectionEnabled = false
         isAutomaticDataDetectionEnabled = false
         smartInsertDeleteEnabled = false
+        // No floating "Write with Siri" button beside the caret: it sits over the composer's edge and catches stray clicks.
+        writingToolsBehavior = .none
         isContinuousSpellCheckingEnabled = true
         textContainerInset = NSSize(width: 0, height: 3)
         selectedTextAttributes = [.backgroundColor: Theme.opaqueTextSelection(over: Theme.composerFill)]
