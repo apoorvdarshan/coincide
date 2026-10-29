@@ -24,6 +24,9 @@ public final class PreviewBridge {
                 - ask-user with message (one or two short sentences) and optional timeout in seconds (default 300, \
                 at most 900): opens the panel, shows the user your message with a Done button, and waits. Returns \
                 result done, declined or timeout.
+                - tabs: lists this thread's tabs (id, url, title, active). new-tab with optional url opens one and makes \
+                it active; select-tab and close-tab take tab. Other commands act on the active tab, or on the tab you \
+                name with tab. Links that open a new window open a new tab. At most 20 tabs.
                 - fill-login with optional item (a title or username): on a sign-in or two-factor page, Coincide fills \
                 the user's saved login from their password manager after the user allows it. You get the username at \
                 most, never the password or code; submit the form yourself afterwards. If no login matches, use ask-user.

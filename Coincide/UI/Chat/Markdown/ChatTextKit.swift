@@ -340,13 +340,14 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
     /// Links go only to `onOpenLink`. NSTextView's own handling would give any URL to the system, which
     /// launches apps and runs scripts that agent-written links can point at.
     override func clicked(onLink link: Any, at charIndex: Int) {
-        let commandKey = NSApp.currentEvent?.modifierFlags.contains(.command) == true
-        openLink(link, commandKey: commandKey)
+        let flags = NSApp.currentEvent?.modifierFlags ?? []
+        openLink(link, commandKey: flags.contains(.command), optionKey: flags.contains(.option))
     }
 
     /// Opens a clicked link: a web link where the click asks (`LinkRouting`), anything else as before.
-    func openLink(_ link: Any, commandKey: Bool) {
-        let request = LinkRouting.request(for: link, commandKey: commandKey, opensInDefaultBrowser: opensLinksInDefaultBrowser())
+    func openLink(_ link: Any, commandKey: Bool, optionKey: Bool = false) {
+        let request = LinkRouting.request(
+            for: link, commandKey: commandKey, optionKey: optionKey, opensInDefaultBrowser: opensLinksInDefaultBrowser())
         _ = onOpenLink?(request ?? link)
     }
 
@@ -369,7 +370,8 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
         let menu = NSMenu()
         menu.autoenablesItems = false
         for (destination, action) in [
-            (LinkDestination.coincideBrowser, #selector(openLinkInCoincide(_:))), (.defaultBrowser, #selector(openLinkInDefaultBrowser(_:))),
+            (LinkDestination.coincideBrowser, #selector(openLinkInCoincide(_:))),
+            (.coincideBrowserNewTab, #selector(openLinkInNewTab(_:))), (.defaultBrowser, #selector(openLinkInDefaultBrowser(_:))),
         ] {
             let item = NSMenuItem(title: LinkRouting.menuTitle(destination), action: action, keyEquivalent: "")
             item.target = self
@@ -387,6 +389,11 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
     @objc private func openLinkInCoincide(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? URL else { return }
         _ = onOpenLink?(WebLinkRequest(url: url, destination: .coincideBrowser))
+    }
+
+    @objc private func openLinkInNewTab(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        _ = onOpenLink?(WebLinkRequest(url: url, destination: .coincideBrowserNewTab))
     }
 
     @objc private func openLinkInDefaultBrowser(_ sender: NSMenuItem) {
