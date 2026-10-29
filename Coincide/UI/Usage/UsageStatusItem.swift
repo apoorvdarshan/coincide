@@ -394,7 +394,7 @@ private struct UsageMenuAccountRow: View {
                     }
                     Spacer(minLength: 0)
                 }
-                let rows = account.limits.map { UsageRow.rows($0, mode: mode, now: now) } ?? []
+                let rows = account.limits.map { UsageRow.rows($0, marks: account.balanceMarks, mode: mode, now: now) } ?? []
                 if rows.isEmpty && (account.limits?.notes ?? []).isEmpty && tracked == nil {
                     Text(UsageFormat.unavailable(account, settings: AppStore.shared.settings))
                         .font(.caption)
