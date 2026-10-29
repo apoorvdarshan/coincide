@@ -29,6 +29,14 @@ struct GeneralSettingsView: View {
                         Text("The typeface of agents’ replies in the conversation.")
                     }
                     .settingsRevealable(.replyTypeface, highlighted: highlighted)
+                    ThemedPicker(
+                        selection: model.binding(\.userMessageSide),
+                        options: UserMessageSide.allCases.map { .init($0, $0.title(in: NSApp.userInterfaceLayoutDirection)) }
+                    ) {
+                        Text("Your messages")
+                        Text("Where your messages sit in the conversation. Agents’ replies stay by the agent rail.")
+                    }
+                    .settingsRevealable(.userMessageSide, highlighted: highlighted)
                     // Only the themes the chosen appearance can show: both with System. A search still reaches either.
                     if model.settings.appearance != .light || highlighted == .darkTheme {
                         ThemeGridRow(
@@ -229,6 +237,7 @@ struct GeneralSettingsView: View {
         settings.appearance = defaults.appearance
         settings.fontSize = defaults.fontSize
         settings.replyTypeface = defaults.replyTypeface
+        settings.userMessageSide = defaults.userMessageSide
         settings.darkTheme = defaults.darkTheme
         settings.lightTheme = defaults.lightTheme
         settings.terminalPlacement = defaults.terminalPlacement

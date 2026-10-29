@@ -3,9 +3,10 @@ import CoincideKit
 import QuartzCore
 
 /// The agent rail: a line down the transcript's left gutter in the color of the agent that did the work, so a thread
-/// several agents worked on shows who did what at a glance. A ring marks each message of the user's and the agent's
-/// logo marks where it starts answering; where the next turn goes to another agent, the line blends from one color
-/// to the other through the user's message.
+/// several agents worked on shows who did what at a glance. The agent's logo marks where it starts answering; a ring
+/// marks each message of the user's while the messages sit on the rail (Settings › General › Your messages: Left), and
+/// with them across on the right the line runs on through them. Where the next turn goes to another agent, the line
+/// blends from one color to the other through the user's message.
 struct TranscriptRail: Equatable {
     enum Node: Equatable {
         case none
@@ -94,6 +95,15 @@ final class TranscriptRailView: NSView {
         }
     }
 
+    /// Whether a message of the user's is marked with a ring. With the message across the transcript from the rail,
+    /// the line runs on through it instead.
+    var showsMessageNode = true {
+        didSet {
+            guard showsMessageNode != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
     /// Where the node's center sits, from the top of the row.
     var nodeY: CGFloat = 10 {
         didSet {
@@ -147,7 +157,7 @@ final class TranscriptRailView: NSView {
     private var gap: CGFloat {
         switch rail?.node {
         case .agent: Self.logoSize / 2 + 4
-        case .message: 7
+        case .message: showsMessageNode ? 7 : 0
         case .live: 6
         default: 0
         }
@@ -179,7 +189,7 @@ final class TranscriptRailView: NSView {
             gradient?.draw(in: full, angle: 90)
             NSGraphicsContext.restoreGraphicsState()
         }
-        if rail.node == .message {
+        if rail.node == .message, showsMessageNode {
             let ring = NSBezierPath(ovalIn: NSRect(x: x - 3.5, y: nodeY - 3.5, width: 7, height: 7))
             ring.lineWidth = 1.5
             NSColor.secondaryLabelColor.setStroke()
