@@ -4,17 +4,19 @@ import Observation
 import SwiftUI
 
 /// Coincide's menu bar item. By default it shows the logo of the agent used last with the share used of that account's
-/// most used limit; the popover and Settings › Usage can pin an account's figure instead, show the closest limit across
+/// most used limit; its list and Settings › Usage can pin an account's figure instead, show the closest limit across
 /// all (with a gauge), or add a second figure beside the first (`AppSettings.menuBarUsage`). Clicking it shows the
 /// overall usage and each account's windows, credits and figures. It shows the figures Settings › Usage shows
 /// (`UsageInsights`), so opening it reads nothing the page has not, and it lives only while Coincide runs. Settings ›
 /// Usage turns it off.
 @MainActor
-final class UsageStatusItem: NSObject, NSPopoverDelegate {
+final class UsageStatusItem: NSObject {
     static let shared = UsageStatusItem()
 
     private var item: NSStatusItem?
-    private var popover: NSPopover?
+    /// The list clicking the item drops down, in a panel that opens under the clicked item on whatever display and
+    /// Space the user is on, over full-screen apps too, without activating Coincide.
+    private let dropdown = StatusItemDropdown()
     private var observers: [NSObjectProtocol] = []
     private var storeObserver: ObservationToken?
     private var insights: UsageInsights { .shared }
@@ -34,7 +36,7 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
     private func update() {
         let settings = AppStore.shared.settings
         guard settings.showsUsageInMenuBar else {
-            popover?.close()
+            dropdown.close()
             if let item { NSStatusBar.system.removeStatusItem(item) }
             item = nil
             return
@@ -163,25 +165,23 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
     }
 
     @objc private func toggle(_ sender: NSStatusBarButton) {
-        if let popover, popover.isShown {
-            popover.performClose(sender)
+        if dropdown.isShown {
+            dropdown.close()
             return
         }
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        popover.delegate = self
-        let controller = NSHostingController(rootView: UsageMenuView(close: { [weak popover] in popover?.performClose(nil) }))
+        let controller = NSHostingController(rootView: UsageMenuView(close: { [weak dropdown = self.dropdown] in dropdown?.close() }))
         controller.sizingOptions = .preferredContentSize
-        popover.contentViewController = controller
-        self.popover = popover
-        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+        controller.preferredContentSize = controller.sizeThatFits(
+            in: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+        controller.title = String(localized: "Usage")
+        // Where the click was, so the list opens under it even if the item's frame is from another display's menu bar.
+        let mouse = NSApp.currentEvent.flatMap { Self.isMouseClick($0.type) ? NSEvent.mouseLocation : nil }
+        dropdown.show(controller, under: sender, mouse: mouse)
         insights.refreshIfStale()
     }
 
-    func popoverDidClose(_ notification: Notification) {
-        popover = nil
+    private static func isMouseClick(_ type: NSEvent.EventType) -> Bool {
+        [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp].contains(type)
     }
 }
 
@@ -196,7 +196,7 @@ private final class UsageMenuModel {
     private(set) var isRefreshing = false
     private(set) var lastScan: Date?
     private(set) var now = Date()
-    /// Used or what is left, kept in step with the setting (which Settings › Usage may change while the popover shows).
+    /// Used or what is left, kept in step with the setting (which Settings › Usage may change while the list shows).
     var displayMode: UsageDisplayMode = AppStore.shared.settings.usageDisplayMode {
         didSet {
             guard AppStore.shared.settings.usageDisplayMode != displayMode else { return }
@@ -424,7 +424,7 @@ private struct UsageMenuAccountRow: View {
     }
 }
 
-/// Switches between showing what is used and what is left: a small two-part control for the popover's header.
+/// Switches between showing what is used and what is left: a small two-part control for the list's header.
 struct UsageDisplayModeToggle: View {
     @Binding var mode: UsageDisplayMode
 
