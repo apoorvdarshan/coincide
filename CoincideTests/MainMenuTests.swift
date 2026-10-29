@@ -210,15 +210,15 @@ struct UIStateTests {
             values.threadSort = .created
             values.chatSort = .name
             values.pinnedThreads = pinned
-            values.sidebarSections = ["chats", "bots", "projects"]
+            values.sidebarSections = ["chats", "agents", "projects"]
         }
         state.flush()
         let reloaded = UIState(directory: folder.url).values
         #expect(reloaded.projectSort == .name && reloaded.threadSort == .created && reloaded.chatSort == .name)
         #expect(reloaded.pinnedThreads == pinned)
         // Kept as saved, a section from a newer version included; the sidebar skips what it doesn't know.
-        #expect(reloaded.sidebarSections == ["chats", "bots", "projects"])
-        #expect(SidebarOrdering.sectionOrder(saved: reloaded.sidebarSections) == [.chats, .projects, .pinned])
+        #expect(reloaded.sidebarSections == ["chats", "agents", "projects"])
+        #expect(SidebarOrdering.sectionOrder(saved: reloaded.sidebarSections) == [.chats, .projects, .bots, .pinned])
         #expect(reloaded.sidebarThreadsPerProject == nil)
     }
 }

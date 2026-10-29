@@ -19,6 +19,7 @@ final class SidebarViewController: NSViewController {
     private var nodes = SidebarNodeCache()
     private var header: SidebarNode { nodes.header }
     private var pinnedSection: SidebarNode { nodes.pinned }
+    private var botsSection: SidebarNode { nodes.bots }
     private var sections: [SidebarNode] = []
     /// Real projects live under Projects; project-free conversations live directly under Chats, and pinned threads
     /// of both directly under Pinned. In the order the sidebar shows them.
@@ -231,7 +232,7 @@ final class SidebarViewController: NSViewController {
 
     private func handle(_ change: StoreChange) {
         switch change {
-        case .projects, .threadList:
+        case .projects, .threadList, .bots:
             rebuild()
         case .thread(let id):
             refreshThreadRow(id)
@@ -320,7 +321,9 @@ final class SidebarViewController: NSViewController {
         }
         pinnedSection.children = pinnedOrder().filter(Set(pinned.map(\.id)).contains).map { nodes.node(.thread($0)) }
         header.children = projectNodes
+        botsSection.children = listedBots().map { nodes.node(.bot($0.id)) }
         var shown: [SidebarSection: SidebarNode] = [:]
+        if !botsSection.children.isEmpty { shown[.bots] = botsSection }
         if !pinnedSection.children.isEmpty { shown[.pinned] = pinnedSection }
         if !isSearching || !projectNodes.isEmpty { shown[.projects] = header }
         if let chatsNode { shown[.chats] = chatsNode }
@@ -340,6 +343,18 @@ final class SidebarViewController: NSViewController {
         let projectIDs = Set(store.projects.map(\.id))
         nodes.prune(keeping: projectIDs.union(keptIDs.projects), threadIDs: allThreadIDs.union(keptIDs.threads))
         keptIDs = (projectIDs, allThreadIDs)
+    }
+
+    /// The bots the Bots section lists: all of them, or while searching those whose name or conversations match.
+    private func listedBots() -> [Bot] {
+        guard isSearching else { return store.bots }
+        return store.bots.filter { bot in
+            PaletteSearch.scoreTerms(searchQuery, name: bot.displayName, keywords: [], typos: false) != nil
+                || store.conversations(of: bot.id).contains { thread in
+                    messageMatches[thread.id] != nil
+                        || PaletteSearch.scoreTerms(searchQuery, name: thread.title, keywords: [], typos: false) != nil
+                }
+        }
     }
 
     /// Threads a list shows before "Show more": the user's choice, or as many as a little more than fill the sidebar.
@@ -464,7 +479,10 @@ final class SidebarViewController: NSViewController {
     private func syncSelection() {
         isSyncingSelection = true
         defer { isSyncingSelection = false }
-        guard let id = selectedThreadID, let node = nodes.existing(.thread(id)) else {
+        // A bot's conversation highlights the bot's row.
+        guard let id = selectedThreadID,
+            let node = nodes.existing(.thread(id)) ?? store.summary(id)?.botID.flatMap({ nodes.existing(.bot($0)) })
+        else {
             outlineView.deselectAll(nil)
             return
         }
@@ -563,12 +581,42 @@ final class SidebarViewController: NSViewController {
     }
 
     private func refreshThreadRow(_ id: UUID) {
+        if let botID = store.summary(id)?.botID {
+            refreshBotRow(botID)
+            return
+        }
         guard let node = nodes.existing(.thread(id)), let thread = store.summary(id) else { return }
         let row = outlineView.row(forItem: node)
         if row >= 0, let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ThreadCell {
             cell.configure(rowModel(for: thread, project: store.project(thread.projectID)))
         }
         refreshProjectRows(only: thread.projectID)
+    }
+
+    private func refreshBotRow(_ botID: UUID) {
+        guard let node = nodes.existing(.bot(botID)), let model = botRowModel(botID) else { return }
+        let row = outlineView.row(forItem: node)
+        if row >= 0, let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? BotCell {
+            cell.configure(model)
+        }
+    }
+
+    /// A bot's row: its latest message, and the most pressing status among its conversations.
+    private func botRowModel(_ botID: UUID) -> BotRowModel? {
+        guard let bot = store.bot(botID) else { return nil }
+        let conversations = store.conversations(of: botID)
+        let latest = conversations.first
+        let status = strongestStatus(of: conversations.map(\.id)) ?? .idle
+        var lines = [bot.displayName]
+        if let latest { lines.append(latest.title) }
+        lines.append("\(bot.selection.provider.displayName) · \(ProviderRegistry.shared.displayName(for: bot.selection))")
+        lines.append((bot.workingDirectory.path as NSString).abbreviatingWithTildeInPath)
+        if let label = status.label { lines.append(label) }
+        if isSearching, let match = conversations.lazy.compactMap({ self.messageMatches[$0.id] }).first { lines.append("“\(match)”") }
+        return BotRowModel(
+            name: bot.displayName, avatar: bot.avatar, preview: latest?.preview ?? String(localized: "Say hello"),
+            updatedAt: latest?.updatedAt, status: status, toolTip: lines.joined(separator: "\n"),
+            accessibilityLabel: [bot.displayName, status.label, latest?.preview].compactMap(\.self).joined(separator: ", "))
     }
 
     /// Updates project rows (their collapsed status) and "Show more" rows (their hidden status).
@@ -610,6 +658,7 @@ final class SidebarViewController: NSViewController {
     }
 
     private func refreshVisibleThreadRows() {
+        for node in botsSection.children { if let id = node.botID { refreshBotRow(id) } }
         outlineView.enumerateAvailableRowViews { rowView, row in
             guard let id = self.sidebarNode(atRow: row)?.threadID, let thread = self.store.summary(id),
                 let cell = rowView.view(atColumn: 0) as? ThreadCell
@@ -620,6 +669,10 @@ final class SidebarViewController: NSViewController {
 
     private func refreshVisibleTimes(runningOnly: Bool) {
         outlineView.enumerateAvailableRowViews { rowView, row in
+            if let cell = rowView.view(atColumn: 0) as? BotCell {
+                cell.refreshTime()
+                return
+            }
             guard let id = self.sidebarNode(atRow: row)?.threadID, let cell = rowView.view(atColumn: 0) as? ThreadCell else { return }
             if !runningOnly || ThreadRunner.shared.isRunning(id) { cell.refreshTime() }
         }
@@ -717,7 +770,7 @@ final class SidebarViewController: NSViewController {
             showAllThreads(true, in: id)
         case .showLess(let id):
             showAllThreads(false, in: id)
-        case .pinned, .header, .chats, .thread, .empty:
+        case .bots, .bot, .pinned, .header, .chats, .thread, .empty:
             break
         }
     }
@@ -734,6 +787,10 @@ final class SidebarViewController: NSViewController {
 
     @objc private func newChat() {
         ThreadActions.newChat()
+    }
+
+    @objc private func newBot() {
+        BotActions.newBot(in: view.window)
     }
 
     @objc private func showOptions(_ sender: NSButton) {
@@ -938,7 +995,7 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         guard let node = item as? SidebarNode else { return false }
         switch node.kind {
-        case .pinned, .header, .chats, .project: return true
+        case .bots, .pinned, .header, .chats, .project: return true
         default: return false
         }
     }
@@ -962,7 +1019,8 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
         guard let node = item as? SidebarNode else { return 28 }
         switch node.kind {
-        case .pinned, .header, .chats: return 26
+        case .bots, .pinned, .header, .chats: return 26
+        case .bot: return 44
         case .project, .thread: return 28
         case .showMore, .showLess, .empty: return 24
         }
@@ -979,6 +1037,15 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? SidebarNode else { return nil }
         switch node.kind {
+        case .bots:
+            return reuse("botsHeader") {
+                SidebarHeaderCell(
+                    title: String(localized: "Bots"), target: self, add: (#selector(newBot), "plus", String(localized: "New Bot…")))
+            }
+        case .bot(let id):
+            let cell = reuse("bot") { BotCell(frame: .zero) }
+            if let model = botRowModel(id) { cell.configure(model) }
+            return cell
         case .pinned:
             return reuse("pinnedHeader") { SidebarHeaderCell(title: String(localized: "Pinned"), target: self) }
         case .header:
@@ -1046,6 +1113,11 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
         selectedInboxIDs = Set(outlineView.selectedRowIndexes.compactMap { sidebarNode(atRow: $0)?.threadID })
         // Extending selection prepares a bulk action without navigating away from the open conversation.
         if selectedInboxIDs.count > 1 { return }
+        if let botID = sidebarNode(atRow: outlineView.selectedRow)?.botID {
+            // A bot's row opens its latest conversation, which then highlights the row.
+            if selectedThreadID.flatMap({ store.summary($0)?.botID }) != botID { BotActions.open(botID) }
+            return
+        }
         guard let id = sidebarNode(atRow: outlineView.selectedRow)?.threadID else {
             // Clicking empty space must not close the open thread.
             syncSelection()
@@ -1237,6 +1309,10 @@ extension SidebarViewController: NSMenuDelegate {
             }
         case .chats(let id), .project(let id), .showMore(let id), .showLess(let id), .empty(let id):
             buildProjectMenu(menu, id)
+        case .bot(let id):
+            buildBotMenu(menu, id)
+        case .bots:
+            menu.addItem(item(String(localized: "New Bot…"), #selector(newBot)))
         case .pinned, .header, nil:
             menu.addItem(item(String(localized: "Add Project…"), #selector(addProject)))
             menu.addItem(.separator())
@@ -1254,6 +1330,38 @@ extension SidebarViewController: NSMenuDelegate {
             menu.addItem(item(String(localized: "Expand All Projects"), #selector(expandAll)))
             menu.addItem(item(String(localized: "Collapse All Projects"), #selector(collapseAll)))
         }
+    }
+
+    private func buildBotMenu(_ menu: NSMenu, _ id: UUID) {
+        guard store.bot(id) != nil else { return }
+        menu.addItem(item(String(localized: "New Conversation"), #selector(newConversationFromMenu(_:)), id))
+        let past = NSMenuItem(title: String(localized: "Past Conversations"), action: nil, keyEquivalent: "")
+        past.submenu = BotActions.pastConversationsMenu(for: id, target: self, action: #selector(openConversationFromMenu(_:)))
+        menu.addItem(past)
+        menu.addItem(.separator())
+        menu.addItem(item(String(localized: "Edit Bot…"), #selector(editBotFromMenu(_:)), id))
+        menu.addItem(.separator())
+        menu.addItem(item(String(localized: "Delete Bot…"), #selector(deleteBotFromMenu(_:)), id))
+    }
+
+    @objc private func newConversationFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        BotActions.newConversation(with: id)
+    }
+
+    @objc private func openConversationFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        AppEvents.openThread(id)
+    }
+
+    @objc private func editBotFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        BotActions.edit(id, in: view.window)
+    }
+
+    @objc private func deleteBotFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        BotActions.delete(id, in: view.window)
     }
 
     private func buildThreadMenu(_ menu: NSMenu, _ id: UUID) {

@@ -331,7 +331,8 @@ public final class ThreadRunner {
                 finishTurn(threadID, turnID, outcome: .interrupted)
                 return
             }
-            if store.settings.checkpointsEnabled {
+            // A bot working across the home folder is not snapshotted: a checkpoint would copy all of it into git.
+            if store.settings.checkpointsEnabled, !Bot.isBroadFolder(cwd) {
                 capturingBefore.insert(turnID)
                 await checkpoints.captureBeforeTurn(threadID: threadID, userItemID: turnID, cwd: cwd)
                 capturingBefore.remove(turnID)
@@ -355,10 +356,16 @@ public final class ThreadRunner {
             }
             var snapshot = current
             snapshot.items = Array(current.items.prefix(userIndex))
+            // A bot's persona reaches agents without a channel for it in front of the first message of each native
+            // session: one that has not finished a turn yet, or one started because resuming the earlier one failed.
+            // Agents with a channel got it at launch (`AgentLaunch.instructions`).
+            let persona = provider.takesSessionInstructions ? nil : snapshot.botID.flatMap { store.bot($0) }?.instructionsBlock
+            let isFreshSession = (snapshot.sessions[provider]?.seenItemCount ?? 0) <= 0
             let input = AgentTurnInput(
                 message: runtimeMessage(MessageContext.prompt(message: trimmed, context: context, workingDirectory: cwd.path), threadID: threadID),
-                handoffRecap: Handoff.recap(thread: snapshot, provider: provider),
-                newSessionRecap: Handoff.newSessionRecap(thread: snapshot, provider: provider), threadTitle: snapshot.title,
+                handoffRecap: Self.joined(isFreshSession ? persona : nil, Handoff.recap(thread: snapshot, provider: provider)),
+                newSessionRecap: Self.joined(persona, Handoff.newSessionRecap(thread: snapshot, provider: provider)),
+                threadTitle: snapshot.title,
                 imagePaths: imagePaths, filePaths: context.compactMap(\.filePath), selection: selection,
                 accessMode: snapshot.accessMode, interactionMode: snapshot.interactionMode)
             turns[threadID]?.isStarting = false
@@ -371,6 +378,12 @@ public final class ThreadRunner {
             guard isActive(threadID, turnID) else { return }
             finishTurn(threadID, turnID, outcome: .failed(error.localizedDescription))
         }
+    }
+
+    /// The blocks that are there, one after another.
+    private nonisolated static func joined(_ blocks: String?...) -> String? {
+        let present = blocks.compactMap { $0 }.filter { !$0.isEmpty }
+        return present.isEmpty ? nil : present.joined(separator: "\n\n")
     }
 
     /// Usage reports fill in each other's missing fields, so a turn starts without the previous turn's
@@ -696,7 +709,8 @@ public final class ThreadRunner {
         let launch = AgentLaunch(
             provider: provider, executable: executable, environment: environment, workingDirectory: cwd,
             resumeSessionID: resumed, selection: thread.selection,
-            accessMode: thread.accessMode, interactionMode: thread.interactionMode)
+            accessMode: thread.accessMode, interactionMode: thread.interactionMode,
+            instructions: provider.takesSessionInstructions ? thread.botID.flatMap { store.bot($0) }?.instructions : nil)
         let session =
             hostedSession?(threadID, launch, registry.account(account, of: provider)) ?? factory.makeSession(launch)
         launchedAccess[threadID, default: [:]][provider] = launch.accessMode

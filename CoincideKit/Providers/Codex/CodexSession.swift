@@ -238,8 +238,8 @@ final class CodexSession: AgentSession {
                 try adoptThread(try await resume(resumeID, cwd: cwd, model: model, on: connection), on: connection)
                 return
             } catch CodexRPCError.server(_, let message) {
-                let result = try await connection.request(
-                    "thread/start", CodexProtocol.threadStartParams(cwd: cwd, model: model), timeout: .seconds(120))
+                let params = CodexProtocol.threadStartParams(cwd: cwd, model: model, instructions: launch.instructions)
+                let result = try await connection.request("thread/start", params, timeout: .seconds(120))
                 try adoptThread(result, on: connection)
                 replacedThreads += 1
                 let notice = String(
@@ -248,15 +248,16 @@ final class CodexSession: AgentSession {
                 return
             }
         }
-        let result = try await connection.request(
-            "thread/start", CodexProtocol.threadStartParams(cwd: cwd, model: model), timeout: .seconds(60))
+        let params = CodexProtocol.threadStartParams(cwd: cwd, model: model, instructions: launch.instructions)
+        let result = try await connection.request("thread/start", params, timeout: .seconds(60))
         try adoptThread(result, on: connection)
     }
 
     private func resume(_ threadID: String, cwd: String, model: String?, on connection: CodexConnection) async throws
         -> JSONValue
     {
-        let params = CodexProtocol.threadResumeParams(threadID: threadID, cwd: cwd, model: model)
+        let params = CodexProtocol.threadResumeParams(
+            threadID: threadID, cwd: cwd, model: model, instructions: launch.instructions)
         do {
             return try await connection.request("thread/resume", params, timeout: .seconds(120))
         } catch CodexRPCError.server(_, let message) where CodexProtocol.isArchivedError(message) {

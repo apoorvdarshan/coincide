@@ -33,6 +33,11 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
     public var importedSession: ImportedSession?
     /// The user named the thread, so the agent leaves its title alone.
     public var isTitleCustom: Bool
+    /// The bot whose conversation this is (`ChatThread.botID`).
+    public var botID: UUID?
+    /// The latest message, shortened, for a bot's row in the sidebar. Kept for bots' conversations only, so the
+    /// index stays small.
+    public var preview: String?
 
     public nonisolated init(_ thread: ChatThread) {
         id = thread.id
@@ -55,6 +60,20 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
         nativeSessionIDs = thread.sessions.mapValues(\.sessionID)
         importedSession = thread.importedSession
         isTitleCustom = thread.isTitleCustom
+        botID = thread.botID
+        preview = thread.botID == nil ? nil : Self.preview(of: thread.items.lazy.map { ($0.kind, $0.text) })
+    }
+
+    /// The text of the latest message of the user's or an agent's, on one line and at most `limit` characters.
+    nonisolated static func preview(of items: some BidirectionalCollection<(TranscriptItem.Kind, String)>, limit: Int = 140)
+        -> String?
+    {
+        for (kind, text) in items.reversed() where kind == .user || kind == .assistant {
+            let line = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard !line.isEmpty else { continue }
+            return line.count > limit ? String(line.prefix(limit - 1)) + "…" : line
+        }
+        return nil
     }
 
     nonisolated static func ordered(_ providers: some Sequence<ProviderKind>) -> [ProviderKind] {
@@ -65,6 +84,7 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
     mutating func noteAppended(_ item: TranscriptItem, at date: Date) {
         itemCount += 1
         if item.kind == .user { hasUserMessages = true }
+        if botID != nil, let line = Self.preview(of: [(item.kind, item.text)]) { preview = line }
         updatedAt = date
     }
 }
@@ -103,11 +123,30 @@ struct ThreadSummaryFile: Decodable {
         thread.snoozedUntil = container.lenient(Date.self, forKey: key("snoozedUntil"))
         thread.importedSession = container.lenient(ImportedSession.self, forKey: key("importedSession"))
         thread.titledByUser = container.lenient(Bool.self, forKey: key("titledByUser"))
+        thread.botID = container.lenient(UUID.self, forKey: key("botID"))
         summary = ThreadSummary(thread)
         summary.itemCount = items.count
         summary.hasUserMessages = items.contains { $0.kind == .user }
         summary.sessionProviders = ThreadSummary.ordered(sessions.keys)
         summary.nativeSessionIDs = sessions.mapValues(\.sessionID)
+        // Only bots' conversations show a message, so only theirs have item text read.
+        if summary.botID != nil {
+            let texts = container.lenientArray(ItemText.self, forKey: key("items"))
+            summary.preview = ThreadSummary.preview(of: texts.map { ($0.kind, $0.text) })
+        }
+    }
+
+    /// An item's kind and text, read with the requirements of `TranscriptItem.init(from:)`.
+    private struct ItemText: Decodable {
+        var kind: TranscriptItem.Kind
+        var text: String
+
+        nonisolated init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: FileKey.self)
+            _ = try container.decode(UUID.self, forKey: FileKey("id"))
+            kind = try container.decode(TranscriptItem.Kind.self, forKey: FileKey("kind"))
+            text = container.lenient(String.self, forKey: FileKey("text")) ?? ""
+        }
     }
 
     /// An item's kind, read with the requirements of `TranscriptItem.init(from:)`, so the same items count.
