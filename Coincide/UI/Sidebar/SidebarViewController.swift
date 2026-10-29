@@ -53,6 +53,8 @@ final class SidebarViewController: NSViewController {
     private var hasLoaded = false
     private var keptIDs: (projects: Set<UUID>, threads: Set<UUID>) = ([], [])
     private var editing: (node: SidebarNode, original: String)?
+    /// Watches for a click outside the field being renamed, which finishes the rename.
+    private var renameClickMonitor: Any?
     private var clockTimer: Timer?
     private var runningTimer: Timer?
     private var jumpHintTimer: Timer?
@@ -1087,10 +1089,27 @@ final class SidebarViewController: NSViewController {
         field.isSelectable = true
         field.delegate = self
         view.window?.makeFirstResponder(field)
-        field.currentEditor()?.selectAll(nil)
+        if let editor = field.currentEditor() as? NSTextView {
+            // The theme's selection and caret, not the system's blue.
+            editor.selectedTextAttributes = [.backgroundColor: Theme.textSelection]
+            editor.insertionPointColor = Theme.accent
+            editor.selectAll(nil)
+        }
+        // A click outside the field finishes the rename, even on views that don't take focus (the transcript).
+        renameClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
+            [weak self, weak field] event in
+            guard let self, let field, event.window === field.window else { return event }
+            let point = field.convert(event.locationInWindow, from: nil)
+            if !field.bounds.contains(point) { field.window?.makeFirstResponder(nil) }
+            return event
+        }
     }
 
     private func endRename(_ field: NSTextField) {
+        if let monitor = renameClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            renameClickMonitor = nil
+        }
         guard let editing else { return }
         self.editing = nil
         field.isEditable = false
