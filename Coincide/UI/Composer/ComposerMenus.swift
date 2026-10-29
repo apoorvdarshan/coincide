@@ -1,7 +1,7 @@
 import AppKit
 import CoincideKit
 
-/// Builds the composer's menus: reasoning effort and access mode. (The agent and model picker is `ModelPickerViewController`.)
+/// Builds the composer's menus: reasoning effort, speed and access mode. (The agent and model picker is `ModelPickerViewController`.)
 /// Items carry their value in `representedObject`.
 enum ComposerMenus {
     static func effortMenu(model: ModelOption, current: String?, target: AnyObject, action: Selector) -> NSMenu {
@@ -15,6 +15,30 @@ enum ComposerMenus {
             item.representedObject = effort
             item.state = effort == selected ? .on : .off
             if effort == model.defaultEffort { item.subtitle = String(localized: "Default") }
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    /// Standard speed, then the faster ones the model offers. Standard's item carries no value.
+    static func speedMenu(model: ModelOption, current: String?, target: AnyObject, action: Selector) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(.sectionHeader(title: String(localized: "Speed")))
+        let selected = model.speed(current)
+        let standard = NSMenuItem(title: ComposerSpeedControl.standardTitle, action: action, keyEquivalent: "")
+        standard.target = target
+        standard.state = selected == nil ? .on : .off
+        standard.image = NSImage(systemSymbolName: ComposerSpeedControl.standardSymbol, accessibilityDescription: nil)
+        standard.subtitle = String(localized: "Default")
+        menu.addItem(standard)
+        for speed in model.speeds {
+            let item = NSMenuItem(title: speed.name, action: action, keyEquivalent: "")
+            item.target = target
+            item.representedObject = speed.id
+            item.state = speed == selected ? .on : .off
+            item.image = NSImage(systemSymbolName: ComposerSpeedControl.fastSymbol, accessibilityDescription: nil)
+            item.subtitle = speed.detail
             menu.addItem(item)
         }
         return menu

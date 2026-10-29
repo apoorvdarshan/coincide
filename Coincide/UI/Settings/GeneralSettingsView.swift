@@ -406,7 +406,7 @@ private struct DefaultModelRows: View {
         }
         switch model.status(provider).state {
         case .ready, .unknown:
-            return String(localized: "New threads start with this model. You can switch models and agents in any thread.")
+            return String(localized: "New threads start with this model. Choosing a model, effort, speed or access in a thread makes that the new default.")
         default:
             return String(localized: "\(provider.displayName) isn’t ready yet. Set it up in Providers or pick another model.")
         }

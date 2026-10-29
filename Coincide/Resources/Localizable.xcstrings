@@ -6355,17 +6355,6 @@
         }
       }
     },
-    "%@, %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@, %2$@"
-          }
-        }
-      },
-      "shouldTranslate" : false
-    },
     "%@, %@, %lld added, %lld removed" : {
       "localizations" : {
         "de" : {
@@ -113870,7 +113859,120 @@
         }
       }
     },
+    "New threads start with this model. Choosing a model, effort, speed or access in a thread makes that the new default." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neue Threads starten mit diesem Modell. Wählst du in einem Thread Modell, Denkaufwand, Geschwindigkeit oder Zugriff, wird das zum neuen Standard."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las conversaciones nuevas empiezan con este modelo. Al elegir modelo, esfuerzo, velocidad o acceso en una conversación, esa elección pasa a ser la nueva opción predeterminada."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las conversaciones nuevas empiezan con este modelo. Al elegir modelo, esfuerzo, velocidad o acceso en una conversación, esa elección pasa a ser la nueva opción predeterminada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les nouvelles discussions démarrent avec ce modèle. Choisir un modèle, un effort, une vitesse ou un accès dans une discussion en fait le nouveau réglage par défaut."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "नए थ्रेड इसी मॉडल से शुरू होते हैं। किसी थ्रेड में मॉडल, रीज़निंग स्तर, गति या ऐक्सेस चुनने पर वही नया डिफ़ॉल्ट बन जाता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utas baru dimulai dengan model ini. Memilih model, tingkat penalaran, kecepatan, atau akses di sebuah utas menjadikannya default baru."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I nuovi thread iniziano con questo modello. Scegliere modello, livello di ragionamento, velocità o accesso in un thread lo rende il nuovo predefinito."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新規スレッドはこのモデルで開始します。スレッドでモデル、推論レベル、速度、アクセスを選ぶと、それが新しいデフォルトになります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "새 스레드는 이 모델로 시작합니다. 스레드에서 모델, 추론 수준, 속도 또는 접근 권한을 선택하면 그것이 새 기본값이 됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nieuwe threads starten met dit model. Kies je in een thread een model, redeneerniveau, snelheid of toegang, dan wordt dat de nieuwe standaard."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nowe wątki zaczynają się z tym modelem. Wybór modelu, wysiłku, szybkości lub dostępu w wątku staje się nowym ustawieniem domyślnym."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As novas conversas começam com este modelo. Escolher modelo, esforço, velocidade ou acesso em uma conversa torna essa escolha o novo padrão."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Новые чаты начинаются с этой модели. Модель, уровень рассуждений, скорость или доступ, выбранные в чате, становятся новыми значениями по умолчанию."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yeni sohbetler bu modelle başlar. Bir sohbette model, akıl yürütme düzeyi, hız veya erişim seçmek bunu yeni varsayılan yapar."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нові чати починаються з цією моделлю. Модель, рівень міркувань, швидкість або доступ, вибрані в чаті, стають новими типовими значеннями."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Luồng mới bắt đầu với mô hình này. Chọn mô hình, mức suy luận, tốc độ hoặc quyền truy cập trong một luồng sẽ biến lựa chọn đó thành mặc định mới."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新对话将使用此模型开始。在任意对话中选择模型、推理强度、速度或访问权限后，它就会成为新的默认设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新對話會使用此模型開始。在任一對話中選擇模型、推理強度、速度或取用權限後，它就會成為新的預設設定。"
+          }
+        }
+      }
+    },
     "New threads start with this model. You can switch models and agents in any thread." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -171514,6 +171616,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "速度"
+          }
+        }
+      }
+    },
+    "Speed: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geschwindigkeit: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Velocidad: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Velocidad: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vitesse : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "गति: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kecepatan: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Velocità: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "速度：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "속도: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Snelheid: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Szybkość: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Velocidade: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Скорость: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hız: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Швидкість: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tốc độ: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "速度：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "速度：%@"
           }
         }
       }

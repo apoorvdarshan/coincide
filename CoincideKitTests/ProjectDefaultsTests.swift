@@ -84,4 +84,30 @@ struct ProjectDefaultsTests {
         #expect(reset.provider == .codex && reset.modelID == "m1")
         #expect(store.settings.defaultSelection == unavailable)
     }
+
+    @Test func aRememberedComposerChoiceBecomesTheDefaultAndSurvivesRelaunch() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("composer-choice-\(UUID())")
+        let store = AppStore(directory: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let project = store.addProject(at: directory.appendingPathComponent("project"))
+        let earlier = store.createThread(in: project.id)
+        let thread = store.createThread(in: project.id)
+        let chosen = ModelSelection(provider: .codex, modelID: "gpt", effort: "high", speed: "priority", accountID: "work")
+        store.updateThread(thread.id) {
+            $0.selection = chosen
+            $0.accessMode = .approval
+        }
+        // Changing a thread alone leaves the default; remembering the choice moves it.
+        #expect(store.settings.defaultSelection != chosen)
+        store.rememberComposerChoice(of: thread.id)
+        #expect(store.settings.defaultSelection == chosen && store.settings.defaultAccessMode == .approval)
+        #expect(store.newThreadDefaults(in: project.id).selection == chosen)
+        #expect(store.newThreadDefaults(in: store.ensureChatsProject().id).accessMode == .approval)
+        #expect(store.thread(earlier.id)?.selection == earlier.selection)
+        store.rememberComposerChoice(of: UUID())
+        #expect(store.settings.defaultSelection == chosen)
+        store.flush()
+        let reopened = AppStore(directory: directory)
+        #expect(reopened.settings.defaultSelection == chosen && reopened.settings.defaultAccessMode == .approval)
+    }
 }

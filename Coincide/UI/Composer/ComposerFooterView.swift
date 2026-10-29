@@ -1,11 +1,12 @@
 import AppKit
 
-/// The composer's bottom row: agent and model, effort, access and Build/Plan on the leading side;
+/// The composer's bottom row: agent and model, effort, speed, access and Build/Plan on the leading side;
 /// attach, the usage and context meters and send/stop on the trailing side. Labels collapse to symbols,
 /// least important first, when the composer is too narrow for them.
 final class ComposerFooterView: NSView {
     let modelButton = ComposerControlButton()
     let effortButton = ComposerControlButton()
+    let speedButton = ComposerControlButton()
     let accessButton = ComposerControlButton()
     let modeButton = ComposerControlButton()
     let attachButton = ComposerControlButton()
@@ -24,7 +25,7 @@ final class ComposerFooterView: NSView {
         leadingControls.spacing = 2
         trailingControls.orientation = .horizontal
         trailingControls.spacing = 6
-        for view in [modelButton, effortButton, accessButton, modeButton] { leadingControls.addArrangedSubview(view) }
+        for view in [modelButton, effortButton, speedButton, accessButton, modeButton] { leadingControls.addArrangedSubview(view) }
         for view in [attachButton, usageMeter, contextMeter, stopButton, implementButton, sendButton] {
             trailingControls.addArrangedSubview(view)
         }
@@ -70,13 +71,13 @@ final class ComposerFooterView: NSView {
         super.layout()
     }
 
-    /// Collapses Build/Plan, then access, then effort, then the model name to their symbols until the controls fit.
+    /// Collapses Build/Plan, then access, then speed, then effort, then the model name to their symbols until the controls fit.
     private func compactLabelsToFit() {
         let available = bounds.width - trailingControls.fittingSize.width - 8
-        let buttons = [modelButton, effortButton, accessButton, modeButton].filter { !$0.isHidden }
+        let buttons = [modelButton, effortButton, speedButton, accessButton, modeButton].filter { !$0.isHidden }
         var width = buttons.reduce(0) { $0 + $1.width(compact: false) } + CGFloat(max(buttons.count - 1, 0)) * leadingControls.spacing
         var compacted = Set<ObjectIdentifier>()
-        for button in [modeButton, accessButton, effortButton, modelButton] where !button.isHidden {
+        for button in [modeButton, accessButton, speedButton, effortButton, modelButton] where !button.isHidden {
             if width <= available { break }
             width -= button.width(compact: false) - button.width(compact: true)
             compacted.insert(ObjectIdentifier(button))
