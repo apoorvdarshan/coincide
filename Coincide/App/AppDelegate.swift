@@ -27,6 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(true, forKey: "NSQuitAlwaysKeepsWindows")
         // Before any window reads a transcript: threads whose agents kept running in the host are picked up again.
         AgentHostController.shared.startAtLaunch()
+        // Before the window reads it: the "Open in" app moved from the interface state into the settings.
+        OpenTargets.migrateLegacyChoice()
         let controller = MainWindowController()
         mainWindow = controller
         let menu = MainMenu(windowController: controller)

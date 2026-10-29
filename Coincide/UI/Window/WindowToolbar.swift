@@ -205,6 +205,7 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
     /// Shows the preferred app's icon and name on the "Open in" button.
     @objc func updateOpenInItem() {
         updateRail()
+        rail.updateOpenInTarget()
         guard let item = toolbarItems[.openIn] else { return }
         let target = OpenTargets.preferred
         let title = target.map { String(localized: "Open in \($0.name)") } ?? String(localized: "Open in Editor")
