@@ -1,7 +1,7 @@
 import Foundation
 
 /// The preview exposes a small command vocabulary, never arbitrary JavaScript or filesystem paths.
-public enum PreviewCommand: Sendable, Equatable {
+public indirect enum PreviewCommand: Sendable, Equatable {
     case read
     case navigate(URL)
     case click(String)
@@ -14,10 +14,22 @@ public enum PreviewCommand: Sendable, Equatable {
     /// Has Coincide sign in on the current page with a saved login (optionally named by `item`), after the user allows
     /// it. Coincide types the secrets itself; the reply carries the username at most.
     case fillLogin(item: String?)
+    /// Lists the thread's tabs: id, URL, title, whether it is active and loading.
+    case tabs
+    /// Opens a tab (at `url`, or empty) and makes it active.
+    case newTab(URL?)
+    case selectTab(String)
+    case closeTab(String)
+    /// A page command for one tab rather than the active one.
+    case inTab(String, PreviewCommand)
+
+    /// The most tabs a thread can have.
+    public static let tabLimit = 20
 
     /// How long the app lets the command run before answering with an error.
     public var timeout: TimeInterval {
         switch self {
+        case .inTab(_, let command): return command.timeout
         case .askUser(_, let timeout): return timeout + 5
         // The user's approval, then the password manager (which may ask for Touch ID).
         case .fillLogin: return LoginApprovalGate.timeout + 90
@@ -26,28 +38,59 @@ public enum PreviewCommand: Sendable, Equatable {
     }
 
     public init(json: JSONValue) throws {
+        let command = try Self.command(json)
+        guard let tab = json["tab"] else {
+            self = command
+            return
+        }
+        // Page commands can name a tab; the tab commands name theirs themselves.
+        guard let id = tab.string, Self.isTabID(id) else { throw PreviewError.invalidCommand }
+        switch command {
+        case .read, .navigate, .click, .input, .screenshot, .fillLogin: self = .inTab(id, command)
+        case .selectTab, .closeTab: self = command
+        default: throw PreviewError.invalidCommand
+        }
+    }
+
+    static func isTabID(_ id: String) -> Bool {
+        !id.isEmpty && id.utf8.count <= 32 && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
+    }
+
+    private static func tabID(_ json: JSONValue) throws -> String {
+        guard let id = json["tab"]?.string, isTabID(id) else { throw PreviewError.invalidCommand }
+        return id
+    }
+
+    private static func command(_ json: JSONValue) throws -> PreviewCommand {
         switch json["action"]?.string {
-        case "read": self = .read
+        case "read": return .read
         case "navigate":
             guard let address = json["url"]?.string, let url = Self.url(address) else {
                 throw PreviewError.invalidAddress
             }
-            self = .navigate(url)
-        case "click": self = .click(try Self.selector(json))
+            return .navigate(url)
+        case "click": return .click(try Self.selector(json))
         case "input":
             guard let text = json["text"]?.string, text.utf8.count <= 65_536 else { throw PreviewError.invalidCommand }
-            self = .input(selector: try Self.selector(json), text: text)
-        case "screenshot": self = .screenshot
-        case "show": self = .show
+            return .input(selector: try Self.selector(json), text: text)
+        case "screenshot": return .screenshot
+        case "show": return .show
         case "fill-login":
             let item = json["item"]?.string
             guard (item?.utf8.count ?? 0) <= 200 else { throw PreviewError.invalidCommand }
-            self = .fillLogin(item: item)
+            return .fillLogin(item: item)
         case "ask-user":
             guard let message = json["message"]?.string, message.utf8.count <= 4096 else { throw PreviewError.invalidCommand }
             let timeout = json["timeout"]?.number ?? UserTurnGate.defaultTimeout
             guard timeout.isFinite, timeout >= 1, timeout <= UserTurnGate.maximumTimeout else { throw PreviewError.invalidCommand }
-            self = .askUser(message: message, timeout: timeout)
+            return .askUser(message: message, timeout: timeout)
+        case "tabs": return .tabs
+        case "new-tab":
+            guard let address = json["url"]?.string else { return .newTab(nil) }
+            guard let url = Self.url(address) else { throw PreviewError.invalidAddress }
+            return .newTab(url)
+        case "select-tab": return .selectTab(try tabID(json))
+        case "close-tab": return .closeTab(try tabID(json))
         default: throw PreviewError.invalidCommand
         }
     }
@@ -89,7 +132,7 @@ public enum PreviewCommand: Sendable, Equatable {
 }
 
 public enum PreviewError: LocalizedError {
-    case invalidAddress, invalidCommand, unavailable, connection, timedOut
+    case invalidAddress, invalidCommand, unavailable, connection, timedOut, tooManyTabs, noSuchTab
 
     public var errorDescription: String? {
         switch self {
@@ -98,6 +141,8 @@ public enum PreviewError: LocalizedError {
         case .unavailable: String(localized: "Agent control is off for this preview.")
         case .connection: String(localized: "The preview connection could not be started.")
         case .timedOut: String(localized: "The browser didn't finish the command in time.")
+        case .tooManyTabs: String(localized: "This thread has 20 tabs. Close one first.")
+        case .noSuchTab: String(localized: "There's no tab with that id in this thread.")
         }
     }
 }

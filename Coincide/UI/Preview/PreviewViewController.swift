@@ -8,33 +8,46 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     var sessions = PreviewSessions.shared
     private(set) var session: PreviewSession?
     private let content = NSView()
-    private let address = ThemedTextField(placeholder: "http://localhost:3000")
-    private let status = NSTextField(wrappingLabelWithString: "")
+    private let address = ThemedTextField(placeholder: "localhost:3000")
+    private let status = NSTextField(labelWithString: "")
     private let agentStatus = NSTextField(labelWithString: "")
     private let spinner = NSProgressIndicator()
     private let empty = NSTextField(wrappingLabelWithString: String(localized: "Open a page to preview it beside your conversation."))
+    let tabStrip = PreviewTabStrip()
     let userTurnBanner = PreviewUserTurnBanner()
     let approvalBanner = PreviewLoginApprovalBanner()
     let saveBanner = PreviewSaveLoginBanner()
     /// The banners between the status line and the page; hidden ones take no room.
     private let banners = NSStackView()
+    /// The web view shown, the active tab's.
+    private weak var shownWebView: WKWebView?
     private lazy var back = PanelIconButton(symbol: "chevron.left", label: String(localized: "Back"), target: self, action: #selector(goBack))
     private lazy var forward = PanelIconButton(symbol: "chevron.right", label: String(localized: "Forward"), target: self, action: #selector(goForward))
     private lazy var reload = PanelIconButton(symbol: "arrow.clockwise", label: String(localized: "Reload Preview"), target: self, action: #selector(reloadPage))
     private lazy var bookmark = PanelIconButton(symbol: "star", label: String(localized: "Bookmark This Page"), target: self, action: #selector(toggleBookmark))
     private lazy var libraryButton = PanelIconButton(symbol: "book", label: String(localized: "Bookmarks and History"), target: self, action: #selector(showLibrary))
-    lazy var control = ThemedButton(title: String(localized: "Enable Agent Control"), style: .secondary, target: self, action: #selector(toggleControl))
+    /// Agent Control for this thread: a small switch in the header, on unless the user turned it off.
+    lazy var control = PanelIconButton(symbol: "cursorarrow.rays", label: String(localized: "Agent Control"), target: self, action: #selector(toggleControl))
+    private lazy var closePanel = PanelIconButton(symbol: "xmark", label: String(localized: "Close Browser"), target: self, action: #selector(closeBrowser))
     private var observers: [NSObjectProtocol] = []
     private var lastTypedLength = 0
 
     override func loadView() {
-        let root = SolidBackgroundView(color: Theme.contentBackground)
+        let root = PreviewPanelView(color: Theme.contentBackground)
         root.setAccessibilityLabel(String(localized: "Browser Preview"))
+        root.keyHandler = { [weak self] event in self?.handleKey(event) ?? false }
         address.target = self
         address.action = #selector(navigate)
         address.delegate = self
         address.setAccessibilityLabel(String(localized: "Preview Address"))
         address.setContentCompressionResistancePriority(.init(200), for: .horizontal)
+        tabStrip.onSelect = { [weak self] id in self?.selectTab(id) }
+        tabStrip.onClose = { [weak self] id in self?.session?.closeTab(id) }
+        tabStrip.onNew = { [weak self] in self?.newTab() }
+        tabStrip.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        tabStrip.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let header = NSStackView(views: [tabStrip, control, closePanel])
+        header.spacing = 4
         let toolbar = NSStackView(views: [back, forward, address, keyButton, bookmark, libraryButton, reload, spinner])
         toolbar.spacing = 4
         spinner.style = .spinning
@@ -42,10 +55,15 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         spinner.isDisplayedWhenStopped = false
         status.font = .systemFont(ofSize: 11)
         status.textColor = .secondaryLabelColor
+        status.lineBreakMode = .byTruncatingTail
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         agentStatus.font = .systemFont(ofSize: 11)
         agentStatus.textColor = .secondaryLabelColor
         agentStatus.lineBreakMode = .byTruncatingTail
-        agentStatus.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        agentStatus.alignment = .right
+        agentStatus.setContentCompressionResistancePriority(.init(100), for: .horizontal)
+        let statusRow = NSStackView(views: [status, NSView(), agentStatus])
+        statusRow.spacing = 8
         empty.textColor = .secondaryLabelColor
         empty.alignment = .center
         userTurnBanner.isHidden = true
@@ -65,34 +83,37 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
             banners.addArrangedSubview(banner)
             banner.widthAnchor.constraint(equalTo: banners.widthAnchor).isActive = true
         }
-        let footer = NSStackView(views: [control, agentStatus])
-        footer.alignment = .centerY
-        footer.spacing = 8
-        control.toolTip = String(localized: "Lets this thread's agent read and control its browser through a private local connection. Agents can't read cookies, site storage or passwords.")
-        for child in [toolbar, status, banners, content, footer] {
+        for child in [header, toolbar, statusRow, banners, content] {
             child.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(child)
         }
         NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
+            header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
+            header.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 6),
             toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
-            toolbar.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 8),
-            status.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 6),
-            status.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
-            status.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
-            banners.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 6),
+            toolbar.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
+            statusRow.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 6),
+            statusRow.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
+            statusRow.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
+            banners.topAnchor.constraint(equalTo: statusRow.bottomAnchor, constant: 6),
             banners.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             banners.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
             content.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            content.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -8),
-            footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
-            footer.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -8),
-            footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
+            content.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
-        contentBelowStatus = content.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 6)
+        contentBelowStatus = content.topAnchor.constraint(equalTo: statusRow.bottomAnchor, constant: 6)
         contentBelowBanner = content.topAnchor.constraint(equalTo: banners.bottomAnchor, constant: 8)
         contentBelowStatus.isActive = true
+        empty.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(empty)
+        NSLayoutConstraint.activate([
+            empty.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            empty.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
+            empty.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
+        ])
         view = root
         let center = NotificationCenter.default
         for name in [PreviewSessions.sessionsReset, PreviewSessions.agentControlChanged] {
@@ -111,6 +132,26 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private var contentBelowStatus: NSLayoutConstraint!
+    private var focusObserver: NSObjectProtocol?
+
+    /// Tooltips name ⌘T and ⌘W only while they reach the panel, that is while focus is inside it.
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        guard focusObserver == nil, let window = view.window else { return }
+        focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification, object: window, queue: .main) {
+            [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.tabStrip.shortcutsActive = (self.view as? PreviewPanelView)?.containsFocus ?? false
+            }
+        }
+    }
+
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        if let focusObserver { NotificationCenter.default.removeObserver(focusObserver) }
+        focusObserver = nil
+    }
     private var contentBelowBanner: NSLayoutConstraint!
 
     isolated deinit {
@@ -118,49 +159,66 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private func showThread() {
-        // The previous thread's browser goes back offscreen, where its agent can keep using it.
-        if let previous = session {
-            previous.onChange = nil
-            if previous.webView.isDescendant(of: content) {
-                previous.webView.removeFromSuperview()
-                PreviewParking.shared.park(previous.webView)
-            }
-        }
-        for subview in content.subviews { subview.removeFromSuperview() }
+        // The previous thread's tabs go back offscreen, where its agent can keep using them.
+        if let previous = session { previous.onChange = nil }
+        parkShownWebView()
         session = threadID.map { sessions.session(for: $0) }
-        if let session {
-            session.onChange = { [weak self] in self?.update() }
-            let web = session.webView
-            web.removeFromSuperview()
-            web.translatesAutoresizingMaskIntoConstraints = false
-            content.addSubview(web)
-            NSLayoutConstraint.activate([
-                web.leadingAnchor.constraint(equalTo: content.leadingAnchor), web.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-                web.topAnchor.constraint(equalTo: content.topAnchor), web.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            ])
-        }
-        empty.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(empty)
-        NSLayoutConstraint.activate([
-            empty.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-            empty.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
-            empty.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
-        ])
+        session?.onChange = { [weak self] in self?.update() }
         address.stringValue = session?.webView.url?.absoluteString ?? ""
         update()
     }
 
+    private func parkShownWebView() {
+        guard let shown = shownWebView else { return }
+        shown.removeFromSuperview()
+        shown.translatesAutoresizingMaskIntoConstraints = true
+        PreviewParking.shared.park(shown)
+        shownWebView = nil
+    }
+
+    /// Puts the active tab's web view in the panel, returning the one shown before to the parking window.
+    private func showActiveTab() {
+        guard let session else { parkShownWebView(); return }
+        let web = session.webView
+        guard web !== shownWebView else { return }
+        // Switching tabs keeps focus in the panel, so its shortcuts go on working (⌘W must not fall to Delete Thread).
+        let hadFocus = shownWebView.map { shown in
+            (view.window?.firstResponder as? NSView)?.isDescendant(of: shown) ?? false
+        } ?? false
+        parkShownWebView()
+        web.removeFromSuperview()
+        web.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(web, positioned: .below, relativeTo: empty)
+        NSLayoutConstraint.activate([
+            web.leadingAnchor.constraint(equalTo: content.leadingAnchor), web.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            web.topAnchor.constraint(equalTo: content.topAnchor), web.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
+        shownWebView = web
+        if hadFocus { view.window?.makeFirstResponder(web) }
+        if address.currentEditor() == nil { address.stringValue = web.url?.absoluteString ?? "" }
+    }
+
     private func update() {
+        showActiveTab()
+        tabStrip.update((session?.tabs ?? []).map { tab in
+            PreviewTabStrip.Tab(id: tab.id, title: tab.title.isEmpty ? (tab.url?.host ?? "") : tab.title,
+                isActive: tab === session?.activeTab, isLoading: tab.isLoading)
+        })
+        tabStrip.isHidden = session == nil
         let loading = session?.webView.isLoading == true
         if loading { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         back.isEnabled = session?.webView.canGoBack == true
         forward.isEnabled = session?.webView.canGoForward == true
         reload.isEnabled = session?.webView.url != nil
         address.isEnabled = session != nil
-        if address.currentEditor() == nil, let url = session?.webView.url { address.stringValue = url.absoluteString }
+        if address.currentEditor() == nil { address.stringValue = session?.webView.url?.absoluteString ?? "" }
         let enabled = threadID.map { sessions.isAgentControlEnabled($0) } ?? false
         control.isEnabled = session != nil
-        control.title = enabled ? String(localized: "Disable Agent Control") : String(localized: "Enable Agent Control")
+        control.image = Theme.symbol(enabled ? "cursorarrow.rays" : "cursorarrow.slash", size: 12, weight: .medium)
+        control.toolTip = enabled
+            ? String(localized: "Agent Control is on: this thread's agent can use its browser. Click to turn it off for this thread.")
+            : String(localized: "Agent Control is off for this thread. Click to let its agent use the browser.")
+        control.setAccessibilityValue(enabled ? String(localized: "On") : String(localized: "Off"))
         agentStatus.stringValue = agentStatusText(enabled: enabled)
         status.stringValue = session?.error ?? (session?.isPrivate == true
             ? String(localized: "Private preview · cookies are cleared when Coincide quits")
@@ -185,12 +243,54 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private func agentStatusText(enabled: Bool) -> String {
-        guard enabled else { return String(localized: "Agents can't use this browser.") }
+        guard enabled else { return String(localized: "Agent Control off") }
         if let used = session?.lastAgentUse {
             let ago = RelativeDateTimeFormatter().localizedString(for: used, relativeTo: Date())
             return String(localized: "The agent used this browser \(ago).")
         }
-        return String(localized: "The agent can use this browser, even while the panel is closed.")
+        return String(localized: "Agent Control on")
+    }
+
+    // MARK: Tabs
+
+    func newTab() {
+        guard let session else { return }
+        if session.newTab() == nil {
+            status.stringValue = PreviewError.tooManyTabs.localizedDescription
+            status.textColor = Theme.failure
+            return
+        }
+        view.window?.makeFirstResponder(address)
+    }
+
+    func selectTab(_ id: String) {
+        guard let session, let tab = session.tab(id) else { return }
+        session.select(tab)
+    }
+
+    /// ⌘T, ⌘W and ⌘⇧[ / ⌘⇧] while focus is in the panel. Elsewhere they keep their usual meaning (⌘W deletes the
+    /// thread, as the menu says).
+    func handleKey(_ event: NSEvent) -> Bool {
+        guard let session, (view as? PreviewPanelView)?.containsFocus == true,
+            let shortcut = KeyShortcut(event: event)
+        else { return false }
+        if shortcut == KeyShortcut("mod+t") {
+            newTab()
+        } else if shortcut == KeyShortcut("mod+w") {
+            session.closeTab(session.activeTab.id)
+            view.window?.makeFirstResponder(session.webView)
+        } else if shortcut == KeyShortcut("mod+shift+]") {
+            session.selectTab(offset: 1)
+        } else if shortcut == KeyShortcut("mod+shift+[") {
+            session.selectTab(offset: -1)
+        } else {
+            return false
+        }
+        return true
+    }
+
+    @objc private func closeBrowser() {
+        NSApp.sendAction(#selector(MainWindowController.togglePreviewPanel(_:)), to: nil, from: self)
     }
 
     private func updateBookmark() {
