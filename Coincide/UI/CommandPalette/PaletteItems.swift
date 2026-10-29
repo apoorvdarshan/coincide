@@ -96,6 +96,18 @@ struct PaletteCatalog {
                 id: "action:new-chat", title: String(localized: "New Chat"), icon: symbol("bubble.left.and.bubble.right"),
                 keywords: ["new chat", "chat", "no project", "without project", "conversation"],
                 behavior: .run { ThreadActions.newChat() }))
+        items.append(
+            PaletteItem(
+                id: "action:new-bot", title: String(localized: "New Bot…"), icon: symbol("face.smiling"),
+                keywords: ["new bot", "bot", "assistant", "persona", "create"], behavior: .run { window?.newBot(nil) }))
+        for bot in store.bots {
+            let id = bot.id
+            items.append(
+                PaletteItem(
+                    id: "bot:\(id)", title: String(localized: "Talk to \(bot.displayName)"), subtitle: String(localized: "Bot"),
+                    icon: BotAvatarArt.image(bot.avatar, size: 16), keywords: ["bot", bot.displayName],
+                    behavior: .run { BotActions.open(id) }))
+        }
         if !store.projects.isEmpty {
             items.append(
                 PaletteItem(

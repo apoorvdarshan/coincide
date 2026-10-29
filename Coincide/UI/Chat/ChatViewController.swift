@@ -411,6 +411,9 @@ final class ChatViewController: NSViewController {
             settingsChanged()
         case .providers:
             if !welcomeView.isHidden { updateChrome() }
+        case .bots:
+            // The open conversation's bot may have a new name or look.
+            if displayedThreadID.flatMap({ store.summary($0)?.botID }) != nil { updateChrome() }
         }
     }
 

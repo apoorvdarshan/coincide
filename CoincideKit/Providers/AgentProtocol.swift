@@ -11,10 +11,16 @@ public struct AgentLaunch: Sendable, Codable {
     public var selection: ModelSelection
     public var accessMode: AccessMode
     public var interactionMode: InteractionMode
+    /// Standing instructions for the session, such as a bot's persona (`Bot.instructions`), for agents that take them
+    /// as system or developer instructions (`ProviderKind.takesSessionInstructions`): Claude Code appends them to its
+    /// system prompt, Codex sets them as the thread's developer instructions. Other agents get them in front of the
+    /// first message of each native session instead (see `ThreadRunner.send`).
+    public var instructions: String?
 
     public nonisolated init(
         provider: ProviderKind, executable: URL, environment: [String: String], workingDirectory: URL,
-        resumeSessionID: String?, selection: ModelSelection, accessMode: AccessMode, interactionMode: InteractionMode
+        resumeSessionID: String?, selection: ModelSelection, accessMode: AccessMode, interactionMode: InteractionMode,
+        instructions: String? = nil
     ) {
         self.provider = provider
         self.executable = executable
@@ -24,6 +30,19 @@ public struct AgentLaunch: Sendable, Codable {
         self.selection = selection
         self.accessMode = accessMode
         self.interactionMode = interactionMode
+        self.instructions = instructions
+    }
+}
+
+extension ProviderKind {
+    /// Whether the agent takes standing instructions for a session (`AgentLaunch.instructions`) apart from the user's
+    /// messages: Claude Code's `--append-system-prompt` and Codex's developer instructions. The others' protocols
+    /// (ACP, Cursor's, OpenCode's) have no such field, so their first message of a session carries them.
+    public nonisolated var takesSessionInstructions: Bool {
+        switch self {
+        case .claude, .codex: true
+        case .cursor, .grok, .opencode, .antigravity: false
+        }
     }
 }
 

@@ -142,8 +142,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     var selectedThread: ThreadSummary? { selectedThreadID.flatMap { store.summary($0) } }
 
-    /// The project new threads go to: the open thread's, else the first one.
-    var currentProjectID: UUID? { selectedThread?.projectID ?? store.projects.first?.id }
+    /// The project new threads go to: the open thread's, else the first one. Never the Bots container, whose
+    /// conversations only bots start.
+    var currentProjectID: UUID? {
+        selectedThread.flatMap { $0.projectID == AppStore.botsProjectID ? nil : $0.projectID } ?? store.projects.first?.id
+    }
 
     private func handle(_ change: StoreChange) {
         switch change {
@@ -155,6 +158,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             // The open thread may be gone; the sidebar then opens its neighbour.
             updateTitle()
             updateRunStatus()
+        case .bots:
+            updateTitle()
         default:
             break
         }
@@ -172,6 +177,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         var title = "Coincide"
         var subtitle = ""
         var folder: URL?
+        var bot: Bot?
         if let thread = selectedThread {
             title = thread.title
             let project = store.project(thread.projectID)
@@ -179,16 +185,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             if project?.isChats != true, let branch = thread.branch, !branch.isEmpty {
                 subtitle += subtitle.isEmpty ? branch : " · \(branch)"
             }
+            // A bot's conversation is titled with the bot, the conversation below it.
+            if let found = thread.botID.flatMap({ store.bot($0) }) {
+                bot = found
+                title = found.displayName
+                subtitle = thread.title
+            }
             folder = store.workingDirectory(for: thread.id)
         }
         if window.title != title { window.title = title }
         if window.subtitle != subtitle { window.subtitle = subtitle }
-        threadTitle.set(title: title, subtitle: subtitle)
+        threadTitle.set(title: title, subtitle: subtitle, avatar: bot?.avatar)
         if window.representedURL != folder { window.representedURL = folder }
     }
 
     private func updateRunStatus() {
         projectScripts.threadID = selectedThreadID
+        // A bot blinks while it works.
+        threadTitle.avatarView.isAnimating = selectedThreadID.map { ThreadRunner.shared.isRunning($0) } ?? false
         guard let id = selectedThreadID else {
             runStatus.update(.idle)
             return
@@ -221,6 +235,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     func newThread(in projectID: UUID?) {
         showWindow(nil)
+        // In a bot's conversation, New Thread starts a fresh conversation with that bot.
+        if projectID == nil, let botID = selectedThread?.botID, store.bot(botID) != nil {
+            BotActions.newConversation(with: botID)
+            return
+        }
         if projectID == nil, store.settings.newThreadStartsChat {
             ThreadActions.newChat()
             return
@@ -233,6 +252,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     // MARK: Actions
+
+    /// Opens the editor for a new bot, which starts its first conversation once created.
+    @objc func newBot(_ sender: Any?) {
+        showWindow(nil)
+        BotActions.newBot(in: window)
+    }
 
     /// A thread without a project, whatever New Thread does.
     @objc func newChat(_ sender: Any?) {

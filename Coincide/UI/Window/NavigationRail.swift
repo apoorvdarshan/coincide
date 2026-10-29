@@ -287,6 +287,8 @@ private final class RailDivider: NSView {
 final class ThreadTitleView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    /// The bot's avatar, in a bot's conversation.
+    let avatarView = BotAvatarView(size: 24)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -297,10 +299,15 @@ final class ThreadTitleView: NSView {
             label.lineBreakMode = .byTruncatingTail
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
-        let stack = NSStackView(views: [titleLabel, subtitleLabel])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 0
+        let labels = NSStackView(views: [titleLabel, subtitleLabel])
+        labels.orientation = .vertical
+        labels.alignment = .leading
+        labels.spacing = 0
+        avatarView.isHidden = true
+        let stack = NSStackView(views: [avatarView, labels])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -318,7 +325,9 @@ final class ThreadTitleView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func set(title: String, subtitle: String) {
+    func set(title: String, subtitle: String, avatar: BotAvatar? = nil) {
+        avatarView.isHidden = avatar == nil
+        if let avatar { avatarView.avatar = avatar }
         titleLabel.stringValue = title
         subtitleLabel.stringValue = subtitle
         subtitleLabel.isHidden = subtitle.isEmpty

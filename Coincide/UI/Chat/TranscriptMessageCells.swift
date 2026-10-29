@@ -421,12 +421,23 @@ final class TranscriptAssistantCell: TranscriptCell {
         (Theme.lineHeight(of: ChatFonts.body(Theme.replyFontSize, serif: Theme.usesSerifReplies)) / 2).rounded()
     }
 
-    /// The agent's name in its color, then the model.
+    /// The agent's name in its color, then the model. In a bot's conversation, the bot with its avatar comes first.
     private static func signature(_ meta: AssistantMeta, host: TranscriptHost) -> NSAttributedString {
         let size = Theme.fontSize - 2
-        let result = NSMutableAttributedString(
+        let result = NSMutableAttributedString()
+        if let bot = host.threadID.flatMap({ AppStore.shared.bot(forThread: $0) }) {
+            let font = NSFont.systemFont(ofSize: size, weight: .semibold)
+            let side = (font.capHeight + 6).rounded()
+            let avatar = NSTextAttachment()
+            avatar.image = BotAvatarArt.image(bot.avatar, size: side)
+            avatar.bounds = NSRect(x: 0, y: ((font.capHeight - side) / 2).rounded(), width: side, height: side)
+            result.append(NSAttributedString(attachment: avatar))
+            result.append(NSAttributedString(
+                string: " \(bot.displayName)  ", attributes: [.font: font, .foregroundColor: NSColor.labelColor]))
+        }
+        result.append(NSAttributedString(
             string: meta.provider.displayName,
-            attributes: [.font: NSFont.systemFont(ofSize: size, weight: .semibold), .foregroundColor: Theme.color(for: meta.provider)])
+            attributes: [.font: NSFont.systemFont(ofSize: size, weight: .semibold), .foregroundColor: Theme.color(for: meta.provider)]))
         if let model = host.modelName(for: meta) {
             result.append(
                 NSAttributedString(

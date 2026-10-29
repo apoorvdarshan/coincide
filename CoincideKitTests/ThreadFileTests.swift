@@ -208,6 +208,8 @@ struct ThreadFileTests {
         store.append(full, to: thread.id)
         // Fields that fall back to a value when unreadable, holding that value.
         store.append(TranscriptItem(kind: .user, text: "", createdAt: .distantPast), to: thread.id)
+        let bot = store.addBot(
+            Bot(name: "Bot", avatar: BotAvatar(shape: .blob, tint: .sky), persona: "", selection: ModelSelection(provider: .claude, modelID: "m")))
         store.updateThread(thread.id) {
             $0.title = "Everything"
             $0.accessMode = .approval
@@ -227,6 +229,7 @@ struct ThreadFileTests {
             $0.importedSession = ImportedSession(provider: .codex, sessionID: "native", sourcePath: "/tmp/session.jsonl")
             $0.titledByUser = true
             $0.titleRefreshes = TitleRefresh.allCases
+            $0.botID = bot.id
         }
         store.flush()
         // Every field holds a value, so a field added to the model later must be added here (and to ThreadFile).

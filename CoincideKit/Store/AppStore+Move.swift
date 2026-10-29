@@ -17,6 +17,8 @@ extension AppStore {
     /// repository, so it stays.
     public func canMoveThread(_ id: UUID, to projectID: UUID) -> Bool {
         guard let thread = summary(id), thread.projectID != projectID, project(projectID) != nil else { return false }
+        // A bot's conversations stay with their bot, and only bots start conversations in the Bots container.
+        guard thread.botID == nil, projectID != Self.botsProjectID else { return false }
         return thread.worktreePath == nil
     }
 

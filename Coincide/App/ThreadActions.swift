@@ -30,7 +30,7 @@ enum ThreadActions {
     /// An empty thread in the same folder is reused rather than adding another. With `setsFolder` the thread runs in
     /// `worktreePath` (the project folder when nil) on `branch`.
     private static func newThread(in projectID: UUID, worktreePath: String?, branch: String?, setsFolder: Bool) -> UUID? {
-        guard store.project(projectID) != nil else { return nil }
+        guard let project = store.project(projectID), !project.isBots else { return nil }
         let defaults = store.newThreadDefaults(in: projectID)
         let selection = ProviderRegistry.shared.usableSelection(preferring: defaults.selection)
         let id: UUID
@@ -278,7 +278,7 @@ enum ThreadActions {
         return threadIDs.flatMap { manager.terminals(for: $0).sessions.filter(\.isBusy) }
     }
 
-    private static func present(_ alert: ThemedAlert, in window: NSWindow?, completion: @escaping (Bool) -> Void) {
+    static func present(_ alert: ThemedAlert, in window: NSWindow?, completion: @escaping (Bool) -> Void) {
         if let window, window.isVisible {
             alert.beginSheetModal(for: window) { completion($0 == .alertFirstButtonReturn) }
         } else {
@@ -297,12 +297,17 @@ enum RelocatedSessions {
     private static var observer: NSObjectProtocol?
 
     static func end(in projectID: UUID) {
+        end(threads: AppStore.shared.threads(in: projectID, includeArchived: true).filter { $0.worktreePath == nil }.map(\.id))
+    }
+
+    /// The same for the given threads, such as a bot's conversations after its folder or instructions changed.
+    static func end(threads threadIDs: [UUID]) {
         let runner = ThreadRunner.shared
-        for thread in AppStore.shared.threads(in: projectID, includeArchived: true) where thread.worktreePath == nil {
-            if runner.isRunning(thread.id) {
-                waiting.insert(thread.id)
+        for id in threadIDs {
+            if runner.isRunning(id) {
+                waiting.insert(id)
             } else {
-                runner.shutdown(threadID: thread.id)
+                runner.shutdown(threadID: id)
             }
         }
         guard !waiting.isEmpty, observer == nil else { return }

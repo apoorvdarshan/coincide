@@ -37,12 +37,13 @@ enum ThreadSort: String, Codable, CaseIterable {
 /// The sidebar's top-level sections, which the user can drag into any order. A new kind of section joins
 /// `defaultOrder`; people who already reordered theirs find it at the end.
 enum SidebarSection: String, CaseIterable {
+    case bots
     case pinned
     case projects
     case chats
 
     /// The order before the user changes it.
-    static let defaultOrder: [SidebarSection] = [.pinned, .projects, .chats]
+    static let defaultOrder: [SidebarSection] = [.bots, .pinned, .projects, .chats]
 }
 
 /// The sidebar's ordering rules, kept apart from the outline so they can be tested on their own.

@@ -94,23 +94,26 @@ struct SidebarOrderingTests {
     }
 
     @Test func sectionsFollowTheSavedOrderWithMissingOnesAddedInTheirDefaultOrder() {
-        #expect(SidebarSection.defaultOrder == [.pinned, .projects, .chats])
+        #expect(SidebarSection.defaultOrder == [.bots, .pinned, .projects, .chats])
         #expect(Set(SidebarSection.defaultOrder) == Set(SidebarSection.allCases))
-        // Nothing saved: the default, Chats last.
-        #expect(SidebarOrdering.sectionOrder(saved: []) == [.pinned, .projects, .chats])
-        #expect(SidebarOrdering.sectionOrder(saved: ["chats", "pinned", "projects"]) == [.chats, .pinned, .projects])
+        // Nothing saved: the default, Bots first and Chats last.
+        #expect(SidebarOrdering.sectionOrder(saved: []) == [.bots, .pinned, .projects, .chats])
+        #expect(SidebarOrdering.sectionOrder(saved: ["chats", "pinned", "projects"]) == [.chats, .pinned, .projects, .bots])
         // A section saved by a newer version is skipped, repeats count once, and sections not saved yet (one this
         // version added since the user reordered, say) follow in their default order.
-        #expect(SidebarOrdering.sectionOrder(saved: ["bots", "chats", "chats"]) == [.chats, .pinned, .projects])
+        #expect(SidebarOrdering.sectionOrder(saved: ["agents", "chats", "chats"]) == [.chats, .bots, .pinned, .projects])
     }
 
     @Test func movingASectionSavesTheWholeOrderAndKeepsSectionsOfNewerVersions() {
-        #expect(SidebarOrdering.savedSectionOrder(saved: [], moving: .chats, before: .pinned) == ["chats", "pinned", "projects"])
-        #expect(SidebarOrdering.savedSectionOrder(saved: [], moving: .pinned, before: nil) == ["projects", "chats", "pinned"])
-        #expect(SidebarOrdering.savedSectionOrder(saved: [], moving: .projects, before: .projects) == ["pinned", "projects", "chats"])
         #expect(
-            SidebarOrdering.savedSectionOrder(saved: ["bots", "projects", "pinned", "chats"], moving: .chats, before: .projects)
-                == ["chats", "projects", "pinned", "bots"])
+            SidebarOrdering.savedSectionOrder(saved: [], moving: .chats, before: .pinned) == ["bots", "chats", "pinned", "projects"])
+        #expect(
+            SidebarOrdering.savedSectionOrder(saved: [], moving: .bots, before: nil) == ["pinned", "projects", "chats", "bots"])
+        #expect(
+            SidebarOrdering.savedSectionOrder(saved: [], moving: .projects, before: .projects) == ["bots", "pinned", "projects", "chats"])
+        #expect(
+            SidebarOrdering.savedSectionOrder(saved: ["agents", "projects", "pinned", "chats", "bots"], moving: .chats, before: .projects)
+                == ["chats", "projects", "pinned", "bots", "agents"])
     }
 
     @Test func theAutomaticCutShowsALittleMoreThanTheSidebarHolds() {

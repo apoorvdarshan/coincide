@@ -12,6 +12,8 @@ public enum StoreChange: Sendable, Equatable {
     case runState(UUID)
     case settings
     case providers
+    /// Bots were added, removed, reordered or edited.
+    case bots
 }
 
 /// Owns projects, threads and settings, persists them as JSON, and tells observers what changed.
@@ -38,6 +40,10 @@ public final class AppStore {
     /// Every thread, without its transcript.
     public private(set) var threadSummaries: [UUID: ThreadSummary] = [:]
     public private(set) var settings = AppSettings()
+    /// The user's bots, in the order the sidebar lists them (see `AppStore+Bots.swift`).
+    public internal(set) var bots: [Bot] = []
+    /// Whether the starter bots were offered once, so deleting them does not bring them back.
+    var addedStarterBots = false
 
     public let directory: URL
     /// Threads whose transcript is in memory.
@@ -181,7 +187,10 @@ public final class AppStore {
         notify(.threadList)
     }
 
-    public func project(_ id: UUID) -> Project? { projects.first { $0.id == id } }
+    /// A project by id, the Bots container (`botsProject`) included, though it is not among `projects`.
+    public func project(_ id: UUID) -> Project? {
+        id == Self.botsProjectID ? botsProject : projects.first { $0.id == id }
+    }
 
     /// Where chats live, once the first one was started.
     public var chatsProject: Project? { projects.first(where: \.isChats) }
@@ -252,6 +261,8 @@ public final class AppStore {
     public func workingDirectory(for threadID: UUID) -> URL? {
         guard let thread = threadSummaries[threadID] else { return nil }
         if let worktree = thread.worktreePath { return URL(fileURLWithPath: worktree) }
+        // A bot's conversations run in its folder, the home folder unless the user picked another.
+        if let botID = thread.botID { return bot(botID)?.workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser }
         return project(thread.projectID)?.url
     }
 
@@ -267,12 +278,17 @@ public final class AppStore {
         let thread = ChatThread(
             projectID: projectID, selection: selection ?? defaults.selection,
             accessMode: defaults.accessMode, interactionMode: defaults.interactionMode)
+        insert(thread)
+        return thread
+    }
+
+    /// Adds a new thread, to be saved soon.
+    func insert(_ thread: ChatThread) {
         loadedThreads[thread.id] = thread
         threadSummaries[thread.id] = ThreadSummary(thread)
         markUsed(thread.id)
         scheduleSave(thread.id)
         notify(.threadList)
-        return thread
     }
 
     /// Changes thread metadata. Use `append` / `updateItem` for transcript changes.
@@ -492,6 +508,8 @@ public final class AppStore {
         filesFromEarlierRuns.insert(thread.id)
         markUsed(thread.id)
         notify(.threadList)
+        // A bot's conversation whose bot was deleted meanwhile comes back as a chat.
+        rehomeOrphanedBotConversations()
         return true
     }
 
@@ -738,12 +756,17 @@ public final class AppStore {
     private var threadsDirectory: URL { directory.appendingPathComponent("threads", isDirectory: true) }
     private var settingsURL: URL { directory.appendingPathComponent("settings.json") }
     private var projectsURL: URL { directory.appendingPathComponent("projects.json") }
+    private var botsURL: URL { directory.appendingPathComponent("bots.json") }
     private var indexURL: URL { directory.appendingPathComponent("thread-index.json") }
 
     private func threadURL(_ id: UUID) -> URL { threadsDirectory.appendingPathComponent("\(id.uuidString).json") }
 
     private func saveProjects() {
         writer.write(projects, to: projectsURL)
+    }
+
+    func saveBots() {
+        writer.write(BotsFile(addedStarters: addedStarterBots, bots: bots), to: botsURL)
     }
 
     private func load() {
@@ -754,7 +777,13 @@ public final class AppStore {
             projects = value.elements
             if value.skipped > 0 { Self.setAside(projectsURL, copy: true) }
         }
+        if let value = Self.read(BotsFile.self, from: botsURL, decoder: decoder) {
+            bots = value.bots
+            addedStarterBots = value.addedStarters
+            if value.skipped > 0 { Self.setAside(botsURL, copy: true) }
+        }
         loadThreadSummaries()
+        rehomeOrphanedBotConversations()
     }
 
     /// Lists every thread from the index, reading the summary of each thread file the index does not cover

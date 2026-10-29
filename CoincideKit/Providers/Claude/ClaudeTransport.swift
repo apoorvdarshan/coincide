@@ -48,6 +48,9 @@ struct ClaudeLaunchConfig: Sendable, Hashable {
     var allowsBypass: Bool
     /// Fast mode, which Claude Code only runs for an SDK client that opts in with the `fastMode` flag setting.
     var fastMode = false
+    /// `--append-system-prompt`: standing instructions such as a bot's persona (`AgentLaunch.instructions`). Every
+    /// process gets them, a resumed one too, as Claude Code builds its system prompt anew at each launch.
+    var instructions: String?
 
     var sessionID: String {
         switch identity {
@@ -69,6 +72,7 @@ struct ClaudeLaunchConfig: Sendable, Hashable {
         if allowsBypass { arguments.append("--allow-dangerously-skip-permissions") }
         if let model { arguments += ["--model", model] }
         if let effort = effort.cliEffort { arguments += ["--effort", effort] }
+        if let instructions, !instructions.isEmpty { arguments += ["--append-system-prompt", instructions] }
         switch identity {
         case .fresh(let id): arguments.append("--session-id=\(id)")
         case .resume(let id): arguments.append("--resume=\(id)")

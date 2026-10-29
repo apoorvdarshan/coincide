@@ -116,7 +116,8 @@ public enum ThreadFork {
             id: id, projectID: source.projectID, title: title(forkOf: source.title), selection: source.selection,
             accessMode: source.accessMode, interactionMode: source.interactionMode, items: items, sessions: [:],
             isPinned: false, isArchived: false, worktreePath: source.worktreePath, branch: source.branch, draft: nil,
-            createdAt: now)
+            // A bot's fork is another conversation with the same bot.
+            botID: source.botID, createdAt: now)
         let lineage = ThreadLineage(
             parentThreadID: source.id, parentTitle: source.title, parentItemID: slice.last?.id, forkItemID: items.last?.id,
             forkedAt: now)
