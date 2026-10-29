@@ -1,0 +1,88 @@
+import Foundation
+
+/// Settings › Browser, kept in `browser.json` beside the store's data (so `COINCIDE_DATA_DIR` keeps test runs apart).
+///
+/// Coincide 0.1 gave every thread its own ephemeral WebKit storage and wrote no file; a missing file therefore means
+/// the defaults: one shared, persistent profile (a fresh id, so nothing from before is reused) and Agent Control on.
+public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
+    /// Names the shared `WKWebsiteDataStore`. Clearing all data keeps it; it changes only when the file is new.
+    public var profileID: UUID
+    /// Each thread gets its own temporary storage instead of the shared profile, as before.
+    public var usesPrivateSessions: Bool
+    /// Whether threads the user hasn't switched on or off themselves let their agent use the thread's browser.
+    public var agentControlByDefault: Bool
+    /// Threads where the user turned Agent Control on or off in the browser panel, by thread id.
+    public var agentControl: [String: Bool]
+
+    public init(profileID: UUID = UUID()) {
+        self.profileID = profileID
+        usesPrivateSessions = false
+        agentControlByDefault = true
+        agentControl = [:]
+    }
+
+    public init(from decoder: Decoder) throws {
+        let defaults = BrowserSettings()
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            (try? container.decodeIfPresent(T.self, forKey: key)) ?? fallback
+        }
+        profileID = value(.profileID, defaults.profileID)
+        usesPrivateSessions = value(.usesPrivateSessions, defaults.usesPrivateSessions)
+        agentControlByDefault = value(.agentControlByDefault, defaults.agentControlByDefault)
+        agentControl = value(.agentControl, defaults.agentControl)
+    }
+
+    public func isAgentControlEnabled(for threadID: UUID) -> Bool {
+        agentControl[threadID.uuidString] ?? agentControlByDefault
+    }
+}
+
+/// Loads and saves `BrowserSettings`, and tells observers when they change.
+@MainActor
+public final class BrowserSettingsStore {
+    public static let didChange = Notification.Name("coincide.browserSettingsChanged")
+
+    public private(set) var settings: BrowserSettings
+    /// True when the file didn't exist yet: the first launch since the browser had a shared profile.
+    public let isNew: Bool
+    private let url: URL
+
+    public init(directory: URL) {
+        url = directory.appendingPathComponent("browser.json")
+        if let data = try? Data(contentsOf: url), let decoded = try? JSONDecoder().decode(BrowserSettings.self, from: data) {
+            settings = decoded
+            isNew = false
+        } else {
+            settings = BrowserSettings()
+            isNew = true
+            save()
+        }
+    }
+
+    public func update(_ mutate: (inout BrowserSettings) -> Void) {
+        let old = settings
+        mutate(&settings)
+        guard settings != old else { return }
+        save()
+        NotificationCenter.default.post(name: Self.didChange, object: self)
+    }
+
+    /// Forgets per-thread choices for threads that no longer exist.
+    public func prune(keeping threads: Set<UUID>) {
+        let keep = Set(threads.map(\.uuidString))
+        guard settings.agentControl.keys.contains(where: { !keep.contains($0) }) else { return }
+        update { $0.agentControl = $0.agentControl.filter { keep.contains($0.key) } }
+    }
+
+    private func save() {
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try encoder.encode(settings).write(to: url, options: .atomic)
+        } catch {
+            NSLog("Coincide: failed to save browser settings: \(error.localizedDescription)")
+        }
+    }
+}

@@ -2,17 +2,32 @@ import AppKit
 import CoincideKit
 import WebKit
 
-/// Each thread owns a WebKit session with ephemeral storage; switching panels never retargets an agent's commands.
+/// Each thread owns a browser: its own WebKit view with its page and back/forward history, over the shared profile or
+/// a private store (`BrowserProfile`). Switching panels never retargets an agent's commands. A browser not shown in the
+/// panel stays alive offscreen (`PreviewParking`), so agents can use it headless.
 final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     let webView: WKWebView
+    /// Whether the session uses temporary storage of its own rather than the shared profile.
+    let isPrivate: Bool
+    /// The agent's open "your turn" request, shown as a banner in the panel.
+    let userTurn = UserTurnGate()
+    /// When an agent last sent this browser a command, for the panel's footer.
+    var lastAgentUse: Date?
+    /// When the session was last shown or used, so the least recently used one can be closed first.
+    var lastUse = Date()
     var onChange: (() -> Void)?
-    var onNavigate: ((URL) -> Void)?
+    var onNavigate: ((URL, String?) -> Void)?
     private(set) var error: String?
     private var observations: [NSKeyValueObservation] = []
 
-    override init() {
+    convenience override init() {
+        self.init(dataStore: .nonPersistent(), isPrivate: true)
+    }
+
+    init(dataStore: WKWebsiteDataStore, isPrivate: Bool) {
+        self.isPrivate = isPrivate
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
+        configuration.websiteDataStore = dataStore
         configuration.mediaTypesRequiringUserActionForPlayback = .all
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
         super.init()
@@ -27,6 +42,14 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
         observations.append(webView.observe(\.url, options: [.new]) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.onChange?() }
         })
+        userTurn.onChange = { [weak self] in self?.onChange?() }
+    }
+
+    /// Ends the session: stops loading and lets an agent waiting on the user go.
+    func close() {
+        userTurn.finish(.cancelled)
+        webView.stopLoading()
+        webView.removeFromSuperview()
     }
 
     func navigate(_ address: String) throws {
@@ -37,7 +60,13 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func perform(_ command: PreviewCommand, directory: URL) async throws -> JSONValue {
+        lastAgentUse = Date()
+        lastUse = Date()
+        defer { onChange?() }
         switch command {
+        case .show, .askUser:
+            // The panel's commands; `PreviewSessions` answers them.
+            throw PreviewError.invalidCommand
         case .navigate(let url):
             try navigate(url.absoluteString)
             return ["loading": true, "url": .string(url.absoluteString)]
@@ -53,6 +82,7 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
             return try await script(Self.inputScript, arguments: ["selector": selector, "text": text])
         case .screenshot:
             let configuration = WKSnapshotConfiguration()
+            if webView.superview == nil { PreviewParking.shared.park(webView) }
             let scale = webView.window?.backingScaleFactor ?? 2
             configuration.snapshotWidth = min(1600 / scale, webView.bounds.width) as NSNumber
             let image = try await webView.takeSnapshot(configuration: configuration)
@@ -80,7 +110,7 @@ final class PreviewSession: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if let url = webView.url { onNavigate?(url) }
+        if let url = webView.url { onNavigate?(url, webView.title) }
         onChange?()
     }
 
