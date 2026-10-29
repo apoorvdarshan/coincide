@@ -101,7 +101,7 @@ struct GeneralSettingsView: View {
                     .settingsRevealable(.newThreadChat, highlighted: highlighted)
                     Toggle(isOn: model.binding(\.generatesThreadTitles)) {
                         Text("Name threads with the agent")
-                        Text("The thread's agent titles it from your first message, with its quickest model.")
+                        Text("The thread's agent titles it from your first message with its quickest model, and may refresh the title as the thread develops. Threads you rename keep your name.")
                     }
                     .settingsRevealable(.threadTitles, highlighted: highlighted)
                 }
