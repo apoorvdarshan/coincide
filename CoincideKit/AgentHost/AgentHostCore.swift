@@ -76,6 +76,8 @@ public final class AgentHostCore {
     public var onExit: (() -> Void)?
     /// Called for what the user should hear about while no app is connected, when the app allowed it.
     public var onAttention: ((AgentHostAttention) -> Void)?
+    /// Called when the app has shown a thread the host may have posted notifications about.
+    public var onClearNotifications: ((UUID) -> Void)?
     public private(set) var retireRequested = false
     /// From the latest app's hello.
     public private(set) var notifiesWhileAppIsClosed = false
@@ -212,6 +214,9 @@ public final class AgentHostCore {
             return .ok
         case .list:
             return .sessions(sessionInfos)
+        case .clearNotifications(let threadID):
+            onClearNotifications?(threadID)
+            return .ok
         }
     }
 

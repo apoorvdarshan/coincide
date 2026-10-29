@@ -48,6 +48,10 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
     func clearDelivered(for threadID: UUID) {
         let ids = [Kind.approval, .question, .completed, .failed, .slowStart].map { identifier(threadID, $0) }
         center.removeDeliveredNotifications(withIdentifiers: ids)
+        // Those the background agent host posted while Coincide was closed are its own; ask it to remove them.
+        if let transport = AgentHostController.shared.transport {
+            Task { _ = try? await transport.perform(.clearNotifications(threadID: threadID)) }
+        }
     }
 
     // MARK: Events
@@ -140,7 +144,9 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
     /// Posts a notification named after the thread, with what happened under it and a line of detail.
     private func post(_ kind: Kind, threadID: UUID, event: String, body: String?) {
         let store = AppStore.shared
-        guard store.settings.notifyWhenInBackground, !NSApp.isActive, let thread = store.summary(threadID),
+        // Only the thread on screen is skipped: one you're not looking at still notifies while Coincide is in front.
+        let isOnScreen = NSApp.isActive && ThreadActivity.shared.visibleThreadID == threadID
+        guard store.settings.notifyWhenInBackground, !isOnScreen, let thread = store.summary(threadID),
             !thread.isArchived
         else { return }
         let content = UNMutableNotificationContent()
@@ -180,8 +186,8 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter, willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        // Coincide is in front; the sidebar and toolbar already show the change.
-        []
+        // Coincide is in front but showing another thread, so the banner is how the user hears about this one.
+        [.banner, .list, .sound]
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {

@@ -26,7 +26,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             defer: false)
         window.title = "Coincide"
         window.isReleasedWhenClosed = false
-        window.isRestorable = false
+        // Restorable so a relaunch brings the window back on the desktop (Space) it was on; the frame comes from
+        // `UIState` as before, and `MainWindowRestoration` hands back this window rather than making another.
+        window.identifier = MainWindowRestoration.identifier
+        window.isRestorable = true
+        window.restorationClass = MainWindowRestoration.self
         window.tabbingMode = .disallowed
         window.toolbarStyle = .unified
         window.backgroundColor = Theme.contentBackground
@@ -113,13 +117,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if unsnooze, let threadID, store.summary(threadID)?.snoozedUntil != nil {
             ThreadSnooze.shared.unsnooze(threadID)
         }
+        // Clicking the open thread again also clears what was posted about it.
+        if let threadID { NotificationController.shared.clearDelivered(for: threadID) }
         guard threadID != selectedThreadID || !hasOpenedThread else { return }
         hasOpenedThread = true
         selectedThreadID = threadID
         splitController.setThreadID(threadID)
         sidebar.select(threadID: threadID)
         ThreadActivity.shared.visibleThreadID = threadID
-        if let threadID { NotificationController.shared.clearDelivered(for: threadID) }
         UIState.shared.update { $0.selectedThreadID = threadID }
         updateTitle()
         updateRunStatus()
@@ -553,5 +558,20 @@ extension MainWindowController: NSMenuItemValidation {
             break
         }
         return true
+    }
+}
+
+// MARK: - Restoration
+
+/// Gives macOS the window Coincide already made at launch, so restoring state only puts it back on its desktop.
+final class MainWindowRestoration: NSObject, NSWindowRestoration {
+    static let identifier = NSUserInterfaceItemIdentifier("main")
+
+    static func restoreWindow(
+        withIdentifier identifier: NSUserInterfaceItemIdentifier, state: NSCoder,
+        completionHandler: @escaping (NSWindow?, (any Error)?) -> Void
+    ) {
+        let window = identifier == Self.identifier ? (NSApp.delegate as? AppDelegate)?.mainWindow?.window : nil
+        completionHandler(window, nil)
     }
 }

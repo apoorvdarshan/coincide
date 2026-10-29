@@ -20,6 +20,7 @@ final class AgentHostService: NSObject, NSXPCListenerDelegate {
         ) { launch, account in providers.provider(for: account)?.makeSession(launch) }
         super.init()
         core.onAttention = { [notifier] in notifier.post($0) }
+        core.onClearNotifications = { [notifier] in notifier.clear(threadID: $0) }
         core.onExit = {
             AgentHostCore.terminateChildProcesses()
             exit(0)
@@ -182,6 +183,17 @@ final class AgentHostNotifier: NSObject, UNUserNotificationCenterDelegate {
             default: return
             }
             try? await center.add(request)
+        }
+    }
+
+    /// Removes what was posted about the thread, which the user has now seen in Coincide.
+    func clear(threadID: UUID) {
+        let center = center
+        Task {
+            let ids = await center.deliveredNotifications()
+                .filter { $0.request.content.threadIdentifier == threadID.uuidString }
+                .map(\.request.identifier)
+            if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
         }
     }
 

@@ -200,6 +200,8 @@ public enum AgentHostCommand: Codable, Sendable {
     /// The app applied every event up to `sequence`; the log may drop them.
     case acknowledge(key: AgentSessionKey, sequence: Int)
     case list
+    /// The user has seen the thread in the app: notifications the host posted about it can go.
+    case clearNotifications(threadID: UUID)
 }
 
 public enum AgentHostReply: Codable, Sendable {

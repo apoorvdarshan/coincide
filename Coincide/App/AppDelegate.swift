@@ -2,7 +2,7 @@ import AppKit
 import CoincideKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var mainWindow: MainWindowController?
+    private(set) var mainWindow: MainWindowController?
     private var mainMenu: MainMenu?
 
     /// Whether the app hosts the unit tests (CoincideTests). It then stays in the background: no windows,
@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.setActivationPolicy(.prohibited)
             return
         }
+        // Keep window state across quits even with "Close windows when quitting an app" on, so the window reopens on
+        // the desktop it was on (a restart for an update included).
+        UserDefaults.standard.set(true, forKey: "NSQuitAlwaysKeepsWindows")
         // Before any window reads a transcript: threads whose agents kept running in the host are picked up again.
         AgentHostController.shared.startAtLaunch()
         let controller = MainWindowController()
