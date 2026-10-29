@@ -38036,6 +38036,118 @@
         }
       }
     },
+    "Apple Passwords" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Passwörter"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contraseñas de Apple"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contraseñas de Apple"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mots de passe d’Apple"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple पासवर्ड"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kata Sandi Apple"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Password di Apple"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple パスワード"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple 암호"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Wachtwoorden"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hasła Apple"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Senhas da Apple"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пароли Apple"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple Parolalar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Паролі Apple"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mật khẩu của Apple"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple 密码"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apple 密碼"
+          }
+        }
+      }
+    },
     "Application windows" : {
       "localizations" : {
         "de" : {
@@ -55216,6 +55328,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "選擇…"
+          }
+        }
+      }
+    },
+    "Chrome, Safari and Apple Passwords, Firefox, 1Password and Bitwarden exports work. The logins are saved in your Keychain as Coincide saved logins." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exporte aus Chrome, Safari und Apple Passwörter, Firefox, 1Password und Bitwarden funktionieren. Die Anmeldungen werden als bei Coincide gesicherte Anmeldungen in deinem Schlüsselbund gespeichert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Funcionan las exportaciones de Chrome, Safari y Contraseñas de Apple, Firefox, 1Password y Bitwarden. Los inicios de sesión se guardan en tu llavero como inicios de sesión de Coincide."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Funcionan las exportaciones de Chrome, Safari y Contraseñas de Apple, Firefox, 1Password y Bitwarden. Los inicios de sesión se guardan en tu llavero como inicios de sesión de Coincide."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les exports de Chrome, Safari et Mots de passe d’Apple, Firefox, 1Password et Bitwarden fonctionnent. Les identifiants sont enregistrés dans votre trousseau comme identifiants Coincide."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chrome, Safari और Apple पासवर्ड, Firefox, 1Password और Bitwarden के एक्सपोर्ट काम करते हैं। लॉगिन Coincide में सहेजे गए लॉगिन के रूप में आपके कीचेन में रखे जाते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ekspor dari Chrome, Safari dan Kata Sandi Apple, Firefox, 1Password, serta Bitwarden didukung. Login disimpan di Rantai Kunci sebagai login tersimpan Coincide."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Funzionano le esportazioni di Chrome, Safari e Password di Apple, Firefox, 1Password e Bitwarden. Gli accessi vengono salvati nel portachiavi come accessi salvati in Coincide."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chrome、Safari と Apple パスワード、Firefox、1Password、Bitwarden の書き出しに対応しています。ログインは Coincide に保存したログインとしてキーチェーンに保存されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chrome, Safari 및 Apple 암호, Firefox, 1Password, Bitwarden 내보내기를 지원합니다. 로그인은 Coincide 저장 로그인으로 키체인에 저장됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exports van Chrome, Safari en Apple Wachtwoorden, Firefox, 1Password en Bitwarden werken. De aanmeldingen worden in je sleutelhanger bewaard als in Coincide bewaarde aanmeldingen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Działają eksporty z Chrome, Safari i Haseł Apple, Firefoksa, 1Password i Bitwarden. Loginy są zapisywane w pęku kluczy jako loginy zapisane w Coincide."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Funcionam exportações do Chrome, Safari e Senhas da Apple, Firefox, 1Password e Bitwarden. Os logins são salvos nas suas Chaves como logins salvos no Coincide."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поддерживаются экспорты Chrome, Safari и Паролей Apple, Firefox, 1Password и Bitwarden. Данные входа сохраняются в связке ключей как входы, сохранённые в Coincide."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chrome, Safari ve Apple Parolalar, Firefox, 1Password ve Bitwarden dışa aktarımları çalışır. Girişler Anahtar Zinciri’nize Coincide’da kayıtlı girişler olarak kaydedilir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Підтримуються експорти Chrome, Safari та Паролів Apple, Firefox, 1Password і Bitwarden. Дані входу зберігаються у в’язці ключів як входи, збережені в Coincide."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hỗ trợ tệp xuất từ Chrome, Safari và Mật khẩu của Apple, Firefox, 1Password và Bitwarden. Thông tin đăng nhập được lưu vào Chuỗi khóa dưới dạng thông tin đăng nhập lưu trong Coincide."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "支持 Chrome、Safari 和 Apple 密码、Firefox、1Password 和 Bitwarden 的导出文件。登录信息会作为 Coincide 存储的登录信息存入钥匙串。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "支援 Chrome、Safari 和 Apple 密碼、Firefox、1Password 和 Bitwarden 的匯出檔案。登入資訊會作為 Coincide 儲存的登入資訊存入鑰匙圈。"
           }
         }
       }
@@ -122410,6 +122634,118 @@
         }
       }
     },
+    "Import CSV…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CSV importieren …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar CSV…"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar CSV…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer un CSV…"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CSV इम्पोर्ट करें…"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impor CSV…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importa CSV…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CSV を読み込む…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CSV 가져오기…"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CSV importeren…"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importuj CSV…"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar CSV…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импортировать CSV…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CSV İçe Aktar…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпортувати CSV…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhập CSV…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "导入 CSV…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "匯入 CSV…"
+          }
+        }
+      }
+    },
     "Import from Another Browser" : {
       "localizations" : {
         "de" : {
@@ -122630,6 +122966,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "從其他瀏覽器匯入"
+          }
+        }
+      }
+    },
+    "Import passwords from a CSV export" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passwörter aus einem CSV-Export importieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar contraseñas de una exportación CSV"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar contraseñas de una exportación CSV"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer des mots de passe depuis un export CSV"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CSV एक्सपोर्ट से पासवर्ड इम्पोर्ट करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impor kata sandi dari ekspor CSV"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importa password da un’esportazione CSV"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CSV 書き出しからパスワードを読み込む"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CSV 내보내기에서 암호 가져오기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wachtwoorden importeren uit een CSV-export"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importuj hasła z eksportu CSV"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar senhas de uma exportação CSV"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импорт паролей из CSV-экспорта"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CSV dışa aktarımından parolaları içe aktar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпорт паролів із CSV-експорту"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhập mật khẩu từ tệp xuất CSV"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "从 CSV 导出文件导入密码"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "從 CSV 匯出檔案匯入密碼"
           }
         }
       }
@@ -136612,6 +137060,124 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "登入項目"
+          }
+        }
+      }
+    },
+    "Logins imported: %lld · Rows skipped (no web address or password): %lld. Delete the CSV file now: it holds your passwords unencrypted." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importierte Anmeldungen: %1$lld · Übersprungene Zeilen (ohne Webadresse oder Passwort): %2$lld. Lösche die CSV-Datei jetzt: Sie enthält deine Passwörter unverschlüsselt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Logins imported: %1$lld · Rows skipped (no web address or password): %2$lld. Delete the CSV file now: it holds your passwords unencrypted."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inicios de sesión importados: %1$lld · Filas omitidas (sin dirección web o contraseña): %2$lld. Elimina ahora el archivo CSV: contiene tus contraseñas sin cifrar."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inicios de sesión importados: %1$lld · Filas omitidas (sin dirección web o contraseña): %2$lld. Elimina ahora el archivo CSV: contiene tus contraseñas sin cifrar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Identifiants importés : %1$lld · Lignes ignorées (sans adresse web ou mot de passe) : %2$lld. Supprimez maintenant le fichier CSV : il contient vos mots de passe en clair."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इम्पोर्ट किए गए लॉगिन: %1$lld · छोड़ी गई पंक्तियाँ (वेब पता या पासवर्ड नहीं): %2$lld. अभी CSV फ़ाइल हटाएँ: इसमें आपके पासवर्ड बिना एन्क्रिप्शन के हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Login diimpor: %1$lld · Baris dilewati (tanpa alamat web atau kata sandi): %2$lld. Hapus file CSV sekarang: file itu berisi kata sandi Anda tanpa enkripsi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accessi importati: %1$lld · Righe saltate (senza indirizzo web o password): %2$lld. Elimina subito il file CSV: contiene le tue password in chiaro."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "読み込んだログイン: %1$lld · スキップした行（Web アドレスまたはパスワードなし）: %2$lld。CSV ファイルは今すぐ削除してください。パスワードが暗号化されずに含まれています。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "가져온 로그인: %1$lld · 건너뛴 행(웹 주소나 암호 없음): %2$lld. 지금 CSV 파일을 삭제하세요. 암호가 암호화되지 않은 채 들어 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geïmporteerde aanmeldingen: %1$lld · Overgeslagen rijen (zonder webadres of wachtwoord): %2$lld. Verwijder het CSV-bestand nu: het bevat je wachtwoorden onversleuteld."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zaimportowane loginy: %1$lld · Pominięte wiersze (bez adresu lub hasła): %2$lld. Usuń teraz plik CSV: zawiera Twoje hasła bez szyfrowania."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Logins importados: %1$lld · Linhas ignoradas (sem endereço web ou senha): %2$lld. Apague o arquivo CSV agora: ele contém suas senhas sem criptografia."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импортировано входов: %1$lld · Пропущено строк (без адреса или пароля): %2$lld. Удалите CSV-файл сейчас: в нём ваши пароли в открытом виде."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İçe aktarılan girişler: %1$lld · Atlanan satırlar (web adresi veya parola yok): %2$lld. CSV dosyasını şimdi silin: parolalarınızı şifrelenmemiş olarak içerir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпортовано входів: %1$lld · Пропущено рядків (без адреси чи пароля): %2$lld. Видаліть CSV-файл зараз: у ньому ваші паролі у відкритому вигляді."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã nhập thông tin đăng nhập: %1$lld · Bỏ qua hàng (không có địa chỉ web hoặc mật khẩu): %2$lld. Hãy xóa tệp CSV ngay: nó chứa mật khẩu chưa mã hóa của bạn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已导入登录信息：%1$lld · 已跳过的行（无网址或密码）：%2$lld。请立即删除 CSV 文件：其中的密码未加密。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已匯入登入資訊：%1$lld · 已略過的列（無網址或密碼）：%2$lld。請立即刪除 CSV 檔案：其中的密碼未加密。"
           }
         }
       }
@@ -161502,6 +162068,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "不支援"
+          }
+        }
+      }
+    },
+    "Not supported: macOS doesn’t let other apps read website passwords from Passwords or iCloud Keychain. In the Passwords app, choose File › Export All Passwords…, then import the CSV below." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht unterstützt: macOS erlaubt anderen Apps nicht, Website-Passwörter aus Passwörter oder dem iCloud-Schlüsselbund zu lesen. Wähle in der App „Passwörter“ Ablage › Alle Passwörter exportieren … und importiere dann die CSV-Datei unten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No compatible: macOS no permite que otras apps lean contraseñas de sitios web de Contraseñas ni del Llavero de iCloud. En la app Contraseñas, elige Archivo › Exportar todas las contraseñas… e importa el CSV abajo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No compatible: macOS no permite que otras apps lean contraseñas de sitios web de Contraseñas ni del Llavero de iCloud. En la app Contraseñas, elige Archivo › Exportar todas las contraseñas… e importa el CSV abajo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Non pris en charge : macOS ne permet pas aux autres apps de lire les mots de passe de sites depuis Mots de passe ou le trousseau iCloud. Dans l’app Mots de passe, choisissez Fichier › Exporter tous les mots de passe…, puis importez le CSV ci-dessous."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "समर्थित नहीं: macOS दूसरे ऐप्स को पासवर्ड ऐप या iCloud कीचेन से वेबसाइट पासवर्ड पढ़ने नहीं देता। पासवर्ड ऐप में फ़ाइल › सभी पासवर्ड एक्सपोर्ट करें… चुनें, फिर नीचे CSV इम्पोर्ट करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidak didukung: macOS tidak mengizinkan app lain membaca kata sandi situs web dari Kata Sandi atau Rantai Kunci iCloud. Di app Kata Sandi, pilih File › Ekspor Semua Kata Sandi…, lalu impor CSV di bawah."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Non supportato: macOS non consente ad altre app di leggere le password dei siti da Password o dal portachiavi iCloud. Nell’app Password scegli File › Esporta tutte le password…, poi importa il CSV qui sotto."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "非対応：macOS では、他のアプリがパスワード App や iCloud キーチェーンの Web サイトのパスワードを読み取れません。パスワード App で「ファイル › すべてのパスワードを書き出す…」を選び、下で CSV を読み込んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "지원되지 않음: macOS는 다른 앱이 암호 앱이나 iCloud 키체인의 웹사이트 암호를 읽도록 허용하지 않습니다. 암호 앱에서 파일 › 모든 암호 내보내기…를 선택한 다음 아래에서 CSV를 가져오세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Niet ondersteund: macOS laat andere apps geen websitewachtwoorden lezen uit Wachtwoorden of de iCloud-sleutelhanger. Kies in de app Wachtwoorden Archief › Exporteer alle wachtwoorden… en importeer de CSV hieronder."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nieobsługiwane: macOS nie pozwala innym aplikacjom odczytywać haseł witryn z aplikacji Hasła ani pęku kluczy iCloud. W aplikacji Hasła wybierz Plik › Eksportuj wszystkie hasła…, a następnie zaimportuj plik CSV poniżej."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não compatível: o macOS não permite que outros apps leiam senhas de sites do app Senhas ou das Chaves do iCloud. No app Senhas, escolha Arquivo › Exportar Todas as Senhas… e importe o CSV abaixo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не поддерживается: macOS не позволяет другим приложениям читать пароли сайтов из «Паролей» или связки ключей iCloud. В приложении «Пароли» выберите «Файл › Экспортировать все пароли…», затем импортируйте CSV ниже."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desteklenmiyor: macOS, diğer uygulamaların Parolalar’daki veya iCloud Anahtar Zinciri’ndeki web sitesi parolalarını okumasına izin vermez. Parolalar uygulamasında Dosya › Tüm Parolaları Dışa Aktar…’ı seçin, ardından CSV’yi aşağıdan içe aktarın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не підтримується: macOS не дозволяє іншим застосункам читати паролі сайтів із «Паролів» або в’язки ключів iCloud. У застосунку «Паролі» виберіть «Файл › Експортувати всі паролі…», а потім імпортуйте CSV нижче."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không được hỗ trợ: macOS không cho ứng dụng khác đọc mật khẩu trang web từ Mật khẩu hay Chuỗi khóa iCloud. Trong ứng dụng Mật khẩu, chọn Tệp › Xuất tất cả mật khẩu…, rồi nhập tệp CSV bên dưới."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "不支持：macOS 不允许其他 App 读取“密码”App 或 iCloud 钥匙串中的网站密码。请在“密码”App 中选择“文件 › 导出所有密码…”，然后在下方导入 CSV。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "不支援：macOS 不允許其他 App 讀取「密碼」App 或 iCloud 鑰匙圈中的網站密碼。請在「密碼」App 中選擇「檔案 › 匯出所有密碼⋯」，然後在下方匯入 CSV。"
           }
         }
       }
@@ -236575,6 +237253,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "已加入該自訂模型。"
+          }
+        }
+      }
+    },
+    "That file isn't a password export Coincide can read." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Datei ist kein Passwortexport, den Coincide lesen kann."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ese archivo no es una exportación de contraseñas que Coincide pueda leer."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ese archivo no es una exportación de contraseñas que Coincide pueda leer."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce fichier n’est pas un export de mots de passe lisible par Coincide."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "वह फ़ाइल ऐसा पासवर्ड एक्सपोर्ट नहीं है जिसे Coincide पढ़ सके।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "File itu bukan ekspor kata sandi yang dapat dibaca Coincide."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quel file non è un’esportazione di password leggibile da Coincide."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "そのファイルは Coincide が読み込めるパスワードの書き出しではありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide가 읽을 수 있는 암호 내보내기 파일이 아닙니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dat bestand is geen wachtwoordexport die Coincide kan lezen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten plik nie jest eksportem haseł, który Coincide potrafi odczytać."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esse arquivo não é uma exportação de senhas que o Coincide consiga ler."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот файл не является экспортом паролей, который может прочитать Coincide."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu dosya, Coincide’ın okuyabileceği bir parola dışa aktarımı değil."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей файл не є експортом паролів, який може прочитати Coincide."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tệp đó không phải tệp xuất mật khẩu mà Coincide đọc được."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "该文件不是 Coincide 能读取的密码导出文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "該檔案不是 Coincide 能讀取的密碼匯出檔案。"
           }
         }
       }
