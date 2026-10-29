@@ -2,7 +2,7 @@ import AppKit
 import CoincideKit
 
 /// Interface state that belongs to this Mac rather than to the user's projects: window layout, the
-/// open thread, the preferred "Open in" app, which threads finished while the user looked away, and
+/// open thread, which threads finished while the user looked away, and
 /// which turns agents started on their own.
 /// Stored beside the store's data, so `COINCIDE_DATA_DIR` keeps test runs apart from real use.
 final class UIState {
@@ -45,7 +45,8 @@ final class UIState {
         /// Whether the terminal's drawer below the chat is open. With the terminal on the right, it is open when the
         /// inspector is open on it.
         var isTerminalOpen = false
-        /// Bundle identifier of the app the toolbar's "Open in" button uses.
+        /// The "Open in" app earlier versions kept here, read once at launch and moved into the settings
+        /// (`AppSettings.preferredOpenTarget`, by `OpenTargets.migrateLegacyChoice`).
         var preferredOpenTarget: String?
         var showsArchivedThreads = false
         /// List snoozed threads too, marked with when they wake.

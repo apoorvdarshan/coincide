@@ -21,7 +21,9 @@ struct NavigationRailTests {
         // The panels that open on the right have their buttons on the right, in the toolbar (`InspectorPanelButtons`).
         let labels = Set(buttons.compactMap { $0.accessibilityLabel() })
         #expect(labels.isDisjoint(with: ["Diff", "Pull Requests", "Browser Preview"]))
-        #expect(labels.isSuperset(of: ["Terminal", "Open In"]))
+        #expect(labels.contains("Terminal"))
+        // Open In names the app it opens ("Open in Xcode"), or reads "Open In" when none is installed.
+        #expect(labels.contains { $0.lowercased().hasPrefix("open in") })
         let frames = buttons.map { $0.convert($0.bounds, to: rail.view) }.sorted { $0.minY < $1.minY }
         for frame in frames {
             #expect(frame.width == RailButton.side)
