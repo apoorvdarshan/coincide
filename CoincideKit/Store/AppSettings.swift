@@ -28,6 +28,20 @@ public enum ReplyTypeface: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Which side of the conversation the user's own messages sit on: the right, across from the agents' replies as in a
+/// chat app, or the left, on the agent rail with the replies. In a right-to-left interface the transcript mirrors them.
+public enum UserMessageSide: String, Codable, CaseIterable, Sendable {
+    case right
+    case left
+
+    public nonisolated var displayName: String {
+        switch self {
+        case .right: String(localized: "Right")
+        case .left: String(localized: "Left")
+        }
+    }
+}
+
 /// Where the terminal opens, and with it where its button sits: in a drawer below the chat, with its button in the
 /// navigation rail on the window's left edge, or in the column on the right beside the diff, the pull requests and the
 /// browser preview, with its button among theirs in the toolbar's top-right corner.
@@ -151,6 +165,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Font size for the transcript and composer.
     public var fontSize: Double
     public var replyTypeface: ReplyTypeface
+    /// Where the user's messages sit in the conversation; the right by default.
+    public var userMessageSide: UserMessageSide
     /// Where the terminal opens: below the chat (its button in the rail), as it always has, or in the right column (its
     /// button in the toolbar's top-right group).
     public var terminalPlacement: TerminalPlacement
@@ -208,6 +224,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         worktreeBranchPrefix = "coincide/"
         fontSize = 13
         replyTypeface = .newYork
+        userMessageSide = .right
         terminalPlacement = .bottom
         darkTheme = "carbon"
         lightTheme = "carbon-light"
@@ -257,6 +274,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         worktreeBranchPrefix = value(.worktreeBranchPrefix, defaults.worktreeBranchPrefix)
         fontSize = value(.fontSize, defaults.fontSize)
         replyTypeface = value(.replyTypeface, defaults.replyTypeface)
+        userMessageSide = value(.userMessageSide, defaults.userMessageSide)
         terminalPlacement = value(.terminalPlacement, defaults.terminalPlacement)
         darkTheme = value(.darkTheme, defaults.darkTheme)
         lightTheme = value(.lightTheme, defaults.lightTheme)
