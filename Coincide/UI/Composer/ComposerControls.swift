@@ -34,7 +34,8 @@ final class ComposerControlButton: NSButton {
     private var symbolColor: NSColor?
     private var showsChevron = false
     private var isHovered = false
-    private var isMenuOpen = false
+    /// Whether its menu or popup is up, which keeps the control highlighted.
+    private(set) var isMenuOpen = false
     private var trackingArea: NSTrackingArea?
 
     override init(frame frameRect: NSRect) {
@@ -211,19 +212,21 @@ final class ComposerControlButton: NSButton {
     func showMenu() {
         let content = popupProvider?() ?? menuProvider?().map { ThemedMenuViewController(menu: $0, minimumWidth: max(200, bounds.width)) }
         guard let content else { return }
-        isMenuOpen = true
-        updateAppearance()
         var anchor = bounds
         if let clearance = popupClearance {
             // Above or below the whole composer, lined up with this control.
             let frame = convert(clearance.bounds, from: clearance)
             anchor = NSRect(x: bounds.minX, y: frame.minY, width: bounds.width, height: frame.height)
         }
-        ThemedPopup.show(content, from: self, rect: anchor) { [weak self] in
+        let popup = ThemedPopup.show(content, from: self, rect: anchor) { [weak self] in
             self?.isMenuOpen = false
             self?.isHovered = false
             self?.updateAppearance()
         }
+        // Set once it opened: a popup it replaces (from this control too) clears the highlight as it closes, and one
+        // that could not open leaves none.
+        isMenuOpen = popup != nil
+        updateAppearance()
     }
 
     /// Where a menu opening above `frame` (screen coordinates) puts its top-left corner. A menu taller than the room
