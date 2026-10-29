@@ -73,6 +73,21 @@ struct UsageLimitsTests {
         #expect(UsageLimits.warningKey(for: near, provider: .codex) == UsageLimits.warningKey(for: window("w", 95, kind: .weekly, resetsIn: 2 * 86_400 + 3 * 3_600 + 59), provider: .codex))
     }
 
+    @Test func warningsSayWhatIsLeftWhenUsageShowsWhatIsLeft() {
+        let near = window("w", 92.6, kind: .weekly, resetsIn: 2 * 86_400 + 3 * 3_600 + 59)
+        #expect(
+            UsageLimits.warningText(for: near, provider: .codex, mode: .remaining, at: now)
+                == "8% of your Codex weekly limit is left. It resets in 2d 3h.")
+        #expect(UsageLimits.warningText(for: window("s", 99.7), provider: .claude, mode: .remaining, at: now) == "1% of your Claude Code session limit is left.")
+        // Used and left add up to 100 in the two modes.
+        #expect(UsageLimits.warningText(for: window("s", 99.7), provider: .claude, mode: .used, at: now) == "99% of your Claude Code session limit is used.")
+        // A reached limit reads the same in both.
+        let reached = window("s", 100, resetsIn: 90 * 60)
+        #expect(
+            UsageLimits.warningText(for: reached, provider: .claude, mode: .remaining, at: now)
+                == UsageLimits.warningText(for: reached, provider: .claude, at: now))
+    }
+
     @Test func aLimitPassedOnCreditsWarnsWithoutStoppingWork() {
         var weekly = window("w", 100, kind: .weekly, resetsIn: 5 * 86_400 + 5 * 3_600)
         weekly.continuesOnCredits = true

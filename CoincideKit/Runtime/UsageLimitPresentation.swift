@@ -99,8 +99,11 @@ extension UsageLimits {
         }.joined(separator: ". ")
     }
 
-    /// What the composer says about a window near or at its limit.
-    public nonisolated static func warningText(for window: UsageLimitWindow, provider: ProviderKind, at now: Date) -> String {
+    /// What the composer says about a window near or at its limit: how much is used, or how much is left when `mode`
+    /// shows what is left. The two add up to 100, and neither reads as the limit reached before it is.
+    public nonisolated static func warningText(
+        for window: UsageLimitWindow, provider: ProviderKind, mode: UsageDisplayMode = .used, at now: Date
+    ) -> String {
         let name = provider.displayName
         let limit = window.label.lowercased()
         if window.isExhausted, window.continuesOnCredits {
@@ -118,6 +121,14 @@ extension UsageLimits {
             return String(localized: "\(name) usage limit reached.")
         }
         let used = Int(window.usedPercent.rounded(.down))
+        if mode == .remaining {
+            let left = 100 - used
+            if let resetsAt = window.resetsAt, resetsAt > now {
+                return String(
+                    localized: "\(left)% of your \(name) \(limit) limit is left. It resets in \(UsageLimitWindow.duration(resetsAt.timeIntervalSince(now))).")
+            }
+            return String(localized: "\(left)% of your \(name) \(limit) limit is left.")
+        }
         if let resetsAt = window.resetsAt, resetsAt > now {
             return String(
                 localized: "\(used)% of your \(name) \(limit) limit is used. It resets in \(UsageLimitWindow.duration(resetsAt.timeIntervalSince(now))).")

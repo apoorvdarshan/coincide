@@ -847,7 +847,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         if let warning = limits.warning,
             !dismissedUsageWarnings.contains(UsageLimits.warningKey(for: warning, provider: provider))
         {
-            usageBanner.show(warning, provider: provider, now: now, resume: resumeOffer(provider: provider, now: now))
+            usageBanner.show(
+                warning, provider: provider, mode: store.settings.usageDisplayMode, now: now,
+                resume: resumeOffer(provider: provider, now: now))
             usageBanner.isHidden = false
         } else {
             usageBanner.isHidden = true
