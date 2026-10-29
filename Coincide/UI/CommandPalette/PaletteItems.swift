@@ -138,7 +138,7 @@ struct PaletteCatalog {
             items.append(
                 PaletteItem(
                     id: "action:terminal",
-                    title: split.content.isTerminalOpen ? String(localized: "Hide Terminal") : String(localized: "Show Terminal"),
+                    title: split.isTerminalOpen ? String(localized: "Hide Terminal") : String(localized: "Show Terminal"),
                     icon: symbol("terminal"), trailing: keys(.toggleTerminal), keywords: ["terminal", "shell", "console", "toggle"],
                     behavior: .run { window?.toggleTerminalPanel(nil) }))
             items.append(

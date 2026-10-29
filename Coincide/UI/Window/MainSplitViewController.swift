@@ -4,6 +4,9 @@ import CoincideKit
 /// Thread list | chat over a collapsible terminal | inspector (the diff, the pull requests or the browser preview),
 /// right of the navigation rail (`MainRootViewController`). Panel sizes and visibility are remembered in `UIState`.
 ///
+/// Settings › General can put the terminal in the inspector instead, as a fourth panel (`TerminalPlacement`). Switching
+/// moves the same terminal controller, with its running shells, between the two places (`setTerminalPlacement`).
+///
 /// The inspector keeps a share of the space right of the thread list rather than a width (`InspectorWidth`): a
 /// constraint holds it at that multiple of the chat's width, above the split items' holding priorities, so resizing,
 /// zooming, full screen and hiding the thread list all keep the proportion while the thread list keeps its width.
@@ -34,6 +37,15 @@ final class MainSplitViewController: NSSplitViewController {
     var isDiffOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .diff }
     var isPullRequestsOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .pullRequests }
     var isPreviewOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .preview }
+    /// Where the terminal opens: in the drawer below the chat or in the inspector.
+    private(set) var terminalPlacement: TerminalPlacement
+    /// Whether the terminal shows, wherever it is.
+    var isTerminalOpen: Bool {
+        switch terminalPlacement {
+        case .bottom: content.isTerminalOpen
+        case .right: !inspectorItem.isCollapsed && inspector.panel == .terminal
+        }
+    }
     /// Called after the sidebar, terminal or diff opens or closes, so the toolbar and menus can follow.
     var onPanelsChanged: (() -> Void)?
 
@@ -50,10 +62,13 @@ final class MainSplitViewController: NSSplitViewController {
     static let sidebarHoldingPriority = NSLayoutConstraint.Priority(320)
     static let proportionIdentifier = "Coincide.inspectorProportion"
 
-    init(state: UIState = .shared) {
+    init(state: UIState = .shared, terminalPlacement: TerminalPlacement = AppStore.shared.settings.terminalPlacement) {
         self.state = state
+        self.terminalPlacement = terminalPlacement
         inspectorFraction = state.values.inspectorFraction
         super.init(nibName: nil, bundle: nil)
+        // Before the drawer loads, so a terminal on the right never starts out in it.
+        content.hostsTerminal = terminalPlacement == .bottom
     }
 
     @available(*, unavailable)
@@ -77,6 +92,9 @@ final class MainSplitViewController: NSSplitViewController {
         inspectorItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
         inspectorItem.holdingPriority = Self.contentHoldingPriority
         inspectorItem.canCollapse = true
+        if terminalPlacement == .right {
+            inspector.attachTerminal(content.terminal, select: values.inspectorPanel == .terminal)
+        }
         inspectorItem.isCollapsed = !values.isInspectorOpen
 
         addSplitViewItem(sidebarItem)
@@ -84,6 +102,11 @@ final class MainSplitViewController: NSSplitViewController {
         addSplitViewItem(inspectorItem)
         super.viewDidLoad()
         content.onTerminalToggled = { [weak self] in self?.onPanelsChanged?() }
+        // As in T3 Code, closing the last terminal closes the panel, wherever it is.
+        content.terminal.onLastTerminalClosed = { [weak self] in
+            guard let self, self.isTerminalOpen else { return }
+            self.toggleTerminalPanel()
+        }
         installDividerHandle()
         if !inspectorItem.isCollapsed { holdProportion() }
 
@@ -142,8 +165,59 @@ final class MainSplitViewController: NSSplitViewController {
         toggleInspector(.pullRequests)
     }
 
+    /// Opens or closes the terminal: its drawer below the chat, or its panel in the inspector, which another panel's
+    /// button switches away from like a tab.
+    func toggleTerminalPanel() {
+        switch terminalPlacement {
+        case .bottom:
+            content.toggleTerminal()
+        case .right:
+            toggleInspector(.terminal)
+            // The drawer's terminal takes focus as it opens; a tab joining the window doesn't, so ask once it shows.
+            if isTerminalOpen {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.isTerminalOpen else { return }
+                    self.content.terminal.focus()
+                }
+            }
+        }
+    }
+
+    /// Moves the terminal between the drawer below the chat and the inspector, taking the same controller, and so the
+    /// thread's running shells, along: nothing restarts. An open terminal stays open in its new place and a closed one
+    /// stays closed; the inspector's other panels are left as they were.
+    func setTerminalPlacement(_ placement: TerminalPlacement) {
+        guard placement != terminalPlacement else { return }
+        guard isViewLoaded else {
+            terminalPlacement = placement
+            content.hostsTerminal = placement == .bottom
+            return
+        }
+        let wasOpen = isTerminalOpen
+        let hadFocus = (view.window?.firstResponder as? NSView)?.isDescendant(of: content.terminal.view) ?? false
+        terminalPlacement = placement
+        switch placement {
+        case .right:
+            content.detachTerminal()
+            inspector.attachTerminal(content.terminal, select: false)
+            if wasOpen { showInspector(.terminal) }
+        case .bottom:
+            if wasOpen {
+                // In place: the panel is about to leave the column, so there is nothing to animate.
+                closedInspectorWidth = inspector.view.frame.width
+                releaseProportion()
+                inspectorItem.isCollapsed = true
+            }
+            inspector.detachTerminal()
+            content.attachTerminal(open: wasOpen)
+        }
+        onPanelsChanged?()
+        if hadFocus { content.terminal.focus() }
+    }
+
     /// Closes the inspector when it shows `panel`, otherwise shows `panel` in it, opening it if it is closed: the
-    /// toolbar's diff, pull request and preview buttons (`InspectorPanelButtons`) work like tabs of one column.
+    /// toolbar's diff, pull request, preview and (on the right) terminal buttons (`InspectorPanelButtons`) work like
+    /// tabs of one column.
     private func toggleInspector(_ panel: UIState.InspectorPanel) {
         if !inspectorItem.isCollapsed, inspector.panel == panel {
             closeInspector()
@@ -288,9 +362,10 @@ final class MainSplitViewController: NSSplitViewController {
     }
 }
 
-/// The inspector column: the diff or the pull requests, one at a time, as T3 Code's right panel switches between
-/// them. It has no tabs of its own; the toolbar's buttons (`InspectorPanelButtons`) choose. A panel not showing is out of the window, so it loads
-/// nothing until it shows again.
+/// The inspector column: the diff, the pull requests, the browser preview or, when Settings › General puts it on the
+/// right, the terminal, one at a time, as T3 Code's right panel switches between them. It has no tabs of its own; the
+/// toolbar's buttons (`InspectorPanelButtons`) choose. A panel not showing is out of the window, so it loads nothing
+/// until it shows again; the terminal's shells keep running meanwhile, as they do in a closed drawer.
 final class InspectorViewController: NSTabViewController {
     init(diff: DiffViewController, pullRequests: PullRequestsViewController, preview: PreviewViewController = PreviewViewController()) {
         super.init(nibName: nil, bundle: nil)
@@ -300,31 +375,61 @@ final class InspectorViewController: NSTabViewController {
         addTabViewItem(NSTabViewItem(viewController: diff))
         addTabViewItem(NSTabViewItem(viewController: pullRequests))
         addTabViewItem(NSTabViewItem(viewController: preview))
-        selectedTabViewItemIndex = Self.panels.firstIndex(of: UIState.shared.values.inspectorPanel) ?? 0
+        // The terminal's panel is added only with the terminal (`attachTerminal`).
+        selectedTabViewItemIndex = panels.firstIndex(of: UIState.shared.values.inspectorPanel) ?? 0
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    private static let panels: [UIState.InspectorPanel] = [.diff, .pullRequests, .preview]
-    var panel: UIState.InspectorPanel { Self.panels[selectedTabViewItemIndex] }
+    /// The panels in tab order.
+    private(set) var panels: [UIState.InspectorPanel] = [.diff, .pullRequests, .preview]
+    var panel: UIState.InspectorPanel { panels[selectedTabViewItemIndex] }
+    var hasTerminal: Bool { panels.contains(.terminal) }
 
     func show(_ panel: UIState.InspectorPanel) {
-        selectedTabViewItemIndex = Self.panels.firstIndex(of: panel) ?? 0
+        guard let index = panels.firstIndex(of: panel) else { return }
+        selectedTabViewItemIndex = index
         UIState.shared.update { $0.inspectorPanel = panel }
+    }
+
+    /// Adds the terminal as the last panel, showing it when `select` is true.
+    func attachTerminal(_ terminal: NSViewController, select: Bool) {
+        guard !hasTerminal else { return }
+        // A collapsed drawer leaves its view hidden.
+        terminal.view.isHidden = false
+        addTabViewItem(NSTabViewItem(viewController: terminal))
+        panels.append(.terminal)
+        if select { selectedTabViewItemIndex = panels.count - 1 }
+    }
+
+    /// Takes the terminal's panel out, so the terminal can go back below the chat. When it was the chosen panel, the
+    /// column goes back to the diff.
+    func detachTerminal() {
+        guard let index = panels.firstIndex(of: .terminal) else { return }
+        let wasSelected = selectedTabViewItemIndex == index
+        if wasSelected { selectedTabViewItemIndex = 0 }
+        removeTabViewItem(tabViewItems[index])
+        panels.remove(at: index)
+        if wasSelected || UIState.shared.values.inspectorPanel == .terminal {
+            UIState.shared.update { $0.inspectorPanel = .diff }
+        }
     }
 }
 
-/// The chat on top and the thread's terminal in a drawer below it, toggled with Command-J.
+/// The chat on top and the thread's terminal in a drawer below it, toggled with Command-J. With the terminal on the
+/// right (`TerminalPlacement.right`), the drawer has no terminal and the chat takes the whole height.
 final class ChatTerminalSplitViewController: NSSplitViewController {
     let chat = ChatViewController()
     let terminal = TerminalViewController()
-    private var terminalItem: NSSplitViewItem!
+    /// Whether the drawer starts out with the terminal. Set before the view loads.
+    var hostsTerminal = true
+    private var terminalItem: NSSplitViewItem?
     private var hasSizedTerminal = false
     private var hasRestoredLayout = false
     var onTerminalToggled: (() -> Void)?
 
-    var isTerminalOpen: Bool { !terminalItem.isCollapsed }
+    var isTerminalOpen: Bool { terminalItem.map { !$0.isCollapsed } ?? false }
 
     private static let defaultTerminalHeight: CGFloat = 260
 
@@ -334,21 +439,52 @@ final class ChatTerminalSplitViewController: NSSplitViewController {
         let chatItem = NSSplitViewItem(viewController: chat)
         chatItem.minimumThickness = 200
         chatItem.holdingPriority = .defaultLow
-        terminalItem = NSSplitViewItem(viewController: terminal)
-        terminalItem.canCollapse = true
-        terminalItem.minimumThickness = 120
-        terminalItem.holdingPriority = NSLayoutConstraint.Priority(NSLayoutConstraint.Priority.defaultLow.rawValue + 10)
-        terminalItem.isCollapsed = !UIState.shared.values.isTerminalOpen
         addSplitViewItem(chatItem)
-        addSplitViewItem(terminalItem)
+        if hostsTerminal {
+            let item = makeTerminalItem(collapsed: !UIState.shared.values.isTerminalOpen)
+            addSplitViewItem(item)
+            terminalItem = item
+        }
         super.viewDidLoad()
+    }
+
+    private func makeTerminalItem(collapsed: Bool) -> NSSplitViewItem {
+        let item = NSSplitViewItem(viewController: terminal)
+        item.canCollapse = true
+        item.minimumThickness = 120
+        item.holdingPriority = NSLayoutConstraint.Priority(NSLayoutConstraint.Priority.defaultLow.rawValue + 10)
+        item.isCollapsed = collapsed
+        return item
     }
 
     override func viewDidAppear() {
         super.viewDidAppear()
         guard !hasRestoredLayout else { return }
         hasRestoredLayout = true
-        if !terminalItem.isCollapsed { sizeTerminal() }
+        if isTerminalOpen { sizeTerminal() }
+    }
+
+    /// Takes the terminal out of the drawer, so it can go to the inspector. Its shells keep running.
+    func detachTerminal() {
+        guard let item = terminalItem else { return }
+        saveLayout()
+        removeSplitViewItem(item)
+        terminalItem = nil
+        UIState.shared.update { $0.isTerminalOpen = false }
+    }
+
+    /// Puts the terminal back in the drawer, open or closed.
+    func attachTerminal(open: Bool) {
+        guard terminalItem == nil else { return }
+        terminal.view.isHidden = false
+        let item = makeTerminalItem(collapsed: !open)
+        addSplitViewItem(item)
+        terminalItem = item
+        if open {
+            view.layoutSubtreeIfNeeded()
+            sizeTerminal()
+        }
+        UIState.shared.update { $0.isTerminalOpen = open }
     }
 
     func setThreadID(_ threadID: UUID?) {
@@ -359,6 +495,7 @@ final class ChatTerminalSplitViewController: NSSplitViewController {
     /// Opens or closes the terminal drawer. Closing a focused terminal returns focus to the composer;
     /// once open, the terminal controller starts a shell if the thread has none and focuses it.
     func toggleTerminal() {
+        guard let terminalItem else { return }
         let opening = terminalItem.isCollapsed
         if opening {
             if hasSizedTerminal {
@@ -378,7 +515,7 @@ final class ChatTerminalSplitViewController: NSSplitViewController {
     }
 
     func saveLayout() {
-        guard !terminalItem.isCollapsed else { return }
+        guard isTerminalOpen else { return }
         let height = Double(terminal.view.frame.height)
         if height > 0 { UIState.shared.update { $0.terminalHeight = height } }
     }

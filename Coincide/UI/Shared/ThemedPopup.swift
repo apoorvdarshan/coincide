@@ -10,7 +10,7 @@ import CoincideKit
 final class ThemedPopup: NSObject {
     private static var current: ThemedPopup?
 
-    private let panel = ThemedPopupPanel()
+    private let panel: ThemedPopupPanel
     private let content: NSViewController & ThemedPopupContent
     private weak var parent: NSWindow?
     private var onClose: (() -> Void)?
@@ -20,8 +20,9 @@ final class ThemedPopup: NSObject {
     /// The popup this one was opened from.
     private weak var host: ThemedPopup?
 
-    private init(content: NSViewController & ThemedPopupContent) {
+    private init(content: NSViewController & ThemedPopupContent, over parent: NSWindow) {
         self.content = content
+        panel = ThemedPopupPanel(over: parent)
         super.init()
     }
 
@@ -49,7 +50,7 @@ final class ThemedPopup: NSObject {
         _ content: NSViewController & ThemedPopupContent, anchorRect: NSRect, in window: NSWindow, preferAbove: Bool,
         onClose: (() -> Void)?
     ) -> ThemedPopup? {
-        let popup = ThemedPopup(content: content)
+        let popup = ThemedPopup(content: content, over: window)
         popup.parent = window
         popup.onClose = onClose
         var host = current
@@ -127,12 +128,17 @@ final class ThemedPopup: NSObject {
     private func close(refocus: Bool) {
         guard !isClosing else { return }
         isClosing = true
+        // Over a non-activating panel (the menu bar item's) Coincide is usually not active, and the keyboard goes back
+        // to that panel only if this popup still had it: not after a click in another app took it.
+        let hadKeyboard = panel.isKeyWindow
         child?.close(refocus: false)
         if Self.current === self { Self.current = nil }
         if host?.child === self { host?.child = nil }
         parent?.removeChildWindow(panel)
         panel.orderOut(nil)
-        if refocus, NSApp.isActive { parent?.makeKey() }
+        if refocus, NSApp.isActive || (hadKeyboard && parent?.styleMask.contains(.nonactivatingPanel) == true) {
+            parent?.makeKey()
+        }
         onClose?()
     }
 
@@ -158,15 +164,24 @@ protocol ThemedPopupContent: AnyObject {
 }
 
 /// The popup's window: borderless and see-through outside the surface, with the window shadow. As a child window it
-/// rides above its parent only.
+/// rides above its parent only. Over a non-activating panel, such as the menu bar item's, it is one too, on the same
+/// level and Spaces, so it shows where that panel does (over a full-screen app) and takes the keyboard without
+/// activating Coincide.
 final class ThemedPopupPanel: NSPanel {
     var onCancel: (() -> Void)?
     var onResignKey: (() -> Void)?
 
-    init() {
-        super.init(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: true)
+    init(over parent: NSWindow? = nil) {
+        let followsParent = parent?.styleMask.contains(.nonactivatingPanel) == true
+        super.init(
+            contentRect: .zero, styleMask: followsParent ? [.borderless, .nonactivatingPanel] : [.borderless], backing: .buffered,
+            defer: true)
+        if let parent, followsParent {
+            level = parent.level
+            collectionBehavior = parent.collectionBehavior
+        }
         isExcludedFromWindowsMenu = true
-        hidesOnDeactivate = true
+        hidesOnDeactivate = !followsParent
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true

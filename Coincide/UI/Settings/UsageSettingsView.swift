@@ -508,7 +508,7 @@ private struct UsageAccountLimitsView: View {
         if let limits = account.limits, !limits.windows.isEmpty || !limits.modelWindows.isEmpty || limits.credits != nil
             || !limits.figures.isEmpty
         {
-            ForEach(Array(UsageRow.rows(limits, mode: mode, now: now).enumerated()), id: \.offset) { _, row in
+            ForEach(Array(UsageRow.rows(limits, marks: account.balanceMarks, mode: mode, now: now).enumerated()), id: \.offset) { _, row in
                 UsageRowView(row: row, provider: account.provider)
             }
             if let warning = limits.warning {
