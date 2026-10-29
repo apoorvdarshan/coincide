@@ -21,6 +21,11 @@ public final class AgentHostClient {
     private var applied: [AgentSessionKey: Int] = [:]
     private var pendingAcknowledgements: Set<AgentSessionKey> = []
     public private(set) var isConnected = true
+    /// The last event per adopted session the host recorded before the app took it up again.
+    private var backlogEnd: [AgentSessionKey: Int] = [:]
+    /// True while events the host recorded with no app attached are being applied, and while the prompts still
+    /// waiting are shown again. The host notified about those itself, so the app must not notify again.
+    public private(set) var isApplyingBacklog = false
     /// Called once the connection ended, after every session reported its end.
     public var onDisconnect: (() -> Void)?
 
@@ -45,6 +50,7 @@ public final class AgentHostClient {
     public func adopt(_ info: AgentHostSessionInfo, thread: @escaping () -> AgentHostThreadInfo) -> RemoteAgentSession {
         let session = RemoteAgentSession(key: info.key, client: self, mode: .adopted(info), thread: thread)
         applied[info.key] = info.acknowledgedSequence
+        backlogEnd[info.key] = info.lastSequence
         register(session)
         return session
     }
@@ -55,6 +61,8 @@ public final class AgentHostClient {
         let after = applied[session.key] ?? 0
         guard (try? await transport.run(.attach(key: session.key, after: after))) != nil else { return }
         guard case .adopted(let info) = session.mode, sessions[session.key] === session else { return }
+        isApplyingBacklog = true
+        defer { isApplyingBacklog = false }
         for request in info.pendingApprovals { session.deliver(.approvalRequested(request)) }
         for request in info.pendingQuestions { session.deliver(.userInputRequested(request)) }
     }
@@ -94,7 +102,9 @@ public final class AgentHostClient {
                 // Replays and live pushes can overlap; each event is applied once.
                 guard logged.sequence > (applied[key] ?? 0) else { continue }
                 applied[key] = logged.sequence
+                isApplyingBacklog = logged.sequence <= (backlogEnd[key] ?? 0)
                 if let event = logged.event { sessions[key]?.deliver(event) }
+                isApplyingBacklog = false
             }
             acknowledgeSoon(key)
         }

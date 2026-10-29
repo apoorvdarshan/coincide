@@ -77,6 +77,8 @@ struct SettingsView: View {
                     }
                 }
 
+                NotificationsSection()
+
                 if client.isConnected {
                     Section {
                         NavigationLink {
@@ -143,6 +145,71 @@ struct SettingsView: View {
             return String(localized: "Last connected \(date.formatted(.relative(presentation: .named)))")
         }
         return String(localized: "Paired")
+    }
+}
+
+/// Alerts from the Mac: whether iOS allows them, and "Notify this iPhone when it's locked".
+struct NotificationsSection: View {
+    @Environment(RemoteClient.self) private var client
+    @Environment(\.theme) private var theme
+    @Environment(\.openURL) private var openURL
+    @State private var alerts = PhoneAlerts.shared
+    @State private var isUpdating = false
+
+    var body: some View {
+        Section {
+            if alerts.authorization == .denied {
+                Label {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Notifications are off for Coincide Remote")
+                        Text("Alerts stay on your Mac. Turn notifications on in Settings to get them here.")
+                            .font(.caption).foregroundStyle(theme.secondaryInk)
+                    }
+                } icon: {
+                    Image(systemName: "bell.slash.fill").foregroundStyle(.orange)
+                }
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openNotificationSettingsURLString) { openURL(url) }
+                }
+            }
+            Toggle(isOn: Binding(get: { alerts.isLockScreenEnabled }, set: { enabled in
+                isUpdating = true
+                Task {
+                    await alerts.setLockScreenAlerts(enabled)
+                    isUpdating = false
+                }
+            })) {
+                Text("Notify this iPhone when it’s locked")
+            }
+            .disabled(isUpdating)
+            if alerts.isLockScreenEnabled, let status = statusLine {
+                Label {
+                    Text(status.text).font(.caption).foregroundStyle(theme.secondaryInk)
+                } icon: {
+                    Image(systemName: status.symbol).foregroundStyle(status.color)
+                }
+            }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            if let server = client.server, server.notifies == false {
+                Text("\(server.name) has notifications turned off, so it sends none here either.")
+            } else {
+                Text("While you’re using this iPhone and not your Mac, alerts come here instead. When it’s locked, they come through your iCloud account, only if you turn that on.")
+            }
+        }
+        .task { await alerts.refreshAuthorization() }
+    }
+
+    private var statusLine: (text: String, symbol: String, color: Color)? {
+        switch alerts.lockScreenStatus {
+        case .off: nil
+        case .settingUp: (String(localized: "Setting up…"), "hourglass", theme.secondaryInk)
+        case .on: (String(localized: "On. Alerts arrive through your iCloud account."), "checkmark.circle.fill", .green)
+        case .notificationsDenied:
+            (String(localized: "Allow notifications for Coincide Remote in Settings first."), "exclamationmark.triangle.fill", .orange)
+        case .unavailable(let message): (message, "icloud.slash", .orange)
+        }
     }
 }
 
