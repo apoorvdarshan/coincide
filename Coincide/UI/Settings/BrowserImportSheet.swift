@@ -162,6 +162,8 @@ struct BrowserImportSheet: View {
                     Text(source.definition.name)
                     if source.status == .needsFullDiskAccess {
                         Text("Needs Full Disk Access").font(.caption).foregroundStyle(.secondary)
+                    } else if source.profiles.isEmpty {
+                        Text("No profile data found").font(.caption).foregroundStyle(.secondary)
                     } else if source.profiles.count > 1 {
                         Text("Profiles: \(source.profiles.count)").font(.caption).foregroundStyle(.secondary)
                     }
