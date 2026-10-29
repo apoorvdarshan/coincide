@@ -534,8 +534,10 @@ struct CursorMapperTests {
         // The turn's summed input says nothing about the context in use, so the meter keeps `usage_update`'s.
         #expect(
             CursorEventMapper.promptUsage(["inputTokens": 1_000, "outputTokens": 20, "cachedReadTokens": 500])
-                == TokenUsage(outputTokens: 20, cachedInputTokens: 500))
-        #expect(CursorEventMapper.promptUsage(["inputTokens": 1_000]) == nil)
+                == TokenUsage(
+                    outputTokens: 20, cachedInputTokens: 500, turnTotals: TokenTotals(input: 1_000, cacheRead: 500, output: 20)))
+        // The input count alone says nothing of the context, but it adds to the turn's totals.
+        #expect(CursorEventMapper.promptUsage(["inputTokens": 1_000]) == TokenUsage(turnTotals: TokenTotals(input: 1_000)))
         #expect(CursorEventMapper.promptUsage(nil) == nil)
         // Options of unknown kinds are left out, and a request without a way to say no gets Cancel.
         #expect(CursorEventMapper.approvalOption(["optionId": "x", "name": "Maybe", "kind": "reject_politely"]) == nil)

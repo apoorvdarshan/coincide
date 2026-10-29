@@ -384,7 +384,7 @@ enum XAI {
         let ticks = value["costUsdTicks"]?.number.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
         let usage = TokenUsage(
             outputTokens: value["outputTokens"]?.acpInt, cachedInputTokens: value["cachedReadTokens"]?.acpInt,
-            costUSD: ticks.map { $0 / 10_000_000_000 })
+            costUSD: ticks.map { $0 / 10_000_000_000 }, turnTotals: TokenTotals.acp(value))
         return usage == TokenUsage() ? nil : usage
     }
 

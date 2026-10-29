@@ -192,7 +192,8 @@ private struct SettingsSearchResults: View {
         let general = SettingsPane.section(.general)
         var entries: [SettingsSearchEntry] = [
             SettingsSearchEntry(title: String(localized: "Usage"), pane: .section(.usage),
-                keywords: [String(localized: "Account limits"), String(localized: "Recent turns")]),
+                keywords: [String(localized: "Account limits"), String(localized: "Tokens"), String(localized: "Cost"),
+                           String(localized: "Credits"), String(localized: "Menu bar")]),
             SettingsSearchEntry(
                 title: String(localized: "Appearance"), pane: general, setting: .appearance,
                 keywords: [String(localized: "Dark mode"), String(localized: "Light mode"), String(localized: "Theme")]),

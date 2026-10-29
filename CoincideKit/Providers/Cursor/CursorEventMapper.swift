@@ -639,7 +639,9 @@ struct CursorEventMapper {
     /// is left out, as the ACP providers do.
     nonisolated static func promptUsage(_ json: JSONValue?) -> TokenUsage? {
         guard let json, json.object != nil else { return nil }
-        let usage = TokenUsage(outputTokens: json["outputTokens"]?.int, cachedInputTokens: json["cachedReadTokens"]?.int)
+        let usage = TokenUsage(
+            outputTokens: json["outputTokens"]?.int, cachedInputTokens: json["cachedReadTokens"]?.int,
+            turnTotals: TokenTotals.acp(json))
         return usage == TokenUsage() ? nil : usage
     }
 

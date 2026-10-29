@@ -292,7 +292,12 @@ struct ACPSessionTests {
         await acpWaitUntil { !log.completions.isEmpty }
         #expect(log.completions == [.completed])
         #expect(log.notices.count == 1)
-        #expect(log.events.contains(.usage(TokenUsage(outputTokens: 100, cachedInputTokens: 300))))
+        // The total shows the input count holds the cached tokens.
+        #expect(
+            log.events.contains(
+                .usage(
+                    TokenUsage(
+                        outputTokens: 100, cachedInputTokens: 300, turnTotals: TokenTotals(input: 500, cacheRead: 300, output: 100)))))
     }
 
     @Test func promptErrorsFailTheTurn() async throws {
@@ -977,7 +982,11 @@ struct ACPSessionTests {
         await acpWaitUntil { !log.completions.isEmpty }
         #expect(log.completions == [.completed])
         #expect(
-            log.events.contains(.usage(TokenUsage(inputTokens: 1_200, outputTokens: 50, cachedInputTokens: 800, costUSD: 0.015))))
+            log.events.contains(
+                .usage(
+                    TokenUsage(
+                        inputTokens: 1_200, outputTokens: 50, cachedInputTokens: 800, costUSD: 0.015,
+                        turnTotals: TokenTotals(input: 1_000, cacheRead: 800, output: 50)))))
 
         // The prompt response that follows does not end the turn twice.
         agent.finishPrompt()

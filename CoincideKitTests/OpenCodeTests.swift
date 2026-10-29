@@ -52,7 +52,11 @@ struct OpenCodeEventMapperTests {
                 .assistantTextDelta(itemID: item, delta: "po"),
                 .assistantTextDelta(itemID: item, delta: "ng"),
                 .assistantText(itemID: item, text: "pong"),
-                .usage(TokenUsage(inputTokens: 21_674, outputTokens: 8, cachedInputTokens: 3, contextWindow: 200_000)),
+                .usage(
+                    TokenUsage(
+                        inputTokens: 21_674, outputTokens: 8, cachedInputTokens: 3, contextWindow: 200_000,
+                        // The turn's steps added up, with reasoning counted in the output.
+                        turnTotals: TokenTotals(input: 21_671, cacheRead: 3, output: 37, reasoning: 29))),
                 .turnCompleted(.completed),
             ])
         #expect(mapper.turn == nil)

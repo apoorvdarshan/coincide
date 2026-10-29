@@ -7,6 +7,9 @@ public struct UsageRecord: Codable, Hashable, Sendable, Identifiable {
     public var threadID: UUID
     public var projectID: UUID
     public var provider: ProviderKind
+    /// The provider account the turn ran with; nil for its default account (and for turns recorded before accounts
+    /// were kept).
+    public var accountID: String?
     public var modelID: String?
     public var startedAt: Date
     public var finishedAt: Date
@@ -16,12 +19,13 @@ public struct UsageRecord: Codable, Hashable, Sendable, Identifiable {
     public enum Outcome: String, Codable, Sendable { case completed, interrupted, failed }
     public var duration: TimeInterval { max(0, finishedAt.timeIntervalSince(startedAt)) }
 
-    public init(id: UUID, threadID: UUID, projectID: UUID, provider: ProviderKind, modelID: String?,
+    public init(id: UUID, threadID: UUID, projectID: UUID, provider: ProviderKind, accountID: String? = nil, modelID: String?,
                 startedAt: Date, finishedAt: Date, outcome: Outcome, usage: TokenUsage) {
         self.id = id
         self.threadID = threadID
         self.projectID = projectID
         self.provider = provider
+        self.accountID = ProviderAccount.storedID(accountID)
         self.modelID = modelID
         self.startedAt = startedAt
         self.finishedAt = max(startedAt, finishedAt)
@@ -29,7 +33,8 @@ public struct UsageRecord: Codable, Hashable, Sendable, Identifiable {
         func count(_ value: Int?) -> Int? { value.flatMap { $0 >= 0 ? $0 : nil } }
         self.usage = TokenUsage(inputTokens: count(usage.inputTokens), outputTokens: count(usage.outputTokens),
             cachedInputTokens: count(usage.cachedInputTokens), contextWindow: count(usage.contextWindow),
-            costUSD: usage.costUSD.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil })
+            costUSD: usage.costUSD.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil },
+            turnTotals: usage.turnTotals.flatMap { $0.isEmpty ? nil : $0 })
     }
 }
 

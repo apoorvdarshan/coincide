@@ -65,14 +65,16 @@ extension UsageLimits {
     /// The windows as they stand at `now`: one whose reset time has passed starts over, until the agent reports
     /// it again.
     public nonisolated func current(at now: Date) -> UsageLimits {
-        let windows = windows.map { window in
+        func current(_ window: UsageLimitWindow) -> UsageLimitWindow {
             guard let resetsAt = window.resetsAt, resetsAt <= now else { return window }
             var reset = window
             reset.usedPercent = 0
             reset.resetsAt = nil
             return reset
         }
-        return UsageLimits(windows: windows, checkedAt: checkedAt)
+        var limits = with(windows: windows.map(current), checkedAt: checkedAt)
+        limits.modelWindows = modelWindows.map(current)
+        return limits
     }
 
     /// The window to warn about: an exhausted one that resets last (all of them must reset before work can go on),
