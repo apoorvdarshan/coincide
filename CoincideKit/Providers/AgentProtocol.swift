@@ -46,6 +46,17 @@ extension ProviderKind {
     }
 }
 
+extension ProviderKind {
+    /// Whether the agent takes a message into the turn it is running (steering): Claude Code, Codex and OpenCode do.
+    /// The others' sessions only take a message per turn, so one sent while they work waits for the turn, or stops it.
+    public nonisolated var takesMessagesWhileWorking: Bool {
+        switch self {
+        case .claude, .codex, .opencode: true
+        case .cursor, .grok, .antigravity: false
+        }
+    }
+}
+
 /// One user turn: the user's message plus, when other providers worked on the thread meanwhile, a recap
 /// of what this provider missed (see `Handoff`). `text` is the two combined, ready to send.
 /// The model, effort, access and interaction mode may differ from the previous turn;

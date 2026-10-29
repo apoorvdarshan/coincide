@@ -17,4 +17,18 @@ extension AppStore {
             settings.defaultAccessMode = thread.accessMode
         }
     }
+
+    /// What a message sent while the thread's agent works does: the thread's own choice, or for a thread made before
+    /// threads kept one, what the app-wide setting was then.
+    public func followUpBehavior(of thread: ChatThread) -> FollowUpBehavior {
+        thread.followUpBehavior ?? settings.existingThreadsFollowUpBehavior
+    }
+
+    /// The user's pick in a thread's composer: the thread keeps it, and it becomes the default for new threads, as
+    /// `rememberComposerChoice` does for the model and access. Other existing threads keep theirs.
+    public func setFollowUpBehavior(_ behavior: FollowUpBehavior, for threadID: UUID) {
+        guard let thread = thread(threadID) else { return }
+        if thread.followUpBehavior != behavior { updateThread(threadID) { $0.followUpBehavior = behavior } }
+        if settings.followUpBehavior != behavior { updateSettings { $0.followUpBehavior = behavior } }
+    }
 }

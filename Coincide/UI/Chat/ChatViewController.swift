@@ -163,7 +163,7 @@ final class ChatViewController: NSViewController {
             composerView.bottomAnchor.constraint(equalTo: composerContainer.bottomAnchor),
 
             jumpButton.centerXAnchor.constraint(equalTo: list.scrollView.centerXAnchor),
-            jumpButton.bottomAnchor.constraint(equalTo: composerContainer.topAnchor, constant: -12),
+            jumpButton.bottomAnchor.constraint(equalTo: composerContainer.topAnchor, constant: -Self.jumpButtonGap),
 
             findBar.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 10),
             findBar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
@@ -177,6 +177,9 @@ final class ChatViewController: NSViewController {
         ])
         jumpButton.isHidden = true
         jumpButton.alphaValue = 0
+        // The pill floats over the bottom of the conversation; the space below the last row keeps it clear of the
+        // last message or notice once the reader is at the bottom.
+        list.scrollView.contentInsets.bottom = Self.jumpButtonClearance(pillHeight: jumpButton.fittingSize.height)
         // Placed by frame over the transcript, under the find bar.
         root.addSubview(replyButton.button, positioned: .below, relativeTo: findBar)
         NotificationCenter.default.addObserver(
@@ -557,6 +560,14 @@ final class ChatViewController: NSViewController {
             }
         }
     }
+
+    /// The space kept below the last row: the pill, its distance from the composer, and a little air above it.
+    nonisolated static func jumpButtonClearance(pillHeight: CGFloat) -> CGFloat {
+        jumpButtonGap + pillHeight + 6
+    }
+
+    /// How far the pill floats above the composer.
+    nonisolated static let jumpButtonGap: CGFloat = 12
 
     @objc private func jumpToLatest() {
         list.scrollToBottom(animated: true)

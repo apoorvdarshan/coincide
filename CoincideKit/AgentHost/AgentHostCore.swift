@@ -105,7 +105,7 @@ public final class AgentHostCore {
             let log = logs.open(key)
             // Without a session, a log the app has applied entirely has nothing left to give.
             guard !log.backlog.isEmpty else {
-                log.remove()
+                logs.remove(log)
                 continue
             }
             let record = Hosted(key: key, log: log, thread: AgentHostThreadInfo(title: "", projectName: nil))
@@ -199,7 +199,7 @@ public final class AgentHostCore {
                 record.starting?.cancel()
                 record.session?.shutdown()
                 record.session = nil
-                record.log.remove()
+                logs.remove(record.log)
             }
             evaluateLifecycle()
             return .ok
@@ -227,7 +227,7 @@ public final class AgentHostCore {
         record.log.acknowledge(sequence)
         // An ended session whose every event the app applied has nothing left to keep.
         if record.session == nil, record.log.backlog.isEmpty {
-            record.log.remove()
+            logs.remove(record.log)
             hosted[key] = nil
         }
     }
@@ -269,7 +269,7 @@ public final class AgentHostCore {
                 record.session = nil
                 session.shutdown()
                 if record.log.backlog.isEmpty, hosted[key] === record {
-                    record.log.remove()
+                    logs.remove(record.log)
                     hosted[key] = nil
                 }
             }

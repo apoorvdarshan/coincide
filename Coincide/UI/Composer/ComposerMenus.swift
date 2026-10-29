@@ -59,7 +59,48 @@ enum ComposerMenus {
         return menu
     }
 
+    /// Queue, Steer and Interrupt, for what a message sent while the agent works does. Steer is shown but can't be
+    /// picked for an agent that doesn't take messages mid-turn, saying why.
+    static func followUpMenu(current: FollowUpBehavior, provider: ProviderKind, target: AnyObject, action: Selector) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for behavior in [FollowUpBehavior.queue, .steer, .interrupt] {
+            let item = NSMenuItem(title: behavior.displayName, action: action, keyEquivalent: "")
+            item.target = target
+            item.representedObject = behavior.rawValue
+            item.state = behavior == current ? .on : .off
+            item.image = NSImage(systemSymbolName: symbolName(for: behavior), accessibilityDescription: nil)
+            let available = ComposerDispatch.isAvailable(behavior, for: provider)
+            item.isEnabled = available
+            item.subtitle = available ? summary(for: behavior) : unavailableReason(for: provider)
+            item.toolTip = item.subtitle
+            menu.addItem(item)
+        }
+        return menu
+    }
+
     // MARK: Labels
+
+    static func symbolName(for behavior: FollowUpBehavior) -> String {
+        switch behavior {
+        case .queue: "text.line.last.and.arrowtriangle.forward"
+        case .steer: "arrow.turn.up.right"
+        case .interrupt: "forward.end"
+        }
+    }
+
+    static func summary(for behavior: FollowUpBehavior) -> String {
+        switch behavior {
+        case .queue: String(localized: "Messages sent while the agent works wait for its turn to end.")
+        case .steer: String(localized: "Messages sent while the agent works go into its current turn.")
+        case .interrupt: String(localized: "Messages sent while the agent works stop its turn and go next.")
+        }
+    }
+
+    /// Why Steer can't be picked for the agent.
+    static func unavailableReason(for provider: ProviderKind) -> String {
+        String(localized: "\(provider.displayName) can’t take messages while it works.")
+    }
 
     static func symbolName(for mode: AccessMode) -> String {
         switch mode {

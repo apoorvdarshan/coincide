@@ -473,13 +473,16 @@ final class ComposerHandoffBanner: ComposerBanner {
     }
 }
 
-/// Messages sent while a turn runs. Each can be sent into the running turn when its agent takes messages while it
-/// works (T3 Code's "Send now"), edited (taken back into the composer) or removed.
+/// Messages sent while a turn runs. Each can be sent now (T3 Code's "Send now"): into the running turn when its agent
+/// takes messages while it works, otherwise by stopping that turn and sending the message next. Each can also be
+/// edited (taken back into the composer) or removed.
 final class ComposerQueueBanner: ComposerBanner {
     var onEdit: ((UUID) -> Void)?
     var onRemove: ((UUID) -> Void)?
     var onSteer: ((UUID) -> Void)?
-    /// Whether the running turn takes messages now, which offers "Send now" on each row.
+    /// Whether a turn runs that is not being stopped already, which offers "Send now" on each row.
+    private var isRunning = false
+    /// Whether the running turn takes messages now: "Send now" puts the message into it rather than stopping it.
     private var canSteer = false
     /// The key that sends the oldest queued message now (`ComposerSendKeys.steerQueued`), named on its row's "Send now"
     /// as in T3 Code's queue.
@@ -498,7 +501,8 @@ final class ComposerQueueBanner: ComposerBanner {
         rows.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -18).isActive = true
     }
 
-    func show(_ messages: [ThreadRunner.QueuedMessage], canSteer: Bool, steerKey: KeyShortcut?) {
+    func show(_ messages: [ThreadRunner.QueuedMessage], isRunning: Bool, canSteer: Bool, steerKey: KeyShortcut?) {
+        self.isRunning = isRunning
         self.canSteer = canSteer
         self.steerKey = steerKey
         for view in rows.arrangedSubviews { view.removeFromSuperview() }
@@ -533,9 +537,13 @@ final class ComposerQueueBanner: ComposerBanner {
         let edit = rowButton("pencil", label: String(localized: "Edit queued message"), id: message.id, action: #selector(edit(_:)))
         let remove = rowButton("xmark", label: String(localized: "Remove from queue"), id: message.id, action: #selector(remove(_:)))
         var views: [NSView] = [icon, label, NSView()]
-        if canSteer {
-            let title = String(localized: "Send now, into the current turn")
-            let button = rowButton("arrow.turn.up.right", label: title, id: message.id, action: #selector(steer(_:)))
+        if isRunning {
+            let title =
+                canSteer
+                ? String(localized: "Send now, into the current turn")
+                : String(localized: "Stop the current turn and send this now")
+            let button = rowButton(
+                canSteer ? "arrow.turn.up.right" : "stop.circle", label: title, id: message.id, action: #selector(steer(_:)))
             if isFirst, let keys = steerKey?.displayString { button.toolTip = String(localized: "\(title) (\(keys))") }
             views.append(button)
         }

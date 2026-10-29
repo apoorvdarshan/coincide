@@ -277,7 +277,8 @@ public final class AppStore {
         let defaults = newThreadDefaults(in: projectID)
         let thread = ChatThread(
             projectID: projectID, selection: selection ?? defaults.selection,
-            accessMode: defaults.accessMode, interactionMode: defaults.interactionMode)
+            accessMode: defaults.accessMode, interactionMode: defaults.interactionMode,
+            followUpBehavior: settings.followUpBehavior)
         insert(thread)
         return thread
     }
@@ -364,7 +365,7 @@ public final class AppStore {
             selection: ModelSelection(provider: preview.provider, modelID: preview.modelID), accessMode: .approval,
             items: preview.items,
             sessions: [preview.provider: ProviderSessionRef(sessionID: preview.sessionID, seenItemCount: preview.items.count)],
-            branch: preview.branch, createdAt: preview.createdAt)
+            branch: preview.branch, followUpBehavior: settings.followUpBehavior, createdAt: preview.createdAt)
         thread.updatedAt = preview.updatedAt
         thread.importedSession = ImportedSession(provider: preview.provider, sessionID: preview.sessionID, sourcePath: preview.sourceURL.path)
         let encoder = JSONEncoder()

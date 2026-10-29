@@ -61,7 +61,7 @@ struct GeneralSettingsView: View {
                         options: FollowUpBehavior.allCases.map { .init($0, $0.displayName) }
                     ) {
                         Text("Follow-up behavior")
-                        Text(followUpCaption)
+                        Text(followUpCaption + " " + String(localized: "New threads start with this; each thread keeps its own choice, set in its composer."))
                     }
                     .settingsRevealable(.followUpBehavior, highlighted: highlighted)
                     Toggle(isOn: model.binding(\.showReasoning)) {
@@ -179,6 +179,12 @@ struct GeneralSettingsView: View {
                     localized: "Messages sent while an agent works wait until its turn ends. Command-Return sends one into the current turn instead.")
                 : String(
                     localized: "Messages sent while an agent works wait until its turn ends. Shift-Command-Return sends one into the current turn instead.")
+        case .interrupt:
+            return sendOnReturn
+                ? String(
+                    localized: "Messages sent while an agent works stop its current turn and go next. Command-Return queues one for after the turn instead.")
+                : String(
+                    localized: "Messages sent while an agent works stop its current turn and go next. Shift-Command-Return queues one for after the turn instead.")
         }
     }
 

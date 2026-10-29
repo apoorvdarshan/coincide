@@ -299,9 +299,46 @@ struct ComposerDispatchTests {
         #expect(ComposerDispatch.resolve(running: true, canSteer: true, alternate: true, behavior: .queue) == .steer)
     }
 
-    @Test(arguments: FollowUpBehavior.allCases, [false, true])
+    @Test(arguments: [FollowUpBehavior.steer, .queue], [false, true])
     func aTurnThatCantTakeAMessageGetsItQueued(behavior: FollowUpBehavior, alternate: Bool) {
         #expect(ComposerDispatch.resolve(running: true, canSteer: false, alternate: alternate, behavior: behavior) == .queue)
+        // Still meant for the turn when steering, so it goes next even if the turn is stopped.
+        #expect(
+            ComposerDispatch.meansToSteer(alternate: alternate, behavior: behavior)
+                == ((behavior == .steer) != alternate))
+    }
+
+    @Test(arguments: [false, true])
+    func interruptStopsTheTurnWhetherOrNotItTakesMessages(canSteer: Bool) {
+        #expect(ComposerDispatch.resolve(running: true, canSteer: canSteer, alternate: false, behavior: .interrupt) == .interrupt)
+        // The alternate send queues instead.
+        #expect(ComposerDispatch.resolve(running: true, canSteer: canSteer, alternate: true, behavior: .interrupt) == .queue)
+        #expect(!ComposerDispatch.meansToSteer(alternate: true, behavior: .interrupt))
+        #expect(ComposerDispatch.resolve(running: false, canSteer: canSteer, alternate: false, behavior: .interrupt) == .send)
+    }
+
+    @Test func steerIsOfferedOnlyForAgentsThatTakeMessagesWhileWorking() {
+        for provider in ProviderKind.allCases {
+            let steers = [ProviderKind.claude, .codex, .opencode].contains(provider)
+            #expect(provider.takesMessagesWhileWorking == steers)
+            #expect(ComposerDispatch.isAvailable(.steer, for: provider) == steers)
+            #expect(ComposerDispatch.isAvailable(.queue, for: provider))
+            #expect(ComposerDispatch.isAvailable(.interrupt, for: provider))
+            #expect(ComposerDispatch.effective(.steer, for: provider) == (steers ? .steer : .queue))
+            #expect(ComposerDispatch.effective(.interrupt, for: provider) == .interrupt)
+        }
+    }
+
+    @MainActor @Test func theFollowUpMenuOffersWhatTheAgentCanDo() {
+        let target = NSObject()
+        let action = #selector(NSObject.isEqual(_:))
+        let claude = ComposerMenus.followUpMenu(current: .interrupt, provider: .claude, target: target, action: action)
+        #expect(claude.items.map(\.title) == ["Queue", "Steer", "Interrupt"])
+        #expect(claude.items.map(\.isEnabled) == [true, true, true])
+        #expect(claude.items.map(\.state) == [.off, .off, .on])
+        let cursor = ComposerMenus.followUpMenu(current: .queue, provider: .cursor, target: target, action: action)
+        #expect(cursor.items.map(\.isEnabled) == [true, false, true])
+        #expect(cursor.items[1].toolTip == "Cursor can’t take messages while it works.")
     }
 
     @Test func aShownApprovalMakesTheMainSendSteer() {
@@ -370,7 +407,16 @@ struct ComposerSendKeysTests {
                 == "Queue: send when the current turn finishes (⌘↩). ⇧⌘↩ or ⌘-click sends it into the current turn instead.")
     }
 
-    @Test(arguments: [false, true], FollowUpBehavior.allCases)
+    @Test func interruptSaysItStopsTheTurn() {
+        #expect(
+            ComposerSendKeys(sendOnReturn: true).sendToolTip(running: true, canSteer: false, behavior: .interrupt)
+                == "Interrupt: stop the current turn and send this now (↩). ⌘↩ or ⌘-click queues it for after the turn.")
+        #expect(
+            ComposerSendKeys(sendOnReturn: false).sendToolTip(running: true, canSteer: true, behavior: .interrupt)
+                == "Interrupt: stop the current turn and send this now (⌘↩). ⇧⌘↩ or ⌘-click queues it for after the turn.")
+    }
+
+    @Test(arguments: [false, true], [FollowUpBehavior.steer, .queue])
     func aTurnThatCantTakeMessagesOnlyQueues(sendOnReturn: Bool, behavior: FollowUpBehavior) {
         #expect(
             ComposerSendKeys(sendOnReturn: sendOnReturn).sendToolTip(running: true, canSteer: false, behavior: behavior)
