@@ -144,7 +144,7 @@ public enum APIKeyUsage {
 
     nonisolated static let anthropicMessagesURL = URL(string: "https://api.anthropic.com/v1/messages")!
     /// The cheapest current model, for the one-token request that reads the headers.
-    nonisolated static let anthropicProbeModel = "claude-haiku-4-5"
+    nonisolated static let anthropicProbeModel = "claude-haiku-5-5"
 
     /// Sends a one-token message with `key` and reads the rate limits from the answer's headers: what the key may still
     /// send this minute and when that starts over. It costs a fraction of a cent, so only the user starts it.
