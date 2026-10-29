@@ -5,6 +5,8 @@ import CoincideKit
 nonisolated enum LinkDestination: Equatable, Sendable {
     /// The thread's browser preview, beside the conversation.
     case coincideBrowser
+    /// A new tab of the thread's browser (⌘⌥-click, or the link menu's Open in New Tab).
+    case coincideBrowserNewTab
     /// The user's default browser, through `SafeLinks`.
     case defaultBrowser
 }
@@ -20,8 +22,8 @@ nonisolated struct WebLinkRequest: Equatable, Sendable {
 /// default browser; Settings › General › "Open links in your default browser" swaps the two. Only http(s) links are
 /// routed: every other link keeps going where it went before (`SafeLinks`).
 ///
-/// A link opened here loads as an ordinary navigation of the user's in the preview's private session. It gives the
-/// agent no control it did not have: agent control stays off unless the user turns it on in the panel.
+/// A link opened here loads as an ordinary navigation of the user's in the thread's browser (its active tab, or a new
+/// tab with ⌘⌥-click). It gives the agent no control it did not have.
 enum LinkRouting {
     /// The http(s) URL a link names: a `URL`, or text the transcript keeps as a link (`www.` included). Nil for files,
     /// mail, other schemes, and web addresses without a host.
@@ -46,8 +48,11 @@ enum LinkRouting {
     }
 
     /// What a click on `link` asks for: a `WebLinkRequest` for a web link, nil for any other link.
-    nonisolated static func request(for link: Any, commandKey: Bool, opensInDefaultBrowser: Bool) -> WebLinkRequest? {
+    nonisolated static func request(for link: Any, commandKey: Bool, optionKey: Bool = false, opensInDefaultBrowser: Bool)
+        -> WebLinkRequest?
+    {
         guard let url = webURL(link) else { return nil }
+        if commandKey && optionKey { return WebLinkRequest(url: url, destination: .coincideBrowserNewTab) }
         return WebLinkRequest(url: url, destination: destination(commandKey: commandKey, opensInDefaultBrowser: opensInDefaultBrowser))
     }
 
@@ -65,6 +70,7 @@ enum LinkRouting {
     nonisolated static func menuTitle(_ destination: LinkDestination) -> String {
         switch destination {
         case .coincideBrowser: String(localized: "Open in Coincide Browser")
+        case .coincideBrowserNewTab: String(localized: "Open in New Tab")
         case .defaultBrowser: String(localized: "Open in Default Browser")
         }
     }
@@ -72,9 +78,9 @@ enum LinkRouting {
     /// Opens a web link where it was asked to go. The preview needs the main window and a thread; without them, or for
     /// an address the preview does not load, the link opens in the default browser instead.
     static func open(_ request: WebLinkRequest, from window: NSWindow?) {
-        if request.destination == .coincideBrowser,
+        if request.destination != .defaultBrowser,
             let controller = (window ?? NSApp.mainWindow)?.windowController as? MainWindowController,
-            controller.openInBrowserPreview(request.url)
+            controller.openInBrowserPreview(request.url, newTab: request.destination == .coincideBrowserNewTab)
         {
             return
         }

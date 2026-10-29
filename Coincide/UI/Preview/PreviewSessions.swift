@@ -43,9 +43,17 @@ final class PreviewSessions {
             forName: BrowserSettingsStore.didChange, object: profile.settings, queue: .main
         ) { [weak self] _ in MainActor.assumeIsolated { self?.settingsChanged() } }
         prepareBridgeIfNeeded()
+        let pressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        pressure.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.unloadBackgroundTabs() } }
+        pressure.resume()
+        memoryPressure = pressure
     }
 
+    private var memoryPressure: DispatchSourceMemoryPressure?
+
     func stop() {
+        memoryPressure?.cancel()
+        memoryPressure = nil
         bridge.stop()
         for session in sessions.values { session.close() }
         sessions.removeAll()
@@ -66,7 +74,10 @@ final class PreviewSessions {
             return session
         }
         evictIfNeeded()
-        let session = PreviewSession(dataStore: profile.makeDataStore(), isPrivate: usesPrivateSessions)
+        let state = UIState.shared.values
+        let saved = state.previewTabs[id.uuidString]
+            ?? state.previewAddresses[id.uuidString].map { BrowserTabsState(urls: [$0], selected: 0) }
+        let session = PreviewSession(dataStore: profile.makeDataStore(), isPrivate: usesPrivateSessions, restoring: saved)
         let isPrivate = session.isPrivate
         session.onNavigate = { [weak self] url, title in
             UIState.shared.update { $0.previewAddresses[id.uuidString] = url.absoluteString }
@@ -76,9 +87,17 @@ final class PreviewSessions {
             guard let self, let session else { return }
             self.offerToSave(url, username: username, password: password, in: session)
         }
+        session.onTabsChanged = { [weak session] in
+            guard let session else { return }
+            let tabs = session.tabsState
+            UIState.shared.update { state in
+                state.previewTabs[id.uuidString] = tabs
+                let active = tabs.urls[tabs.selected]
+                if active.isEmpty { state.previewAddresses.removeValue(forKey: id.uuidString) } else { state.previewAddresses[id.uuidString] = active }
+            }
+        }
+        session.onTabLoaded = { [weak self] in self?.unloadTabsOverBudget() }
         sessions[id] = session
-        if let address = UIState.shared.values.previewAddresses[id.uuidString] { try? session.navigate(address) }
-        PreviewParking.shared.park(session.webView)
         return session
     }
 
@@ -94,7 +113,30 @@ final class PreviewSessions {
     private func forget(_ id: UUID) {
         bridge.disable(threadID: id)
         sessions.removeValue(forKey: id)?.close()
-        UIState.shared.update { $0.previewAddresses.removeValue(forKey: id.uuidString) }
+        UIState.shared.update { state in
+            state.previewAddresses.removeValue(forKey: id.uuidString)
+            state.previewTabs.removeValue(forKey: id.uuidString)
+        }
+    }
+
+    /// Keeps at most `TabUnloading.budget` web views alive across threads, unloading the least recently used
+    /// background tabs. Active tabs stay loaded.
+    func unloadTabsOverBudget(budget: Int = TabUnloading.budget) {
+        var byID: [String: PreviewTab] = [:]
+        var loaded: [TabUnloading.Candidate] = []
+        for (thread, session) in sessions {
+            for tab in session.tabs where tab.isLoaded {
+                let key = thread.uuidString + "/" + tab.id
+                byID[key] = tab
+                loaded.append(TabUnloading.Candidate(id: key, isActive: tab === session.activeTab, lastUsed: tab.lastUse))
+            }
+        }
+        for key in TabUnloading.tabsToUnload(loaded, budget: budget) { byID[key]?.unload() }
+    }
+
+    /// Under memory pressure, every background tab lets go of its web view.
+    func unloadBackgroundTabs() {
+        for session in sessions.values { session.unloadBackgroundTabs() }
     }
 
     /// Closes every browser, as when the storage they use changes. Pages reopen from their last address.

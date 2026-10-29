@@ -39,6 +39,8 @@ final class UIState {
         var diffLayout: DiffLayout = .unified
         /// Last page for each thread; browser storage and agent capabilities are never persisted.
         var previewAddresses: [String: String] = [:]
+        /// Each thread's browser tabs, by thread id. Threads saved before tabs have only `previewAddresses`.
+        var previewTabs: [String: BrowserTabsState] = [:]
         var terminalHeight: Double?
         /// Whether the terminal's drawer below the chat is open. With the terminal on the right, it is open when the
         /// inspector is open on it.
@@ -97,6 +99,7 @@ final class UIState {
             inspectorPanel = value(.inspectorPanel, defaults.inspectorPanel)
             diffLayout = value(.diffLayout, defaults.diffLayout)
             previewAddresses = value(.previewAddresses, defaults.previewAddresses)
+            previewTabs = value(.previewTabs, defaults.previewTabs)
             terminalHeight = value(.terminalHeight, defaults.terminalHeight)
             isTerminalOpen = value(.isTerminalOpen, defaults.isTerminalOpen)
             preferredOpenTarget = value(.preferredOpenTarget, defaults.preferredOpenTarget)

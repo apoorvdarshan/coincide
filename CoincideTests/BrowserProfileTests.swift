@@ -31,6 +31,12 @@ import WebKit
         func tearDown() async {
             sessions.stop()
             await profile.removeProfile()
+            // WebKit can hold on to a store a little longer than the views that used it; the test's own store folder
+            // is removed directly then, so runs leave nothing under ~/Library/WebKit.
+            let store = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/WebKit/\(Bundle.main.bundleIdentifier ?? "")/WebsiteDataStore")
+                .appendingPathComponent(profile.settings.settings.profileID.uuidString.lowercased())
+            if !(Bundle.main.bundleIdentifier ?? "").isEmpty { try? FileManager.default.removeItem(at: store) }
             try? FileManager.default.removeItem(at: folder)
         }
     }
