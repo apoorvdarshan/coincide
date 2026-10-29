@@ -130,6 +130,11 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
                 tableView.beginUpdates()
                 tableView.removeRows(at: removed, withAnimation: [])
                 tableView.insertRows(at: inserted, withAnimation: [])
+                // The table asks for the height of an inserted row only once it needs it, and until then places the rows
+                // below by a guess. It does not move them again when it learns the real height, so below a long reply
+                // that came in above the view (as when a finished turn lays out its reply again) the rows would draw
+                // over the reply until the reader scrolls. Asking now, before it places them, puts every row in place.
+                for index in inserted { _ = tableView.rect(ofRow: index) }
                 tableView.endUpdates()
             }
             guard !changed.isEmpty else { return }
@@ -215,7 +220,8 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
 
     // MARK: Heights
 
-    private func cellType(for kind: TranscriptRow.Kind) -> TranscriptCell.Type {
+    /// The cell class that draws rows of a kind.
+    static func cellType(for kind: TranscriptRow.Kind) -> TranscriptCell.Type {
         switch kind {
         case .user: TranscriptUserCell.self
         case .assistant: TranscriptAssistantCell.self
@@ -261,7 +267,7 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         let sameContent = cached.map { $0.revision == row.revision && $0.continuesWork == row.continuesWork } ?? false
         if let cached, sameContent, cached.width == width, cached.isExact || !exact { return cached.value }
         guard let host else { return 1 }
-        let type = cellType(for: row.kind)
+        let type = Self.cellType(for: row.kind)
         let isExact = exact || !type.measuresText
         let value: CGFloat
         if isExact {
@@ -521,7 +527,7 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let host, row < rows.count else { return nil }
         let item = rows[row]
-        let identifier = NSUserInterfaceItemIdentifier(String(describing: cellType(for: item.kind)))
+        let identifier = NSUserInterfaceItemIdentifier(String(describing: Self.cellType(for: item.kind)))
         let cell = (tableView.makeView(withIdentifier: identifier, owner: nil) as? TranscriptCell) ?? {
             let cell = makeCell(for: item.kind)
             cell.identifier = identifier
