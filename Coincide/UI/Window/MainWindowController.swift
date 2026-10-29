@@ -9,6 +9,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     var rail: NavigationRailViewController { root.rail }
     let runStatus = RunStatusView()
     let projectScripts = ProjectScriptsControl()
+    let panelButtons = InspectorPanelButtons()
     var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     let threadTitle = ThreadTitleView()
 
@@ -61,6 +62,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebar.onSelectThread = { [weak self] id in self?.open(id, unsnooze: false) }
         splitController.onPanelsChanged = { [weak self] in self?.updatePanelItems() }
         runStatus.onStop = { [weak self] in self?.stopTurn(nil) }
+        panelButtons.target = self
         projectScripts.onVisibilityChange = { [weak self] visible in
             self?.toolbarItems[.projectScripts]?.isHidden = !visible
         }
