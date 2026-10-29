@@ -138,6 +138,9 @@ struct ProviderSettingsView: View {
             if kind == .cursor && model.isEnabled(kind) {
                 CursorUsageSection(model: model)
             }
+            if kind == .antigravity && model.isEnabled(kind) {
+                AntigravitySetupSections(model: model)
+            }
             Section("Executable") {
                 ExecutablePathRow(model: model, kind: kind)
             }
