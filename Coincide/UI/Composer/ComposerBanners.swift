@@ -206,27 +206,6 @@ final class ComposerApprovalBanner: ComposerBanner {
     }
 }
 
-/// Shown in plan mode once the agent has proposed a plan; the send button then offers to implement it.
-final class ComposerPlanBanner: ComposerBanner {
-    private let title = ComposerBanner.label()
-
-    init() {
-        super.init()
-        let heading = ComposerBanner.label(String(localized: "Plan ready"), weight: .semibold, color: .secondaryLabelColor)
-        heading.setContentCompressionResistancePriority(.required, for: .horizontal)
-        content.alignment = .centerY
-        content.addArrangedSubview(ComposerBanner.icon("checklist", color: Theme.ink))
-        content.addArrangedSubview(heading)
-        content.addArrangedSubview(title)
-    }
-
-    func show(planTitle: String?) {
-        title.stringValue = planTitle ?? ""
-        title.isHidden = planTitle == nil
-        setAccessibilityLabel([String(localized: "Plan ready"), planTitle].compactMap { $0 }.joined(separator: ", "))
-    }
-}
-
 /// Questions the agent is waiting on, one at a time, as in T3 Code's pending user input panel:
 /// pick options or type an answer, then go on to the next question. Picking a single option with the
 /// mouse moves on by itself.
