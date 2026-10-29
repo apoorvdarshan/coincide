@@ -13,6 +13,8 @@ enum Theme {
     /// so it is set a point larger.
     static var usesSerifReplies: Bool { AppStore.shared.settings.replyTypeface == .newYork }
     static var replyFontSize: CGFloat { usesSerifReplies ? fontSize + 1 : fontSize }
+    /// Where the user's messages sit in the conversation (Settings › General › Your messages).
+    static var userMessageSide: UserMessageSide { AppStore.shared.settings.userMessageSide }
 
     /// The height of a line of `font`, cached since rows ask on every layout.
     static func lineHeight(of font: NSFont) -> CGFloat {

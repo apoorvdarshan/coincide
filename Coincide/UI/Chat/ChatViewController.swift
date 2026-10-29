@@ -80,6 +80,7 @@ final class ChatViewController: NSViewController {
     private var findRefreshScheduled = false
     private var appliedFontSize = 0.0
     private var appliedReplyTypeface = ReplyTypeface.newYork
+    private var appliedUserMessageSide = UserMessageSide.right
     private var appliedThemes = (dark: "", light: "")
     private var rails: [TranscriptRowID: TranscriptRail] = [:]
     private var composerAtBottom: NSLayoutConstraint!
@@ -189,6 +190,7 @@ final class ChatViewController: NSViewController {
             self, selector: #selector(transcriptScrolled), name: NSView.boundsDidChangeNotification, object: list.scrollView.contentView)
         appliedFontSize = store.settings.fontSize
         appliedReplyTypeface = store.settings.replyTypeface
+        appliedUserMessageSide = store.settings.userMessageSide
         appliedThemes = (store.settings.darkTheme, store.settings.lightTheme)
         appliedShowReasoning = store.settings.showReasoning
         appliedOpensLinksInDefaultBrowser = store.settings.opensLinksInDefaultBrowser
@@ -484,7 +486,8 @@ final class ChatViewController: NSViewController {
         let settings = store.settings
         guard
             settings.fontSize != appliedFontSize || settings.showReasoning != appliedShowReasoning
-                || settings.replyTypeface != appliedReplyTypeface || settings.darkTheme != appliedThemes.dark
+                || settings.replyTypeface != appliedReplyTypeface || settings.userMessageSide != appliedUserMessageSide
+                || settings.darkTheme != appliedThemes.dark
                 || settings.lightTheme != appliedThemes.light
                 || settings.opensLinksInDefaultBrowser != appliedOpensLinksInDefaultBrowser
         else { return }
@@ -492,6 +495,7 @@ final class ChatViewController: NSViewController {
         appliedThemes = (settings.darkTheme, settings.lightTheme)
         appliedFontSize = settings.fontSize
         appliedReplyTypeface = settings.replyTypeface
+        appliedUserMessageSide = settings.userMessageSide
         appliedShowReasoning = settings.showReasoning
         textCache.removeAll()
         list.invalidateHeights()

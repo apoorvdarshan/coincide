@@ -410,6 +410,22 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
     /// The transcript scrolls; the text itself never does.
     override func scrollRangeToVisible(_ range: NSRange) {}
 
+    /// How deep in `setFrameSize` the view is: AppKit can size it again while it takes a size.
+    private var resizeDepth = 0
+
+    /// A text view that takes a new size scrolls whatever encloses it to keep its selection in view. In the transcript
+    /// that moved the reader whenever a row laid out again (a setting that lays every row out anew, a narrower panel),
+    /// so a resize never scrolls; dragging out a selection past the edge still does.
+    override func setFrameSize(_ newSize: NSSize) {
+        resizeDepth += 1
+        defer { resizeDepth -= 1 }
+        super.setFrameSize(newSize)
+    }
+
+    override func scrollToVisible(_ rect: NSRect) -> Bool {
+        resizeDepth > 0 ? false : super.scrollToVisible(rect)
+    }
+
     // MARK: Context menu and quoting
 
     /// The selected text as it reads, its ranges joined by line breaks.
