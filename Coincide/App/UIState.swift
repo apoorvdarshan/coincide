@@ -37,6 +37,8 @@ final class UIState {
         var diffLayout: DiffLayout = .unified
         /// Last page for each thread; browser storage and agent capabilities are never persisted.
         var previewAddresses: [String: String] = [:]
+        /// Each thread's browser tabs, by thread id. Threads saved before tabs have only `previewAddresses`.
+        var previewTabs: [String: BrowserTabsState] = [:]
         var terminalHeight: Double?
         var isTerminalOpen = false
         /// Bundle identifier of the app the toolbar's "Open in" button uses.
@@ -92,6 +94,7 @@ final class UIState {
             inspectorPanel = value(.inspectorPanel, defaults.inspectorPanel)
             diffLayout = value(.diffLayout, defaults.diffLayout)
             previewAddresses = value(.previewAddresses, defaults.previewAddresses)
+            previewTabs = value(.previewTabs, defaults.previewTabs)
             terminalHeight = value(.terminalHeight, defaults.terminalHeight)
             isTerminalOpen = value(.isTerminalOpen, defaults.isTerminalOpen)
             preferredOpenTarget = value(.preferredOpenTarget, defaults.preferredOpenTarget)

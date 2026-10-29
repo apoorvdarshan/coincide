@@ -303,10 +303,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     /// Loads a web link the user opened in the selected thread's browser preview and shows the preview. False when
     /// there is no thread or the preview cannot load the address, so the caller can open it elsewhere. This is the
-    /// user's own navigation: it does not turn on agent control.
-    func openInBrowserPreview(_ url: URL) -> Bool {
-        guard let id = selectedThreadID, (try? PreviewSessions.shared.session(for: id).navigate(url.absoluteString)) != nil
-        else { return false }
+    /// user's own navigation, in the active tab or (`newTab`) a new one.
+    func openInBrowserPreview(_ url: URL, newTab: Bool = false) -> Bool {
+        guard let id = selectedThreadID, let address = PreviewCommand.url(url.absoluteString) else { return false }
+        let session = PreviewSessions.shared.session(for: id)
+        if newTab {
+            // At the tab limit the link opens in the current tab.
+            if session.newTab(address) == nil { session.activeTab.navigate(address) }
+        } else {
+            session.activeTab.navigate(address)
+        }
         splitController.showPreviewPanel()
         return true
     }
