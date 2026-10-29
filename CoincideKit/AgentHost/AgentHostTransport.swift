@@ -131,8 +131,8 @@ public final class XPCAgentHostTransport: NSObject, AgentHostTransport, AgentHos
     public func helloSynchronously(_ hello: AgentHostHello, timeout: TimeInterval) -> AgentHostWelcome? {
         guard let connection, let data = try? AgentHostWire.encode(hello) else { return nil }
         let box = ReplyBox()
-        let proxy = connection.remoteObjectProxyWithErrorHandler { _ in box.finish(nil) } as? AgentHostXPC
-        proxy?.hello(data) { box.finish($0) }
+        let proxy = connection.remoteObjectProxyWithErrorHandler { @Sendable _ in box.finish(nil) } as? AgentHostXPC
+        proxy?.hello(data) { @Sendable reply in box.finish(reply) }
         guard let reply = box.wait(timeout: timeout) else { return nil }
         return try? AgentHostWire.decode(AgentHostWelcome.self, from: reply)
     }
@@ -143,8 +143,8 @@ public final class XPCAgentHostTransport: NSObject, AgentHostTransport, AgentHos
         for (key, sequence) in acknowledgements {
             guard let data = try? AgentHostWire.encode(AgentHostCommand.acknowledge(key: key, sequence: sequence)) else { continue }
             let box = ReplyBox()
-            let proxy = connection.remoteObjectProxyWithErrorHandler { _ in box.finish(nil) } as? AgentHostXPC
-            proxy?.perform(data) { box.finish($0) }
+            let proxy = connection.remoteObjectProxyWithErrorHandler { @Sendable _ in box.finish(nil) } as? AgentHostXPC
+            proxy?.perform(data) { @Sendable reply in box.finish(reply) }
             guard box.wait(timeout: max(0, deadline.timeIntervalSinceNow)) != nil else { return }
         }
     }
@@ -153,7 +153,7 @@ public final class XPCAgentHostTransport: NSObject, AgentHostTransport, AgentHos
         guard let connection else { throw AgentHostError.disconnected }
         return try await withCheckedThrowingContinuation { continuation in
             let once = Once(continuation)
-            let proxy = connection.remoteObjectProxyWithErrorHandler { _ in once.resume(throwing: AgentHostError.disconnected) }
+            let proxy = connection.remoteObjectProxyWithErrorHandler { @Sendable _ in once.resume(throwing: AgentHostError.disconnected) }
             guard let host = proxy as? AgentHostXPC else {
                 once.resume(throwing: AgentHostError.disconnected)
                 return
@@ -162,7 +162,9 @@ public final class XPCAgentHostTransport: NSObject, AgentHostTransport, AgentHos
         }
     }
 
-    /// XPC calls either the reply or the error handler; this makes sure the continuation resumes once.
+    /// XPC calls either the reply or the error handler; this makes sure the continuation resumes once. The handlers are
+    /// `@Sendable` so they don't inherit main-actor isolation: XPC calls them on its own queue, where an isolation
+    /// check would trap (a failed hello at launch crashed the app this way).
     private final class Once: @unchecked Sendable {
         private let lock = NSLock()
         private var continuation: CheckedContinuation<Data, Error>?
