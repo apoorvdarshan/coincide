@@ -170,6 +170,12 @@ struct ThreadRunnerTests {
         #expect(session.steered.last?.message == "Access is now off")
     }
 
+    @Test func startingATurnRecordsTheLastActiveAgent() async throws {
+        await runner.send(threadID: threadID, text: "Hello")
+        let last = try #require(runner.lastActiveAgent.value)
+        #expect(last.provider == .claude && last.accountID == ProviderAccount.defaultID)
+    }
+
     // MARK: Usage limits
 
     private func exhaustLimit(resettingIn seconds: TimeInterval) {

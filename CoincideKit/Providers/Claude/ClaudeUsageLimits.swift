@@ -86,6 +86,73 @@ enum ClaudeUsageLimits {
         return windows
     }
 
+    /// The amounts a `get_usage` answer reports besides its percentages: extra usage spent this period against its cap
+    /// (in minor units of its currency, cents for USD), the spend budget, and dollar allowances such as promotional
+    /// cloud credits. Empty when Claude Code has no plan limits to report.
+    nonisolated static func figures(fromUsage response: JSONValue) -> [UsageFigure] {
+        guard response["rate_limits_available"]?.bool == true, let limits = response["rate_limits"], limits.object != nil
+        else { return [] }
+        var figures: [UsageFigure] = []
+        // The period's end is the reset time of the active spend row in `limits`, as Claude Code pairs them.
+        let spendRows = (limits["limits"]?.array ?? []).filter { $0["kind"]?.string == "spend" }
+        let spendReset = date(fromISO: (spendRows.first { $0["is_active"]?.bool == true } ?? spendRows.first)?["resets_at"]?.string)
+        if let extra = limits["extra_usage"], extra.object != nil {
+            let currency = extra["currency"]?.string?.trimmedNonEmpty?.uppercased() ?? "USD"
+            let scale = minorUnitScale(currency)
+            if extra["is_enabled"]?.bool == true {
+                figures.append(
+                    UsageFigure(
+                        id: "extra_usage", label: String(localized: "Extra usage"), unit: .currency(currency),
+                        used: extra["used_credits"]?.number.map { $0 / scale }, limit: extra["monthly_limit"]?.number.map { $0 / scale },
+                        resetsAt: spendReset, detail: extra["monthly_limit"]?.number == nil ? String(localized: "No cap") : nil))
+            } else {
+                figures.append(
+                    UsageFigure(id: "extra_usage", label: String(localized: "Extra usage"), unit: .currency(currency), detail: String(localized: "Off")))
+            }
+        }
+        if let spend = limits["spend"], spend["enabled"]?.bool == true, let used = spend["used"],
+            let currency = used["currency"]?.string?.trimmedNonEmpty?.uppercased(), let usedMinor = used["amount_minor"]?.number
+        {
+            let exponent = used["exponent"]?.number ?? 2
+            let limit = spend["limit"]
+            let limitAmount =
+                limit?["currency"]?.string?.uppercased() == currency
+                ? limit?["amount_minor"]?.number.map { $0 / pow(10, limit?["exponent"]?.number ?? exponent) } : nil
+            figures.append(
+                UsageFigure(
+                    id: "spend", label: String(localized: "Spend"), unit: .currency(currency), used: usedMinor / pow(10, exponent),
+                    limit: limitAmount, resetsAt: spendReset))
+        }
+        // Dollar allowances, which the endpoint reports in whole dollars. Only named ones are shown: a label from the
+        // answer, or the promotional cloud credits CodexBar knows by their bucket.
+        for (bucket, value) in (limits.object ?? [:]).sorted(by: { $0.key < $1.key }) {
+            guard value.object != nil, let limit = value["limit_dollars"]?.number, limit.isFinite, limit > 0,
+                let label = value["label"]?.string?.trimmedNonEmpty ?? (bucket == "iguana_necktie" ? String(localized: "Cloud credits") : nil)
+            else { continue }
+            var used = value["used_dollars"]?.number
+            let remaining = value["remaining_dollars"]?.number
+            if used == nil, remaining == nil, let utilization = value["utilization"]?.number, utilization.isFinite {
+                used = limit * min(100, max(0, utilization)) / 100
+            }
+            // Promotional credits end at their `resets_at` rather than start over.
+            let end = date(fromISO: value["resets_at"]?.string)
+            let expires = bucket == "iguana_necktie" && value["label"] == nil
+            figures.append(
+                UsageFigure(
+                    id: bucket, label: label, unit: .currency("USD"), used: used, limit: limit, remaining: remaining,
+                    resetsAt: expires ? nil : end, expiresAt: expires ? end : nil))
+        }
+        return figures
+    }
+
+    /// How many minor units make one unit of `currency`: 100 for USD, 1 for JPY.
+    nonisolated static func minorUnitScale(_ currency: String) -> Double {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currency
+        return pow(10, Double(formatter.maximumFractionDigits))
+    }
+
     /// The model `rate_limit_event`'s overage-included bucket stands for: the first per-model window of a `get_usage`
     /// answer (Claude Code allows overage for one model).
     nonisolated static func overageIncludedName(fromUsage response: JSONValue) -> String? {

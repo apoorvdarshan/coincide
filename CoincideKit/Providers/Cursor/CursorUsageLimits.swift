@@ -83,7 +83,8 @@ enum CursorUsageLimits {
                 guard (200..<300).contains(response.statusCode), let body = JSONValue.parse(data), body.object != nil
                 else { return .failed }
                 let windows = windows(fromResponse: body)
-                return windows.isEmpty ? .unsupported : .limits(UsageLimits(windows: windows, checkedAt: now))
+                return windows.isEmpty
+                    ? .unsupported : .limits(UsageLimits(windows: windows, checkedAt: now, figures: figures(fromResponse: body)))
             }
         } catch {
             return .failed
@@ -111,6 +112,32 @@ enum CursorUsageLimits {
     }
 
     /// `billingCycleEnd` is epoch milliseconds, as a number or as text.
+    /// The dollar amounts of the period, which Cursor reports in cents as its CLI's `/usage` reads them: the plan's
+    /// included usage against its allowance, and on-demand usage against the user's own spend limit.
+    nonisolated static func figures(fromResponse response: JSONValue) -> [UsageFigure] {
+        let resetsAt = billingCycleEnd(response["billingCycleEnd"])
+        func dollars(_ value: JSONValue?) -> Double? {
+            guard let cents = value?.number, cents.isFinite, cents >= 0 else { return nil }
+            return cents / 100
+        }
+        var figures: [UsageFigure] = []
+        if let plan = response["planUsage"], let limit = dollars(plan["limit"]), limit > 0 {
+            figures.append(
+                UsageFigure(
+                    id: "included", label: String(localized: "Included usage"), unit: .currency("USD"), used: dollars(plan["includedSpend"]),
+                    limit: limit, remaining: dollars(plan["remaining"]), resetsAt: resetsAt))
+        }
+        if let spend = response["spendLimitUsage"], spend.object != nil, let used = dollars(spend["individualUsed"]) {
+            let limit = dollars(spend["individualLimit"])
+            figures.append(
+                UsageFigure(
+                    id: "on_demand", label: String(localized: "On-demand usage"), unit: .currency("USD"), used: used,
+                    limit: limit.flatMap { $0 > 0 ? $0 : nil }, remaining: dollars(spend["individualRemaining"]).flatMap { limit ?? 0 > 0 ? $0 : nil },
+                    resetsAt: resetsAt))
+        }
+        return figures
+    }
+
     private nonisolated static func billingCycleEnd(_ value: JSONValue?) -> Date? {
         guard let millis = value?.number ?? value?.string.flatMap({ Double($0.trimmingCharacters(in: .whitespaces)) }),
             millis.isFinite, millis > 0, millis <= 8.64e15

@@ -139,6 +139,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var usageIncludesOtherSessions: Bool
     /// Coincide's menu bar item shows the plans' usage limits.
     public var showsUsageInMenuBar: Bool
+    /// What the menu bar item shows: by default the last agent used, with its most used limit.
+    public var menuBarUsage: MenuBarUsageChoice
+    /// A second figure shown beside the first, such as Codex next to Claude; nil for none.
+    public var menuBarSecondaryUsage: MenuBarUsageChoice?
     /// Models the user starred (T3 Code's favorites), in the order they were starred. The model picker lists them
     /// first, and together in its Favorites tab.
     public var favoriteModels: [ModelReference]
@@ -173,6 +177,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         cursorKeychainUsageEnabled = false
         usageIncludesOtherSessions = true
         showsUsageInMenuBar = true
+        menuBarUsage = .lastActive
+        menuBarSecondaryUsage = nil
         favoriteModels = []
         hiddenModels = []
     }
@@ -216,6 +222,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         cursorKeychainUsageEnabled = value(.cursorKeychainUsageEnabled, defaults.cursorKeychainUsageEnabled)
         usageIncludesOtherSessions = value(.usageIncludesOtherSessions, defaults.usageIncludesOtherSessions)
         showsUsageInMenuBar = value(.showsUsageInMenuBar, defaults.showsUsageInMenuBar)
+        menuBarUsage = value(.menuBarUsage, defaults.menuBarUsage)
+        menuBarSecondaryUsage = value(.menuBarSecondaryUsage, defaults.menuBarSecondaryUsage)
         // Models of agents this version does not know are skipped, not the whole list.
         favoriteModels = container.lenientArray(ModelReference.self, forKey: .favoriteModels)
         hiddenModels = container.lenientArray(ModelReference.self, forKey: .hiddenModels)

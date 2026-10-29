@@ -38,8 +38,6 @@ final class SidebarViewController: NSViewController {
 
     private var selectedThreadID: UUID?
     private var selectedInboxIDs: Set<UUID> = []
-    private lazy var undoButton = ThemedButton(title: "", style: .secondary, target: self, action: #selector(undoInbox))
-    private var undoHeight: NSLayoutConstraint?
     private var query = ""
     /// Threads whose messages match the search, with the matching line, found after a short pause in typing.
     private var messageMatches: [UUID: String] = [:]
@@ -184,11 +182,8 @@ final class SidebarViewController: NSViewController {
         emptyView.isHidden = true
         emptyView.translatesAutoresizingMaskIntoConstraints = false
 
-        undoButton.isHidden = true
-        undoButton.translatesAutoresizingMaskIntoConstraints = false
-        undoHeight = undoButton.heightAnchor.constraint(equalToConstant: 0)
-        undoHeight?.isActive = true
-        for view: NSView in [topRows, scrollView, emptyView, undoButton] { root.addSubview(view) }
+        // Undo after deleting, archiving or moving threads is Edit › Undo (⌘Z), not a bar of its own.
+        for view: NSView in [topRows, scrollView, emptyView] { root.addSubview(view) }
         NSLayoutConstraint.activate([
             topRows.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 4),
             topRows.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
@@ -196,10 +191,7 @@ final class SidebarViewController: NSViewController {
             scrollView.topAnchor.constraint(equalTo: topRows.bottomAnchor, constant: 10),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: undoButton.topAnchor),
-            undoButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-            undoButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
-            undoButton.bottomAnchor.constraint(equalTo: root.safeAreaLayoutGuide.bottomAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: root.safeAreaLayoutGuide.bottomAnchor),
             emptyView.topAnchor.constraint(equalTo: scrollView.topAnchor),
             emptyView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             emptyView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -1693,16 +1685,8 @@ extension SidebarViewController: NSMenuDelegate {
     }
 
     @objc private func inboxChanged() {
-        let manager = ThreadInbox.shared.undoManager
-        undoButton.title = String(localized: "Undo")
-        undoButton.toolTip = manager.undoMenuItemTitle
-        undoButton.setAccessibilityLabel(manager.undoMenuItemTitle)
-        undoButton.isHidden = !manager.canUndo
-        undoHeight?.constant = manager.canUndo ? 30 : 0
         rebuild()
     }
-
-    @objc private func undoInbox() { ThreadInbox.shared.undo() }
 
     private func buildProjectMenu(_ menu: NSMenu, _ id: UUID) {
         guard let project = store.project(id) else { return }

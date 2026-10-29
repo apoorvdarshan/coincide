@@ -3,10 +3,12 @@ import CoincideKit
 import Observation
 import SwiftUI
 
-/// Coincide's menu bar item: a gauge with the share used of the window closest to its limit, across every enabled
-/// provider and account. Clicking it lists each account's windows, credits and today's tokens. It shows the figures
-/// Settings › Usage shows (`UsageInsights`), so opening it reads nothing the page has not, and it lives only while
-/// Coincide runs. Settings › Usage turns it off.
+/// Coincide's menu bar item. By default it shows the logo of the agent used last with the share used of that account's
+/// most used limit; the popover and Settings › Usage can pin an account's figure instead, show the closest limit across
+/// all (with a gauge), or add a second figure beside the first (`AppSettings.menuBarUsage`). Clicking it shows the
+/// overall usage and each account's windows, credits and figures. It shows the figures Settings › Usage shows
+/// (`UsageInsights`), so opening it reads nothing the page has not, and it lives only while Coincide runs. Settings ›
+/// Usage turns it off.
 @MainActor
 final class UsageStatusItem: NSObject, NSPopoverDelegate {
     static let shared = UsageStatusItem()
@@ -30,7 +32,8 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
     }
 
     private func update() {
-        guard AppStore.shared.settings.showsUsageInMenuBar else {
+        let settings = AppStore.shared.settings
+        guard settings.showsUsageInMenuBar else {
             popover?.close()
             if let item { NSStatusBar.system.removeStatusItem(item) }
             item = nil
@@ -39,18 +42,28 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
         let item = item ?? makeItem()
         self.item = item
         guard let button = item.button else { return }
-        let constrained = UsageInsights.mostConstrained(insights.accountLimits())
-        let percent = constrained.map { Int($0.window.usedPercent.rounded()) }
-        button.image = Self.gauge(percent: percent)
-        button.imagePosition = percent == nil ? .imageOnly : .imageLeading
-        button.attributedTitle =
-            percent.map {
-                NSAttributedString(
-                    string: " \($0)%", attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize - 1, weight: .medium)])
-            } ?? NSAttributedString()
-        let summary = Self.summary(constrained)
+        let readings = Self.readings(settings: settings, accounts: insights.accountLimits(), lastActive: insights.lastActive)
+        button.image = Self.image(for: readings)
+        button.imagePosition = .imageOnly
+        button.title = ""
+        let summary = Self.summary(readings)
         button.toolTip = summary
         button.setAccessibilityLabel(summary)
+    }
+
+    /// What the item shows for the user's choices: the first, then the second unless it reads the same.
+    static func readings(
+        settings: AppSettings, accounts: [UsageInsights.AccountLimits], lastActive: LastActiveAgent?
+    ) -> [MenuBarUsageReading] {
+        let choices = [settings.menuBarUsage] + [settings.menuBarSecondaryUsage].compactMap { $0 }
+        var readings: [MenuBarUsageReading] = []
+        for choice in choices {
+            guard let reading = MenuBarUsage.reading(for: choice, accounts: accounts, lastActive: lastActive),
+                !readings.contains(where: { $0.provider == reading.provider && $0.account?.id == reading.account?.id && $0.text == reading.text })
+            else { continue }
+            readings.append(reading)
+        }
+        return readings
     }
 
     private func makeItem() -> NSStatusItem {
@@ -59,6 +72,54 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
         item.button?.action = #selector(toggle(_:))
         item.button?.setAccessibilityRole(.menuButton)
         return item
+    }
+
+    /// The item's whole image, drawn as one template so the menu bar tints it for light and dark bars and its highlight:
+    /// each reading's logo (or the gauge) followed by its text. With no reading, the gauge alone.
+    static func image(for readings: [MenuBarUsageReading]) -> NSImage {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize - 1, weight: .medium)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
+        let iconSize: CGFloat = 15
+        let height: CGFloat = 18
+        let segments: [(icon: NSImage?, text: NSAttributedString?)] =
+            readings.isEmpty
+            ? [(gauge(percent: nil), nil)]
+            : readings.map { reading in
+                let icon = reading.provider.map { Theme.logo(for: $0) } ?? gauge(percent: reading.window.map { Int($0.usedPercent.rounded()) })
+                return (icon, reading.text.map { NSAttributedString(string: $0, attributes: attributes) })
+            }
+        let gap: CGFloat = 3
+        let spacing: CGFloat = 7
+        let widths = segments.map { segment in iconSize + (segment.text.map { gap + ceil($0.size().width) } ?? 0) }
+        let width = widths.reduce(0, +) + spacing * CGFloat(max(0, segments.count - 1))
+        let image = NSImage(size: NSSize(width: max(width, iconSize), height: height), flipped: false) { _ in
+            var x: CGFloat = 0
+            for (index, segment) in segments.enumerated() {
+                let iconRect = NSRect(x: x, y: (height - iconSize) / 2, width: iconSize, height: iconSize)
+                if let icon = segment.icon {
+                    icon.draw(in: Self.fitted(icon.size, in: iconRect))
+                    // A silhouette, so a colored logo (Claude's) tints like the rest.
+                    NSColor.black.setFill()
+                    iconRect.fill(using: .sourceAtop)
+                }
+                if let text = segment.text {
+                    let size = text.size()
+                    text.draw(at: NSPoint(x: iconRect.maxX + gap, y: (height - size.height) / 2))
+                }
+                x += widths[index] + spacing
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
+    /// `size` scaled to fit `rect`, centered.
+    private static func fitted(_ size: NSSize, in rect: NSRect) -> NSRect {
+        guard size.width > 0, size.height > 0 else { return rect }
+        let scale = min(rect.width / size.width, rect.height / size.height)
+        let fitted = NSSize(width: size.width * scale, height: size.height * scale)
+        return NSRect(x: rect.midX - fitted.width / 2, y: rect.midY - fitted.height / 2, width: fitted.width, height: fitted.height)
     }
 
     /// A gauge whose needle follows how much is used, drawn as a template so the menu bar tints it.
@@ -77,15 +138,22 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
         return image
     }
 
-    /// "Coincide usage: Claude Code weekly limit 62% used, resets in 2d 3h".
-    static func summary(_ constrained: (account: UsageInsights.AccountLimits, window: UsageLimitWindow)?, now: Date = Date()) -> String {
-        guard let constrained else { return String(localized: "Coincide usage: no plan limits reported") }
-        var text = String(
-            localized:
-                "Coincide usage: \(UsageFormat.title(constrained.account)) \(constrained.window.label.lowercased()) limit \(Int(constrained.window.usedPercent.rounded()))% used"
-        )
-        if let reset = constrained.window.resetDescription(at: now) { text += ", " + reset }
-        return text
+    /// "Coincide usage: Claude Code weekly limit 62% used, resets in 2d 3h. Codex: $12.40 left".
+    static func summary(_ readings: [MenuBarUsageReading], now: Date = Date()) -> String {
+        let parts = readings.compactMap { reading -> String? in
+            guard let account = reading.account else { return nil }
+            if let window = reading.window {
+                var text = String(
+                    localized: "\(UsageFormat.title(account)) \(window.label.lowercased()) limit \(Int(window.usedPercent.rounded()))% used")
+                if let reset = window.resetDescription(at: now) { text += ", " + reset }
+                return text
+            }
+            if let figure = reading.figure { return "\(UsageFormat.title(account)): \(UsageFormat.figureValue(figure))" }
+            if let credits = reading.credits { return "\(UsageFormat.title(account)): \(UsageFormat.credits(credits))" }
+            return String(localized: "\(UsageFormat.title(account)): no limits reported")
+        }
+        guard !parts.isEmpty else { return String(localized: "Coincide usage: no plan limits reported") }
+        return String(localized: "Coincide usage: \(parts.joined(separator: ". "))")
     }
 
     @objc private func toggle(_ sender: NSStatusBarButton) {
@@ -111,11 +179,12 @@ final class UsageStatusItem: NSObject, NSPopoverDelegate {
     }
 }
 
-/// The menu bar item's list: what each account's plan allows and today's tokens.
+/// The menu bar item's list: usage across all agents, then what each account's plan allows.
 @Observable
 private final class UsageMenuModel {
     private(set) var accounts: [UsageInsights.AccountLimits] = []
-    private(set) var today = UsageTotals()
+    private(set) var report = UsageReport()
+    private(set) var closest: (account: UsageInsights.AccountLimits, window: UsageLimitWindow)?
     private(set) var isRefreshing = false
     private(set) var lastScan: Date?
     private(set) var now = Date()
@@ -132,11 +201,22 @@ private final class UsageMenuModel {
         if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 
+    var menuBarUsage: MenuBarUsageChoice? {
+        get { AppStore.shared.settings.menuBarUsage }
+        set { AppStore.shared.updateSettings { $0.menuBarUsage = newValue ?? .lastActive } }
+    }
+
+    var menuBarSecondaryUsage: MenuBarUsageChoice? {
+        get { AppStore.shared.settings.menuBarSecondaryUsage }
+        set { AppStore.shared.updateSettings { $0.menuBarSecondaryUsage = newValue } }
+    }
+
     func reload() {
         let insights = UsageInsights.shared
         now = Date()
         accounts = insights.accountLimits(now: now)
-        today = UsageReport.make(insights.events, periodDays: 1, now: now).today
+        closest = UsageInsights.mostConstrained(accounts)
+        report = UsageReport.make(insights.events, periodDays: 30, now: now)
         isRefreshing = insights.isScanning || insights.isCheckingLimits
         lastScan = insights.lastScan
     }
@@ -160,6 +240,8 @@ private struct UsageMenuView: View {
             .padding(.horizontal, 14)
             .padding(.top, 12)
             .padding(.bottom, 8)
+            overall
+            divider
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
                     if model.accounts.isEmpty {
@@ -176,21 +258,17 @@ private struct UsageMenuView: View {
                     }
                 }
                 .padding(.horizontal, 6)
+                .padding(.vertical, 6)
             }
-            .frame(maxHeight: 460)
+            .frame(maxHeight: 420)
             .fixedSize(horizontal: false, vertical: true)
             divider
-            HStack {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Today").font(.caption).foregroundStyle(.secondary)
-                    Text(
-                        "\(UsageFormat.tokens(model.today.tokens.total)) tokens · \(model.today.hasPricedTokens ? "≈ " + UsageFormat.cost(model.today.cost) : "—")"
-                    )
-                    .monospacedDigit()
-                }
-                .accessibilityElement(children: .combine)
-                Spacer()
+            VStack(spacing: 6) {
+                MenuBarUsagePicker(title: String(localized: "Menu bar shows"), choice: $model.menuBarUsage, accounts: model.accounts)
+                MenuBarUsagePicker(
+                    title: String(localized: "Also show"), choice: $model.menuBarSecondaryUsage, accounts: model.accounts, allowsNone: true)
             }
+            .font(.caption)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             divider
@@ -215,10 +293,59 @@ private struct UsageMenuView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
         }
-        .frame(width: 330)
+        .frame(width: 340)
         .foregroundStyle(Color(nsColor: Theme.ink))
         .background(Color(nsColor: Theme.floatingFill))
         .tint(Color(nsColor: Theme.ink))
+    }
+
+    /// Tokens and estimated cost across every agent today and over the last 7 and 30 days, and the closest limit.
+    private var overall: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Overall").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 0) {
+                period(String(localized: "Today"), model.report.today)
+                period(String(localized: "7 days"), model.report.lastWeek)
+                period(String(localized: "30 days"), model.report.lastMonth)
+            }
+            if let closest = model.closest {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        SettingsProviderIcon(kind: closest.account.provider, size: 14)
+                        Text("Closest limit").font(.caption)
+                        Spacer()
+                        Text("\(UsageFormat.title(closest.account)) · \(closest.window.label) · \(UsageFormat.used(closest.window))")
+                            .font(.caption.monospacedDigit())
+                            .lineLimit(1)
+                    }
+                    UsageWindowBar(window: closest.window, provider: closest.account.provider, now: model.now, height: 4)
+                    if let reset = closest.window.resetDescription(at: model.now) {
+                        Text(reset).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    [String(localized: "Closest limit"), UsageFormat.title(closest.account), closest.window.label,
+                     UsageFormat.used(closest.window), closest.window.resetDescription(at: model.now)]
+                        .compactMap { $0 }.joined(separator: ", "))
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 10)
+    }
+
+    private func period(_ title: String, _ totals: UsageTotals) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(UsageFormat.tokens(totals.tokens.total)).font(.body.monospacedDigit())
+                .help(UsageFormat.exactTokens(totals.tokens.total))
+            Text(totals.hasPricedTokens ? "≈ " + UsageFormat.cost(totals.cost) : "—")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .help(UsageFormat.exactCost(totals))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     private var divider: some View {
@@ -226,7 +353,8 @@ private struct UsageMenuView: View {
     }
 }
 
-/// One account in the menu: its name and plan, then each window, or why it has none. Clicking opens Settings › Usage.
+/// One account in the menu: its name and plan, then each window and figure, or why it has none. Clicking opens
+/// Settings › Usage.
 private struct UsageMenuAccountRow: View {
     let account: UsageInsights.AccountLimits
     let now: Date
@@ -247,30 +375,36 @@ private struct UsageMenuAccountRow: View {
                         Text(UsageFormat.credits(credits)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
-                let windows = (account.limits?.windows ?? []) + (account.limits?.modelWindows ?? [])
-                if windows.isEmpty {
+                let windows = MenuBarUsage.allWindows(account)
+                let figures = account.limits?.figures ?? []
+                if windows.isEmpty && figures.isEmpty && (account.limits?.notes ?? []).isEmpty {
                     Text(UsageFormat.unavailable(account, settings: AppStore.shared.settings))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    ForEach(windows) { window in
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(window.label).font(.caption)
-                                Spacer()
-                                Text(UsageFormat.used(window)).font(.caption.monospacedDigit())
-                            }
-                            UsageWindowBar(window: window, provider: account.provider, now: now, height: 4)
-                            if let reset = window.resetDescription(at: now) {
-                                Text(reset).font(.caption2).foregroundStyle(.secondary)
-                            }
+                }
+                ForEach(windows) { window in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(window.label).font(.caption)
+                            Spacer()
+                            Text(UsageFormat.used(window)).font(.caption.monospacedDigit())
                         }
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(
-                            [window.label, UsageFormat.used(window), window.resetDescription(at: now)].compactMap { $0 }
-                                .joined(separator: ", "))
+                        UsageWindowBar(window: window, provider: account.provider, now: now, height: 4)
+                        if let reset = UsageFormat.reset(window, now: now) {
+                            Text(reset).font(.caption2).foregroundStyle(.secondary)
+                        }
                     }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(
+                        [window.label, UsageFormat.used(window), UsageFormat.reset(window, now: now)].compactMap { $0 }
+                            .joined(separator: ", "))
+                }
+                ForEach(figures) { figure in
+                    UsageFigureRow(figure: figure, provider: account.provider, now: now, compact: true)
+                }
+                ForEach(account.limits?.notes ?? [], id: \.self) { note in
+                    Text(note).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(8)
@@ -283,5 +417,51 @@ private struct UsageMenuAccountRow: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .help(String(localized: "Show in Settings › Usage"))
+    }
+}
+
+/// Picks what the menu bar item shows: the last active agent, the closest limit across all, or one account's most used
+/// limit, one of its windows or its balance. With `allowsNone`, also nothing (for the second figure).
+struct MenuBarUsagePicker: View {
+    let title: String
+    @Binding var choice: MenuBarUsageChoice?
+    let accounts: [UsageInsights.AccountLimits]
+    var allowsNone = false
+
+    var body: some View {
+        ThemedPicker(selection: $choice, options: Self.options(accounts: accounts, allowsNone: allowsNone, current: choice)) {
+            Text(title)
+        }
+    }
+
+    static func options(
+        accounts: [UsageInsights.AccountLimits], allowsNone: Bool, current: MenuBarUsageChoice?
+    ) -> [ThemedPicker<MenuBarUsageChoice?, Text>.Option] {
+        typealias Option = ThemedPicker<MenuBarUsageChoice?, Text>.Option
+        var options: [Option] = []
+        if allowsNone { options.append(Option(nil, String(localized: "None"))) }
+        options.append(Option(.lastActive, String(localized: "Auto (last active agent)")))
+        options.append(Option(.closest, String(localized: "Closest limit across all")))
+        for account in accounts {
+            let group = UsageFormat.title(account)
+            let image = Theme.logo(for: account.provider, size: 14)
+            func option(_ metric: MenuBarUsageMetric, _ name: String) -> Option {
+                Option(
+                    .account(provider: account.provider, accountID: account.account.id, metric: metric), "\(group) · \(name)",
+                    image: image, group: group)
+            }
+            options.append(option(.mostUsed, String(localized: "Most used limit")))
+            for window in MenuBarUsage.allWindows(account) {
+                options.append(option(.window(window.id), window.label))
+            }
+            if MenuBarUsage.hasBalance(account) {
+                options.append(option(.balance, String(localized: "Balance")))
+            }
+        }
+        // A pinned window that is not reported now (not checked yet, say) stays listed, so the field names it.
+        if let current, !options.contains(where: { $0.value == current }) {
+            options.append(Option(current, String(localized: "Not reported now")))
+        }
+        return options
     }
 }

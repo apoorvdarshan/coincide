@@ -74,6 +74,8 @@ public final class ThreadRunner {
     private let store: AppStore
     private let registry: ProviderRegistry
     public let usageHistory: UsageHistory
+    /// The provider account of the last turn started, which the menu bar item follows.
+    public let lastActiveAgent: LastActiveAgentStore
     private var sessions: [UUID: [ProviderKind: AgentSession]] = [:]
     private var launches: [UUID: [ProviderKind: Launch]] = [:]
     /// The native id each live session last reported, to notice when the thread forgot it (rewind).
@@ -148,6 +150,7 @@ public final class ThreadRunner {
         self.store = store
         self.registry = registry
         usageHistory = UsageHistory(directory: store.directory)
+        lastActiveAgent = LastActiveAgentStore(directory: store.directory)
         idleTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.shutDownIdleSessions() }
         }
@@ -313,6 +316,7 @@ public final class ThreadRunner {
         store.updateThread(threadID, touch: true) { $0.draft = nil; $0.draftContext = nil }
         itemMaps[threadID] = [:]
         turns[threadID] = TurnState(provider: provider, startedAt: Date(), userItemID: turnID, modelID: selection.modelID)
+        lastActiveAgent.record(provider: provider, account: registry.account(selection.accountID, of: provider).id)
         resetTurnUsage(threadID, provider: provider, modelID: selection.modelID)
         store.notify(.runState(threadID))
 

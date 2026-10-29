@@ -20,6 +20,10 @@ public final class ProviderRegistry {
     private var accountCommands: [String: [ProviderCommand]] = [:]
     private var accountChecks: [String: Task<Void, Never>] = [:]
     private let makeProvider: (ProviderAccount) -> AgentProvider?
+    /// What API-key accounts' own usage reads (`APIKeyUsage`) last found, by account id.
+    private var keyUsage: [String: UsageLimits] = [:]
+    /// Sends those reads; tests answer them without the network.
+    var keyUsageFetch: UsageLimitsFetch = UsageLimitsHTTP.live
     /// Where the accounts' API keys are kept.
     public let secrets: ProviderAccountSecrets
 
@@ -260,6 +264,7 @@ public final class ProviderRegistry {
         accountStatuses[id] = nil
         accountModels[id] = nil
         accountCommands[id] = nil
+        keyUsage[id] = nil
         store.notify(.providers)
     }
 
@@ -299,7 +304,16 @@ public final class ProviderRegistry {
         }
         let environment = await environment(for: kind, account: account, fresh: true)
         let executable = await executable(for: kind, fresh: true)
-        let status = await provider.detect(executable: executable, environment: environment)
+        var status = await provider.detect(executable: executable, environment: environment)
+        guard !Task.isCancelled else { return }
+        if account.auth == .apiKey, status.state == .ready, let key = secrets.apiKey(for: account),
+            let outcome = await APIKeyUsage.read(variable: account.keyVariable, key: key, fetch: keyUsageFetch)
+        {
+            // A failed read keeps what the last one found.
+            let read = outcome.resolved(after: keyUsage[id])
+            keyUsage[id] = read
+            if let read { status.usageLimits = status.usageLimits.map { $0.adding(read) } ?? read }
+        }
         guard !Task.isCancelled else { return }
         accountStatuses[id] = status
         if status.state == .ready || status.state == .notAuthenticated {

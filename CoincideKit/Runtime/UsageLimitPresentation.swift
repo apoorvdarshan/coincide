@@ -74,6 +74,7 @@ extension UsageLimits {
         }
         var limits = with(windows: windows.map(current), checkedAt: checkedAt)
         limits.modelWindows = modelWindows.map(current)
+        limits.figures = figures.map { $0.current(at: now) }
         return limits
     }
 

@@ -30,6 +30,8 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
     /// Agents with a native session for the thread, in a fixed order. Others than the selected one handed it off.
     public var sessionProviders: [ProviderKind]
     public var nativeSessionIDs: [ProviderKind: String]
+    /// The account of each native session run with another account than the provider's default; nil when none was.
+    public var nativeSessionAccounts: [ProviderKind: String]?
     public var importedSession: ImportedSession?
     /// The user named the thread, so the agent leaves its title alone.
     public var isTitleCustom: Bool
@@ -58,10 +60,17 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
         hasUserMessages = thread.hasUserMessages
         sessionProviders = Self.ordered(thread.sessions.keys)
         nativeSessionIDs = thread.sessions.mapValues(\.sessionID)
+        nativeSessionAccounts = Self.accounts(of: thread.sessions)
         importedSession = thread.importedSession
         isTitleCustom = thread.isTitleCustom
         botID = thread.botID
         preview = thread.botID == nil ? nil : Self.preview(of: thread.items.lazy.map { ($0.kind, $0.text) })
+    }
+
+    /// The sessions' accounts other than the default ones, nil when there are none, so most index entries stay as before.
+    nonisolated static func accounts(of sessions: [ProviderKind: ProviderSessionRef]) -> [ProviderKind: String]? {
+        let accounts = sessions.compactMapValues(\.accountID)
+        return accounts.isEmpty ? nil : accounts
     }
 
     /// The text of the latest message of the user's or an agent's, on one line and at most `limit` characters.
@@ -129,6 +138,7 @@ struct ThreadSummaryFile: Decodable {
         summary.hasUserMessages = items.contains { $0.kind == .user }
         summary.sessionProviders = ThreadSummary.ordered(sessions.keys)
         summary.nativeSessionIDs = sessions.mapValues(\.sessionID)
+        summary.nativeSessionAccounts = ThreadSummary.accounts(of: sessions)
         // Only bots' conversations show a message, so only theirs have item text read.
         if summary.botID != nil {
             let texts = container.lenientArray(ItemText.self, forKey: key("items"))

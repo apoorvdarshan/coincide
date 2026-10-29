@@ -263,21 +263,35 @@ public struct UsageLimits: Sendable, Hashable {
     /// Limits of single models (such as a research preview) that run apart from the plan's main allowance. Settings ›
     /// Usage lists them; the composer never warns about them.
     public var modelWindows: [UsageLimitWindow]
+    /// Amounts the provider reports beside its percentage windows: extra usage spent against its cap, a key's credit
+    /// limit, requests left this minute. Only what the provider sent; nothing here is estimated.
+    public var figures: [UsageFigure]
+    /// What the provider does not show this account, such as a balance only an admin key may read.
+    public var notes: [String]
 
     public nonisolated init(
         windows: [UsageLimitWindow], checkedAt: Date, plan: String? = nil, credits: UsageCredits? = nil,
-        modelWindows: [UsageLimitWindow] = []
+        modelWindows: [UsageLimitWindow] = [], figures: [UsageFigure] = [], notes: [String] = []
     ) {
         self.windows = Self.sorted(windows)
         self.checkedAt = checkedAt
         self.plan = plan
         self.credits = credits
         self.modelWindows = Self.sorted(modelWindows)
+        self.figures = figures
+        self.notes = notes
     }
 
     /// The same details with other windows.
     nonisolated func with(windows: [UsageLimitWindow], checkedAt: Date) -> UsageLimits {
-        UsageLimits(windows: windows, checkedAt: checkedAt, plan: plan, credits: credits, modelWindows: modelWindows)
+        UsageLimits(
+            windows: windows, checkedAt: checkedAt, plan: plan, credits: credits, modelWindows: modelWindows, figures: figures,
+            notes: notes)
+    }
+
+    /// Whether there is anything to show: a window, credits, a figure or a note.
+    public nonisolated var isEmpty: Bool {
+        windows.isEmpty && modelWindows.isEmpty && credits == nil && figures.isEmpty && notes.isEmpty
     }
 
     /// Applies a report that may name only some windows: those it names are replaced (keeping a reset time or
@@ -318,6 +332,76 @@ public struct UsageCredits: Sendable, Hashable {
         self.hasCredits = hasCredits
         self.unlimited = unlimited
         self.balance = balance
+    }
+}
+
+/// An amount a provider reports for an account besides its percentage windows, such as Claude's extra usage this month
+/// or an OpenRouter key's credit limit. Each value is what the provider sent, in `unit`; a figure with no amounts says
+/// what state the feature is in (`detail`, "Off").
+public struct UsageFigure: Sendable, Hashable, Identifiable {
+    public enum Unit: Sendable, Hashable {
+        /// Money in an ISO 4217 currency ("USD"), in major units (dollars, not cents).
+        case currency(String)
+        /// The provider's own credits.
+        case credits
+        case requests
+        case tokens
+        /// A plain count, such as rate-limit resets available.
+        case count
+    }
+
+    /// Stable for the provider, so a later check replaces it.
+    public var id: String
+    public var label: String
+    public var unit: Unit
+    public var used: Double?
+    public var limit: Double?
+    public var remaining: Double?
+    /// When the amount starts over.
+    public var resetsAt: Date?
+    /// When the amount runs out for good, such as promotional credits.
+    public var expiresAt: Date?
+    /// A word on the figure's state or period, such as "Off" or "Daily limit".
+    public var detail: String?
+
+    public nonisolated init(
+        id: String, label: String, unit: Unit, used: Double? = nil, limit: Double? = nil, remaining: Double? = nil,
+        resetsAt: Date? = nil, expiresAt: Date? = nil, detail: String? = nil
+    ) {
+        func finite(_ value: Double?) -> Double? { value.flatMap { $0.isFinite ? $0 : nil } }
+        self.id = id
+        self.label = label
+        self.unit = unit
+        self.used = finite(used)
+        self.limit = finite(limit)
+        self.remaining = finite(remaining)
+        self.resetsAt = resetsAt
+        self.expiresAt = expiresAt
+        self.detail = detail
+    }
+
+    /// What is left: as reported, else the limit less what is used.
+    public nonisolated var left: Double? {
+        if let remaining { return remaining }
+        guard let limit, let used else { return nil }
+        return max(0, limit - used)
+    }
+
+    /// The share used, 0–100, when the figure has a limit.
+    public nonisolated var usedPercent: Double? {
+        guard let limit, limit > 0 else { return nil }
+        let used = used ?? remaining.map { limit - $0 }
+        return used.map { min(100, max(0, $0 / limit * 100)) }
+    }
+
+    /// The figure as it stands at `now`: past its reset time it starts over, with nothing used.
+    public nonisolated func current(at now: Date) -> UsageFigure {
+        guard let resetsAt, resetsAt <= now, limit != nil || used != nil else { return self }
+        var reset = self
+        reset.used = used == nil ? nil : 0
+        reset.remaining = remaining == nil ? nil : limit
+        reset.resetsAt = nil
+        return reset
     }
 }
 
