@@ -40,7 +40,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private let attachmentStrip = ComposerAttachmentStrip()
     private let scrollView = NSScrollView()
     private let textView = ComposerTextView(usingTextLayoutManager: true)
-    private let footer = ComposerFooterView()
+    /// Internal so tests can read the controls.
+    let footer = ComposerFooterView()
     private let branchToolbar = BranchToolbarView(frame: .zero)
     private let suggestions = ComposerSuggestionPanel()
     private var textHeight: NSLayoutConstraint?
@@ -221,8 +222,11 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     private func wireActions() {
         footer.modelButton.popupProvider = { [weak self] in self?.modelPicker() }
-        for button in [footer.modelButton, footer.effortButton, footer.accessButton] { button.popupClearance = surface }
+        for button in [footer.modelButton, footer.effortButton, footer.speedButton, footer.accessButton] {
+            button.popupClearance = surface
+        }
         footer.effortButton.menuProvider = { [weak self] in self?.effortMenu() }
+        footer.speedButton.menuProvider = { [weak self] in self?.speedMenu() }
         footer.accessButton.menuProvider = { [weak self] in self?.accessMenu() }
         footer.modeButton.target = self
         footer.modeButton.action = #selector(toggleInteractionMode)
@@ -506,7 +510,10 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         let thread = thread
         let enabled = thread != nil
         textView.isEditable = enabled
-        for control in [footer.modelButton, footer.effortButton, footer.accessButton, footer.modeButton, footer.attachButton] {
+        for control in [
+            footer.modelButton, footer.effortButton, footer.speedButton, footer.accessButton, footer.modeButton,
+            footer.attachButton,
+        ] {
             control.isEnabled = enabled
         }
         refreshControls(thread)
@@ -521,6 +528,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         guard let thread else {
             footer.modelButton.configure(title: String(localized: "No thread"), symbolName: "cpu", chevron: true)
             footer.effortButton.isHidden = true
+            footer.speedButton.isHidden = true
             return
         }
         let selection = thread.selection
@@ -533,21 +541,16 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         var title = selection.modelID == "default" ? provider.displayName : modelName
         // Another account of the agent is named on the control, so the user sees which one pays.
         if let accountName, !registry.account(for: selection).isDefault { title += " · \(accountName)" }
-        // A faster speed shows as a bolt on the control and is named with the model.
-        let speedName = selection.speed.map { model?.speed($0)?.name ?? $0 }
-        let modelDescription = speedName.map { String(localized: "\(modelName), \($0)") } ?? modelName
         if noneReady {
             footer.modelButton.configure(
                 title: String(localized: "Set Up a Provider"), symbolName: "exclamationmark.circle", chevron: true)
         } else {
             footer.modelButton.configure(title: title, agent: provider, chevron: true)
         }
-        footer.modelButton.accentSymbol = noneReady || speedName == nil ? nil : "bolt.fill"
         let keyBindings = KeyBindingsController.shared
         footer.modelButton.toolTip = keyBindings.toolTip(
-            String(localized: "\(agentName) · \(modelDescription). Choose the agent and model"), for: .chooseModel)
-        footer.modelButton.setAccessibilityLabel(
-            String(localized: "Agent and model: \(agentName), \(modelDescription)"))
+            String(localized: "\(agentName) · \(modelName). Choose the agent and model"), for: .chooseModel)
+        footer.modelButton.setAccessibilityLabel(String(localized: "Agent and model: \(agentName), \(modelName)"))
 
         if let model, !model.efforts.isEmpty {
             let effort = selection.effort ?? model.defaultEffort
@@ -560,6 +563,16 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
                 String(localized: "Reasoning effort: \(effort.map(ComposerMenus.effortTitle) ?? String(localized: "Default"))"))
         } else {
             footer.effortButton.isHidden = true
+        }
+
+        // Shown only for models that offer a faster speed; the picker's speed chips change the same selection.
+        if !noneReady, let speed = ComposerSpeedControl(model: model, speed: selection.speed) {
+            footer.speedButton.isHidden = false
+            footer.speedButton.configure(title: speed.title, symbolName: speed.symbolName, chevron: true)
+            footer.speedButton.toolTip = String(localized: "Speed")
+            footer.speedButton.setAccessibilityLabel(String(localized: "Speed: \(speed.title)"))
+        } else {
+            footer.speedButton.isHidden = true
         }
 
         footer.accessButton.configure(
@@ -1239,6 +1252,12 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             model: model, current: thread.selection.effort, target: self, action: #selector(chooseEffort(_:)))
     }
 
+    private func speedMenu() -> NSMenu? {
+        guard let thread, let model = registry.model(for: thread.selection), !model.speeds.isEmpty else { return nil }
+        return ComposerMenus.speedMenu(
+            model: model, current: thread.selection.speed, target: self, action: #selector(chooseSpeed(_:)))
+    }
+
     private func accessMenu() -> NSMenu? {
         guard let thread else { return nil }
         return ComposerMenus.accessMenu(current: thread.accessMode, target: self, action: #selector(chooseAccess(_:)))
@@ -1256,10 +1275,13 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         } else {
             selection.effort = model?.defaultEffort
         }
-        selection.speed = model?.speed(thread.selection.speed)?.id
+        selection.speed = ComposerSpeedControl.carried(thread.selection.speed, to: model)
         // Another account of the same agent is a switch too: it runs its own session and gets a recap.
         let switched = selection.provider != thread.selection.provider || selection.account != thread.selection.account
-        store.updateThread(threadID) { $0.selection = selection }
+        if selection != thread.selection {
+            store.updateThread(threadID) { $0.selection = selection }
+            store.rememberComposerChoice(of: threadID)
+        }
         if switched {
             let name = registry.accountName(for: selection).map { "\(selection.provider.displayName) · \($0)" }
                 ?? selection.provider.displayName
@@ -1291,9 +1313,17 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         setAccessMode(mode)
     }
 
+    @objc private func chooseSpeed(_ sender: NSMenuItem) {
+        // Standard's item carries no value.
+        setSpeed(sender.representedObject as? String)
+    }
+
+    /// The user's picks in the composer (`select`, `setEffort`, `setSpeed`, `setAccessMode`) also become the default
+    /// for new threads (`AppStore.rememberComposerChoice`); a pick that changes nothing leaves the default alone.
     func setEffort(_ effort: String) {
         guard let threadID, thread?.selection.effort != effort else { return }
         store.updateThread(threadID) { $0.selection.effort = effort }
+        store.rememberComposerChoice(of: threadID)
     }
 
     /// Runs the model at a faster speed it offers, or at standard speed for nil.
@@ -1301,11 +1331,13 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         guard let threadID, let thread, thread.selection.speed != speed else { return }
         guard speed == nil || registry.model(for: thread.selection)?.speed(speed) != nil else { return }
         store.updateThread(threadID) { $0.selection.speed = speed }
+        store.rememberComposerChoice(of: threadID)
     }
 
     func setAccessMode(_ mode: AccessMode) {
         guard let threadID, thread?.accessMode != mode else { return }
         store.updateThread(threadID) { $0.accessMode = mode }
+        store.rememberComposerChoice(of: threadID)
     }
 
     @objc func toggleInteractionMode() {

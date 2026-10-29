@@ -101,7 +101,7 @@ struct GeneralSettingsView: View {
                     .settingsRevealable(.newThreadChat, highlighted: highlighted)
                     Toggle(isOn: model.binding(\.generatesThreadTitles)) {
                         Text("Name threads with the agent")
-                        Text("The thread's agent titles it from your first message, with its quickest model.")
+                        Text("The thread's agent titles it from your first message with its quickest model, and may refresh the title as the thread develops. Threads you rename keep your name.")
                     }
                     .settingsRevealable(.threadTitles, highlighted: highlighted)
                 }
@@ -406,7 +406,7 @@ private struct DefaultModelRows: View {
         }
         switch model.status(provider).state {
         case .ready, .unknown:
-            return String(localized: "New threads start with this model. You can switch models and agents in any thread.")
+            return String(localized: "New threads start with this model. Choosing a model, effort, speed or access in a thread makes that the new default.")
         default:
             return String(localized: "\(provider.displayName) isn’t ready yet. Set it up in Providers or pick another model.")
         }

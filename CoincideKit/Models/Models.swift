@@ -576,6 +576,14 @@ public struct ImportedSession: Codable, Hashable, Sendable {
     }
 }
 
+/// A point in a thread's life where the agent looks at its title again (`ThreadTitles`), once each.
+public enum TitleRefresh: String, Codable, Hashable, Sendable, CaseIterable {
+    /// After the first turn that completes: the reply shows what a short first message was about.
+    case firstReply
+    /// After the fifth turn, when the thread may have moved on from where it started.
+    case fifthTurn
+}
+
 public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     public var id: UUID
     public var projectID: UUID
@@ -604,6 +612,13 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     /// Unsent context cards, restored with the draft after switching threads or restarting.
     public var draftContext: [MessageContext]?
     public var importedSession: ImportedSession?
+    /// True once the user named the thread, so the agent never titles it again. Nil rather than false, so threads
+    /// the user never renamed are written as before.
+    public var titledByUser: Bool?
+    /// The follow-up titles the agent has had a look at, so none runs twice. Nil for a thread whose first message
+    /// was sent before follow-up titles existed, or that came with its messages (an import, a fork): those keep
+    /// their titles.
+    public var titleRefreshes: [TitleRefresh]?
 
     public nonisolated init(
         id: UUID = UUID(), projectID: UUID, title: String = String(localized: "New thread"),
@@ -632,6 +647,9 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     }
 
     public nonisolated var hasUserMessages: Bool { items.contains { $0.kind == .user } }
+
+    /// The user named the thread, so the agent leaves its title alone.
+    public nonisolated var isTitleCustom: Bool { titledByUser == true }
 
     /// "claude/<account id>": where `accountSessions` keeps an account's session.
     public nonisolated static func accountSessionKey(_ provider: ProviderKind, _ account: String) -> String {
@@ -695,6 +713,11 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         draft = container.lenient(String.self, forKey: .draft)
         draftContext = container.contains(.draftContext) ? container.lenientArray(MessageContext.self, forKey: .draftContext) : nil
         importedSession = container.lenient(ImportedSession.self, forKey: .importedSession)
+        titledByUser = container.lenient(Bool.self, forKey: .titledByUser)
+        // Refreshes this version does not know are left out (`ThreadFile` notices them).
+        titleRefreshes =
+            container.contains(.titleRefreshes) && !((try? container.decodeNil(forKey: .titleRefreshes)) ?? true)
+            ? container.lenientArray(TitleRefresh.self, forKey: .titleRefreshes) : nil
     }
 }
 
