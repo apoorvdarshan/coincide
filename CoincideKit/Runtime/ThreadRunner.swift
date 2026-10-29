@@ -1079,7 +1079,7 @@ public final class ThreadRunner {
             case .failed: result = .failed
             }
             usageHistory.record(UsageRecord(id: turnID, threadID: threadID, projectID: projectID,
-                provider: provider, modelID: turn.modelID, startedAt: turn.startedAt, finishedAt: Date(),
+                provider: provider, accountID: launchedAccount(threadID, provider), modelID: turn.modelID, startedAt: turn.startedAt, finishedAt: Date(),
                 outcome: result, usage: turn.reportedUsage))
         }
         turns[threadID] = nil

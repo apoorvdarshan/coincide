@@ -1174,7 +1174,9 @@ public final class ACPSession: AgentSession {
     /// ACP's prompt `usage` counts the whole turn, so only output and cache figures carry over.
     nonisolated static func promptUsage(_ value: JSONValue?) -> TokenUsage? {
         guard let value, value.object != nil else { return nil }
-        let usage = TokenUsage(outputTokens: value["outputTokens"]?.acpInt, cachedInputTokens: value["cachedReadTokens"]?.acpInt)
+        let usage = TokenUsage(
+            outputTokens: value["outputTokens"]?.acpInt, cachedInputTokens: value["cachedReadTokens"]?.acpInt,
+            turnTotals: TokenTotals.acp(value))
         return usage == TokenUsage() ? nil : usage
     }
 

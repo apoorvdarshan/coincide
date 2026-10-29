@@ -131,6 +131,11 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Read the Cursor CLI's login from the macOS Keychain to show the plan's usage limits (T3 Code's
     /// `cursorKeychainUsageEnabled`). Off by default, because macOS may ask the user to allow the read.
     public var cursorKeychainUsageEnabled: Bool
+    /// Settings › Usage also counts Claude Code and Codex sessions run outside Coincide (in a terminal or another app),
+    /// read from the CLIs' own logs on this Mac.
+    public var usageIncludesOtherSessions: Bool
+    /// Coincide's menu bar item shows the plans' usage limits.
+    public var showsUsageInMenuBar: Bool
     /// Models the user starred (T3 Code's favorites), in the order they were starred. The model picker lists them
     /// first, and together in its Favorites tab.
     public var favoriteModels: [ModelReference]
@@ -162,6 +167,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         lightTheme = "carbon-light"
         shortcutOverrides = [:]
         cursorKeychainUsageEnabled = false
+        usageIncludesOtherSessions = true
+        showsUsageInMenuBar = true
         favoriteModels = []
         hiddenModels = []
     }
@@ -202,6 +209,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         shortcutOverrides = (container.lenient([String: JSONValue].self, forKey: .shortcutOverrides) ?? [:])
             .compactMapValues { $0.isNull ? nil : ($0.string ?? $0.displayText) }
         cursorKeychainUsageEnabled = value(.cursorKeychainUsageEnabled, defaults.cursorKeychainUsageEnabled)
+        usageIncludesOtherSessions = value(.usageIncludesOtherSessions, defaults.usageIncludesOtherSessions)
+        showsUsageInMenuBar = value(.showsUsageInMenuBar, defaults.showsUsageInMenuBar)
         // Models of agents this version does not know are skipped, not the whole list.
         favoriteModels = container.lenientArray(ModelReference.self, forKey: .favoriteModels)
         hiddenModels = container.lenientArray(ModelReference.self, forKey: .hiddenModels)

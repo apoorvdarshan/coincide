@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ThemeController.shared.start()
         AppearanceController.shared.start()
         SettingsWindowController.shared.startHandlingRequests()
+        UsageStatusItem.shared.start()
         ThreadActivity.shared.start()
         AgentTurns.shared.start()
         NotificationController.shared.start()

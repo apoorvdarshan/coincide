@@ -75,6 +75,8 @@ struct OpenCodeEventMapper {
     private var retryMessages: Set<String> = []
     private var compactionID: String?
     private var compactions = 0
+    /// The steps of the current turn added up (`TokenUsage.turnTotals`).
+    private var turnTotals = TokenTotals()
 
     nonisolated init(sessionID: String) {
         self.sessionID = sessionID
@@ -87,6 +89,7 @@ struct OpenCodeEventMapper {
         // An execution OpenCode started itself now continues as this turn; its end no longer reports separately.
         agentExecution = nil
         retryMessages = []
+        turnTotals = TokenTotals()
         guard !executionRunning else { return }
         // Nothing from an earlier execution can still arrive; drop what an interrupted one left behind.
         tools = [:]
@@ -114,6 +117,7 @@ struct OpenCodeEventMapper {
         guard turn != nil else { return nil }
         turn = nil
         compactionID = nil
+        turnTotals = TokenTotals()
         return .turnCompleted(outcome)
     }
 
@@ -247,9 +251,10 @@ struct OpenCodeEventMapper {
             guard let tokens = data["tokens"] else { return [] }
             let cacheRead = tokens.at("cache.read")?.int ?? 0
             let cacheWrite = tokens.at("cache.write")?.int ?? 0
+            if let step = TokenTotals.openCode(tokens) { turnTotals += step }
             let usage = TokenUsage(
                 inputTokens: Int.saturatingSum(tokens["input"]?.int ?? 0, cacheRead, cacheWrite), outputTokens: tokens["output"]?.int,
-                cachedInputTokens: cacheRead, contextWindow: contextWindow)
+                cachedInputTokens: cacheRead, contextWindow: contextWindow, turnTotals: turnTotals.isEmpty ? nil : turnTotals)
             return [.event(.usage(usage))]
         case "session.usage.updated":
             guard let cost = data["cost"]?.number, cost > 0 else { return [] }
@@ -372,6 +377,7 @@ struct OpenCodeEventMapper {
         guard let turn else {
             guard let stopping = agentExecution else { return [] }
             agentExecution = nil
+            turnTotals = TokenTotals()
             return [.event(.turnCompleted(stopping && outcome == .completed ? .interrupted : outcome))]
         }
         // An end before the prompt reached the agent belongs to an earlier execution, unless the user

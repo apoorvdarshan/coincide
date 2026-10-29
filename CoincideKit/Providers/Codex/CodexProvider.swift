@@ -85,7 +85,7 @@ enum CodexProbe {
         if account.at("account.type")?.string == "chatgpt",
             let result = try? await connection.request("account/rateLimits/read", [:], timeout: .seconds(15))
         {
-            usageLimits = UsageLimits(windows: CodexUsageLimits.windows(fromRead: result), checkedAt: Date())
+            usageLimits = CodexUsageLimits.limits(fromRead: result, at: Date())
         }
         return Snapshot(version: version, account: account, models: models, usageLimits: usageLimits)
     }

@@ -177,16 +177,20 @@ public struct TokenUsage: Sendable, Hashable, Codable {
     public var cachedInputTokens: Int?
     public var contextWindow: Int?
     public var costUSD: Double?
+    /// Every request of the current turn added up, when the provider reports it (ACP agents' prompt usage, OpenCode's
+    /// steps). The fields above are snapshots of the context and cannot be added; these can.
+    public var turnTotals: TokenTotals?
 
     public nonisolated init(
         inputTokens: Int? = nil, outputTokens: Int? = nil, cachedInputTokens: Int? = nil, contextWindow: Int? = nil,
-        costUSD: Double? = nil
+        costUSD: Double? = nil, turnTotals: TokenTotals? = nil
     ) {
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.cachedInputTokens = cachedInputTokens
         self.contextWindow = contextWindow
         self.costUSD = costUSD
+        self.turnTotals = turnTotals
     }
 
     /// Fills fields missing here from `other`.
@@ -194,7 +198,8 @@ public struct TokenUsage: Sendable, Hashable, Codable {
         TokenUsage(
             inputTokens: inputTokens ?? other.inputTokens, outputTokens: outputTokens ?? other.outputTokens,
             cachedInputTokens: cachedInputTokens ?? other.cachedInputTokens,
-            contextWindow: contextWindow ?? other.contextWindow, costUSD: costUSD ?? other.costUSD)
+            contextWindow: contextWindow ?? other.contextWindow, costUSD: costUSD ?? other.costUSD,
+            turnTotals: turnTotals ?? other.turnTotals)
     }
 }
 
@@ -251,10 +256,28 @@ public struct UsageLimits: Sendable, Hashable {
     /// Session windows first, then weekly, monthly and others.
     public private(set) var windows: [UsageLimitWindow]
     public var checkedAt: Date
+    /// The plan the account is on, as the provider names it (Codex's `pro`, `plus`, …), when reported.
+    public var plan: String?
+    /// Credits the account can spend past its plan's windows, when reported.
+    public var credits: UsageCredits?
+    /// Limits of single models (such as a research preview) that run apart from the plan's main allowance. Settings ›
+    /// Usage lists them; the composer never warns about them.
+    public var modelWindows: [UsageLimitWindow]
 
-    public nonisolated init(windows: [UsageLimitWindow], checkedAt: Date) {
+    public nonisolated init(
+        windows: [UsageLimitWindow], checkedAt: Date, plan: String? = nil, credits: UsageCredits? = nil,
+        modelWindows: [UsageLimitWindow] = []
+    ) {
         self.windows = Self.sorted(windows)
         self.checkedAt = checkedAt
+        self.plan = plan
+        self.credits = credits
+        self.modelWindows = Self.sorted(modelWindows)
+    }
+
+    /// The same details with other windows.
+    nonisolated func with(windows: [UsageLimitWindow], checkedAt: Date) -> UsageLimits {
+        UsageLimits(windows: windows, checkedAt: checkedAt, plan: plan, credits: credits, modelWindows: modelWindows)
     }
 
     /// Applies a report that may name only some windows: those it names are replaced (keeping a reset time or
@@ -268,7 +291,7 @@ public struct UsageLimits: Sendable, Hashable {
             }
             byID[window.id] = window
         }
-        return UsageLimits(windows: Array(byID.values), checkedAt: max(date, checkedAt))
+        return with(windows: Array(byID.values), checkedAt: max(date, checkedAt))
     }
 
     private nonisolated static func sorted(_ windows: [UsageLimitWindow]) -> [UsageLimitWindow] {
@@ -281,6 +304,20 @@ public struct UsageLimits: Sendable, Hashable {
             }
         }
         return windows.sorted { (rank($0.kind), $0.id) < (rank($1.kind), $1.id) }
+    }
+}
+
+/// An account's credits, as Codex reports them with its rate limits.
+public struct UsageCredits: Sendable, Hashable {
+    public var hasCredits: Bool
+    public var unlimited: Bool
+    /// The balance as the provider writes it (Codex sends a decimal string), when reported.
+    public var balance: String?
+
+    public nonisolated init(hasCredits: Bool, unlimited: Bool, balance: String? = nil) {
+        self.hasCredits = hasCredits
+        self.unlimited = unlimited
+        self.balance = balance
     }
 }
 
