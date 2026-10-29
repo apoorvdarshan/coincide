@@ -468,7 +468,10 @@ final class SidebarViewController: NSViewController {
         if let branch = thread.branch, !branch.isEmpty { place += place.isEmpty ? branch : " · \(branch)" }
         if !place.isEmpty { lines.append(place) }
         if let forkedFrom = ThreadForking.forkedFromDescription(thread.id) { lines.append(forkedFrom) }
-        lines.append("\(thread.selection.provider.displayName) · \(ProviderRegistry.shared.displayName(for: thread.selection))")
+        let registry = ProviderRegistry.shared
+        let agent = registry.accountName(for: thread.selection).map { "\(thread.selection.provider.displayName) (\($0))" }
+            ?? thread.selection.provider.displayName
+        lines.append("\(agent) · \(registry.displayName(for: thread.selection))")
         let others = thread.sessionProviders.filter { $0 != thread.selection.provider }
         if !others.isEmpty {
             lines.append(String(localized: "Handed off from \(others.map(\.displayName).formatted(.list(type: .and)))"))

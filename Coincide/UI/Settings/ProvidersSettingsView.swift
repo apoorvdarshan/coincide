@@ -45,7 +45,9 @@ private struct ProviderSummaryRow: View {
     var body: some View {
         let presentation = SettingsProviderStatus(model: model, kind: kind)
         let status = model.status(kind)
-        let details = [presentation.headline, SettingsFormat.version(status.version), status.account].compactMap { $0 }
+        let accountCount = model.accounts(kind).count
+        let accounts = accountCount > 1 ? String(localized: "\(accountCount) accounts") : nil
+        let details = [presentation.headline, SettingsFormat.version(status.version), accounts ?? status.account].compactMap { $0 }
         HStack(spacing: 12) {
             SettingsProviderIcon(kind: kind, size: 30)
                 .opacity(model.isEnabled(kind) ? 1 : 0.55)
@@ -128,6 +130,9 @@ struct ProviderSettingsView: View {
                     Text("Use \(kind.displayName)")
                     Text("Offer its models in the model picker and let threads run it.")
                 }
+            }
+            if kind.supportsAccounts && model.isEnabled(kind) {
+                ProviderAccountsSection(model: model, kind: kind)
             }
             if needsSetup {
                 ProviderSetupSection(model: model, kind: kind)

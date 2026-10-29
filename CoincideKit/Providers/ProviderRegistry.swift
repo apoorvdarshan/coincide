@@ -9,8 +9,19 @@ public final class ProviderRegistry {
     public private(set) var statuses: [ProviderKind: ProviderStatus] = [:]
     public private(set) var discoveredModels: [ProviderKind: [ModelOption]] = [:]
     private var discoveredCommands: [ProviderKind: [ProviderCommand]] = [:]
-    /// True while any provider is being checked.
-    public var isRefreshing: Bool { !running.isEmpty }
+    /// True while any provider or account is being checked.
+    public var isRefreshing: Bool { !running.isEmpty || !accountChecks.isEmpty }
+
+    /// The added accounts' state, by account id; the default accounts' is in `statuses` and the other maps above.
+    /// Each account gets a provider instance of its own, because providers cache what their last check found.
+    private var accountProviders: [String: AgentProvider] = [:]
+    private var accountStatuses: [String: ProviderStatus] = [:]
+    private var accountModels: [String: [ModelOption]] = [:]
+    private var accountCommands: [String: [ProviderCommand]] = [:]
+    private var accountChecks: [String: Task<Void, Never>] = [:]
+    private let makeProvider: (ProviderAccount) -> AgentProvider?
+    /// Where the accounts' API keys are kept.
+    public let secrets: ProviderAccountSecrets
 
     private let store: AppStore
     private let shell: ShellEnvironment
@@ -26,11 +37,22 @@ public final class ProviderRegistry {
     /// reads it at once.
     var environmentRereadAge: TimeInterval = 15 * 60
 
-    public init(store: AppStore, providers: [AgentProvider]? = nil, shell: ShellEnvironment = .shared) {
+    /// `makeProvider` builds the provider instance of an added account. It defaults to a built-in provider, or with
+    /// `providers` given (tests), to that provider itself.
+    public init(
+        store: AppStore, providers: [AgentProvider]? = nil, shell: ShellEnvironment = .shared,
+        secrets: ProviderAccountSecrets = .standard, makeProvider: ((ProviderAccount) -> AgentProvider?)? = nil
+    ) {
         self.store = store
         self.shell = shell
+        self.secrets = secrets
         let all = providers ?? Self.builtInProviders(store: store)
-        self.providers = Dictionary(all.map { ($0.kind, $0) }, uniquingKeysWith: { first, _ in first })
+        let byKind = Dictionary(all.map { ($0.kind, $0) }, uniquingKeysWith: { first, _ in first })
+        self.providers = byKind
+        self.makeProvider =
+            makeProvider
+            ?? (providers == nil
+                ? { account in Self.builtInProvider(for: account, store: store) } : { byKind[$0.provider] })
         // Coming back to Coincide after installing or signing in to an agent finds it without a manual refresh.
         activationObserver = NotificationCenter.default.addObserver(
             forName: Self.didBecomeActive, object: nil, queue: .main
@@ -51,14 +73,26 @@ public final class ProviderRegistry {
 
     /// Every provider Coincide ships, reading their settings from `store`.
     public static func builtInProviders(store: AppStore = .shared) -> [AgentProvider] {
-        [
-            ClaudeProvider(),
-            CodexProvider(),
-            CursorProvider(keychainUsageAllowed: { store.settings.cursorKeychainUsageEnabled }),
-            ACPProvider(profile: .grok),
-            OpenCodeProvider(),
-            ACPProvider(profile: .antigravity),
-        ]
+        [.claude, .codex, .cursor, .grok, .opencode, .antigravity].map { builtInProvider($0, store: store) }
+    }
+
+    static func builtInProvider(_ kind: ProviderKind, store: AppStore) -> AgentProvider {
+        switch kind {
+        case .claude: ClaudeProvider()
+        case .codex: CodexProvider()
+        case .cursor: CursorProvider(keychainUsageAllowed: { store.settings.cursorKeychainUsageEnabled })
+        case .grok: ACPProvider(profile: .grok)
+        case .opencode: OpenCodeProvider()
+        case .antigravity: ACPProvider(profile: .antigravity)
+        }
+    }
+
+    /// An added account's provider. An Antigravity account runs in a private profile of its own, in its home.
+    static func builtInProvider(for account: ProviderAccount, store: AppStore) -> AgentProvider {
+        guard account.provider == .antigravity, !account.isDefault else { return builtInProvider(account.provider, store: store) }
+        let profile = AntigravityProfile(geminiHome: account.home(in: store.directory))
+        let usesAPIKey = account.auth == .apiKey
+        return ACPProvider(profile: .antigravity) { AntigravityFlavor(profile: profile, usesAPIKey: usesAPIKey) }
     }
 
     public func provider(_ kind: ProviderKind) -> AgentProvider? { providers[kind] }
@@ -68,12 +102,209 @@ public final class ProviderRegistry {
     /// Providers in display order.
     public var orderedKinds: [ProviderKind] { ProviderKind.allCases.filter { providers[$0] != nil } }
 
-    /// Providers that are enabled, installed and signed in.
-    public var readyKinds: [ProviderKind] { orderedKinds.filter { status($0).state == .ready } }
+    /// Providers that are enabled, installed and signed in with at least one account.
+    public var readyKinds: [ProviderKind] { orderedKinds.filter(isReady) }
+
+    /// Whether any account of the provider can run.
+    public func isReady(_ kind: ProviderKind) -> Bool {
+        accounts(for: kind).contains { status(kind, account: $0.id).state == .ready }
+    }
+
+    // MARK: Accounts
+
+    /// The provider's default account followed by the ones the user added.
+    public func accounts(for kind: ProviderKind) -> [ProviderAccount] {
+        store.settings.settings(for: kind).allAccounts(of: kind)
+    }
+
+    /// The account with `id`, or the default account for nil or an account that was removed, so a thread that used
+    /// it keeps working.
+    public func account(_ id: String?, of kind: ProviderKind) -> ProviderAccount {
+        accounts(for: kind).first { $0.id == (id ?? ProviderAccount.defaultID) } ?? .defaultAccount(for: kind)
+    }
+
+    public func account(for selection: ModelSelection) -> ProviderAccount { account(selection.accountID, of: selection.provider) }
+
+    /// The selection's account name, when the provider has more than one account to tell apart.
+    public func accountName(for selection: ModelSelection) -> String? {
+        accounts(for: selection.provider).count > 1 ? account(for: selection).name : nil
+    }
+
+    public func status(_ kind: ProviderKind, account id: String?) -> ProviderStatus {
+        let account = self.account(id, of: kind)
+        guard !account.isDefault else { return status(kind) }
+        // A disabled provider's accounts are off with it.
+        guard store.settings.settings(for: kind).isEnabled else { return status(kind) }
+        return accountStatuses[account.id] ?? .unknown
+    }
+
+    public func status(for selection: ModelSelection) -> ProviderStatus { status(selection.provider, account: selection.accountID) }
+
+    /// The provider instance that runs an account's sessions.
+    public func provider(_ kind: ProviderKind, account id: String?) -> AgentProvider? {
+        let account = self.account(id, of: kind)
+        guard !account.isDefault else { return providers[kind] }
+        if let existing = accountProviders[account.id] { return existing }
+        guard providers[kind] != nil, let made = makeProvider(account) else { return nil }
+        accountProviders[account.id] = made
+        return made
+    }
+
+    /// An account's models: what its own check found plus the user's custom ids.
+    public func models(for kind: ProviderKind, account id: String?) -> [ModelOption] {
+        let account = self.account(id, of: kind)
+        guard !account.isDefault else { return models(for: kind) }
+        return withCustomModels(accountModels[account.id] ?? [], of: kind)
+    }
+
+    public func pickerModels(for kind: ProviderKind, account id: String?, current: ModelSelection?) -> [ModelOption] {
+        store.settings.pickerModels(models(for: kind, account: id), current: current)
+    }
+
+    public func commands(for kind: ProviderKind, account id: String?) -> [ProviderCommand] {
+        let account = self.account(id, of: kind)
+        guard !account.isDefault else { return commands(for: kind) }
+        return accountCommands[account.id] ?? status(kind, account: account.id).commands
+    }
+
+    public func updateCommands(_ commands: [ProviderCommand], for kind: ProviderKind, account id: String?) {
+        let account = self.account(id, of: kind)
+        guard !account.isDefault else { return updateCommands(commands, for: kind) }
+        guard accountCommands[account.id] != commands else { return }
+        accountCommands[account.id] = commands
+        store.notify(.providers)
+    }
+
+    public func updateModels(_ models: [ModelOption], for kind: ProviderKind, account id: String?) {
+        let account = self.account(id, of: kind)
+        guard !account.isDefault else { return updateModels(models, for: kind) }
+        guard !models.isEmpty else { return }
+        accountModels[account.id] = models
+        store.notify(.providers)
+    }
+
+    /// An account's environment: the provider's (`environment(for:)`) with the account's home, API key and variables.
+    public func environment(for kind: ProviderKind, account id: String?) async -> [String: String] {
+        await environment(for: kind, account: account(id, of: kind), fresh: false)
+    }
+
+    public func environment(for selection: ModelSelection) async -> [String: String] {
+        await environment(for: selection.provider, account: selection.accountID)
+    }
+
+    private func environment(for kind: ProviderKind, account: ProviderAccount, fresh: Bool) async -> [String: String] {
+        let base = await environment(for: kind, fresh: fresh)
+        guard !account.isDefault else { return base }
+        if account.usesOwnHome { Self.prepareHome(account.home(in: store.directory)) }
+        let apiKey = account.auth == .apiKey ? secrets.apiKey(for: account) : nil
+        return account.environment(base, dataDirectory: store.directory, apiKey: apiKey)
+    }
+
+    /// What a terminal signing an account in needs on top of the login shell's environment: the provider's variables,
+    /// the account's own and its home. Never its API key.
+    public func signInEnvironment(for kind: ProviderKind, account id: String?) -> [String: String] {
+        let account = self.account(id, of: kind)
+        var environment = store.settings.settings(for: kind).environment
+        if account.usesOwnHome { Self.prepareHome(account.home(in: store.directory)) }
+        environment = account.environment(environment, dataDirectory: store.directory, apiKey: nil)
+        return environment
+    }
+
+    /// The folder an account keeps its CLI state in, readable only by the user.
+    private static func prepareHome(_ url: URL) {
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    }
+
+    /// Stores an account's API key in the Keychain and checks the account again. Codex reads a key only from
+    /// `auth.json`, so for Codex the key is also handed to `codex login --with-api-key` (on stdin) in the account's home.
+    public func saveAPIKey(_ key: String, for account: ProviderAccount) async throws {
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !account.isDefault, !key.isEmpty else { return }
+        try secrets.setAPIKey(key, for: account)
+        if account.provider == .codex, let executable = await executable(for: .codex) {
+            let environment = await environment(for: .codex, account: account, fresh: false)
+            let result = await ProcessRunner.run(
+                executable, ["login", "--with-api-key"], environment: environment, timeout: 60, input: key + "\n")
+            if !result.succeeded {
+                throw ProviderAccountError(message: String(localized: "Codex didn’t accept the API key (status \(Int(result.status)))."))
+            }
+        }
+        // A provider instance remembers what its last check found, so the next check starts afresh.
+        accountProviders[account.id] = nil
+        await refresh(account.provider, account: account.id)
+    }
+
+    /// Removes an account's API key from the Keychain; Codex's copy goes with the account's home.
+    public func removeAPIKey(for account: ProviderAccount) async throws {
+        try secrets.removeAPIKey(for: account)
+        accountProviders[account.id] = nil
+        await refresh(account.provider, account: account.id)
+    }
+
+    /// Forgets what the registry knew of an account the user removed: its checks, models and provider instance.
+    public func forgetAccount(_ id: String) {
+        accountChecks.removeValue(forKey: id)?.cancel()
+        accountProviders[id] = nil
+        accountStatuses[id] = nil
+        accountModels[id] = nil
+        accountCommands[id] = nil
+        store.notify(.providers)
+    }
+
+    /// Checks one account again, waiting for a check that already runs to finish first so the result reflects the
+    /// latest settings.
+    public func refresh(_ kind: ProviderKind, account id: String) async {
+        let account = self.account(id, of: kind)
+        guard !account.isDefault else { return await refresh(kind) }
+        store.notify(.providers)
+        await checkAccount(account)
+        store.notify(.providers)
+    }
+
+    private func checkAccount(_ account: ProviderAccount) async {
+        if let current = accountChecks[account.id] { await current.value }
+        let task = Task { @MainActor in await self.refreshAccountNow(account.id, of: account.provider) }
+        accountChecks[account.id] = task
+        await task.value
+        if accountChecks[account.id] == task { accountChecks[account.id] = nil }
+    }
+
+    private func refreshAccountNow(_ id: String, of kind: ProviderKind) async {
+        // Read again: the account may have changed or gone while an earlier check ran.
+        guard let account = accounts(for: kind).first(where: { $0.id == id }), !account.isDefault else { return }
+        guard store.settings.settings(for: kind).isEnabled, let provider = self.provider(kind, account: id) else {
+            accountStatuses[id] = nil
+            accountModels[id] = []
+            return
+        }
+        if account.auth == .apiKey, !secrets.hasAPIKey(account) {
+            let executable = await executable(for: kind, fresh: true)
+            accountStatuses[id] = ProviderStatus(
+                state: executable == nil ? .notInstalled : .notAuthenticated, executable: executable,
+                message: String(localized: "Add an API key for \(account.name) in Settings › Providers."))
+            accountModels[id] = []
+            return
+        }
+        let environment = await environment(for: kind, account: account, fresh: true)
+        let executable = await executable(for: kind, fresh: true)
+        let status = await provider.detect(executable: executable, environment: environment)
+        guard !Task.isCancelled else { return }
+        accountStatuses[id] = status
+        if status.state == .ready || status.state == .notAuthenticated {
+            accountModels[id] = await provider.models(status: status, environment: environment)
+        } else {
+            accountModels[id] = []
+        }
+        store.notify(.providers)
+    }
 
     /// Models for the picker: discovered ones plus the user's custom ids.
     public func models(for kind: ProviderKind) -> [ModelOption] {
-        var models = discoveredModels[kind] ?? []
+        withCustomModels(discoveredModels[kind] ?? [], of: kind)
+    }
+
+    private func withCustomModels(_ discovered: [ModelOption], of kind: ProviderKind) -> [ModelOption] {
+        var models = discovered
         for custom in store.settings.settings(for: kind).customModels where !models.contains(where: { $0.modelID == custom }) {
             models.append(ModelOption(provider: kind, modelID: custom, displayName: custom))
         }
@@ -90,8 +321,13 @@ public final class ProviderRegistry {
         store.settings.favorites(in: readyKinds.flatMap { models(for: $0) })
     }
 
+    /// The selection's model as its account lists it, or as the default account does before the account's check
+    /// lists any (models of one agent mostly match across accounts).
     public func model(for selection: ModelSelection) -> ModelOption? {
-        models(for: selection.provider).first { $0.modelID == selection.modelID }
+        let own = models(for: selection.provider, account: selection.accountID)
+        if let model = own.first(where: { $0.modelID == selection.modelID }) { return model }
+        guard selection.accountID != nil else { return nil }
+        return models(for: selection.provider).first { $0.modelID == selection.modelID }
     }
 
     /// Display name for a selection, falling back to the raw id.
@@ -175,11 +411,15 @@ public final class ProviderRegistry {
         await refresh(stale)
     }
 
+    /// Checks `kinds` and every account added to them.
     private func refresh(_ kinds: [ProviderKind]) async {
         store.notify(.providers)
         await withTaskGroup(of: Void.self) { group in
             for kind in kinds {
                 group.addTask { await self.check(kind) }
+                for account in self.accounts(for: kind) where !account.isDefault {
+                    group.addTask { await self.checkAccount(account) }
+                }
             }
         }
         store.notify(.providers)
@@ -228,12 +468,16 @@ public final class ProviderRegistry {
         store.notify(.providers)
     }
 
-    /// Picks a usable selection: the requested one if its provider is ready, otherwise the first ready model.
+    /// Picks a usable selection: the requested one if its account is ready, otherwise the first ready account's
+    /// first model.
     public func usableSelection(preferring selection: ModelSelection) -> ModelSelection {
-        if status(selection.provider).state == .ready { return selection }
+        if status(for: selection).state == .ready { return selection }
         for kind in readyKinds {
-            if let first = models(for: kind).first {
-                return ModelSelection(provider: kind, modelID: first.modelID, effort: first.defaultEffort)
+            for account in accounts(for: kind) where status(kind, account: account.id).state == .ready {
+                if let first = models(for: kind, account: account.id).first {
+                    return ModelSelection(
+                        provider: kind, modelID: first.modelID, effort: first.defaultEffort, accountID: account.storedID)
+                }
             }
         }
         return selection

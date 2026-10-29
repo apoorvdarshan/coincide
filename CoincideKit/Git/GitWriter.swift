@@ -261,7 +261,8 @@ enum AgentPrompt {
         registry: ProviderRegistry = .shared
     ) async -> String? {
         let resolved = registry.usableSelection(preferring: selection)
-        guard registry.status(resolved.provider).state == .ready, let provider = registry.provider(resolved.provider),
+        guard registry.status(for: resolved).state == .ready,
+            let provider = registry.provider(resolved.provider, account: resolved.accountID),
             let executable = await registry.executable(for: resolved.provider)
         else { return nil }
         var turnSelection = resolved
@@ -269,7 +270,7 @@ enum AgentPrompt {
         if let model = registry.model(for: resolved), let lowest = model.efforts.first { turnSelection.effort = lowest }
         let launch = AgentLaunch(
             provider: resolved.provider, executable: executable,
-            environment: await registry.environment(for: resolved.provider), workingDirectory: cwd,
+            environment: await registry.environment(for: resolved), workingDirectory: cwd,
             resumeSessionID: nil, selection: turnSelection, accessMode: .approval, interactionMode: .plan)
         let session = provider.makeSession(launch)
         let reply = ReplyCollector(session: session)

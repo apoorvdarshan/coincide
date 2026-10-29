@@ -101,6 +101,9 @@ public struct AntigravityProfile: Sendable, Hashable {
     public var geminiHome: URL
     /// The user's home, whose `~/.gemini` skills are linked into the profile.
     public var userHome: URL
+    /// The sign-in method written to the profile's `settings.json` (`auth.type`): Google for the default profile,
+    /// `gemini-api-key` for an account's API-key profile.
+    public var authType = AntigravityFlavor.authMethodID
 
     public nonisolated init(geminiHome: URL, userHome: URL = FileManager.default.homeDirectoryForCurrentUser) {
         self.geminiHome = geminiHome.standardizedFileURL
@@ -172,7 +175,8 @@ public struct AntigravityProfile: Sendable, Hashable {
         try await verifyBrowserHelper(environment: environment(base, harness: URL(fileURLWithPath: "/dev/null")))
         do {
             // `auth.type` names the method, so a native sign-out clears only its credentials.
-            try Self.write(Data(#"{"auth":{"type":"oauth-personal"}}"#.utf8 + [0x0A]), to: settingsFile, permissions: 0o600)
+            // `authType` is one of the flavor's method ids, which need no escaping.
+            try Self.write(Data("{\"auth\":{\"type\":\"\(authType)\"}}\n".utf8), to: settingsFile, permissions: 0o600)
         } catch {
             throw AntigravityProfileError(message: String(localized: "The Antigravity profile settings could not be written."))
         }

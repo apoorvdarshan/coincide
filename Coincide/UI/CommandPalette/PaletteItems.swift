@@ -326,23 +326,31 @@ struct PaletteCatalog {
         return PaletteMenu(title: String(localized: "Choose Agent and Model…"), placeholder: String(localized: "Search models…")) {
             let registry = ProviderRegistry.shared
             let current = AppStore.shared.summary(threadID)?.selection ?? thread.selection
-            return registry.readyKinds.map { kind in
-                var models = registry.pickerModels(for: kind, current: current)
-                if kind == current.provider, !models.contains(where: { $0.modelID == current.modelID }) {
+            // One group per ready account; an agent with several accounts names each.
+            let accounts = registry.readyKinds.flatMap { kind in
+                let all = registry.accounts(for: kind)
+                return all.filter { registry.status(kind, account: $0.id).state == .ready }.map { (kind, $0, all.count > 1) }
+            }
+            return accounts.map { kind, account, named in
+                let isCurrentAccount = kind == current.provider && account.id == current.account
+                var models = registry.pickerModels(for: kind, account: account.id, current: isCurrentAccount ? current : nil)
+                if isCurrentAccount, !models.contains(where: { $0.modelID == current.modelID }) {
                     models.insert(ModelOption(provider: kind, modelID: current.modelID, displayName: current.modelID), at: 0)
                 }
+                let title = named ? "\(kind.displayName) · \(account.name)" : kind.displayName
                 let items = models.map { model in
-                    let selection = ModelSelection(provider: model.provider, modelID: model.modelID, effort: model.defaultEffort)
-                    let isCurrent = model.provider == current.provider && model.modelID == current.modelID
+                    let selection = ModelSelection(
+                        provider: model.provider, modelID: model.modelID, effort: model.defaultEffort, accountID: account.storedID)
+                    let isCurrent = isCurrentAccount && model.modelID == current.modelID
                     return PaletteItem(
-                        id: "model:\(model.id)", title: model.displayName,
+                        id: "model:\(account.id):\(model.id)", title: model.displayName,
                         subtitle: model.displayName != model.modelID && model.modelID != "default" ? model.modelID : nil,
                         icon: Theme.logo(for: kind, size: 15),
                         trailing: isCurrent ? String(localized: "Current") : nil,
-                        keywords: [kind.displayName, kind.rawValue, model.modelID],
+                        keywords: [kind.displayName, kind.rawValue, model.modelID] + (named ? [account.name] : []),
                         behavior: .run { window?.splitController.content.chat.chooseModel(selection) })
                 }
-                return PaletteGroup(id: "models:\(kind.rawValue)", title: kind.displayName, items: items)
+                return PaletteGroup(id: "models:\(kind.rawValue):\(account.id)", title: title, items: items)
             }
         }
     }

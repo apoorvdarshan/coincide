@@ -58,15 +58,18 @@ public struct ProviderSettings: Codable, Hashable, Sendable {
     public var customModels: [String]
     /// Extra environment variables for this provider's process.
     public var environment: [String: String]
+    /// The accounts added besides the default one, in the order the user added them (`ProviderAccount`).
+    public var accounts: [ProviderAccount]
 
     public nonisolated init(
         isEnabled: Bool = true, executablePath: String? = nil, customModels: [String] = [],
-        environment: [String: String] = [:]
+        environment: [String: String] = [:], accounts: [ProviderAccount] = []
     ) {
         self.isEnabled = isEnabled
         self.executablePath = executablePath
         self.customModels = customModels
         self.environment = environment
+        self.accounts = accounts
     }
 
     public nonisolated init(from decoder: Decoder) throws {
@@ -75,6 +78,15 @@ public struct ProviderSettings: Codable, Hashable, Sendable {
         executablePath = try container.decodeIfPresent(String.self, forKey: .executablePath)
         customModels = try container.decodeIfPresent([String].self, forKey: .customModels) ?? []
         environment = try container.decodeIfPresent([String: String].self, forKey: .environment) ?? [:]
+        // An account this version cannot read is left out rather than failing the provider's settings, and one
+        // claiming the default's id or repeating an id is dropped.
+        var seen: Set<String> = [ProviderAccount.defaultID]
+        accounts = container.lenientArray(ProviderAccount.self, forKey: .accounts).filter { seen.insert($0.id).inserted }
+    }
+
+    /// The default account followed by the added ones, all of `kind`.
+    public nonisolated func allAccounts(of kind: ProviderKind) -> [ProviderAccount] {
+        [.defaultAccount(for: kind)] + (kind.supportsAccounts ? accounts.filter { $0.provider == kind } : [])
     }
 }
 

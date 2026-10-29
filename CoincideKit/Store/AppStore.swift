@@ -499,6 +499,7 @@ public final class AppStore {
         loadedThreads[threadID]?.items.removeSubrange(index...)
         // Native sessions have seen the removed turns, so they cannot be resumed faithfully.
         loadedThreads[threadID]?.sessions = [:]
+        loadedThreads[threadID]?.accountSessions = nil
         refreshSummary(threadID)
         scheduleSave(threadID)
         notify(.thread(threadID))

@@ -46,18 +46,22 @@ struct ThreadFile: Decodable {
         }
         if !skippedItems.isEmpty {
             unread = true
-            for (kind, var ref) in thread.sessions {
+            func adjusted(_ ref: ProviderSessionRef) -> ProviderSessionRef {
+                var ref = ref
                 ref.seenItemCount -= skippedItems.prefix { $0 < ref.seenItemCount }.count
-                thread.sessions[kind] = ref
+                if let foreign = ref.foreignItemsBefore { ref.foreignItemsBefore = foreign - skippedItems.prefix { $0 < foreign }.count }
+                return ref
             }
+            thread.sessions = thread.sessions.mapValues(adjusted)
+            thread.accountSessions = thread.accountSessions?.mapValues(adjusted)
         }
         hasUnreadContent = unread
     }
 
     private typealias Container = KeyedDecodingContainer<FileKey>
 
-    nonisolated static let selectionKeys: Set<String> = ["provider", "modelID", "effort", "speed"]
-    nonisolated static let sessionKeys: Set<String> = ["sessionID", "seenItemCount"]
+    nonisolated static let selectionKeys: Set<String> = ["provider", "modelID", "effort", "speed", "accountID"]
+    nonisolated static let sessionKeys: Set<String> = ["sessionID", "seenItemCount", "accountID", "foreignItemsBefore"]
 
     /// Whether this version reads a top-level field other than the items and sessions. False for a field
     /// it does not know.
@@ -71,11 +75,24 @@ struct ThreadFile: Decodable {
         case "isPinned", "isArchived": container.reads(Bool.self, key)
         case "draftContext": readsContext(in: container, key, decoded: try? container.decode([MessageContext].self, forKey: key))
         case "selection": readsSelection(container, key)
+        case "accountSessions": readsAccountSessions(container, key)
         case "importedSession":
             container.reads(ImportedSession.self, key)
                 && (try? container.nestedContainer(keyedBy: FileKey.self, forKey: key))?
                     .hasOnly(["provider", "sessionID", "sourcePath", "importedAt"]) == true
         default: false
+        }
+    }
+
+    /// Whether every set-aside session is one of a known provider with only fields this version reads.
+    private nonisolated static func readsAccountSessions(_ container: Container, _ key: FileKey) -> Bool {
+        guard let keyed = try? container.nestedContainer(keyedBy: FileKey.self, forKey: key) else { return false }
+        return keyed.allKeys.allSatisfy { entry in
+            guard let provider = entry.stringValue.split(separator: "/", maxSplits: 1).first,
+                ProviderKind(rawValue: String(provider)) != nil,
+                let value = try? keyed.nestedContainer(keyedBy: FileKey.self, forKey: entry)
+            else { return false }
+            return value.hasOnly(sessionKeys) && keyed.reads(ProviderSessionRef.self, entry)
         }
     }
 

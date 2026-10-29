@@ -9,14 +9,18 @@ public enum Handoff {
     /// Returns the items `provider` has not seen, or an empty slice when its session is current.
     public nonisolated static func missedItems(in thread: ChatThread, for provider: ProviderKind) -> ArraySlice<TranscriptItem> {
         // A negative count (only a damaged thread file could hold one) means nothing seen.
-        let seen = max(thread.sessions[provider]?.seenItemCount ?? 0, 0)
+        let ref = thread.sessions[provider]
+        let seen = max(ref?.seenItemCount ?? 0, 0)
         let start = min(seen, thread.items.count)
         guard start < thread.items.count else { return [] }
         let missed = thread.items[start...]
-        let fromOthers = missed.contains { item in
+        // The provider's own items before `foreignItemsBefore` came from another of its accounts.
+        let foreignEnd = min(ref?.foreignItemsBefore ?? 0, thread.items.count)
+        let fromOthers = missed.indices.contains { index in
+            let item = thread.items[index]
             switch item.kind {
             case .user, .notice: return false
-            default: return item.provider != nil && item.provider != provider
+            default: return item.provider != nil && (item.provider != provider || index < foreignEnd)
             }
         }
         let hasUserTurns = missed.contains { $0.kind == .user }

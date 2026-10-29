@@ -28,10 +28,16 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
     private let store: AppStore
     private var current: ModelSelection
     private var shownTab: Tab
+    /// The account each agent tab lists the models of: the thread's for its agent, else the agent's first ready one.
+    private var shownAccounts: [ProviderKind: String] = [:]
     private var models: [ModelOption] = []
 
     private let searchField = NSSearchField()
     private let tabs = NSStackView()
+    /// The agent's accounts as chips, under the tabs, when the shown agent has more than one.
+    private let accountRow = NSStackView()
+    private let accountLabel = NSTextField(labelWithString: String(localized: "Account"))
+    private let accountChips = NSStackView()
     private var tabButtons: [Tab: PickerTabButton] = [:]
     private let tableView = ThemedPopupTableView()
     private let scrollView = NSScrollView()
@@ -87,13 +93,26 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
                     [weak self] in self?.show(tab)
                 }
             case .agent(let kind):
-                button = PickerTabButton(kind: kind, isReady: registry.status(kind).state == .ready) { [weak self] in
+                button = PickerTabButton(kind: kind, isReady: registry.isReady(kind)) { [weak self] in
                     self?.show(tab)
                 }
             }
             tabButtons[tab] = button
             tabs.addArrangedSubview(button)
         }
+
+        accountLabel.font = .systemFont(ofSize: 11)
+        accountLabel.textColor = .secondaryLabelColor
+        accountChips.orientation = .horizontal
+        accountChips.spacing = 4
+        accountRow.orientation = .horizontal
+        accountRow.spacing = 8
+        accountRow.setViews([accountLabel, accountChips], in: .leading)
+        let header = NSStackView(views: [tabs, accountRow])
+        header.orientation = .vertical
+        header.alignment = .leading
+        header.spacing = 8
+        header.detachesHiddenViews = true
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("model"))
         tableView.addTableColumn(column)
@@ -153,7 +172,7 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         footer.setViews([settings], in: .trailing)
 
         let dividers = (0..<3).map { _ in ThemedDivider() }
-        let views: [NSView] = [searchIcon, searchField, tabs, scrollView, statusLabel, traits, footer] + dividers
+        let views: [NSView] = [searchIcon, searchField, header, scrollView, statusLabel, traits, footer] + dividers
         for view in views {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
@@ -168,11 +187,13 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
             searchField.leadingAnchor.constraint(equalTo: searchIcon.trailingAnchor, constant: 6),
             searchField.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             dividers[0].topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
-            tabs.topAnchor.constraint(equalTo: dividers[0].bottomAnchor, constant: 8),
-            tabs.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
-            tabs.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
+            header.topAnchor.constraint(equalTo: dividers[0].bottomAnchor, constant: 8),
+            header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
+            header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
+            tabs.widthAnchor.constraint(equalTo: header.widthAnchor),
             tabs.heightAnchor.constraint(equalToConstant: 34),
-            dividers[1].topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 8),
+            accountLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 6),
+            dividers[1].topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
             scrollView.topAnchor.constraint(equalTo: dividers[1].bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -238,9 +259,10 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
             switch shownTab {
             case .favorites:
                 models = registry.favoriteModels
-            case .agent(let kind) where registry.status(kind).state == .ready:
-                var list = registry.pickerModels(for: kind, current: current)
-                if kind == current.provider, !list.contains(where: { $0.modelID == current.modelID }) {
+            case .agent(let kind) where registry.status(kind, account: shownAccount(kind)).state == .ready:
+                let account = shownAccount(kind)
+                var list = registry.pickerModels(for: kind, account: account, current: current)
+                if kind == current.provider, account == current.account, !list.contains(where: { $0.modelID == current.modelID }) {
                     list.insert(ModelOption(provider: kind, modelID: current.modelID, displayName: current.modelID), at: 0)
                 }
                 models = list
@@ -251,9 +273,10 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
             }
         }
         for (tab, button) in tabButtons { button.isSelected = !isSearching && tab == shownTab }
+        updateAccounts(isSearching: isSearching)
         let status: String? =
             if let unavailable {
-                "\(unavailable.displayName): \(ComposerMenus.statusText(unavailable, registry: registry))"
+                unavailableText(unavailable)
             } else if !models.isEmpty {
                 nil
             } else if isSearching {
@@ -271,8 +294,63 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         tableView.reloadData()
     }
 
+    /// In an agent's tab a model is current only for the account the thread runs.
     private func isCurrent(_ model: ModelOption) -> Bool {
-        model.provider == current.provider && model.modelID == current.modelID
+        guard model.provider == current.provider, model.modelID == current.modelID else { return false }
+        if case .agent(let kind) = shownTab, query.isEmpty { return shownAccount(kind) == current.account }
+        return true
+    }
+
+    // MARK: Accounts
+
+    /// The account an agent's tab shows: the one chosen in it, else the thread's for its agent, else the first ready.
+    private func shownAccount(_ kind: ProviderKind) -> String {
+        if let chosen = shownAccounts[kind] { return chosen }
+        let accounts = registry.accounts(for: kind)
+        if kind == current.provider, accounts.contains(where: { $0.id == current.account }) { return current.account }
+        return (accounts.first { registry.status(kind, account: $0.id).state == .ready } ?? accounts[0]).id
+    }
+
+    /// The account a model chosen outside its agent's tab runs with: the thread's for its agent, else the shown one.
+    private func account(choosing model: ModelOption) -> String? {
+        if case .agent(let kind) = shownTab, query.isEmpty, kind == model.provider { return shownAccount(kind) }
+        if model.provider == current.provider { return current.accountID }
+        return ProviderAccount.storedID(shownAccount(model.provider))
+    }
+
+    /// Chips for the shown agent's accounts; hidden while searching, on Favorites, and for agents with one account.
+    private func updateAccounts(isSearching: Bool) {
+        var shown: [ProviderAccount] = []
+        if !isSearching, case .agent(let kind) = shownTab {
+            let accounts = registry.accounts(for: kind)
+            if accounts.count > 1 { shown = accounts }
+        }
+        let wasHidden = accountRow.isHidden
+        accountRow.isHidden = shown.isEmpty
+        accountChips.setViews(
+            shown.map { account in
+                let kind = account.provider
+                let ready = registry.status(kind, account: account.id).state == .ready
+                let chip = PickerChip(title: account.name, isSelected: account.id == shownAccount(kind)) { [weak self] in
+                    self?.shownAccounts[kind] = account.id
+                    self?.reload()
+                    self?.moveSelection(1)
+                }
+                chip.alphaValue = ready ? 1 : 0.55
+                chip.toolTip = ready ? nil : ComposerMenus.statusText(kind, account: account.id, registry: registry)
+                return chip
+            }, in: .leading)
+        if wasHidden != accountRow.isHidden, isViewLoaded, view.window != nil {
+            view.layoutSubtreeIfNeeded()
+            preferredContentSize = view.fittingSize
+            onSizeChange?()
+        }
+    }
+
+    private func unavailableText(_ kind: ProviderKind) -> String {
+        let account = shownAccount(kind)
+        let name = registry.accounts(for: kind).count > 1 ? registry.account(account, of: kind).name : kind.displayName
+        return "\(name): \(ComposerMenus.statusText(kind, account: account, registry: registry))"
     }
 
     // MARK: Favorites
@@ -428,8 +506,9 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
     }
 
     private func choose(_ model: ModelOption) {
+        let account = account(choosing: model)
         close?()
-        onSelect?(ModelSelection(provider: model.provider, modelID: model.modelID, effort: model.defaultEffort))
+        onSelect?(ModelSelection(provider: model.provider, modelID: model.modelID, effort: model.defaultEffort, accountID: account))
     }
 
     func controlTextDidChange(_ obj: Notification) {

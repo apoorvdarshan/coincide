@@ -149,21 +149,30 @@ public struct ModelSelection: Codable, Hashable, Sendable {
     public var effort: String?
     /// A faster speed the model offers (an id of `ModelOption.speeds`), such as `fast`; nil runs at standard speed.
     public var speed: String?
+    /// The provider's account that runs it (`ProviderAccount.id`); nil for the default account, as before accounts.
+    public var accountID: String?
 
-    public nonisolated init(provider: ProviderKind, modelID: String, effort: String? = nil, speed: String? = nil) {
+    public nonisolated init(
+        provider: ProviderKind, modelID: String, effort: String? = nil, speed: String? = nil, accountID: String? = nil
+    ) {
         self.provider = provider
         self.modelID = modelID
         self.effort = effort
         self.speed = speed
+        self.accountID = ProviderAccountID.stored(accountID)
     }
 
-    /// The provider and model are required; an effort or speed this version cannot read is left unset.
+    /// The account's id, the default account's for nil.
+    public nonisolated var account: String { accountID ?? ProviderAccountID.default }
+
+    /// The provider and model are required; an effort, speed or account this version cannot read is left unset.
     public nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         provider = try container.decode(ProviderKind.self, forKey: .provider)
         modelID = try container.decode(String.self, forKey: .modelID)
         effort = container.lenient(String.self, forKey: .effort)
         speed = container.lenient(String.self, forKey: .speed)
+        accountID = ProviderAccountID.stored(container.lenient(String.self, forKey: .accountID))
     }
 }
 
@@ -527,17 +536,28 @@ public struct ProviderSessionRef: Codable, Hashable, Sendable {
     public var sessionID: String
     /// Number of transcript items that existed when this session last finished a turn.
     public var seenItemCount: Int
+    /// The account whose session this is (`ProviderAccount.id`); nil for the default account.
+    public var accountID: String?
+    /// Set when the session comes back after another account of its provider ran the thread: the items before this
+    /// count that the provider wrote came from that account, so `Handoff` recaps them as it does other agents' turns.
+    public var foreignItemsBefore: Int?
 
-    public nonisolated init(sessionID: String, seenItemCount: Int) {
+    public nonisolated init(sessionID: String, seenItemCount: Int, accountID: String? = nil, foreignItemsBefore: Int? = nil) {
         self.sessionID = sessionID
         self.seenItemCount = seenItemCount
+        self.accountID = ProviderAccountID.stored(accountID)
+        self.foreignItemsBefore = foreignItemsBefore
     }
+
+    public nonisolated var account: String { accountID ?? ProviderAccountID.default }
 
     /// A negative count, which only a damaged file could hold, loads as 0 (nothing seen).
     public nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         sessionID = try container.decode(String.self, forKey: .sessionID)
         seenItemCount = max(try container.decode(Int.self, forKey: .seenItemCount), 0)
+        accountID = ProviderAccountID.stored(container.lenient(String.self, forKey: .accountID))
+        foreignItemsBefore = container.lenient(Int.self, forKey: .foreignItemsBefore).map { max($0, 0) }
     }
 }
 
@@ -566,7 +586,12 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     public var accessMode: AccessMode
     public var interactionMode: InteractionMode
     public var items: [TranscriptItem]
+    /// Each provider's native session, of the account the thread last ran that provider with.
     public var sessions: [ProviderKind: ProviderSessionRef]
+    /// The sessions of providers' other accounts, set aside (by `accountSessionKey`) until the thread runs that account
+    /// again: one account cannot resume another's session. Nil rather than empty, so threads that never used another
+    /// account are written as before.
+    public var accountSessions: [String: ProviderSessionRef]?
     public var isPinned: Bool
     public var isArchived: Bool
     /// Hidden from the thread list until then (T3 Code's snooze), unless the agent needs the user first.
@@ -597,6 +622,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         self.interactionMode = interactionMode
         self.items = items
         self.sessions = sessions
+        accountSessions = nil
         self.isPinned = isPinned
         self.isArchived = isArchived
         self.worktreePath = worktreePath
@@ -606,6 +632,39 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     }
 
     public nonisolated var hasUserMessages: Bool { items.contains { $0.kind == .user } }
+
+    /// "claude/<account id>": where `accountSessions` keeps an account's session.
+    public nonisolated static func accountSessionKey(_ provider: ProviderKind, _ account: String) -> String {
+        "\(provider.rawValue)/\(account)"
+    }
+
+    /// The native session `account` of `provider` has in the thread, whether it is the provider's current one or set
+    /// aside.
+    public nonisolated func session(_ provider: ProviderKind, account: String) -> ProviderSessionRef? {
+        if let current = sessions[provider], current.account == account { return current }
+        return accountSessions?[Self.accountSessionKey(provider, account)]
+    }
+
+    /// Makes `account`'s session the provider's current one and sets the other account's aside, so the provider's next
+    /// turn continues `account`'s own session (or starts one) and gets a recap of what the other account did. Returns
+    /// whether anything changed.
+    @discardableResult
+    public nonisolated mutating func activateAccount(_ account: String, for provider: ProviderKind) -> Bool {
+        let current = sessions[provider]
+        if let current, current.account == account { return false }
+        var parked = accountSessions ?? [:]
+        var restored = parked.removeValue(forKey: Self.accountSessionKey(provider, account))
+        if let current { parked[Self.accountSessionKey(provider, current.account)] = current }
+        guard current != nil || restored != nil else { return false }
+        accountSessions = parked.isEmpty ? nil : parked
+        // What the provider wrote while this account was set aside came from another account.
+        if var ref = restored, ref.seenItemCount < items.count {
+            ref.foreignItemsBefore = items.count
+            restored = ref
+        }
+        sessions[provider] = restored
+        return true
+    }
 
     /// Only the id and project are required; anything else this version cannot read falls back to a
     /// default (items it cannot read are left out), so a thread is never lost to one bad field.
@@ -623,6 +682,11 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         interactionMode = container.lenient(InteractionMode.self, forKey: .interactionMode) ?? .build
         items = container.lenientArray(TranscriptItem.self, forKey: .items)
         sessions = container.lenientProviderMap(ProviderSessionRef.self, forKey: .sessions)
+        // Sessions of a provider this version does not know are left out.
+        let parked = (container.lenient([String: ProviderSessionRef].self, forKey: .accountSessions) ?? [:]).filter { key, _ in
+            key.split(separator: "/", maxSplits: 1).first.flatMap { ProviderKind(rawValue: String($0)) } != nil
+        }
+        accountSessions = parked.isEmpty ? nil : parked
         isPinned = container.lenient(Bool.self, forKey: .isPinned) ?? false
         isArchived = container.lenient(Bool.self, forKey: .isArchived) ?? false
         snoozedUntil = container.lenient(Date.self, forKey: .snoozedUntil)
@@ -631,5 +695,18 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         draft = container.lenient(String.self, forKey: .draft)
         draftContext = container.contains(.draftContext) ? container.lenientArray(MessageContext.self, forKey: .draftContext) : nil
         importedSession = container.lenient(ImportedSession.self, forKey: .importedSession)
+    }
+}
+
+/// How selections and sessions store a provider account's id (`ProviderAccount.id`).
+public enum ProviderAccountID {
+    /// The account every agent has: the CLI's own login in its usual home.
+    public nonisolated static let `default` = "default"
+
+    /// `id` as selections and sessions store it: nil for the default account or an empty id, so their files stay as
+    /// before accounts.
+    public nonisolated static func stored(_ id: String?) -> String? {
+        guard let id, !id.isEmpty, id != `default` else { return nil }
+        return id
     }
 }

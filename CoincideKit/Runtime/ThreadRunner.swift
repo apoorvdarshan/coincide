@@ -103,8 +103,9 @@ public final class ThreadRunner {
     private var sessionCommands: [UUID: [ProviderKind: [ProviderCommand]]] = [:]
     /// What each thread's agents run in the background, by provider (`AgentEvent.backgroundWork`).
     private var backgroundWork: [UUID: [ProviderKind: [BackgroundTask]]] = [:]
-    /// Subscription usage each provider's sessions reported, merged over what an earlier check or report read.
-    private var reportedUsageLimits: [ProviderKind: UsageLimits] = [:]
+    /// Subscription usage each account's sessions reported, merged over what an earlier check or report read. Keyed
+    /// by `ChatThread.accountSessionKey`, as each account has a plan of its own.
+    private var reportedUsageLimits: [String: UsageLimits] = [:]
     private var idleTimer: Timer?
     /// Seconds a stopped turn waits for the provider's confirmation. Tests shorten it.
     var stopTimeout: TimeInterval = ThreadRunner.defaultStopTimeout
@@ -187,8 +188,8 @@ public final class ThreadRunner {
     }
 
     /// The time a usage limit that stops the provider's work resets, when the provider reported one in the future.
-    public func blockingLimitReset(for provider: ProviderKind, now: Date = Date()) -> Date? {
-        guard let warning = usageLimits(for: provider)?.current(at: now).warning, warning.blocksWork,
+    public func blockingLimitReset(for provider: ProviderKind, account: String? = nil, now: Date = Date()) -> Date? {
+        guard let warning = usageLimits(for: provider, account: account)?.current(at: now).warning, warning.blocksWork,
             let reset = warning.resetsAt,
             reset > now
         else { return nil }
@@ -223,7 +224,8 @@ public final class ThreadRunner {
     /// The commands and skills an agent offers in the thread: what its session there reported, else what it offered
     /// elsewhere.
     public func commands(_ threadID: UUID, provider: ProviderKind) -> [ProviderCommand] {
-        sessionCommands[threadID]?[provider] ?? registry.commands(for: provider)
+        let account = store.thread(threadID)?.selection.provider == provider ? store.thread(threadID)?.selection.accountID : nil
+        return sessionCommands[threadID]?[provider] ?? registry.commands(for: provider, account: account)
     }
 
     private func setBackgroundWork(_ tasks: [BackgroundTask], threadID: UUID, provider: ProviderKind) {
@@ -244,9 +246,11 @@ public final class ThreadRunner {
     }
 
     /// What the provider's plan allows, as its sessions last reported or its last check read, whichever is newer.
-    public func usageLimits(for provider: ProviderKind) -> UsageLimits? {
-        let checked = registry.status(provider).usageLimits
-        guard let reported = reportedUsageLimits[provider] else { return checked }
+    /// For an account of the provider (nil for its default account).
+    public func usageLimits(for provider: ProviderKind, account: String? = nil) -> UsageLimits? {
+        let account = registry.account(account, of: provider).id
+        let checked = registry.status(provider, account: account).usageLimits
+        guard let reported = reportedUsageLimits[ChatThread.accountSessionKey(provider, account)] else { return checked }
         guard let checked else { return reported }
         // A newer check reads every window afresh.
         if checked.checkedAt >= reported.checkedAt, !checked.windows.isEmpty { return checked }
@@ -605,6 +609,8 @@ public final class ThreadRunner {
 
     /// The access mode each thread's provider session was launched with.
     private var launchedAccess: [UUID: [ProviderKind: AccessMode]] = [:]
+    /// The account each thread's provider session was launched with (`ProviderAccount.id`).
+    private var launchedAccounts: [UUID: [ProviderKind: String]] = [:]
 
     /// The live session, or the one still starting.
     private func currentSession(_ threadID: UUID, _ provider: ProviderKind) -> AgentSession? {
@@ -625,6 +631,16 @@ public final class ThreadRunner {
         {
             shutdown(threadID: threadID, provider: provider)
         }
+        // Another account of the provider runs as another agent would: its own process and native session, with a
+        // recap of what the previous account did. The previous account's session is set aside for when it returns.
+        let account = registry.account(store.thread(threadID)?.selection.accountID, of: provider).id
+        if currentSession(threadID, provider) != nil, launchedAccount(threadID, provider) != account {
+            shutdown(threadID: threadID, provider: provider)
+            sessionCommands[threadID]?[provider] = nil
+        }
+        if store.thread(threadID)?.session(provider, account: account) != store.thread(threadID)?.sessions[provider] {
+            store.updateThread(threadID) { $0.activateAccount(account, for: provider) }
+        }
         if let existing = sessions[threadID]?[provider] {
             // The thread no longer knows this native session (it was rewound), so it must not continue it.
             if let live = liveSessionIDs[threadID]?[provider], store.thread(threadID)?.sessions[provider]?.sessionID != live {
@@ -634,19 +650,22 @@ public final class ThreadRunner {
             }
         }
         if let launch = launches[threadID]?[provider] { return try await join(launch, threadID, provider) }
-        guard let factory = registry.provider(provider) else { throw AgentError.notInstalled(provider) }
+        guard let factory = registry.provider(provider, account: account) else { throw AgentError.notInstalled(provider) }
         guard let executable = await registry.executable(for: provider) else { throw AgentError.notInstalled(provider) }
-        let environment = await registry.environment(for: provider)
+        let environment = await registry.environment(for: provider, account: account)
         // Another send may have started (or finished starting) the session while this one waited.
         if let existing = sessions[threadID]?[provider] { return existing }
         if let launch = launches[threadID]?[provider] { return try await join(launch, threadID, provider) }
         guard let thread = store.thread(threadID) else { throw AgentError.notRunning }
+        // The thread may have moved to another account while the environment was read; the next send starts that one.
+        let resumed = thread.sessions[provider].flatMap { $0.account == account ? $0.sessionID : nil }
         let launch = AgentLaunch(
             provider: provider, executable: executable, environment: environment, workingDirectory: cwd,
-            resumeSessionID: thread.sessions[provider]?.sessionID, selection: thread.selection,
+            resumeSessionID: resumed, selection: thread.selection,
             accessMode: thread.accessMode, interactionMode: thread.interactionMode)
         let session = factory.makeSession(launch)
         launchedAccess[threadID, default: [:]][provider] = launch.accessMode
+        launchedAccounts[threadID, default: [:]][provider] = account
         session.onEvent = { [weak self, weak session] event in
             guard let self, let session, self.isCurrent(session, threadID, provider) else { return }
             self.handle(event, threadID: threadID, provider: provider, session: session)
@@ -731,18 +750,24 @@ public final class ThreadRunner {
         switch event {
         case .sessionStarted(let id):
             liveSessionIDs[threadID, default: [:]][provider] = id
+            let account = launchedAccount(threadID, provider)
             store.updateThread(threadID) { thread in
                 let previous = thread.sessions[provider]
                 // A different id means a fresh native session that has seen nothing yet.
-                let seen = previous?.sessionID == id ? previous?.seenItemCount ?? 0 : 0
-                thread.sessions[provider] = ProviderSessionRef(sessionID: id, seenItemCount: seen)
+                let same = previous?.sessionID == id && previous?.account == account
+                thread.sessions[provider] = ProviderSessionRef(
+                    sessionID: id, seenItemCount: same ? previous?.seenItemCount ?? 0 : 0, accountID: account,
+                    foreignItemsBefore: same ? previous?.foreignItemsBefore : nil)
             }
 
         case .sessionContinued(let id):
             liveSessionIDs[threadID, default: [:]][provider] = id
+            let account = launchedAccount(threadID, provider)
             store.updateThread(threadID) { thread in
-                let seen = thread.sessions[provider]?.seenItemCount ?? 0
-                thread.sessions[provider] = ProviderSessionRef(sessionID: id, seenItemCount: seen)
+                let previous = thread.sessions[provider]
+                thread.sessions[provider] = ProviderSessionRef(
+                    sessionID: id, seenItemCount: previous?.seenItemCount ?? 0, accountID: account,
+                    foreignItemsBefore: previous?.foreignItemsBefore)
             }
 
         case .assistantTextDelta(let itemID, let delta):
@@ -860,18 +885,18 @@ public final class ThreadRunner {
             usage[threadID] = value.merged(with: usage[threadID] ?? TokenUsage())
             store.notify(.runState(threadID))
         case .rateLimits(let windows):
-            recordUsageLimits(windows, for: provider)
+            recordUsageLimits(windows, for: provider, account: launchedAccount(threadID, provider))
         case .modelResolved:
             break
         case .modelsDiscovered(let models):
-            registry.updateModels(models, for: provider)
+            registry.updateModels(models, for: provider, account: launchedAccount(threadID, provider))
         case .notice(let text):
             store.append(TranscriptItem(kind: .notice, text: text, provider: provider), to: threadID)
         case .backgroundWork(let tasks):
             setBackgroundWork(tasks, threadID: threadID, provider: provider)
         case .commandsDiscovered(let commands):
             sessionCommands[threadID, default: [:]][provider] = commands
-            registry.updateCommands(commands, for: provider)
+            registry.updateCommands(commands, for: provider, account: launchedAccount(threadID, provider))
 
         case .agentTurnStarted(let note):
             startAgentTurn(threadID, provider: provider, note: note)
@@ -898,15 +923,23 @@ public final class ThreadRunner {
     /// Merges a provider's report of its usage windows and tells observers when anything changed. Agents repeat
     /// unchanged windows with every token count, which changes nothing. Returns whether anything changed.
     @discardableResult
-    func recordUsageLimits(_ windows: [UsageLimitWindow], for provider: ProviderKind, at date: Date = Date()) -> Bool {
+    func recordUsageLimits(
+        _ windows: [UsageLimitWindow], for provider: ProviderKind, account: String? = nil, at date: Date = Date()
+    ) -> Bool {
         guard !windows.isEmpty else { return false }
-        let current = usageLimits(for: provider)
+        let account = registry.account(account, of: provider).id
+        let current = usageLimits(for: provider, account: account)
         let updated = (current ?? UsageLimits(windows: [], checkedAt: date)).applying(windows, at: date)
-        reportedUsageLimits[provider] = updated
+        reportedUsageLimits[ChatThread.accountSessionKey(provider, account)] = updated
         guard updated.windows != current?.windows else { return false }
         NotificationCenter.default.post(
-            name: Self.usageLimitsChangedNotification, object: self, userInfo: ["provider": provider])
+            name: Self.usageLimitsChangedNotification, object: self, userInfo: ["provider": provider, "accountID": account])
         return true
+    }
+
+    /// The account the thread's live (or starting) session of `provider` runs with.
+    private func launchedAccount(_ threadID: UUID, _ provider: ProviderKind) -> String {
+        launchedAccounts[threadID]?[provider] ?? ProviderAccount.defaultID
     }
 
     /// The model `provider` works with on the thread: its running turn's, or the one it was last sent a message
@@ -995,7 +1028,7 @@ public final class ThreadRunner {
             store.append(TranscriptItem(kind: .error, text: message, provider: provider), to: threadID)
             // A turn stopped by a usage limit picks up again once it resets, when the user asked for that.
             if store.settings.resumesAfterUsageLimit, scheduledResumes[threadID] == nil,
-                let reset = blockingLimitReset(for: provider)
+                let reset = blockingLimitReset(for: provider, account: launchedAccount(threadID, provider))
             {
                 resumeAtReset(threadID, at: reset)
             }

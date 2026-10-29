@@ -11,8 +11,11 @@ import Foundation
 struct AntigravityFlavor: ACPAgentFlavor {
     nonisolated static let defaultModelID = "antigravity-default"
     nonisolated static let harnessName = AntigravityRelease.harnessName
-    /// The only sign-in Coincide uses: the user's Google account (subscription), never API billing.
+    /// The default account's sign-in: the user's Google account (subscription), never API billing.
     nonisolated static let authMethodID = "oauth-personal"
+    /// The sign-in of an account added with a Gemini API key (T3 Code's `gemini-api-key`), which bills the key.
+    nonisolated static let apiKeyMethodID = "gemini-api-key"
+    nonisolated static let apiKeyVariable = "GEMINI_API_KEY"
     /// What the agent prints (on stdout or stderr) when it needs a Google sign-in.
     nonisolated static let signInPrefix = "Open the following link to authenticate the ACP server: "
     /// The image types Antigravity accepts inline (T3 Code's list).
@@ -29,21 +32,29 @@ struct AntigravityFlavor: ACPAgentFlavor {
     /// Reads the plan's quotas: the shared probe, which keeps the access token between checks, unless a test passes
     /// its own.
     let usage: AntigravityUsageProbe
+    /// Signs in with `GEMINI_API_KEY` instead of Google: an added account's private profile with a Gemini API key.
+    let usesAPIKey: Bool
 
     init(
         paths: AntigravityPaths = .standard, profile: AntigravityProfile? = nil, runtime: AntigravityRuntime? = nil,
-        usage: AntigravityUsageProbe? = nil
+        usage: AntigravityUsageProbe? = nil, usesAPIKey: Bool = false
     ) {
         self.paths = paths
-        self.profile = profile ?? AntigravityProfile(geminiHome: paths.profileDirectory)
+        var profile = profile ?? AntigravityProfile(geminiHome: paths.profileDirectory)
+        if usesAPIKey { profile.authType = Self.apiKeyMethodID }
+        self.profile = profile
         self.runtime = runtime
         self.usage = usage ?? .shared
+        self.usesAPIKey = usesAPIKey
     }
 
     var provider: ProviderKind { .antigravity }
 
+    /// The profile removes API keys so the Google subscription is used; an API-key account puts its own key back.
     func environment(_ base: [String: String], executable: URL) -> [String: String] {
-        profile.environment(base, harness: Self.harnessURL(for: executable))
+        var environment = profile.environment(base, harness: Self.harnessURL(for: executable))
+        if usesAPIKey, let key = base[Self.apiKeyVariable], !key.isEmpty { environment[Self.apiKeyVariable] = key }
+        return environment
     }
 
     /// Prepares the private profile and keeps a downloaded release in place while it runs.
@@ -60,7 +71,7 @@ struct AntigravityFlavor: ACPAgentFlavor {
     /// The agent is a one-file bundle that unpacks itself on every launch.
     var initializeTimeout: TimeInterval { 180 }
     /// Antigravity picks its credential source from the method, so it signs in before any session call.
-    func authMethodID(environment: [String: String]) -> String? { Self.authMethodID }
+    func authMethodID(environment: [String: String]) -> String? { usesAPIKey ? Self.apiKeyMethodID : Self.authMethodID }
     var authenticatesEagerly: Bool { true }
     /// Loading replays the whole history slowly; resume does not.
     var prefersResume: Bool { true }
@@ -197,6 +208,15 @@ struct AntigravityFlavor: ACPAgentFlavor {
                     models: models)
             }
         }
+        if usesAPIKey {
+            let hasKey = environment[Self.apiKeyVariable]?.isEmpty == false
+            return ACPProbe(
+                status: ProviderStatus(
+                    state: hasKey ? .ready : .notAuthenticated, version: version, executable: executable,
+                    account: hasKey ? String(localized: "Gemini API key") : nil,
+                    message: hasKey ? nil : String(localized: "Add a Gemini API key in Settings to use this account.")),
+                models: models)
+        }
         guard profile.isSignedIn else {
             return ACPProbe(
                 status: ProviderStatus(
@@ -214,7 +234,9 @@ struct AntigravityFlavor: ACPAgentFlavor {
 
     /// The Google subscription's quotas, with the private profile's sign-in (see `AntigravityUsageLimits`).
     func usageLimits(environment: [String: String]) async -> UsageLimitsOutcome? {
-        await usage.read(profile)
+        // An API key has no subscription quotas.
+        guard !usesAPIKey else { return nil }
+        return await usage.read(profile)
     }
 
     /// The helper sits next to the real executable, even when PATH points at a symlink.

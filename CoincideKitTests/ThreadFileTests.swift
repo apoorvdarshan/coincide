@@ -213,6 +213,10 @@ struct ThreadFileTests {
             $0.accessMode = .approval
             $0.interactionMode = .plan
             $0.sessions = [.codex: ProviderSessionRef(sessionID: "x", seenItemCount: 2), .claude: ProviderSessionRef(sessionID: "c", seenItemCount: 0)]
+            $0.selection.accountID = "work"
+            $0.accountSessions = [
+                "claude/work": ProviderSessionRef(sessionID: "w", seenItemCount: 1, accountID: "work", foreignItemsBefore: 2)
+            ]
             $0.isPinned = true
             $0.isArchived = true
             $0.worktreePath = "/tmp/worktree"
