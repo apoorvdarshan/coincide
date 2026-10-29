@@ -109,6 +109,6 @@ The agents' logos are trademarks of Anthropic, OpenAI, Anysphere, xAI, SST and G
 
 ## License
 
-Coincide is released under the [MIT License](LICENSE).
+Coincide is released under the [Functional Source License, Version 1.1, MIT Future License](LICENSE.md) (FSL-1.1-MIT). You can read, run, modify and contribute to it, and use it for anything except a product that competes with Coincide. Each version becomes available under the MIT License two years after its release. Versions released before this change remain under the MIT License.
 
 Made by [Apoorv Darshan](https://github.com/apoorvdarshan) · X [@apoorvdarshan](https://x.com/apoorvdarshan) · Instagram [@apoorvcodes](https://instagram.com/apoorvcodes)
