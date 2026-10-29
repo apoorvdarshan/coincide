@@ -101,6 +101,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var followUpBehavior: FollowUpBehavior
     public var showReasoning: Bool
     public var confirmBeforeDeletingThreads: Bool
+    /// ⌘Q quits only when held or pressed twice (`QuitShortcutGuard`); a single press shows a hint. Quitting from the
+    /// menu, the Dock, logging out or AppleScript is never held up.
+    public var holdToQuit: Bool
     /// Have the thread's agent name a new thread from its first message (T3 Code's generated titles).
     public var generatesThreadTitles: Bool
     /// App update checks are opt-in and run at most daily, including across launches.
@@ -152,6 +155,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         followUpBehavior = .steer
         showReasoning = true
         confirmBeforeDeletingThreads = true
+        holdToQuit = true
         generatesThreadTitles = true
         lastAppUpdateCheck = nil
         checksForAppUpdates = false
@@ -192,6 +196,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         followUpBehavior = value(.followUpBehavior, defaults.followUpBehavior)
         showReasoning = value(.showReasoning, defaults.showReasoning)
         confirmBeforeDeletingThreads = value(.confirmBeforeDeletingThreads, defaults.confirmBeforeDeletingThreads)
+        holdToQuit = value(.holdToQuit, defaults.holdToQuit)
         generatesThreadTitles = value(.generatesThreadTitles, defaults.generatesThreadTitles)
         lastAppUpdateCheck = value(.lastAppUpdateCheck, defaults.lastAppUpdateCheck)
         checksForAppUpdates = value(.checksForAppUpdates, defaults.checksForAppUpdates)
@@ -660,6 +665,8 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
             .increaseFontSize: "mod++", .decreaseFontSize: "mod+-", .resetFontSize: "mod+0", .stopTurn: "mod+.",
             .previousThread: "mod+shift+[", .nextThread: "mod+shift+]", .chooseModel: "mod+shift+m",
             .reasoningEffort: "mod+shift+e", .accessMode: "mod+shift+a", .pinThread: "mod+shift+p",
+            // Always asks first. File › Close Window moves to ⌘⇧W, and other windows still close with ⌘W.
+            .deleteThread: "mod+w",
         ]
         for index in 1...9 {
             if let command = jumpToThread(index) { defaults[command] = "mod+\(index)" }

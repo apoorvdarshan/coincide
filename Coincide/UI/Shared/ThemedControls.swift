@@ -40,10 +40,13 @@ final class ThemedButton: NSButton {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// The space between the title and either end of the fill.
+    static let horizontalPadding: CGFloat = 14
+
     override var intrinsicContentSize: NSSize {
         let text = (title as NSString).size(withAttributes: [.font: font ?? .systemFont(ofSize: 13)])
         let imageWidth = image.map { $0.size.width + 6 } ?? 0
-        return NSSize(width: ceil(text.width + imageWidth) + 28, height: 28)
+        return NSSize(width: ceil(text.width + imageWidth) + Self.horizontalPadding * 2, height: 28)
     }
 
     override var isHighlighted: Bool {
@@ -107,7 +110,12 @@ final class ThemedButton: NSButton {
             .font: font ?? .systemFont(ofSize: 13, weight: .medium),
             .foregroundColor: text.withAlphaComponent(isEnabled ? 1 : 0.5),
         ]
-        let size = (title as NSString).size(withAttributes: attributes)
+        var size = (title as NSString).size(withAttributes: attributes)
+        // A title wider than the button is cut short with an ellipsis rather than drawn past the fill. Layouts size
+        // buttons to their titles (`intrinsicContentSize`), so this only shows when one is squeezed.
+        let available = max(0, bounds.width - Self.horizontalPadding * 2 - (image.map { $0.size.width + 6 } ?? 0))
+        let fits = size.width <= available
+        if !fits { size.width = available }
         var x = (bounds.width - size.width) / 2
         if let image {
             let imageSize = image.size
@@ -123,7 +131,18 @@ final class ThemedButton: NSButton {
             }
             tinted.draw(in: imageRect)
         }
-        (title as NSString).draw(at: NSPoint(x: x, y: (bounds.height - size.height) / 2), withAttributes: attributes)
+        let origin = NSPoint(x: x, y: (bounds.height - size.height) / 2)
+        if fits {
+            (title as NSString).draw(at: origin, withAttributes: attributes)
+        } else {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byTruncatingTail
+            var truncated = attributes
+            truncated[.paragraphStyle] = paragraph
+            (title as NSString).draw(
+                with: NSRect(origin: origin, size: size), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                attributes: truncated)
+        }
     }
 
     override func drawFocusRingMask() {
@@ -264,7 +283,8 @@ final class ThemedAlert: NSObject {
         window.beginSheet(panel) { response in completionHandler?(response) }
     }
 
-    private func makePanel() -> ThemedAlertPanel {
+    /// The alert's window, laid out but not shown. Internal for the layout tests.
+    func makePanel() -> ThemedAlertPanel {
         if buttons.isEmpty { addButton(withTitle: String(localized: "OK")) }
         let title = NSTextField(wrappingLabelWithString: messageText)
         title.font = .systemFont(ofSize: 15, weight: .semibold)
@@ -278,11 +298,35 @@ final class ThemedAlert: NSObject {
             image: Theme.symbol(alertStyle == .critical ? "exclamationmark.triangle.fill" : "questionmark.circle", size: 20)
                 ?? NSImage())
         icon.contentTintColor = alertStyle == .critical ? .systemRed : .secondaryLabelColor
+        // Each button is as wide as its title needs. The alert widens to fit them in a row, up to a limit; past it they
+        // stack, full width, as macOS alerts do.
+        let layout = AlertButtonLayout(buttonWidths: buttons.map { AlertButtonLayout.buttonWidth($0.intrinsicContentSize.width) })
         let buttonRow = NSStackView()
-        buttonRow.orientation = .horizontal
-        buttonRow.spacing = 8
-        // The default button sits at the trailing end, as in macOS alerts.
-        buttonRow.setViews(buttons.reversed(), in: .trailing)
+        buttonRow.spacing = AlertButtonLayout.spacing
+        for button in buttons {
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        switch layout.arrangement {
+        case .row:
+            buttonRow.orientation = .horizontal
+            // The default button sits at the trailing end, as in macOS alerts.
+            buttonRow.setViews(buttons.reversed(), in: .trailing)
+            for button in buttons {
+                button.widthAnchor.constraint(
+                    greaterThanOrEqualToConstant: AlertButtonLayout.buttonWidth(button.intrinsicContentSize.width)
+                ).isActive = true
+            }
+        case .stacked:
+            buttonRow.orientation = .vertical
+            buttonRow.alignment = .leading
+            // The default button on top, Cancel at the bottom.
+            let stacked = AlertButtonLayout.stackedOrder(count: buttons.count, cancelIndex: cancelButtonIndex).map { buttons[$0] }
+            buttonRow.setViews(stacked, in: .top)
+            for button in stacked {
+                button.widthAnchor.constraint(equalTo: buttonRow.widthAnchor).isActive = true
+            }
+        }
         var rows: [NSView] = [icon, title, info]
         if showsSuppressionButton, let suppressionButton { rows.append(suppressionButton) }
         rows.append(buttonRow)
@@ -294,7 +338,7 @@ final class ThemedAlert: NSObject {
         stack.edgeInsets = NSEdgeInsets(top: 22, left: 22, bottom: 18, right: 22)
         stack.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            title.widthAnchor.constraint(equalToConstant: 336),
+            title.widthAnchor.constraint(equalToConstant: layout.contentWidth),
             info.widthAnchor.constraint(equalTo: title.widthAnchor),
             buttonRow.widthAnchor.constraint(equalTo: title.widthAnchor),
         ])
@@ -315,9 +359,14 @@ final class ThemedAlert: NSObject {
         finish(NSApplication.ModalResponse(rawValue: sender.tag))
     }
 
+    /// The index of the "Cancel" button, if there is one.
+    private var cancelButtonIndex: Int? {
+        buttons.firstIndex { $0.title == String(localized: "Cancel") }
+    }
+
     /// Escape answers with the Cancel button, or the last button when there is none.
     private func cancel() {
-        let cancel = buttons.first { $0.title == String(localized: "Cancel") } ?? buttons.last
+        let cancel = cancelButtonIndex.map { buttons[$0] } ?? buttons.last
         if let cancel { finish(NSApplication.ModalResponse(rawValue: cancel.tag)) }
     }
 
@@ -330,6 +379,61 @@ final class ThemedAlert: NSObject {
         }
         self.panel = nil
         presented = nil
+    }
+}
+
+/// How a themed alert lays out its buttons: in one row when their titles fit within the widest the alert grows to,
+/// otherwise stacked, one per line at full width (as macOS alerts with long button titles do). Buttons are never
+/// narrower than their titles, so no title is clipped or drawn past its button.
+struct AlertButtonLayout: Equatable {
+    enum Arrangement: Equatable {
+        case row
+        case stacked
+    }
+
+    /// The width of the alert's text and buttons when they need no more.
+    static let minimumWidth: CGFloat = 336
+    /// The widest the alert grows to fit its buttons in a row.
+    static let maximumWidth: CGFloat = 480
+    static let spacing: CGFloat = 8
+    /// The narrowest a button gets, so a short title such as "OK" still makes a comfortable target.
+    static let minimumButtonWidth: CGFloat = 72
+
+    let arrangement: Arrangement
+    /// The width of the alert's content: its text and button area.
+    let contentWidth: CGFloat
+
+    /// `buttonWidths` are the widths the buttons need (`buttonWidth(_:)`).
+    init(
+        buttonWidths: [CGFloat], minimumWidth: CGFloat = Self.minimumWidth, maximumWidth: CGFloat = Self.maximumWidth,
+        spacing: CGFloat = Self.spacing
+    ) {
+        let rowWidth = buttonWidths.reduce(0, +) + spacing * CGFloat(max(0, buttonWidths.count - 1))
+        if rowWidth <= maximumWidth {
+            arrangement = .row
+            contentWidth = max(minimumWidth, ceil(rowWidth))
+        } else {
+            arrangement = .stacked
+            // Stacked buttons share the alert's width; only a single title wider than that widens it.
+            contentWidth = max(minimumWidth, ceil(buttonWidths.max() ?? 0))
+        }
+    }
+
+    /// The width a button with this intrinsic width takes in an alert.
+    static func buttonWidth(_ intrinsicWidth: CGFloat) -> CGFloat {
+        max(minimumButtonWidth, ceil(intrinsicWidth))
+    }
+
+    /// The order of stacked buttons, by index in the order they were added: the default (first) button on top, Cancel
+    /// at the bottom, the others between in the order they were added. Cancel stays on top when it is the default.
+    static func stackedOrder(count: Int, cancelIndex: Int?) -> [Int] {
+        guard count > 0 else { return [] }
+        var order = Array(0..<count)
+        if let cancelIndex, cancelIndex != 0, order.contains(cancelIndex) {
+            order.removeAll { $0 == cancelIndex }
+            order.append(cancelIndex)
+        }
+        return order
     }
 }
 

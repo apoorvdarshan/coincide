@@ -22,6 +22,7 @@ nonisolated enum SettingsRowID: String, Hashable, Sendable {
     case defaultModel
     case accessMode
     case confirmDelete
+    case holdToQuit
     case threadTitles
     case newThreadChat
     case resumeAfterLimit

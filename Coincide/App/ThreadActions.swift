@@ -112,12 +112,14 @@ enum ThreadActions {
         ThreadActivity.shared.markUnread(threadID)
     }
 
-    /// Deletion is undoable for the current app session. Running work still needs confirmation.
-    static func delete(_ threadID: UUID, in window: NSWindow?) {
-        delete([threadID], in: window)
+    /// Deletion is undoable for the current app session. Running work still needs confirmation, and `alwaysConfirm`
+    /// asks even when the user turned confirmation off: Thread › Delete Thread… does, as its shortcut is ⌘W, which is
+    /// easily pressed meaning to close a window.
+    static func delete(_ threadID: UUID, in window: NSWindow?, alwaysConfirm: Bool = false) {
+        delete([threadID], in: window, alwaysConfirm: alwaysConfirm)
     }
 
-    static func delete(_ threadIDs: [UUID], in window: NSWindow?) {
+    static func delete(_ threadIDs: [UUID], in window: NSWindow?, alwaysConfirm: Bool = false) {
         let ids = Array(Set(threadIDs)).filter { store.hasThread($0) }
         guard !ids.isEmpty else { return }
         let perform = {
@@ -126,7 +128,7 @@ enum ThreadActions {
         }
         let busy = busyTerminals(in: ids)
         let running = ids.contains { ThreadRunner.shared.isRunning($0) }
-        guard store.settings.confirmBeforeDeletingThreads || !busy.isEmpty || running else {
+        guard alwaysConfirm || store.settings.confirmBeforeDeletingThreads || !busy.isEmpty || running else {
             perform()
             return
         }
@@ -144,7 +146,8 @@ enum ThreadActions {
         alert.informativeText = text
         alert.addButton(withTitle: String(localized: "Delete")).hasDestructiveAction = true
         alert.addButton(withTitle: String(localized: "Cancel"))
-        alert.showsSuppressionButton = busy.isEmpty && !running
+        // "Don't ask again" turns the setting off, which a confirmation that always shows would ignore.
+        alert.showsSuppressionButton = busy.isEmpty && !running && !alwaysConfirm
         alert.suppressionButton?.title = String(localized: "Don’t ask again")
         present(alert, in: window) { confirmed in
             guard confirmed else { return }

@@ -230,6 +230,9 @@ private struct SettingsSearchResults: View {
             SettingsSearchEntry(
                 title: String(localized: "Confirm before deleting threads"), pane: general, setting: .confirmDelete),
             SettingsSearchEntry(
+                title: String(localized: "Hold ⌘Q to quit"), pane: general, setting: .holdToQuit,
+                keywords: [String(localized: "Quit"), String(localized: "Keyboard")]),
+            SettingsSearchEntry(
                 title: String(localized: "Resume after usage limits"), pane: general, setting: .resumeAfterLimit,
                 keywords: [String(localized: "Rate limit"), String(localized: "Continue"), String(localized: "Auto-resume")]),
             SettingsSearchEntry(
