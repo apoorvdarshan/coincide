@@ -170,6 +170,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Where the terminal opens: below the chat (its button in the rail), as it always has, or in the right column (its
     /// button in the toolbar's top-right group).
     public var terminalPlacement: TerminalPlacement
+    /// Bundle identifier of the app the "Open In" button opens project folders in, picked in Settings › General or from
+    /// any Open In menu; nil for automatic, the first installed editor. (Earlier versions kept it in the interface
+    /// state, `UIState`, from where it moves here once.)
+    public var preferredOpenTarget: String?
     /// The color themes used in dark and light mode, by id. An id this version does not know falls back to the first
     /// theme of its kind.
     public var darkTheme: String
@@ -223,6 +227,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         replyTypeface = .newYork
         userMessageSide = .right
         terminalPlacement = .bottom
+        preferredOpenTarget = nil
         darkTheme = "carbon"
         lightTheme = "carbon-light"
         shortcutOverrides = [:]
@@ -272,6 +277,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         replyTypeface = value(.replyTypeface, defaults.replyTypeface)
         userMessageSide = value(.userMessageSide, defaults.userMessageSide)
         terminalPlacement = value(.terminalPlacement, defaults.terminalPlacement)
+        preferredOpenTarget = value(.preferredOpenTarget, defaults.preferredOpenTarget)
         darkTheme = value(.darkTheme, defaults.darkTheme)
         lightTheme = value(.lightTheme, defaults.lightTheme)
         // A value that is not text stays as written, so the Keyboard pane can point it out.

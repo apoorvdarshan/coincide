@@ -226,6 +226,12 @@ struct SettingsSearchResults: View {
                     String(localized: "Navigation"), String(localized: "Shell"), String(localized: "Layout"),
                 ]),
             SettingsSearchEntry(
+                title: String(localized: "Open project folders in"), pane: general, setting: .openIn,
+                keywords: [
+                    String(localized: "Open In"), String(localized: "Editor"), "Xcode", "VS Code", "Cursor", "Finder",
+                    String(localized: "Terminal"),
+                ]),
+            SettingsSearchEntry(
                 title: String(localized: "Send messages with"), pane: general, setting: .sendShortcut,
                 keywords: [String(localized: "Return"), String(localized: "Enter"), String(localized: "New line")]),
             SettingsSearchEntry(
