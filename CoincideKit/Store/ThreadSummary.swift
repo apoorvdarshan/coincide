@@ -31,6 +31,8 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
     public var sessionProviders: [ProviderKind]
     public var nativeSessionIDs: [ProviderKind: String]
     public var importedSession: ImportedSession?
+    /// The user named the thread, so the agent leaves its title alone.
+    public var isTitleCustom: Bool
 
     public nonisolated init(_ thread: ChatThread) {
         id = thread.id
@@ -52,6 +54,7 @@ public struct ThreadSummary: Codable, Hashable, Sendable, Identifiable {
         sessionProviders = Self.ordered(thread.sessions.keys)
         nativeSessionIDs = thread.sessions.mapValues(\.sessionID)
         importedSession = thread.importedSession
+        isTitleCustom = thread.isTitleCustom
     }
 
     nonisolated static func ordered(_ providers: some Sequence<ProviderKind>) -> [ProviderKind] {
@@ -99,6 +102,7 @@ struct ThreadSummaryFile: Decodable {
         thread.updatedAt = container.lenient(Date.self, forKey: key("updatedAt")) ?? createdAt
         thread.snoozedUntil = container.lenient(Date.self, forKey: key("snoozedUntil"))
         thread.importedSession = container.lenient(ImportedSession.self, forKey: key("importedSession"))
+        thread.titledByUser = container.lenient(Bool.self, forKey: key("titledByUser"))
         summary = ThreadSummary(thread)
         summary.itemCount = items.count
         summary.hasUserMessages = items.contains { $0.kind == .user }

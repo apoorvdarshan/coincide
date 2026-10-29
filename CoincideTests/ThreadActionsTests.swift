@@ -158,8 +158,11 @@ struct ThreadActionsTests {
     @Test func renamingTrimsAndIgnoresBlankNames() throws {
         try withProject { project, folder in
             let id = try #require(ThreadActions.newThread(in: project.id))
+            #expect(store.summary(id)?.isTitleCustom == false)
             ThreadActions.rename(id, to: "  Fix the sidebar \n")
             #expect(store.thread(id)?.title == "Fix the sidebar")
+            // The sidebar, menu and palette all rename through here; the agent leaves the name alone after.
+            #expect(store.summary(id)?.isTitleCustom == true)
             ThreadActions.rename(id, to: "   ")
             #expect(store.thread(id)?.title == "Fix the sidebar")
 

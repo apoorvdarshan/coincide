@@ -187564,114 +187564,114 @@
         }
       }
     },
-    "The thread's agent titles it from your first message, with its quickest model." : {
+    "The thread's agent titles it from your first message with its quickest model, and may refresh the title as the thread develops. Threads you rename keep your name." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Der Agent der Unterhaltung erstellt den Titel anhand deiner ersten Nachricht mit seinem schnellsten Modell."
+            "value" : "Der Agent der Unterhaltung erstellt den Titel anhand deiner ersten Nachricht mit seinem schnellsten Modell und kann ihn im Verlauf der Unterhaltung aktualisieren. Unterhaltungen, die du umbenennst, behalten deinen Namen."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El agente del hilo crea el título a partir de tu primer mensaje con su modelo más rápido."
+            "value" : "El agente del hilo crea el título a partir de tu primer mensaje con su modelo más rápido y puede actualizarlo a medida que avanza el hilo. Los hilos que renombras conservan tu nombre."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El agente del hilo crea el título a partir de tu primer mensaje con su modelo más rápido."
+            "value" : "El agente del hilo crea el título a partir de tu primer mensaje con su modelo más rápido y puede actualizarlo a medida que avanza el hilo. Los hilos a los que les cambias el nombre conservan tu nombre."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "L’agent de la conversation crée son titre à partir de votre premier message, avec son modèle le plus rapide."
+            "value" : "L’agent de la conversation crée son titre à partir de votre premier message, avec son modèle le plus rapide, et peut l’actualiser au fil de la conversation. Les conversations que vous renommez gardent votre nom."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "बातचीत का एजेंट अपने सबसे तेज़ मॉडल से आपके पहले संदेश के आधार पर शीर्षक बनाता है।"
+            "value" : "बातचीत का एजेंट अपने सबसे तेज़ मॉडल से आपके पहले संदेश के आधार पर शीर्षक बनाता है, और बातचीत आगे बढ़ने पर उसे अपडेट कर सकता है। जिन बातचीतों का नाम आप बदलते हैं, उनका नाम वही रहता है।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Agen percakapan membuat judul dari pesan pertama Anda menggunakan model tercepatnya."
+            "value" : "Agen percakapan membuat judul dari pesan pertama Anda menggunakan model tercepatnya, dan dapat memperbaruinya seiring percakapan berkembang. Percakapan yang Anda ganti namanya tetap memakai nama Anda."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "L’agente della conversazione crea il titolo dal tuo primo messaggio, con il suo modello più veloce."
+            "value" : "L’agente della conversazione crea il titolo dal tuo primo messaggio, con il suo modello più veloce, e può aggiornarlo man mano che la conversazione procede. Le conversazioni che rinomini mantengono il tuo nome."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "スレッドのエージェントが最も高速なモデルを使い、最初のメッセージからタイトルを付けます。"
+            "value" : "スレッドのエージェントが最も高速なモデルを使い、最初のメッセージからタイトルを付け、スレッドの進行に合わせて更新することがあります。名前を変更したスレッドはその名前のままです。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "스레드의 에이전트가 가장 빠른 모델로 첫 메시지를 바탕으로 제목을 지정합니다."
+            "value" : "스레드의 에이전트가 가장 빠른 모델로 첫 메시지를 바탕으로 제목을 지정하며, 스레드가 진행됨에 따라 제목을 새로 고칠 수 있습니다. 이름을 변경한 스레드는 그 이름을 유지합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "De agent van het gesprek maakt de titel op basis van je eerste bericht, met zijn snelste model."
+            "value" : "De agent van het gesprek maakt de titel op basis van je eerste bericht, met zijn snelste model, en kan die bijwerken naarmate het gesprek vordert. Gesprekken die je hernoemt, houden jouw naam."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Agent wątku tworzy tytuł na podstawie pierwszej wiadomości, używając swojego najszybszego modelu."
+            "value" : "Agent wątku tworzy tytuł na podstawie pierwszej wiadomości, używając swojego najszybszego modelu, i może go odświeżyć w miarę rozwoju wątku. Wątki, których nazwę zmienisz, zachowują Twoją nazwę."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O agente da conversa cria o título a partir da sua primeira mensagem, com seu modelo mais rápido."
+            "value" : "O agente da conversa cria o título a partir da sua primeira mensagem, com seu modelo mais rápido, e pode atualizá-lo conforme a conversa avança. Conversas que você renomeia mantêm o seu nome."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Агент обсуждения создаёт заголовок по первому сообщению с помощью своей самой быстрой модели."
+            "value" : "Агент обсуждения создаёт заголовок по первому сообщению с помощью своей самой быстрой модели и может обновлять его по ходу обсуждения. Обсуждения, которые вы переименовали, сохраняют ваше название."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Konuşmanın aracısı, en hızlı modelini kullanarak ilk mesajınızdan bir başlık oluşturur."
+            "value" : "Konuşmanın aracısı, en hızlı modelini kullanarak ilk mesajınızdan bir başlık oluşturur ve konuşma ilerledikçe başlığı yenileyebilir. Yeniden adlandırdığınız konuşmalar verdiğiniz adı korur."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Агент обговорення створює заголовок із першого повідомлення, використовуючи свою найшвидшу модель."
+            "value" : "Агент обговорення створює заголовок із першого повідомлення, використовуючи свою найшвидшу модель, і може оновлювати його в міру розвитку обговорення. Обговорення, які ви перейменували, зберігають вашу назву."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tác nhân của cuộc trò chuyện đặt tiêu đề từ tin nhắn đầu tiên của bạn bằng mô hình nhanh nhất của nó."
+            "value" : "Tác nhân của cuộc trò chuyện đặt tiêu đề từ tin nhắn đầu tiên của bạn bằng mô hình nhanh nhất của nó và có thể làm mới tiêu đề khi cuộc trò chuyện tiếp diễn. Cuộc trò chuyện bạn đã đổi tên sẽ giữ tên của bạn."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "会话的代理使用最快的模型，根据你的第一条消息生成标题。"
+            "value" : "会话的代理使用最快的模型，根据你的第一条消息生成标题，并可能随着会话的进展更新标题。你重命名过的会话会保留你的名称。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "對話的代理程式使用最快的模型，根據你的第一則訊息產生標題。"
+            "value" : "對話的代理程式使用最快的模型，根據你的第一則訊息產生標題，並可能隨著對話進展更新標題。你重新命名過的對話會保留你的名稱。"
           }
         }
       }

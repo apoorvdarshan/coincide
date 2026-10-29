@@ -65,7 +65,7 @@ enum ThreadActions {
     static func rename(_ threadID: UUID, to title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, store.summary(threadID)?.title != trimmed else { return }
-        store.updateThread(threadID) { $0.title = trimmed }
+        store.renameThread(threadID, to: trimmed)
     }
 
     static func togglePin(_ threadID: UUID) {

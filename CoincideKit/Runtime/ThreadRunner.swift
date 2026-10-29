@@ -291,15 +291,18 @@ public final class ThreadRunner {
         let selection = thread.selection
         let provider = selection.provider
 
-        if !thread.hasUserMessages {
+        // A thread the user named before its first message keeps that name.
+        if !thread.hasUserMessages, !thread.isTitleCustom {
             let provisional = Self.title(from: trimmed.isEmpty ? context.first?.summary ?? "" : trimmed)
-            store.updateThread(threadID) { $0.title = provisional }
+            store.updateThread(threadID) {
+                $0.title = provisional
+                // Started here, so the agent may look at the title again as the thread goes on.
+                $0.titleRefreshes = []
+            }
             if store.settings.generatesThreadTitles, !trimmed.isEmpty, let cwd = store.workingDirectory(for: threadID) {
-                Task { [store, registry] in
-                    await ThreadTitles.generate(
-                        threadID: threadID, message: trimmed, provisional: provisional, selection: selection, cwd: cwd,
-                        store: store, registry: registry)
-                }
+                ThreadTitles.start(
+                    threadID: threadID, message: trimmed, provisional: provisional, selection: selection, cwd: cwd,
+                    store: store, registry: registry)
             }
         }
         let userItem = TranscriptItem(
@@ -1114,6 +1117,9 @@ public final class ThreadRunner {
             }
         } else {
             store.updateThread(threadID, touch: true) { _ in }
+        }
+        if outcome == .completed, !turn.isAgentInitiated {
+            ThreadTitles.refreshIfDue(threadID: threadID, store: store, registry: registry)
         }
         store.notify(.runState(threadID))
         // A before snapshot still being taken has nothing to complete yet; `send` takes the after one once it is done.
