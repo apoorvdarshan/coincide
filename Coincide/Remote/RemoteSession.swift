@@ -38,6 +38,14 @@ final class RemoteSession {
     var onClose: ((RemoteSession) -> Void)?
     /// Called after a phone pairs, so Settings can close its QR code.
     var onPaired: ((RemoteDevice) -> Void)?
+    /// Called when the phone reports its presence, so the server can remember its lock-screen alert setting.
+    var onPresence: ((RemoteSession, RemotePresence) -> Void)?
+    /// The clock presence is stamped with; tests set their own.
+    var now: () -> Date = Date.init
+
+    /// What the phone last said about itself; nil from a phone that never did (one older than notification routing),
+    /// which therefore never gets alerts or clears.
+    private(set) var presence: DevicePresence?
 
     private var observation: ObservationHandle?
     private var openThreads: Set<UUID> = []
@@ -231,10 +239,27 @@ final class RemoteSession {
                 respond(id, .ok)
             case .usageLimits:
                 respond(id, .usage(adapter.usageLimits()))
+            case .presence(let reported):
+                updatePresence(reported)
+                respond(id, .ok)
             }
         } catch {
             fail(id, Self.remote(error))
         }
+    }
+
+    private func updatePresence(_ reported: RemotePresence) {
+        guard let deviceID else { return }
+        let previous = presence
+        let current = DevicePresence(deviceID: deviceID, presence: reported, receivedAt: now())
+        presence = current
+        // A thread on screen in front counts as seen, as on the Mac: its badge and its notifications everywhere go.
+        if current.state == .active, let open = current.openThreadID,
+            previous?.state != .active || previous?.openThreadID != open
+        {
+            try? adapter.markSeen(open)
+        }
+        onPresence?(self, reported)
     }
 
     private var notFound: RemoteError { RemoteError(.notFound, String(localized: "That thread no longer exists.")) }
@@ -266,6 +291,9 @@ final class RemoteSession {
             guard openThreads.contains(threadID) else { return }
             pendingTurns.insert(threadID)
             scheduleItems()
+        case .clearNotifications(let threadID):
+            guard presence != nil else { return }
+            send(.event(.clearNotifications(threadID: threadID)))
         }
     }
 
@@ -332,6 +360,13 @@ final class RemoteSession {
     }
 
     // MARK: Sending
+
+    /// Sends an alert to this phone. False when it can't take one: closed, or never reported its presence.
+    func deliver(_ notification: RemoteNotification) -> Bool {
+        guard case .authenticated = state, presence != nil, transport != nil else { return false }
+        send(.event(.notify(notification)))
+        return true
+    }
 
     private func respond(_ id: String, _ result: RemoteResult) {
         send(.response(id: id, result: result))

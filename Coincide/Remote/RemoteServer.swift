@@ -58,6 +58,9 @@ final class RemoteServer {
     /// The device that paired last, so the QR sheet can say so and close.
     private(set) var lastPairedDevice: RemoteDevice?
     private(set) var connectedDeviceIDs: Set<String> = []
+    /// Paired phones with lock-screen alerts turned on, by device id, as they last reported. Kept across launches in
+    /// `remote-alerts.json`, since the alerts are for when the phone isn't connected.
+    private(set) var alertTargets: [String: PushTarget] = [:]
 
     @ObservationIgnored private let directory: URL
     @ObservationIgnored private lazy var pairing: RemotePairing = {
@@ -78,7 +81,14 @@ final class RemoteServer {
     init(directory: URL = AppStore.shared.directory) {
         self.directory = directory
         settings = RemoteSettings.load(from: directory)
+        if let data = try? Data(contentsOf: directory.appendingPathComponent(Self.alertsFile)),
+            let saved = try? JSONDecoder().decode([String: PushTarget].self, from: data)
+        {
+            alertTargets = saved
+        }
     }
+
+    private static let alertsFile = "remote-alerts.json"
 
     var isEnabled: Bool { settings.isEnabled }
 
@@ -204,6 +214,10 @@ final class RemoteServer {
             self?.pairingPayload = nil
             self?.lastPairedDevice = device
         }
+        session.onPresence = { [weak self] session, presence in
+            guard let self, let deviceID = session.deviceID else { return }
+            self.updateAlertTarget(deviceID, zone: presence.alertZone)
+        }
         wrapper.onAuthenticated = { [weak self] in self?.updateConnectedDevices() }
         connections[ObjectIdentifier(wrapper)] = wrapper
         session.start()
@@ -216,6 +230,58 @@ final class RemoteServer {
 
     private func updateConnectedDevices() {
         connectedDeviceIDs = Set(connections.values.compactMap { $0.session?.deviceID })
+    }
+
+    // MARK: Alerts
+
+    /// What connected phones last said about themselves.
+    var devicePresences: [DevicePresence] {
+        connections.values.compactMap { $0.session?.presence }
+    }
+
+    /// Phones that may get lock-screen alerts; none while Remote is off.
+    var pushTargets: [PushTarget] {
+        guard settings.isEnabled else { return [] }
+        return alertTargets.values.filter { pairing.isPaired($0.deviceID) }
+    }
+
+    /// Sends an alert to the device's live connections. False when none can take it.
+    func deliver(_ notification: RemoteNotification, to deviceID: String) -> Bool {
+        var delivered = false
+        for connection in connections.values {
+            guard let session = connection.session, session.deviceID == deviceID else { continue }
+            if session.deliver(notification) { delivered = true }
+        }
+        return delivered
+    }
+
+    /// Tells connected phones the user saw the thread.
+    func clearNotifications(_ threadID: UUID) {
+        guard !connections.isEmpty else { return }
+        adapter.clearNotifications(threadID)
+    }
+
+    private func updateAlertTarget(_ deviceID: String, zone: String?) {
+        let updated = zone.map { PushTarget(deviceID: deviceID, zone: $0, lastActiveAt: Date()) }
+        guard alertTargets[deviceID] != updated else { return }
+        // A heartbeat only moves the time; save it at most every few minutes.
+        if let updated, let old = alertTargets[deviceID], old.zone == updated.zone,
+            updated.lastActiveAt.timeIntervalSince(old.lastActiveAt) < 300
+        {
+            alertTargets[deviceID]?.lastActiveAt = updated.lastActiveAt
+            return
+        }
+        alertTargets[deviceID] = updated
+        saveAlertTargets()
+    }
+
+    private func saveAlertTargets() {
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try JSONEncoder().encode(alertTargets).write(to: directory.appendingPathComponent(Self.alertsFile), options: .atomic)
+        } catch {
+            NSLog("Coincide: couldn’t save lock-screen alert settings: \(error.localizedDescription)")
+        }
     }
 
     // MARK: Pairing
@@ -252,6 +318,11 @@ final class RemoteServer {
 
     private func devicesChanged() {
         devices = pairing.pairedDevices
+        let stale = alertTargets.keys.filter { !pairing.isPaired($0) }
+        if !stale.isEmpty {
+            for id in stale { alertTargets[id] = nil }
+            saveAlertTargets()
+        }
         for connection in connections.values {
             guard let session = connection.session, let deviceID = session.deviceID, !pairing.isPaired(deviceID) else { continue }
             session.revoke()

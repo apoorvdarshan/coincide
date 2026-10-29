@@ -96,6 +96,8 @@ final class RemoteStoreAdapter {
         case reset(UUID)
         /// A thread's turn or queue changed.
         case turn(UUID)
+        /// The user saw the thread somewhere: phones remove what was posted about it.
+        case clearNotifications(UUID)
     }
 
     let store: AppStore
@@ -149,6 +151,12 @@ final class RemoteStoreAdapter {
         notificationTokens = []
     }
 
+    /// Tells every connected phone to remove what was posted about the thread. Goes to every session, whether or not
+    /// anything changes in the store, so a phone that isn't observing anything else still hears it.
+    func clearNotifications(_ threadID: UUID) {
+        emit(.clearNotifications(threadID))
+    }
+
     private func emit(_ change: Change) {
         for handler in handlers.values { handler(change) }
     }
@@ -187,7 +195,8 @@ final class RemoteStoreAdapter {
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
             theme: RemoteThemeInfo(
                 appearance: settings.appearance.rawValue, darkThemeID: settings.darkTheme, lightThemeID: settings.lightTheme),
-            showsReasoning: settings.showReasoning, followUpBehavior: settings.followUpBehavior.rawValue)
+            showsReasoning: settings.showReasoning, followUpBehavior: settings.followUpBehavior.rawValue,
+            notifies: settings.notifyWhenInBackground)
     }
 
     /// The sidebar in the Mac's order: its sections, its project and bot sorts (Chats last), and each list's thread sort.
