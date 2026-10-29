@@ -177,20 +177,30 @@ struct SidebarOrderingTests {
     @Test func collapsedSectionsAndTheBotSortSurviveRelaunchAndOlderFilesExpandEverything() throws {
         let folder = TemporaryDirectory("sidebar-collapsed-state")
         let state = UIState(directory: folder.url)
-        #expect(state.values.collapsedSections.isEmpty && state.values.botSort == .manual)
+        #expect(state.values.collapsedSections.isEmpty && state.values.botSort == .recentActivity)
         state.update { values in
             values.collapsedSections = ["projects", "bots"]
             values.botSort = .name
+            values.choseBotSort = true
         }
         state.flush()
         let reopened = UIState(directory: folder.url).values
         #expect(reopened.collapsedSections == ["projects", "bots"] && reopened.botSort == .name)
         // A file from before sections could collapse, or with values this version can't read, falls back.
         let older = try JSONDecoder().decode(UIState.Values.self, from: Data(#"{"projectSort":"name"}"#.utf8))
-        #expect(older.collapsedSections.isEmpty && older.botSort == .manual && older.projectSort == .name)
+        #expect(older.collapsedSections.isEmpty && older.botSort == .recentActivity && older.projectSort == .name)
         let future = try JSONDecoder().decode(
             UIState.Values.self, from: Data(#"{"collapsedSections":"bots","botSort":"mood"}"#.utf8))
-        #expect(future.collapsedSections.isEmpty && future.botSort == .manual)
+        #expect(future.collapsedSections.isEmpty && future.botSort == .recentActivity)
+    }
+
+    /// Bots once defaulted to manual and every file saved it; only a sort the user picked survives the new default.
+    @Test func botsDefaultToRecentActivityUnlessTheUserChoseASort() throws {
+        let saved = try JSONDecoder().decode(UIState.Values.self, from: Data(#"{"botSort":"manual"}"#.utf8))
+        #expect(saved.botSort == .recentActivity && !saved.choseBotSort)
+        let chosen = try JSONDecoder().decode(
+            UIState.Values.self, from: Data(#"{"botSort":"manual","choseBotSort":true}"#.utf8))
+        #expect(chosen.botSort == .manual && chosen.choseBotSort)
     }
 
     @Test func theAutomaticCutShowsALittleMoreThanTheSidebarHolds() {

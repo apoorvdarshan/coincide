@@ -1025,7 +1025,10 @@ final class SidebarViewController: NSViewController {
 
     @objc private func setBotSort(_ sender: NSMenuItem) {
         guard let sort = (sender.representedObject as? String).flatMap(BotSort.init(rawValue:)) else { return }
-        UIState.shared.update { $0.botSort = sort }
+        UIState.shared.update {
+            $0.botSort = sort
+            $0.choseBotSort = true
+        }
         rebuild()
     }
 

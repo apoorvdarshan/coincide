@@ -54,7 +54,10 @@ final class UIState {
         var threadSort = ThreadSort.recentActivity
         /// How Chats, the project-free threads, are sorted.
         var chatSort = ThreadSort.recentActivity
-        var botSort = BotSort.manual
+        var botSort = BotSort.recentActivity
+        /// Whether the user picked the bot sort. Files from before it defaulted to recent activity saved the old
+        /// default, manual, which only counts when chosen.
+        var choseBotSort = false
         /// The Pinned section's order (thread ids), most recently pinned first. Threads pinned elsewhere (or before
         /// this order was kept) join at the top as the sidebar notices them.
         var pinnedThreads: [String] = []
@@ -103,7 +106,8 @@ final class UIState {
             projectSort = value(.projectSort, defaults.projectSort)
             threadSort = value(.threadSort, defaults.threadSort)
             chatSort = value(.chatSort, defaults.chatSort)
-            botSort = value(.botSort, defaults.botSort)
+            choseBotSort = value(.choseBotSort, defaults.choseBotSort)
+            botSort = choseBotSort ? value(.botSort, defaults.botSort) : defaults.botSort
             pinnedThreads = value(.pinnedThreads, defaults.pinnedThreads)
             sidebarSections = value(.sidebarSections, defaults.sidebarSections)
             collapsedSections = value(.collapsedSections, defaults.collapsedSections)
