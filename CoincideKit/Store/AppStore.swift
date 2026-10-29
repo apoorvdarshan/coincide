@@ -74,6 +74,10 @@ public final class AppStore {
     /// settled as the transcript is read.
     private var filesFromEarlierRuns: Set<UUID> = []
     private var undoableDeletions: [UUID: Int] = [:]
+    /// Threads whose agents went on in the background agent host while the app was closed. Their items left running
+    /// or waiting may still finish, so they are not settled as their transcripts are read. Set at launch, before any
+    /// transcript is read.
+    public var threadsWithHostedAgents: Set<UUID> = []
     private var turnObserver: NSObjectProtocol?
     /// How long changes collect before they are written.
     var saveDelay: TimeInterval = 0.6
@@ -586,7 +590,7 @@ public final class AppStore {
             return nil
         }
         var thread = file.thread
-        if filesFromEarlierRuns.contains(id) { Self.settleUnfinishedItems(of: &thread) }
+        if filesFromEarlierRuns.contains(id), !threadsWithHostedAgents.contains(id) { Self.settleUnfinishedItems(of: &thread) }
         loadedThreads[id] = thread
         markUsed(id)
         unloadIdleTranscripts(keeping: id)

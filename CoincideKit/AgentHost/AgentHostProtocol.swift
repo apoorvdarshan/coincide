@@ -186,7 +186,8 @@ public struct AgentHostThreadInfo: Codable, Sendable, Hashable {
 /// command instead of misreading it.
 public enum AgentHostCommand: Codable, Sendable {
     /// Starts the session for the key, or keeps the one already running (then `launch` is ignored).
-    case start(key: AgentSessionKey, launch: AgentLaunch, thread: AgentHostThreadInfo)
+    /// `account` picks the provider instance, as `ProviderRegistry.provider(_:account:)` does in the app.
+    case start(key: AgentSessionKey, launch: AgentLaunch, account: ProviderAccount, thread: AgentHostThreadInfo)
     case send(key: AgentSessionKey, input: AgentTurnInput, thread: AgentHostThreadInfo)
     case steer(key: AgentSessionKey, input: AgentTurnInput)
     case respond(key: AgentSessionKey, approvalID: String, optionID: String, text: String?)

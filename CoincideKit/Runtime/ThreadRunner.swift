@@ -140,6 +140,10 @@ public final class ThreadRunner {
     /// Called when an agent is slow to start, which usually means macOS is waiting on a permission prompt.
     public var onSlowStart: ((UUID, ProviderKind) -> Void)?
 
+    /// Makes the sessions that run in the background agent host while the app uses one (`AgentHostClient`), so they
+    /// outlive the app. Nil, or a nil result, runs the session in the app.
+    public var hostedSession: ((_ threadID: UUID, _ launch: AgentLaunch, _ account: ProviderAccount) -> AgentSession?)?
+
     public init(store: AppStore, registry: ProviderRegistry) {
         self.store = store
         self.registry = registry
@@ -171,6 +175,11 @@ public final class ThreadRunner {
     public func turn(_ threadID: UUID) -> TurnState? { turns[threadID] }
 
     public var runningThreadIDs: [UUID] { Array(turns.keys) }
+
+    /// Threads whose running turn stops when the app quits: its session runs in the app, not the agent host.
+    public var runningInAppThreadIDs: [UUID] {
+        turns.filter { threadID, turn in !(currentSession(threadID, turn.provider) is DetachableAgentSession) }.map(\.key)
+    }
 
     /// Providers with a live process for the thread.
     public func liveProviders(_ threadID: UUID) -> [ProviderKind] {
@@ -584,12 +593,34 @@ public final class ThreadRunner {
     /// Ends every session and stops every agent process and what it started, waiting briefly for them
     /// to exit. Call when quitting.
     public func shutdownAll() {
+        detachHostedSessions()
         let threadIDs = Set(sessions.keys).union(launches.keys).union(turns.keys)
         for threadID in threadIDs { shutdown(threadID: threadID) }
         // Sessions stop their processes asynchronously, which a quitting app does not wait for.
         ChildProcesses.terminateAllAndWait()
         // The turns just ended still need their after snapshots, or their changes could never be shown.
         waitForCheckpoints(timeout: 3)
+    }
+
+    /// Lets go of the sessions that run in the agent host without ending them, and leaves their threads as they are:
+    /// the host keeps the agents working and logs what they do, and the next launch catches up (`adopt`).
+    public func detachHostedSessions() {
+        for (threadID, providers) in sessions {
+            for (provider, session) in providers {
+                guard let hosted = session as? DetachableAgentSession else { continue }
+                hosted.detach()
+                sessions[threadID]?[provider] = nil
+                if turns[threadID]?.provider == provider { turns[threadID] = nil }
+            }
+        }
+        for (threadID, providers) in launches {
+            for (provider, launch) in providers {
+                guard let hosted = launch.session as? DetachableAgentSession else { continue }
+                hosted.detach()
+                launches[threadID]?[provider] = nil
+                if turns[threadID]?.provider == provider { turns[threadID] = nil }
+            }
+        }
     }
 
     /// True while snapshots of ended turns are still being taken.
@@ -663,7 +694,8 @@ public final class ThreadRunner {
             provider: provider, executable: executable, environment: environment, workingDirectory: cwd,
             resumeSessionID: resumed, selection: thread.selection,
             accessMode: thread.accessMode, interactionMode: thread.interactionMode)
-        let session = factory.makeSession(launch)
+        let session =
+            hostedSession?(threadID, launch, registry.account(account, of: provider)) ?? factory.makeSession(launch)
         launchedAccess[threadID, default: [:]][provider] = launch.accessMode
         launchedAccounts[threadID, default: [:]][provider] = account
         session.onEvent = { [weak self, weak session] event in
@@ -717,6 +749,45 @@ public final class ThreadRunner {
         // Shut down while starting, or it exited right away.
         guard sessions[threadID]?[provider] === launch.session else { throw AgentError.notRunning }
         return launch.session
+    }
+
+    /// Takes up a session that went on while the app was closed (in the agent host), as if this run had started it.
+    /// With `turnWasActive`, the turn it ran when the app left off runs again, opened by the thread's last message:
+    /// the events that follow (`AgentHostClient.attach`) continue that turn's items and end it.
+    @discardableResult
+    public func adopt(_ session: AgentSession, threadID: UUID, turnWasActive: Bool) -> Bool {
+        let provider = session.provider
+        guard let thread = store.thread(threadID), currentSession(threadID, provider) == nil else { return false }
+        sessions[threadID, default: [:]][provider] = session
+        launchedAccess[threadID, default: [:]][provider] = thread.accessMode
+        launchedAccounts[threadID, default: [:]][provider] = thread.sessions[provider]?.account ?? ProviderAccount.defaultID
+        if let id = session.sessionID { liveSessionIDs[threadID, default: [:]][provider] = id }
+        lastActivity[threadID, default: [:]][provider] = Date()
+        session.onEvent = { [weak self, weak session] event in
+            guard let self, let session, self.isCurrent(session, threadID, provider) else { return }
+            self.handle(event, threadID: threadID, provider: provider, session: session)
+        }
+        if turnWasActive, turns[threadID] == nil,
+            let start = thread.items.lastIndex(where: { $0.kind == .user && $0.steered != true }),
+            thread.items[start].provider == provider
+        {
+            let user = thread.items[start]
+            var state = TurnState(provider: provider, startedAt: user.createdAt, userItemID: user.id, modelID: user.modelID)
+            state.isStarting = false
+            state.promptSent = true
+            state.delivered = true
+            let later = thread.items[(start + 1)...]
+            state.steeredItemIDs = later.filter { $0.kind == .user && $0.steered == true }.map(\.id)
+            // Deltas for the turn's items continue them rather than opening new ones.
+            var map: [String: UUID] = [:]
+            for item in later where item.provider == provider && [.assistant, .reasoning, .tool].contains(item.kind) {
+                if let externalID = item.externalID { map[key(item.kind, externalID)] = item.id }
+            }
+            itemMaps[threadID] = map
+            turns[threadID] = state
+        }
+        store.notify(.runState(threadID))
+        return true
     }
 
     func shutDownIdleSessions(now: Date = Date()) {

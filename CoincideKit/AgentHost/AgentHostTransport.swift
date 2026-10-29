@@ -12,6 +12,9 @@ public protocol AgentHostTransport: AnyObject {
     func perform(_ command: AgentHostCommand) async throws -> AgentHostReply
     func retireWhenIdle()
     func invalidate()
+    /// Tells the host how far the app got and waits until it knows, at most `timeout` seconds: for quitting, when
+    /// a message sent the usual way could be lost as the app exits.
+    func acknowledgeSynchronously(_ acknowledgements: [AgentSessionKey: Int], timeout: TimeInterval)
 }
 
 extension AgentHostTransport {
@@ -134,6 +137,18 @@ public final class XPCAgentHostTransport: NSObject, AgentHostTransport, AgentHos
         return try? AgentHostWire.decode(AgentHostWelcome.self, from: reply)
     }
 
+    public func acknowledgeSynchronously(_ acknowledgements: [AgentSessionKey: Int], timeout: TimeInterval) {
+        guard let connection, !acknowledgements.isEmpty else { return }
+        let deadline = Date().addingTimeInterval(timeout)
+        for (key, sequence) in acknowledgements {
+            guard let data = try? AgentHostWire.encode(AgentHostCommand.acknowledge(key: key, sequence: sequence)) else { continue }
+            let box = ReplyBox()
+            let proxy = connection.remoteObjectProxyWithErrorHandler { _ in box.finish(nil) } as? AgentHostXPC
+            proxy?.perform(data) { box.finish($0) }
+            guard box.wait(timeout: max(0, deadline.timeIntervalSinceNow)) != nil else { return }
+        }
+    }
+
     private func call(_ body: (AgentHostXPC, @escaping @Sendable (Data) -> Void) -> Void) async throws -> Data {
         guard let connection else { throw AgentHostError.disconnected }
         return try await withCheckedThrowingContinuation { continuation in
@@ -225,6 +240,10 @@ public final class InProcessAgentHostTransport: AgentHostTransport, AgentHostSub
     }
 
     public func retireWhenIdle() { core.retireWhenIdle() }
+
+    public func acknowledgeSynchronously(_ acknowledgements: [AgentSessionKey: Int], timeout: TimeInterval) {
+        for (key, sequence) in acknowledgements { core.acknowledge(key, through: sequence) }
+    }
 
     /// Ends the connection, as the app quitting does.
     public func invalidate() {

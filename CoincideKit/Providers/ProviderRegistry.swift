@@ -76,11 +76,11 @@ public final class ProviderRegistry {
         [.claude, .codex, .cursor, .grok, .opencode, .antigravity].map { builtInProvider($0, store: store) }
     }
 
-    static func builtInProvider(_ kind: ProviderKind, store: AppStore) -> AgentProvider {
+    static func builtInProvider(_ kind: ProviderKind, store: AppStore?) -> AgentProvider {
         switch kind {
         case .claude: ClaudeProvider()
         case .codex: CodexProvider()
-        case .cursor: CursorProvider(keychainUsageAllowed: { store.settings.cursorKeychainUsageEnabled })
+        case .cursor: CursorProvider(keychainUsageAllowed: { store?.settings.cursorKeychainUsageEnabled ?? false })
         case .grok: ACPProvider(profile: .grok)
         case .opencode: OpenCodeProvider()
         case .antigravity: ACPProvider(profile: .antigravity)
@@ -89,8 +89,20 @@ public final class ProviderRegistry {
 
     /// An added account's provider. An Antigravity account runs in a private profile of its own, in its home.
     static func builtInProvider(for account: ProviderAccount, store: AppStore) -> AgentProvider {
-        guard account.provider == .antigravity, !account.isDefault else { return builtInProvider(account.provider, store: store) }
-        let profile = AntigravityProfile(geminiHome: account.home(in: store.directory))
+        builtInProvider(
+            for: account, dataDirectory: store.directory,
+            cursorKeychainUsageAllowed: { store.settings.cursorKeychainUsageEnabled })
+    }
+
+    /// The built-in provider of an account, without a store: the agent host makes its sessions from these.
+    public static func builtInProvider(
+        for account: ProviderAccount, dataDirectory: URL, cursorKeychainUsageAllowed: @escaping @MainActor () -> Bool
+    ) -> AgentProvider {
+        guard account.provider == .antigravity, !account.isDefault else {
+            if account.provider == .cursor { return CursorProvider(keychainUsageAllowed: cursorKeychainUsageAllowed) }
+            return builtInProvider(account.provider, store: nil)
+        }
+        let profile = AntigravityProfile(geminiHome: account.home(in: dataDirectory))
         let usesAPIKey = account.auth == .apiKey
         return ACPProvider(profile: .antigravity) { AntigravityFlavor(profile: profile, usesAPIKey: usesAPIKey) }
     }
