@@ -149,7 +149,7 @@ struct KeyShortcutMenuTests {
 struct KeyCommandTests {
     @Test func defaultsAreUsableDistinctAndFreeOfMacOSShortcuts() {
         let defaults = KeyCommand.allCases.compactMap(\.defaultShortcut)
-        #expect(defaults.count == 29)
+        #expect(defaults.count == 30)
         #expect(Set(defaults).count == defaults.count)
         #expect(defaults.allSatisfy { $0.isUsableInMenus })
         let reserved = Set(ReservedShortcut.macOS.map(\.shortcut))
@@ -161,6 +161,19 @@ struct KeyCommandTests {
         #expect(KeyCommand.newThread.defaultShortcut == .builtIn("mod+n"))
         #expect(KeyCommand.newChat.defaultShortcut == .builtIn("mod+shift+n"))
         #expect(KeyCommand.newChat.menu == .file)
+    }
+
+    /// ⌘W deletes the open thread (always asking first) instead of closing the main window. A focused terminal keeps
+    /// it for closing its tab, which is not worth a warning.
+    @Test func commandWDeletesTheThread() {
+        let commandW = KeyShortcut.builtIn("mod+w")
+        #expect(KeyCommand.deleteThread.defaultShortcut == commandW)
+        #expect(KeyBindings().commands(using: commandW) == [.deleteThread])
+        let terminal = ReservedShortcut(shortcut: commandW, title: "Close terminal", owner: .focusedView("terminal"))
+        #expect(KeyBindings().conflicts(for: .deleteThread, reserved: ReservedShortcut.macOS + [terminal]) == [.reserved(terminal)])
+        #expect(KeyBindings().commandsWithConflicts(reserved: ReservedShortcut.macOS + [terminal]).isEmpty)
+        // Removing the shortcut leaves ⌘W to nothing in the main window.
+        #expect(KeyBindings(overrides: ["thread.delete": ""]).commands(using: commandW).isEmpty)
     }
 
     @Test func defaultsMatchT3WhereT3HasTheCommand() {

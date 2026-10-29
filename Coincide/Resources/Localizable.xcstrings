@@ -111379,6 +111379,118 @@
         }
       }
     },
+    "Hold ⌘Q to quit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zum Beenden ⌘Q gedrückt halten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantén ⌘Q para salir"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantén presionado ⌘Q para salir"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Maintenez ⌘Q pour quitter"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बंद करने के लिए ⌘Q दबाए रखें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tahan ⌘Q untuk keluar"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tieni premuto ⌘Q per uscire"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "⌘Qを長押しして終了"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "종료하려면 ⌘Q를 길게 누르세요"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Houd ⌘Q ingedrukt om te stoppen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przytrzymaj ⌘Q, aby zakończyć"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantenha ⌘Q pressionado para sair"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Удерживайте ⌘Q для выхода"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çıkmak için ⌘Q'yu basılı tutun"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Утримуйте ⌘Q, щоб вийти"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ ⌘Q để thoát"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "按住 ⌘Q 退出"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "按住 ⌘Q 結束"
+          }
+        }
+      }
+    },
     "Home" : {
       "localizations" : {
         "de" : {
@@ -160900,6 +161012,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "按下新的快速鍵。按 Delete 可移除；按 Escape 可取消。"
+          }
+        }
+      }
+    },
+    "Pressing ⌘Q once shows a reminder; hold it or press it again to quit. Quitting from the Coincide menu or the Dock is immediate." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einmaliges Drücken von ⌘Q zeigt einen Hinweis; zum Beenden gedrückt halten oder erneut drücken. Beenden über das Coincide-Menü oder das Dock erfolgt sofort."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pulsar ⌘Q una vez muestra un aviso; mantenlo o púlsalo de nuevo para salir. Salir desde el menú Coincide o el Dock es inmediato."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Presionar ⌘Q una vez muestra un aviso; mantenlo presionado o vuelve a presionarlo para salir. Salir desde el menú Coincide o el Dock es inmediato."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appuyer une fois sur ⌘Q affiche un rappel ; maintenez la touche ou appuyez de nouveau pour quitter. Quitter depuis le menu Coincide ou le Dock est immédiat."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "⌘Q एक बार दबाने पर एक रिमाइंडर दिखता है; बंद करने के लिए इसे दबाए रखें या फिर से दबाएँ। Coincide मेनू या Dock से बंद करना तुरंत होता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menekan ⌘Q sekali menampilkan pengingat; tahan atau tekan lagi untuk keluar. Keluar dari menu Coincide atau Dock langsung terjadi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Premere ⌘Q una volta mostra un promemoria; tienilo premuto o premilo di nuovo per uscire. L'uscita dal menu Coincide o dal Dock è immediata."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "⌘Qを1回押すとリマインダーが表示されます。終了するには長押しするか、もう一度押します。CoincideメニューやDockからの終了はすぐに行われます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "⌘Q를 한 번 누르면 알림이 표시됩니다. 종료하려면 길게 누르거나 한 번 더 누르세요. Coincide 메뉴나 Dock에서는 바로 종료됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eén keer op ⌘Q drukken toont een herinnering; houd de toets ingedrukt of druk nogmaals om te stoppen. Stoppen via het Coincide-menu of het Dock gebeurt direct."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jednokrotne naciśnięcie ⌘Q pokazuje przypomnienie; przytrzymaj je lub naciśnij ponownie, aby zakończyć. Zakończenie z menu Coincide lub z Docka następuje od razu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pressionar ⌘Q uma vez mostra um lembrete; mantenha pressionado ou pressione de novo para sair. Sair pelo menu Coincide ou pelo Dock é imediato."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Однократное нажатие ⌘Q показывает напоминание; чтобы выйти, удерживайте сочетание или нажмите его ещё раз. Выход через меню Coincide или Dock происходит сразу."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "⌘Q'ya bir kez basmak bir hatırlatma gösterir; çıkmak için basılı tutun veya tekrar basın. Coincide menüsünden ya da Dock'tan çıkış hemen gerçekleşir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Одне натискання ⌘Q показує нагадування; щоб вийти, утримуйте його або натисніть ще раз. Вихід через меню Coincide або Dock відбувається одразу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhấn ⌘Q một lần sẽ hiện lời nhắc; giữ hoặc nhấn lại để thoát. Thoát từ menu Coincide hoặc Dock sẽ diễn ra ngay."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "按一次 ⌘Q 会显示提醒；按住或再按一次即可退出。从 Coincide 菜单或程序坞退出会立即生效。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "按一下 ⌘Q 會顯示提醒；按住或再按一次即可結束。從 Coincide 選單或 Dock 結束會立即生效。"
           }
         }
       }

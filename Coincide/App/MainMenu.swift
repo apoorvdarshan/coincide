@@ -81,7 +81,9 @@ final class MainMenu: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Edit Instructions…"), #selector(MainWindowController.editInstructions(_:))))
         menu.addItem(.separator())
-        menu.addItem(standard(String(localized: "Close Window"), #selector(NSWindow.performClose(_:)), "w"))
+        // ⌘W is Thread › Delete Thread… in the main window (`KeyCommand.deleteThread`); other windows still close with
+        // it (`CloseShortcut`).
+        menu.addItem(standard(String(localized: "Close Window"), #selector(NSWindow.performClose(_:)), "w", [.command, .shift]))
         return menu
     }
 

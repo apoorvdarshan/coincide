@@ -47,6 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ThreadSnooze.shared.start()
         PreviewSessions.shared.start()
         AppUpdates.shared.start()
+        // ⌘W deletes the open thread in the main window; elsewhere it still closes the window.
+        CloseShortcut.start { [weak self] in self?.mainWindow?.window }
+        // Hold ⌘Q to quit (Settings › General). Quitting any other way is never held up.
+        QuitShortcut.shared.start { [weak self] in self?.mainWindow?.window }
         // Off unless the user turned on Settings › General › Remote.
         RemoteServer.shared.startIfEnabled()
         // Chats are always listed, so the first one can be started from the sidebar.

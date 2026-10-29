@@ -113,12 +113,22 @@ struct MainMenuTests {
             "Thread › Access…": "⇧⌘A", "Thread › Previous Thread": "⇧⌘[", "Thread › Next Thread": "⇧⌘]",
             "Coincide › Settings…": "⌘,", "Edit › Find › Search Threads": "⌥⌘F", "Edit › Find › Find…": "⌘F",
             "Edit › Add Selection to Composer": "⌘L",
+            // ⌘W deletes the open thread, after asking; the window closes with ⌘⇧W.
+            "Thread › Delete Thread…": "⌘W", "File › Close Window": "⇧⌘W", "Coincide › Quit Coincide": "⌘Q",
         ]
         for (title, keys) in expected {
             #expect(byTitle[title] == keys, "\(title)")
         }
         // Plan mode keeps Shift-Tab for the composer.
         #expect(byTitle["Thread › Plan Mode"] == "")
+    }
+
+    /// Hold ⌘Q to quit takes only the key press (`QuitShortcut`): the menu item itself quits at once, as the Dock,
+    /// logging out and AppleScript do, through `terminate:`.
+    @Test func quitFromTheMenuGoesStraightToTerminate() throws {
+        let quit = try #require(items(in: menu).first { $0.path == ["Coincide", "Quit Coincide"] }?.item)
+        #expect(quit.action == #selector(NSApplication.terminate(_:)))
+        #expect(quit.target == nil)
     }
 
     @Test func theCommandPaletteShowsTheSameShortcutsAsTheMenus() throws {

@@ -74,6 +74,11 @@ struct GeneralSettingsView: View {
                         Text("Ask before a thread and its history are deleted.")
                     }
                     .settingsRevealable(.confirmDelete, highlighted: highlighted)
+                    Toggle(isOn: model.binding(\.holdToQuit)) {
+                        Text("Hold ⌘Q to quit")
+                        Text("Pressing ⌘Q once shows a reminder; hold it or press it again to quit. Quitting from the Coincide menu or the Dock is immediate.")
+                    }
+                    .settingsRevealable(.holdToQuit, highlighted: highlighted)
                     Toggle(isOn: model.binding(\.resumesAfterUsageLimit)) {
                         Text("Resume after usage limits")
                         Text("When an agent stops at its plan's limit, the thread continues on its own once the limit resets.")
@@ -202,6 +207,7 @@ struct GeneralSettingsView: View {
             settings.resumesAfterUsageLimit = defaults.resumesAfterUsageLimit
             settings.showReasoning = defaults.showReasoning
             settings.confirmBeforeDeletingThreads = defaults.confirmBeforeDeletingThreads
+            settings.holdToQuit = defaults.holdToQuit
             settings.defaultAccessMode = defaults.defaultAccessMode
             settings.notifyWhenInBackground = defaults.notifyWhenInBackground
             settings.checkpointsEnabled = defaults.checkpointsEnabled
