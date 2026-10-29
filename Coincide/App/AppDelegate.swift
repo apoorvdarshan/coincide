@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.setActivationPolicy(.prohibited)
             return
         }
+        // Before any window reads a transcript: threads whose agents kept running in the host are picked up again.
+        AgentHostController.shared.startAtLaunch()
         let controller = MainWindowController()
         mainWindow = controller
         let menu = MainMenu(windowController: controller)

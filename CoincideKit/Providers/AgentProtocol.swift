@@ -1,7 +1,7 @@
 import Foundation
 
 /// Everything a provider needs to start (or resume) a native session for a thread.
-public struct AgentLaunch: Sendable {
+public struct AgentLaunch: Sendable, Codable {
     public var provider: ProviderKind
     public var executable: URL
     public var environment: [String: String]
@@ -35,7 +35,7 @@ public struct AgentLaunch: Sendable {
 /// A session that had to replace its native session while sending (resuming failed, so it reports
 /// `.sessionStarted` with a new id) must use `prompt(forNewSession: true)` / `recap(forNewSession: true)`:
 /// the new native session has seen nothing of the thread.
-public struct AgentTurnInput: Sendable {
+public struct AgentTurnInput: Sendable, Codable {
     /// The user's message as typed, for example a slash command, followed by what they attached to it
     /// (`MessageContext.prompt(message:context:workingDirectory:)`).
     public var message: String
@@ -95,7 +95,7 @@ public struct AgentTurnInput: Sendable {
     }
 }
 
-public struct ToolCallInfo: Sendable, Hashable {
+public struct ToolCallInfo: Sendable, Hashable, Codable {
     /// Provider id for the call; later events refer to it.
     public var id: String
     public var category: ToolCategory
@@ -112,7 +112,7 @@ public struct ToolCallInfo: Sendable, Hashable {
     }
 }
 
-public struct ApprovalRequest: Sendable, Hashable {
+public struct ApprovalRequest: Sendable, Hashable, Codable {
     /// Id the session needs back in `respond(to:optionID:)`.
     public var id: String
     public var category: ToolCategory
@@ -145,7 +145,7 @@ public struct ApprovalRequest: Sendable, Hashable {
     ]
 }
 
-public enum TurnOutcome: Sendable, Hashable {
+public enum TurnOutcome: Sendable, Hashable, Codable {
     case completed
     case interrupted
     case failed(String)
@@ -266,8 +266,8 @@ public struct UsageLimits: Sendable, Hashable {
 }
 
 /// Something the user can run in an agent: a slash command such as `/compact` or one they added, or a skill.
-public struct ProviderCommand: Sendable, Hashable, Identifiable {
-    public enum Kind: Sendable, Hashable {
+public struct ProviderCommand: Sendable, Hashable, Identifiable, Codable {
+    public enum Kind: Sendable, Hashable, Codable {
         case command
         /// Offered under `$` as well as `/`. Claude Code runs skills and custom commands alike as `/name`.
         case skill
@@ -319,8 +319,8 @@ public struct ProviderCommand: Sendable, Hashable, Identifiable {
 
 /// Work an agent keeps running on its own, such as a background command or subagent, which can outlast the turn
 /// that started it.
-public struct BackgroundTask: Sendable, Hashable, Identifiable {
-    public enum Kind: Sendable, Hashable {
+public struct BackgroundTask: Sendable, Hashable, Identifiable, Codable {
+    public enum Kind: Sendable, Hashable, Codable {
         case agent
         case command
         case other
@@ -342,7 +342,10 @@ public struct BackgroundTask: Sendable, Hashable, Identifiable {
 
 /// What a session reports while it runs. Item ids are the provider's; Coincide maps them to
 /// transcript items. A delta for an id that has not been seen yet starts a new item.
-public enum AgentEvent: Sendable, Hashable {
+///
+/// Codable because the agent host logs events and sends them to the app (`AgentHostWire`): renaming a case or
+/// one of its labels changes what older logs and helpers say, so add cases instead.
+public enum AgentEvent: Sendable, Hashable, Codable {
     /// The provider's session id, persisted so the thread can resume it later.
     /// Emit it again if a resume failed and a fresh session was created instead.
     case sessionStarted(id: String)
