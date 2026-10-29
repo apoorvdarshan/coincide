@@ -222,9 +222,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     private func wireActions() {
         footer.modelButton.popupProvider = { [weak self] in self?.modelPicker() }
-        for button in [footer.modelButton, footer.effortButton, footer.speedButton, footer.accessButton] {
-            button.popupClearance = surface
-        }
+        // The model picker is tall, so it opens clear of the composer; the short effort, speed and access menus open
+        // right above their own control.
+        footer.modelButton.popupClearance = surface
         footer.effortButton.menuProvider = { [weak self] in self?.effortMenu() }
         footer.speedButton.menuProvider = { [weak self] in self?.speedMenu() }
         footer.accessButton.menuProvider = { [weak self] in self?.accessMenu() }
