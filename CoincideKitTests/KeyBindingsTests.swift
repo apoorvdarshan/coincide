@@ -149,12 +149,18 @@ struct KeyShortcutMenuTests {
 struct KeyCommandTests {
     @Test func defaultsAreUsableDistinctAndFreeOfMacOSShortcuts() {
         let defaults = KeyCommand.allCases.compactMap(\.defaultShortcut)
-        #expect(defaults.count == 28)
+        #expect(defaults.count == 29)
         #expect(Set(defaults).count == defaults.count)
         #expect(defaults.allSatisfy { $0.isUsableInMenus })
         let reserved = Set(ReservedShortcut.macOS.map(\.shortcut))
         #expect(reserved.isDisjoint(with: defaults))
         #expect(KeyBindings().commandsWithConflicts(reserved: ReservedShortcut.macOS).isEmpty)
+    }
+
+    @Test func newChatIsCommandShiftNBesideNewThread() {
+        #expect(KeyCommand.newThread.defaultShortcut == .builtIn("mod+n"))
+        #expect(KeyCommand.newChat.defaultShortcut == .builtIn("mod+shift+n"))
+        #expect(KeyCommand.newChat.menu == .file)
     }
 
     @Test func defaultsMatchT3WhereT3HasTheCommand() {
