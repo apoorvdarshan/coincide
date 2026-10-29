@@ -1,0 +1,56 @@
+#!/bin/bash
+# Runs the checks GitHub Actions ran, on this Mac, and reports "Build and test" on the PR's head commit so main's
+# ruleset can merge it. Usage: scripts/local-ci.sh <PR number>, or no argument to test the checked-out commit
+# without reporting. Waits for any other xcodebuild on this Mac first, so builds run one at a time.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+root="$PWD"
+pr="${1:-}"
+derived="$HOME/Library/Developer/Xcode/DerivedData/coincide-local-ci"
+context="Build and test"
+log="$(mktemp -t coincide-ci).log"
+
+if [ -n "$pr" ]; then
+    # Test exactly the PR's head in a throwaway worktree, so local edits can't leak into the result.
+    sha="$(gh pr view "$pr" --json headRefOid -q .headRefOid)"
+    work="$(mktemp -d -t coincide-ci)"
+    git fetch -q origin "$sha" 2>/dev/null || git fetch -q origin "pull/$pr/head"
+    git worktree add -q --detach "$work" "$sha"
+    trap 'git -C "$root" worktree remove --force "$work"' EXIT
+    # Signing settings are local and untracked; the worktree needs them to build like the main checkout.
+    if [ -f "$root/Local.xcconfig" ]; then cp "$root/Local.xcconfig" "$work/"; fi
+    cd "$work"
+else
+    sha="$(git rev-parse HEAD)"
+fi
+
+report() {
+    [ -n "$pr" ] || return 0
+    gh api -X POST "repos/{owner}/{repo}/statuses/$sha" -f state="$1" -f context="$context" \
+        -f description="$2 on $(scutil --get LocalHostName)" >/dev/null
+}
+
+report pending "Running local CI"
+while pgrep -x xcodebuild >/dev/null; do sleep 5; done
+
+status=0
+{
+    echo "== Fuzz sources"
+    Fuzz/fuzz.sh check
+    for fuzzer in $(Fuzz/fuzz.sh list); do (cd Fuzz && swift build -q --target "$fuzzer"); done
+    echo "== Unit tests"
+    xcodegen generate -q
+    xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' \
+        -derivedDataPath "$derived" test -collect-test-diagnostics never -quiet
+} >"$log" 2>&1 || status=$?
+
+if [ "$status" -eq 0 ]; then
+    report success "Local CI passed"
+    echo "Passed: $sha"
+else
+    report failure "Local CI failed"
+    grep -E "error:|failed|✘" "$log" | head -40 || true
+    echo "Failed: $sha (log: $log)"
+fi
+exit "$status"
