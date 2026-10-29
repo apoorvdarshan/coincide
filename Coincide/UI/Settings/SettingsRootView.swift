@@ -213,6 +213,10 @@ private struct SettingsSearchResults: View {
                 title: String(localized: "Reply font"), pane: general, setting: .replyTypeface,
                 keywords: [String(localized: "Serif"), String(localized: "Typeface"), String(localized: "New York")]),
             SettingsSearchEntry(
+                title: String(localized: "Your messages"), pane: general, setting: .userMessageSide,
+                keywords: [String(localized: "Chat layout"), String(localized: "Message alignment"), String(localized: "Right"),
+                           String(localized: "Left")]),
+            SettingsSearchEntry(
                 title: String(localized: "Send messages with"), pane: general, setting: .sendShortcut,
                 keywords: [String(localized: "Return"), String(localized: "Enter"), String(localized: "New line")]),
             SettingsSearchEntry(

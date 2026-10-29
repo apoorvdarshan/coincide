@@ -111,10 +111,15 @@ class TranscriptCell: NSTableCellView {
     /// Where the rail's node for this row sits, from the row's top: the middle of its first line.
     var railNodeY: CGFloat { 10 }
 
+    /// Whether the rail marks this row's node: a message of the user's across the transcript from the rail leaves
+    /// its ring out.
+    var showsRailNode: Bool { true }
+
     override func layout() {
         super.layout()
         railView.frame = NSRect(x: TranscriptMetrics.railX(width: bounds.width) - 12, y: 0, width: 24, height: bounds.height)
         railView.nodeY = railNodeY
+        railView.showsMessageNode = showsRailNode
     }
 
     class func height(for row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> CGFloat { 0 }

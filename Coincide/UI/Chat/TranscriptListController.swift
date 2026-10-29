@@ -99,13 +99,16 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
 
     /// Shows new rows. Rows whose identity survived keep their views; those that changed are
     /// reconfigured in place, so streaming text never rebuilds the list. With `anchor`, that row
-    /// stays where it is on screen, as when the reader expands it.
+    /// stays where it is on screen, as when the reader expands it. A reload keeps the row the reader is scrolled to
+    /// in place, as when a setting lays every row out again.
     func update(_ newRows: [TranscriptRow], reload: Bool = false, keeping anchor: TranscriptRowID? = nil) {
         if reload || rows.isEmpty || newRows.isEmpty {
+            let place = scrollState()
             rows = newRows
             exactRange = Self.tail(of: newRows.count)
             tableView.reloadData()
             tableView.tile()
+            keep(place)
             scheduleRefine()
             return
         }
@@ -183,12 +186,21 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         heights.removeAll()
     }
 
-    /// Forgets every measurement, for font size changes.
+    /// Forgets every measurement, for font size changes and the other settings that lay rows out anew. The row the
+    /// reader is scrolled to stays in place, though the rows above it change height.
     func invalidateHeights() {
+        let place = scrollState()
         heights.removeAll()
         exactRange = visibleRange(margin: 1)
         tableView.reloadData()
+        keep(place)
         scheduleRefine()
+    }
+
+    /// Puts the row the reader was scrolled to back where it was on screen, if it is still there.
+    private func keep(_ place: TranscriptScrollState) {
+        guard case .anchor(let id, let offset) = place, !isPinnedToBottom, let index = index(of: id) else { return }
+        scroll(toY: tableView.rect(ofRow: index).minY - offset)
     }
 
     func refreshLiveState() {
