@@ -1,8 +1,13 @@
 import AppKit
 import CoincideKit
 
-/// Thread list | chat over a collapsible terminal | inspector (the diff or the pull requests), right of the navigation
-/// rail (`MainRootViewController`). Panel sizes and visibility are remembered in `UIState`.
+/// Thread list | chat over a collapsible terminal | inspector (the diff, the pull requests or the browser preview),
+/// right of the navigation rail (`MainRootViewController`). Panel sizes and visibility are remembered in `UIState`.
+///
+/// The inspector keeps a share of the space right of the thread list rather than a width (`InspectorWidth`): a
+/// constraint holds it at that multiple of the chat's width, above the split items' holding priorities, so resizing,
+/// zooming, full screen and hiding the thread list all keep the proportion while the thread list keeps its width.
+/// The user changes the share with `InspectorDividerHandle`, which sits over the divider.
 final class MainSplitViewController: NSSplitViewController {
     let sidebar = SidebarViewController()
     let content = ChatTerminalSplitViewController()
@@ -10,15 +15,22 @@ final class MainSplitViewController: NSSplitViewController {
     let pullRequests = PullRequestsViewController()
     let preview = PreviewViewController()
     private(set) lazy var inspector = InspectorViewController(diff: diff, pullRequests: pullRequests, preview: preview)
+    let dividerHandle = InspectorDividerHandle()
 
+    private let state: UIState
     private var sidebarItem: NSSplitViewItem!
     private var inspectorItem: NSSplitViewItem!
     private var observations: [NSKeyValueObservation] = []
-    /// The inspector has been given its width this session; after that the split view remembers it.
-    private var hasSizedInspector = false
     private var hasRestoredLayout = false
+    /// Holds the inspector at its share while it is open.
+    private var proportion: NSLayoutConstraint?
+    /// The share in use: the saved one, or the drag's while the user drags. Nil is the default.
+    private(set) var inspectorFraction: Double?
+    /// The inspector's width when it last closed: the split view opens it at that width again.
+    private var closedInspectorWidth: CGFloat?
 
     var isSidebarOpen: Bool { !sidebarItem.isCollapsed }
+    var isInspectorOpen: Bool { !inspectorItem.isCollapsed }
     var isDiffOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .diff }
     var isPullRequestsOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .pullRequests }
     var isPreviewOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .preview }
@@ -26,45 +38,72 @@ final class MainSplitViewController: NSSplitViewController {
     var onPanelsChanged: (() -> Void)?
 
     private static let defaultSidebarWidth: CGFloat = 288
-    private static let defaultInspectorWidth: CGFloat = 480
+    // How the columns give way, weakest first. All of it sits below the split view's divider drags (490) and the
+    // window's own size (500), so both still move everything, and above what the views inside ask for: the composer
+    // prefers its full width at 270 (`ComposerViewController.fullWidthPriority`), over the hugging of its controls.
+    /// The chat and the inspector hold their widths: a window resize falls on them, shared out by `proportion`.
+    static let contentHoldingPriority = NSLayoutConstraint.Priority(280)
+    /// The inspector's share of the space right of the thread list: beats the holds above, so the share wins when the
+    /// window or the thread list changes size, and gives way to the items' minimums, the panel's first.
+    static let proportionPriority = NSLayoutConstraint.Priority(300)
+    /// The thread list keeps its width over the share: opening the panel or resizing the window doesn't move it.
+    static let sidebarHoldingPriority = NSLayoutConstraint.Priority(320)
+    static let proportionIdentifier = "Coincide.inspectorProportion"
+
+    init(state: UIState = .shared) {
+        self.state = state
+        inspectorFraction = state.values.inspectorFraction
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func viewDidLoad() {
-        let state = UIState.shared.values
+        let values = state.values
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = 240
         sidebarItem.maximumThickness = 400
         sidebarItem.canCollapse = true
-        sidebarItem.isCollapsed = state.isSidebarCollapsed
+        sidebarItem.holdingPriority = Self.sidebarHoldingPriority
+        sidebarItem.isCollapsed = values.isSidebarCollapsed
 
         let contentItem = NSSplitViewItem(viewController: content)
-        contentItem.minimumThickness = 420
+        contentItem.minimumThickness = CGFloat(InspectorWidth.minimumChatWidth)
+        contentItem.holdingPriority = Self.contentHoldingPriority
 
         inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
-        inspectorItem.minimumThickness = 320
-        inspectorItem.maximumThickness = 1100
+        inspectorItem.minimumThickness = CGFloat(InspectorWidth.minimumPanelWidth)
+        inspectorItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
+        inspectorItem.holdingPriority = Self.contentHoldingPriority
         inspectorItem.canCollapse = true
-        inspectorItem.isCollapsed = !state.isInspectorOpen
+        inspectorItem.isCollapsed = !values.isInspectorOpen
 
         addSplitViewItem(sidebarItem)
         addSplitViewItem(contentItem)
         addSplitViewItem(inspectorItem)
         super.viewDidLoad()
         content.onTerminalToggled = { [weak self] in self?.onPanelsChanged?() }
+        installDividerHandle()
+        if !inspectorItem.isCollapsed { holdProportion() }
 
         // The toolbar's sidebar button toggles the item directly, so follow the item itself.
         observations = [
             sidebarItem.observe(\.isCollapsed, options: [.new]) { [weak self] item, _ in
                 let collapsed = item.isCollapsed
                 MainActor.assumeIsolated {
-                    UIState.shared.update { $0.isSidebarCollapsed = collapsed }
+                    self?.state.update { $0.isSidebarCollapsed = collapsed }
                     self?.onPanelsChanged?()
                 }
             },
             inspectorItem.observe(\.isCollapsed, options: [.new]) { [weak self] item, _ in
                 let collapsed = item.isCollapsed
                 MainActor.assumeIsolated {
-                    UIState.shared.update { $0.isInspectorOpen = !collapsed }
-                    self?.onPanelsChanged?()
+                    guard let self else { return }
+                    if collapsed { self.releaseProportion() }
+                    self.dividerHandle.isHidden = collapsed
+                    self.state.update { $0.isInspectorOpen = !collapsed }
+                    self.onPanelsChanged?()
                 }
             },
         ]
@@ -75,11 +114,9 @@ final class MainSplitViewController: NSSplitViewController {
         guard !hasRestoredLayout else { return }
         hasRestoredLayout = true
         // Positions are set once the window has its real size, so they are not scaled away.
-        let state = UIState.shared.values
         if !sidebarItem.isCollapsed {
-            splitView.setPosition(state.listWidth.map { CGFloat($0) } ?? Self.defaultSidebarWidth, ofDividerAt: 0)
+            splitView.setPosition(state.values.listWidth.map { CGFloat($0) } ?? Self.defaultSidebarWidth, ofDividerAt: 0)
         }
-        if !inspectorItem.isCollapsed { sizeInspector() }
     }
 
     func toggleSidebarPanel() {
@@ -106,8 +143,7 @@ final class MainSplitViewController: NSSplitViewController {
     /// rail's diff and pull request buttons work like tabs of one column.
     private func toggleInspector(_ panel: UIState.InspectorPanel) {
         if !inspectorItem.isCollapsed, inspector.panel == panel {
-            saveLayout()
-            inspectorItem.animator().isCollapsed = true
+            closeInspector()
         } else {
             showInspector(panel)
         }
@@ -119,29 +155,125 @@ final class MainSplitViewController: NSSplitViewController {
             onPanelsChanged?()
         }
         guard inspectorItem.isCollapsed else { return }
-        if hasSizedInspector {
-            inspectorItem.animator().isCollapsed = false
+        openInspector()
+    }
+
+    /// Opens the inspector at its share. The thread list keeps its width: the space comes from the chat, and from the
+    /// window when the chat and the panel would not both get their minimums.
+    private func openInspector() {
+        // Closed, the inspector leaves the chat everything right of the thread list.
+        let available = Double(content.view.frame.width - splitView.dividerThickness)
+        growWindow(by: CGFloat(InspectorWidth.shortfall(available: available)))
+        let target = InspectorWidth.panelWidth(fraction: inspectorFraction, available: available)
+        // The split view animates back to the width the inspector closed at. When that is still its width, let it
+        // animate and hold the share afterwards; otherwise (a first opening, the window resized meanwhile) open it in
+        // place at the share, rather than animate to one width and then jump to another.
+        if let closedInspectorWidth, abs(Double(closedInspectorWidth) - target) < 1, view.window?.isVisible == true {
+            NSAnimationContext.runAnimationGroup { _ in
+                self.inspectorItem.animator().isCollapsed = false
+            } completionHandler: { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, !self.inspectorItem.isCollapsed else { return }
+                    self.holdProportion()
+                }
+            }
         } else {
-            // The first opening has no earlier width to return to; give it the saved one.
             inspectorItem.isCollapsed = false
-            sizeInspector()
+            holdProportion()
+            view.layoutSubtreeIfNeeded()
         }
     }
 
-    private func sizeInspector() {
-        hasSizedInspector = true
-        let width = UIState.shared.values.inspectorWidth.map { CGFloat($0) } ?? Self.defaultInspectorWidth
-        splitView.setPosition(splitView.bounds.width - width - splitView.dividerThickness, ofDividerAt: 1)
+    private func closeInspector() {
+        closedInspectorWidth = inspector.view.frame.width
+        releaseProportion()
+        inspectorItem.animator().isCollapsed = true
     }
 
-    /// Remembers the open panels' sizes. Called before a panel closes and when the window closes.
+    /// Widens the window (on its screen, keeping it there) so the chat and the inspector both fit. Full screen stays.
+    private func growWindow(by shortfall: CGFloat) {
+        guard shortfall > 0, let window = view.window, !window.styleMask.contains(.fullScreen) else { return }
+        var frame = window.frame
+        frame.size.width += ceil(shortfall)
+        if let visible = window.screen?.visibleFrame, frame.maxX > visible.maxX {
+            frame.origin.x = max(visible.minX, visible.maxX - frame.width)
+        }
+        window.setFrame(frame, display: true)
+    }
+
+    // MARK: Inspector width
+
+    /// Holds the open inspector at the current share of the space right of the thread list.
+    private func holdProportion() {
+        proportion?.isActive = false
+        let constraint = inspector.view.widthAnchor.constraint(
+            equalTo: content.view.widthAnchor, multiplier: CGFloat(InspectorWidth.ratio(for: inspectorFraction)))
+        constraint.priority = Self.proportionPriority
+        constraint.identifier = Self.proportionIdentifier
+        constraint.isActive = true
+        proportion = constraint
+    }
+
+    /// Lets go of the share before the inspector closes, so the closed inspector doesn't pull the chat to nothing.
+    private func releaseProportion() {
+        proportion?.isActive = false
+        proportion = nil
+    }
+
+    /// The space right of the thread list that the chat and the open inspector share.
+    private var availableWidth: Double {
+        Double(content.view.frame.width + inspector.view.frame.width)
+    }
+
+    private func installDividerHandle() {
+        dividerHandle.translatesAutoresizingMaskIntoConstraints = false
+        // Above the split view, so it takes the clicks a few points either side of the divider. Tied to the chat, which
+        // never collapses: a constraint on the inspector's view would go when the split view takes that view out.
+        view.addSubview(dividerHandle)
+        NSLayoutConstraint.activate([
+            dividerHandle.centerXAnchor.constraint(equalTo: content.view.trailingAnchor, constant: splitView.dividerThickness / 2),
+            dividerHandle.widthAnchor.constraint(equalToConstant: InspectorDividerHandle.hitWidth),
+            dividerHandle.topAnchor.constraint(equalTo: splitView.topAnchor),
+            dividerHandle.bottomAnchor.constraint(equalTo: splitView.bottomAnchor),
+        ])
+        dividerHandle.isHidden = inspectorItem.isCollapsed
+        dividerHandle.onDrag = { [weak self] x in self?.dragDivider(to: x) }
+        dividerHandle.onDragEnded = { [weak self] in self?.saveInspectorFraction() }
+        dividerHandle.onReset = { [weak self] in self?.resetInspectorWidth() }
+    }
+
+    /// Moves the divider to `x` (in this controller's view) while the user drags: the share follows the pointer, within
+    /// both minimums, and the layout follows the share.
+    func dragDivider(to x: CGFloat) {
+        guard !inspectorItem.isCollapsed else { return }
+        let right = splitView.convert(splitView.bounds, to: view).maxX
+        let width = Double(right - x - splitView.dividerThickness / 2)
+        guard let fraction = InspectorWidth.fraction(panelWidth: width, available: availableWidth) else { return }
+        inspectorFraction = fraction
+        holdProportion()
+        view.layoutSubtreeIfNeeded()
+    }
+
+    /// Remembers the dragged share for every panel and the next launch.
+    func saveInspectorFraction() {
+        let fraction = inspectorFraction
+        state.update { $0.inspectorFraction = fraction }
+    }
+
+    /// Double-clicking the divider: back to half and half, for every panel.
+    func resetInspectorWidth() {
+        inspectorFraction = nil
+        state.update { $0.inspectorFraction = nil }
+        guard !inspectorItem.isCollapsed else { return }
+        holdProportion()
+        view.layoutSubtreeIfNeeded()
+    }
+
+    /// Remembers the open panels' sizes. Called before a panel closes and when the window closes. The inspector's share
+    /// is saved as the user drags it.
     func saveLayout() {
         let sidebarWidth = sidebarItem.isCollapsed ? nil : Double(sidebar.view.frame.width)
-        let inspectorWidth = inspectorItem.isCollapsed ? nil : Double(inspector.view.frame.width)
-        UIState.shared.update { state in
-            if let sidebarWidth { state.listWidth = sidebarWidth }
-            if let inspectorWidth { state.inspectorWidth = inspectorWidth }
-        }
+        if let sidebarWidth { state.update { $0.listWidth = sidebarWidth } }
         content.saveLayout()
     }
 

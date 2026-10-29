@@ -34,7 +34,11 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     var onOpenLink: ((Any) -> Bool)?
 
     private let rootView = ComposerRootView()
-    private let column = NSStackView()
+    /// The input, its banners and the branch bar, centred and at most `Theme.contentMaxWidth` wide. Internal so tests
+    /// can measure it.
+    let column = NSStackView()
+    /// How strongly the column asks for its full width (see `buildColumn`).
+    static let fullWidthPriority = NSLayoutConstraint.Priority(270)
     private let queueBanner = ComposerQueueBanner()
     private let usageBanner = ComposerUsageBanner()
     private let handoffBanner = ComposerHandoffBanner()
@@ -219,11 +223,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         // A glass container would only batch these few glass views, and it can keep hidden ones drawing.
         column.translatesAutoresizingMaskIntoConstraints = false
         rootView.addSubview(column)
-        // The column prefers its full 820 points and gives way to the chat's width. Tying the preference to the chat's
-        // width instead pulled the chat toward 868 points: the split view widened the thread list to its maximum to
-        // get there, and zoom and resizing stopped at the thread list plus 868 points.
+        // The column prefers its full 820 points and gives way to the chat's width. The preference sits above the
+        // hugging of the controls inside (250), which would shrink it to fit them, and below the main window's split
+        // items' holding priorities (`MainSplitViewController.contentHoldingPriority`): any stronger and it pulls the
+        // chat toward 868 points, taken from the thread list or the inspector. Tied to the chat's width it widened the
+        // thread list to its maximum and stopped zoom and resizing at the thread list plus 868 points; just below the
+        // window's size priority it outranked the divider drags (490), so the inspector could not be resized.
         let fullWidth = column.widthAnchor.constraint(equalToConstant: Theme.contentMaxWidth)
-        fullWidth.priority = NSLayoutConstraint.Priority(NSLayoutConstraint.Priority.windowSizeStayPut.rawValue - 1)
+        fullWidth.priority = Self.fullWidthPriority
         NSLayoutConstraint.activate([
             column.topAnchor.constraint(equalTo: rootView.topAnchor, constant: 8),
             column.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -12),

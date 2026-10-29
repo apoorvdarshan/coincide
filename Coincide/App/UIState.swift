@@ -28,7 +28,10 @@ final class UIState {
         /// dropped so everyone starts from the current default.)
         var listWidth: Double?
         var isSidebarCollapsed = false
-        var inspectorWidth: Double?
+        /// The inspector's share of the space right of the thread list, the same for every panel; nil for the default
+        /// (`InspectorWidth`). (A width saved under the earlier key, `inspectorWidth`, is dropped: the divider could not
+        /// be dragged then, so it was never the user's choice.)
+        var inspectorFraction: Double?
         var isInspectorOpen = false
         var inspectorPanel = InspectorPanel.diff
         var diffLayout: DiffLayout = .unified
@@ -81,7 +84,7 @@ final class UIState {
             selectedThreadID = value(.selectedThreadID, defaults.selectedThreadID)
             listWidth = value(.listWidth, defaults.listWidth)
             isSidebarCollapsed = value(.isSidebarCollapsed, defaults.isSidebarCollapsed)
-            inspectorWidth = value(.inspectorWidth, defaults.inspectorWidth)
+            inspectorFraction = value(.inspectorFraction, defaults.inspectorFraction)
             isInspectorOpen = value(.isInspectorOpen, defaults.isInspectorOpen)
             inspectorPanel = value(.inspectorPanel, defaults.inspectorPanel)
             diffLayout = value(.diffLayout, defaults.diffLayout)
