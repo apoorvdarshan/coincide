@@ -2,6 +2,7 @@ import AppKit
 import CoincideKit
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Settings › Browser › Passwords' state: each manager's status, Coincide's saved logins and the sites agents may sign
 /// in to.
@@ -74,6 +75,23 @@ final class PasswordsSettingsModel {
 
     func revoke(_ grant: LoginGrant) { sessions.vault.revoke(grant) }
 
+    // MARK: CSV
+
+    private(set) var csvResult: String?
+
+    /// Saves a password export's logins in Coincide's Keychain logins, turning those on.
+    func importCSV(_ url: URL) {
+        do {
+            let parsed = try PasswordCSV.parse(try Data(contentsOf: url))
+            let saved = try sessions.profile.logins.importLogins(parsed.logins)
+            if !enabled.contains(.coincide) { setEnabled(.coincide, true) }
+            csvResult = String(localized: "Logins imported: \(saved) · Rows skipped (no web address or password): \(parsed.skipped). Delete the CSV file now: it holds your passwords unencrypted.")
+        } catch {
+            csvResult = String(localized: "That file isn't a password export Coincide can read.")
+        }
+        reloadSettings()
+    }
+
     func capabilityNote(_ kind: PasswordManagerKind) -> String? {
         guard let capabilities = sessions.vault.providers[kind]?.capabilities else { return nil }
         var missing: [String] = []
@@ -95,8 +113,26 @@ struct PasswordsSettingsSection: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 ForEach(PasswordManagerKind.allCases) { kind in managerRow(kind) }
+                applePasswordsRow
             } header: {
                 Text("Passwords")
+            }
+
+            Section {
+                LabeledContent {
+                    Button("Import CSV…") {
+                        let panel = NSOpenPanel()
+                        panel.allowedContentTypes = [.commaSeparatedText]
+                        panel.allowsMultipleSelection = false
+                        if panel.runModal() == .OK, let url = panel.url { model.importCSV(url) }
+                    }
+                } label: {
+                    Text("Import passwords from a CSV export")
+                    Text("Chrome, Safari and Apple Passwords, Firefox, 1Password and Bitwarden exports work. The logins are saved in your Keychain as Coincide saved logins.")
+                }
+                if let result = model.csvResult {
+                    Text(result).font(.callout).foregroundStyle(.secondary)
+                }
             }
 
             if model.enabled.contains(.coincide) {
@@ -200,6 +236,23 @@ struct PasswordsSettingsSection: View {
         let password = bitwardenPassword
         bitwardenPassword = ""
         Task { await model.unlockBitwarden(password: password) }
+    }
+
+    /// Apple Passwords has no interface for other apps; its CSV export is the way in.
+    private var applePasswordsRow: some View {
+        HStack(spacing: 8) {
+            if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Passwords") {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: app.path)).resizable().frame(width: 20, height: 20)
+            } else {
+                Image(systemName: "key.fill").frame(width: 20, height: 20)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Apple Passwords")
+                Text("Not supported: macOS doesn’t let other apps read website passwords from Passwords or iCloud Keychain. In the Passwords app, choose File › Export All Passwords…, then import the CSV below.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     private func statusText(_ kind: PasswordManagerKind, _ status: PasswordProviderStatus?) -> String {
