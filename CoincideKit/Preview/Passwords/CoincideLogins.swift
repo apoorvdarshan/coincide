@@ -124,11 +124,11 @@ public nonisolated struct CoincideLoginProvider: PasswordProvider {
 
     /// Saves a login, replacing the password of one with the same address and username.
     @discardableResult
-    public func save(url: URL, username: String, password: String, totpSeed: String? = nil) throws -> SavedLogin {
+    public func save(url: URL, username: String, password: String, totpSeed: String? = nil, title: String? = nil) throws -> SavedLogin {
         guard let address = Self.origin(of: url) else { throw PasswordProviderError.failed(String(localized: "Only web pages’ logins can be saved.")) }
         var list = saved
         let login = list.first { $0.url == address && $0.username == username }
-            ?? SavedLogin(url: address, username: username, title: url.host ?? address)
+            ?? SavedLogin(url: address, username: username, title: title.flatMap { $0.isEmpty ? nil : String($0.prefix(200)) } ?? url.host ?? address)
         let stored = Stored(password: password, totp: totpSeed?.isEmpty == false ? totpSeed : nil)
         try secrets.write(String(decoding: try JSONEncoder().encode(stored), as: UTF8.self), for: login.id.uuidString)
         if !list.contains(login) { list.append(login) }
