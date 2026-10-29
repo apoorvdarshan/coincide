@@ -1,21 +1,33 @@
 import AppKit
 import CoincideKit
+import CoincideRemoteKit
 import UserNotifications
 
-/// Posts a system notification when a turn ends, an agent asks for approval or an agent is slow to start
-/// while Coincide is in the background (`AppSettings.notifyWhenInBackground`), and opens the thread when one is clicked.
+/// Tells the user when a turn ends, an agent asks for approval or a question, or an agent is slow to start
+/// (`AppSettings.notifyWhenInBackground`), and opens the thread when a notification is clicked.
+///
+/// Each event goes to exactly one place, by `NotificationRouting`: this Mac, the phone or iPad in use through Coincide
+/// Remote, or a phone's lock screen through CloudKit. Every event has a stable id (`RemoteAlerts.eventID`) that names
+/// its notification everywhere, and `NotificationLedger` keeps one from being sent twice.
 final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationController()
 
-    private enum Kind: String {
-        case approval
-        case question
-        case completed
-        case failed
-        case slowStart
-    }
-
     private var center: UNUserNotificationCenter { .current() }
+
+    private lazy var dispatcher: NotificationDispatcher = {
+        let directory = AppStore.shared.directory
+        let push = PushAlertDelivery(
+            pusher: CloudKitAlertPusher.shared, url: directory.appendingPathComponent("lock-screen-alerts.json"))
+        return NotificationDispatcher(
+            ledger: NotificationLedger(url: directory.appendingPathComponent("notified-events.json")), push: push,
+            environment: NotificationDispatcher.Environment(
+                isEnabled: { AppStore.shared.settings.notifyWhenInBackground },
+                macActivity: { MacActivity.current(visibleThreadID: ThreadActivity.shared.visibleThreadID) },
+                devices: { RemoteServer.shared.devicePresences },
+                pushTargets: { RemoteServer.shared.pushTargets },
+                postMac: { [weak self] alert in self?.postOnMac(alert) },
+                sendLive: { RemoteServer.shared.deliver($0, to: $1) }))
+    }()
 
     func start() {
         center.delegate = self
@@ -44,37 +56,58 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// Clears delivered notifications for a thread the user is now looking at.
+    /// Clears what was posted about a thread the user is now looking at: on this Mac, by the background agent host,
+    /// on connected phones and on phones' lock screens.
     func clearDelivered(for threadID: UUID) {
-        let ids = [Kind.approval, .question, .completed, .failed, .slowStart].map { identifier(threadID, $0) }
-        center.removeDeliveredNotifications(withIdentifiers: ids)
+        let center = center
+        Task {
+            let ids = await center.deliveredNotifications()
+                .filter { $0.request.content.threadIdentifier == threadID.uuidString }
+                .map(\.request.identifier)
+            if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
+        }
         // Those the background agent host posted while Coincide was closed are its own; ask it to remove them.
         if let transport = AgentHostController.shared.transport {
             Task { _ = try? await transport.perform(.clearNotifications(threadID: threadID)) }
         }
+        RemoteServer.shared.clearNotifications(threadID)
+        dispatcher.threadSeen(threadID)
     }
 
     // MARK: Events
 
     private func turnFinished(_ threadID: UUID, outcome: TurnOutcome) {
         let agent = agentName(threadID)
+        // The turn's last item names the event: a later turn has a later one.
+        let itemID = AppStore.shared.thread(threadID)?.items.last?.id
         switch outcome {
         case .completed:
-            post(.completed, threadID: threadID, event: String(localized: "\(agent) finished"), body: lastReply(threadID))
+            post(
+                .completed, threadID: threadID, itemID: itemID, event: String(localized: "\(agent) finished"),
+                body: lastReply(threadID))
         case .failed(let message):
-            post(.failed, threadID: threadID, event: String(localized: "\(agent) failed"), body: message)
+            post(.failed, threadID: threadID, itemID: itemID, event: String(localized: "\(agent) failed"), body: message)
         case .interrupted:
             break
         }
     }
 
     private func approvalRequested(_ threadID: UUID, request: ApprovalRequest) {
-        post(.approval, threadID: threadID, event: String(localized: "\(agentName(threadID)) needs approval"), body: request.title)
+        post(
+            .approval, threadID: threadID, itemID: promptItem(threadID, kind: .approval, requestID: request.id),
+            event: String(localized: "\(agentName(threadID)) needs approval"), body: request.title)
     }
 
     private func questionAsked(_ threadID: UUID, request: UserInputRequest) {
         let body = request.title ?? request.questions.first?.prompt
-        post(.question, threadID: threadID, event: String(localized: "\(agentName(threadID)) has a question"), body: body)
+        post(
+            .question, threadID: threadID, itemID: promptItem(threadID, kind: .question, requestID: request.id),
+            event: String(localized: "\(agentName(threadID)) has a question"), body: body)
+    }
+
+    /// The transcript item showing an approval or question, which names its event.
+    private func promptItem(_ threadID: UUID, kind: TranscriptItem.Kind, requestID: String) -> UUID? {
+        AppStore.shared.thread(threadID)?.items.last { $0.kind == kind && $0.externalID == requestID }?.id
     }
 
     /// The agent that ran the thread's latest turn, or the one selected for it.
@@ -134,43 +167,62 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// macOS shows folder permission prompts only while Coincide is active, so a stalled start needs the user here.
+    /// This one is never sent to a phone: it is about the Mac itself.
     private func slowStart(_ threadID: UUID, provider: ProviderKind) {
-        post(
-            .slowStart, threadID: threadID,
-            event: String(localized: "\(provider.displayName) is waiting to start"),
-            body: String(localized: "Switch to Coincide in case macOS is asking for permission to access a folder."))
-    }
-
-    /// Posts a notification named after the thread, with what happened under it and a line of detail.
-    private func post(_ kind: Kind, threadID: UUID, event: String, body: String?) {
-        let store = AppStore.shared
         // Only the thread on screen is skipped: one you're not looking at still notifies while Coincide is in front.
         let isOnScreen = NSApp.isActive && ThreadActivity.shared.visibleThreadID == threadID
-        guard store.settings.notifyWhenInBackground, !isOnScreen, let thread = store.summary(threadID),
-            !thread.isArchived
+        guard AppStore.shared.settings.notifyWhenInBackground, !isOnScreen,
+            var alert = content(
+                threadID: threadID, kind: .unknown, itemID: nil,
+                event: String(localized: "\(provider.displayName) is waiting to start"),
+                body: String(localized: "Switch to Coincide in case macOS is asking for permission to access a folder."))
         else { return }
+        alert.id = "\(threadID.uuidString).slowStart"
+        postOnMac(alert)
+    }
+
+    /// Words the event and sends it where `NotificationRouting` says, unless it was sent before.
+    private func post(_ kind: RemoteNotification.Kind, threadID: UUID, itemID: UUID?, event: String, body: String?) {
+        // What the agent host recorded while Coincide was away was the host's to notify about; catching up on it
+        // must not notify again.
+        guard !AgentHostController.shared.isApplyingBacklog,
+            let alert = content(threadID: threadID, kind: kind, itemID: itemID, event: event, body: body)
+        else { return }
+        dispatcher.dispatch(alert)
+    }
+
+    /// The notification named after the thread, with what happened under it and a line of detail. Nil for a thread
+    /// that's gone or archived.
+    private func content(
+        threadID: UUID, kind: RemoteNotification.Kind, itemID: UUID?, event: String, body: String?
+    ) -> AlertContent? {
+        let store = AppStore.shared
+        guard let thread = store.summary(threadID), !thread.isArchived else { return nil }
+        let subtitle = store.project(thread.projectID).map { String(localized: "\(event) in \($0.name)") } ?? event
+        let detail = body?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AlertContent(
+            // Without an item, a fresh id: never mistaken for another event.
+            id: RemoteAlerts.eventID(threadID: threadID, kind: kind, itemID: itemID ?? UUID()), threadID: threadID,
+            kind: kind, title: thread.title, subtitle: subtitle,
+            body: detail.flatMap { $0.isEmpty ? nil : String($0.prefix(240)) })
+    }
+
+    /// Posts on this Mac, named by the event's id so a repeat replaces it.
+    private func postOnMac(_ alert: AlertContent) {
         let content = UNMutableNotificationContent()
-        content.title = thread.title
-        if let project = store.project(thread.projectID)?.name {
-            content.subtitle = String(localized: "\(event) in \(project)")
-        } else {
-            content.subtitle = event
-        }
-        if let body = body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty {
-            content.body = String(body.prefix(240))
-        }
+        content.title = alert.title
+        content.subtitle = alert.subtitle
+        if let body = alert.body { content.body = body }
         content.sound = .default
-        content.threadIdentifier = threadID.uuidString
-        content.userInfo = ["threadID": threadID.uuidString]
-        let request = UNNotificationRequest(identifier: identifier(threadID, kind), content: content, trigger: nil)
+        content.threadIdentifier = alert.threadID.uuidString
+        content.userInfo = ["threadID": alert.threadID.uuidString]
+        let request = UNNotificationRequest(identifier: alert.id, content: content, trigger: nil)
         let center = center
         Task {
             guard await Self.isAuthorized(center) else { return }
             try? await center.add(request)
         }
     }
-
-    private func identifier(_ threadID: UUID, _ kind: Kind) -> String { "\(threadID.uuidString).\(kind.rawValue)" }
 
     /// Asks for permission the first time a notification is due, rather than at launch.
     private static func isAuthorized(_ center: UNUserNotificationCenter) async -> Bool {

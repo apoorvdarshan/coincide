@@ -18,6 +18,23 @@ enum ProjectSort: String, Codable, CaseIterable {
     }
 }
 
+/// How the sidebar orders bots.
+enum BotSort: String, Codable, CaseIterable {
+    /// The order the user dragged them into, kept in `bots.json`.
+    case manual
+    /// The bot with the latest conversation activity first.
+    case recentActivity
+    case name
+
+    var title: String {
+        switch self {
+        case .manual: String(localized: "Manual")
+        case .recentActivity: String(localized: "Recent Activity")
+        case .name: String(localized: "Name")
+        }
+    }
+}
+
 /// How the sidebar orders the threads of a project, or of Chats.
 enum ThreadSort: String, Codable, CaseIterable {
     case recentActivity
@@ -46,6 +63,16 @@ enum SidebarSection: String, CaseIterable {
     static let defaultOrder: [SidebarSection] = [.bots, .pinned, .projects, .chats]
 }
 
+/// The sidebar's row sizes, shared by the outline and the automatic "Show more" cut.
+enum SidebarMetrics {
+    /// A project's or a thread's row.
+    static let rowHeight: CGFloat = 28
+    /// A section's header: room above it to set it apart from the section before.
+    static let sectionHeaderHeight: CGFloat = 36
+    /// The first section's header, which has only the search row above it.
+    static let firstSectionHeaderHeight: CGFloat = 30
+}
+
 /// The sidebar's ordering rules, kept apart from the outline so they can be tested on their own.
 enum SidebarOrdering {
     /// The sections in the saved order (raw values, so a section of a newer version survives in the file), then any
@@ -65,6 +92,45 @@ enum SidebarOrdering {
         let index = target.flatMap { order.firstIndex(of: $0) } ?? order.count
         let unknown = saved.filter { SidebarSection(rawValue: $0) == nil }
         return reordered(order, moving: [section], to: index).map(\.rawValue) + unknown
+    }
+
+    /// The collapsed sections among the saved raw values; ones this version doesn't know are ignored.
+    static func collapsedSections(saved: [String]) -> Set<SidebarSection> {
+        Set(saved.compactMap(SidebarSection.init(rawValue:)))
+    }
+
+    /// What to save after `section` was collapsed or expanded. Sections this version doesn't know keep their state.
+    static func savedCollapsedSections(saved: [String], setting section: SidebarSection, collapsed: Bool) -> [String] {
+        let others = saved.filter { $0 != section.rawValue }
+        return collapsed ? others + [section.rawValue] : others
+    }
+
+    /// Bots in `sort` order. Ties keep the manual order.
+    static func sortedBots(_ bots: [Bot], by sort: BotSort, lastActivity: [UUID: Date]) -> [Bot] {
+        switch sort {
+        case .manual:
+            return bots
+        case .recentActivity:
+            // A bot without conversations counts from when it was made.
+            return bots.enumerated().sorted { lhs, rhs in
+                let left = lastActivity[lhs.element.id] ?? lhs.element.createdAt
+                let right = lastActivity[rhs.element.id] ?? rhs.element.createdAt
+                return left != right ? left > right : lhs.offset < rhs.offset
+            }.map(\.element)
+        case .name:
+            return bots.enumerated().sorted { lhs, rhs in
+                let order = lhs.element.displayName.localizedStandardCompare(rhs.element.displayName)
+                return order != .orderedSame ? order == .orderedAscending : lhs.offset < rhs.offset
+            }.map(\.element)
+        }
+    }
+
+    /// The latest activity among each bot's conversations, as its row shows: archived ones are left out.
+    static func lastBotActivity(of threads: some Sequence<ThreadSummary>) -> [UUID: Date] {
+        threads.reduce(into: [:]) { latest, thread in
+            guard let bot = thread.botID, !thread.isArchived else { return }
+            latest[bot] = max(latest[bot] ?? .distantPast, thread.updatedAt)
+        }
     }
 
     /// Projects in `sort` order. Chats stay last whatever the order.
@@ -140,7 +206,7 @@ enum SidebarOrdering {
 
     /// Threads a list shows before "Show more" when the cut follows the sidebar: a little more than fill its visible
     /// height, in steps of five so small changes to the window's size don't move the cut.
-    static func automaticThreadLimit(visibleHeight: CGFloat, rowHeight: CGFloat = 28) -> Int {
+    static func automaticThreadLimit(visibleHeight: CGFloat, rowHeight: CGFloat = SidebarMetrics.rowHeight) -> Int {
         guard visibleHeight.isFinite, visibleHeight > 0, rowHeight > 0 else { return minimumAutomaticLimit * 2 }
         let rows = Int((visibleHeight * 1.25 / rowHeight).rounded(.down))
         return max(minimumAutomaticLimit, rows / 5 * 5)

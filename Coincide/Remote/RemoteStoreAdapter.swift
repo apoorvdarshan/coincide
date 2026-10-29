@@ -38,6 +38,7 @@ final class RemoteStoreAdapter {
             var projectSort = ProjectSort.manual
             var threadSort = ThreadSort.recentActivity
             var chatSort = ThreadSort.recentActivity
+            var botSort = BotSort.manual
         }
 
         static var live: Services {
@@ -78,7 +79,7 @@ final class RemoteStoreAdapter {
                     let ui = UIState.shared.values
                     return Layout(
                         sections: SidebarOrdering.sectionOrder(saved: ui.sidebarSections).map(\.rawValue), pinned: ui.pinnedThreads,
-                        projectSort: ui.projectSort, threadSort: ui.threadSort, chatSort: ui.chatSort)
+                        projectSort: ui.projectSort, threadSort: ui.threadSort, chatSort: ui.chatSort, botSort: ui.botSort)
                 })
         }
     }
@@ -95,6 +96,8 @@ final class RemoteStoreAdapter {
         case reset(UUID)
         /// A thread's turn or queue changed.
         case turn(UUID)
+        /// The user saw the thread somewhere: phones remove what was posted about it.
+        case clearNotifications(UUID)
     }
 
     let store: AppStore
@@ -148,6 +151,12 @@ final class RemoteStoreAdapter {
         notificationTokens = []
     }
 
+    /// Tells every connected phone to remove what was posted about the thread. Goes to every session, whether or not
+    /// anything changes in the store, so a phone that isn't observing anything else still hears it.
+    func clearNotifications(_ threadID: UUID) {
+        emit(.clearNotifications(threadID))
+    }
+
     private func emit(_ change: Change) {
         for handler in handlers.values { handler(change) }
     }
@@ -186,10 +195,11 @@ final class RemoteStoreAdapter {
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
             theme: RemoteThemeInfo(
                 appearance: settings.appearance.rawValue, darkThemeID: settings.darkTheme, lightThemeID: settings.lightTheme),
-            showsReasoning: settings.showReasoning, followUpBehavior: settings.followUpBehavior.rawValue)
+            showsReasoning: settings.showReasoning, followUpBehavior: settings.followUpBehavior.rawValue,
+            notifies: settings.notifyWhenInBackground)
     }
 
-    /// The sidebar in the Mac's order: its sections, its project sort (Chats last), and each list's thread sort.
+    /// The sidebar in the Mac's order: its sections, its project and bot sorts (Chats last), and each list's thread sort.
     func workspace(includeArchived: Bool = false) -> RemoteWorkspace {
         let layout = services.layout()
         let all = Array(store.threadSummaries.values)
@@ -206,8 +216,9 @@ final class RemoteStoreAdapter {
             SidebarOrdering.sortedThreads(byProject[project.id] ?? [], by: project.isChats ? layout.chatSort : layout.threadSort)
         }
         let pinned = SidebarOrdering.pinnedOrder(saved: layout.pinned, pinned: threads.filter(\.isPinned))
+        let bots = SidebarOrdering.sortedBots(store.bots, by: layout.botSort, lastActivity: SidebarOrdering.lastBotActivity(of: all))
         return RemoteWorkspace(
-            projects: projects, threads: threads.map(summary), bots: store.bots.map { bot in
+            projects: projects, threads: threads.map(summary), bots: bots.map { bot in
                 RemoteBot(
                     id: bot.id, name: bot.name, projectID: store.botsProject.id,
                     threadIDs: store.conversations(of: bot.id).map(\.id))

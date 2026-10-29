@@ -54,12 +54,16 @@ final class UIState {
         var threadSort = ThreadSort.recentActivity
         /// How Chats, the project-free threads, are sorted.
         var chatSort = ThreadSort.recentActivity
+        var botSort = BotSort.manual
         /// The Pinned section's order (thread ids), most recently pinned first. Threads pinned elsewhere (or before
         /// this order was kept) join at the top as the sidebar notices them.
         var pinnedThreads: [String] = []
         /// The sidebar's sections in the order the user dragged them into (`SidebarSection` raw values); empty until
         /// they do, so new sections take their default place (`SidebarOrdering.sectionOrder`).
         var sidebarSections: [String] = []
+        /// Sidebar sections the user collapsed to their header (`SidebarSection` raw values). Files from before
+        /// sections could collapse have none, so every section starts expanded.
+        var collapsedSections: [String] = []
         /// Keyed by thread id.
         var unseen: [String: Unseen] = [:]
         /// Ids of the notices that opened turns an agent started on its own, keyed by thread id (see `AgentTurns`).
@@ -99,8 +103,10 @@ final class UIState {
             projectSort = value(.projectSort, defaults.projectSort)
             threadSort = value(.threadSort, defaults.threadSort)
             chatSort = value(.chatSort, defaults.chatSort)
+            botSort = value(.botSort, defaults.botSort)
             pinnedThreads = value(.pinnedThreads, defaults.pinnedThreads)
             sidebarSections = value(.sidebarSections, defaults.sidebarSections)
+            collapsedSections = value(.collapsedSections, defaults.collapsedSections)
             unseen = value(.unseen, defaults.unseen)
             agentTurns = value(.agentTurns, defaults.agentTurns)
         }

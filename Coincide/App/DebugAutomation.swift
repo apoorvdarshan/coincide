@@ -30,6 +30,9 @@ import CoincideKit
 ///   draws the window's sheet
 /// - `{"toolbarLog": true}`: logs the toolbar's items, whether they are hidden and their views' frames
 /// - `{"popupSnapshot": "/path.png"}`: draws the open themed popup into a PNG; `{"closePopup": true}` closes it
+/// - `{"instructions": "/folder"}`: adds the folder as a project and opens its Instructions window;
+///   `{"instructionsReview": true}` opens its link review; `{"instructionsSnapshot": "/path.png"}` draws the window and
+///   `{"instructionsSheetSnapshot": "/path.png"}` its sheet
 /// - `{"sleep": seconds}`, `{"log": "text"}`, `{"quit": true}`
 enum DebugAutomation {
     static func startIfRequested() {
@@ -211,6 +214,19 @@ enum DebugAutomation {
                     let project = ProjectScripts.shared.project(ofThread: id)
                 else { continue }
                 host.presentAsSheet(ProjectScriptEditor(script: project.scripts.first { $0.name == value.string }))
+            case "instructions":
+                guard let path = value.string else { continue }
+                InstructionsWindowController.show(project: store.addProject(at: URL(fileURLWithPath: path)))
+            case "instructionsReview":
+                InstructionsWindowController.frontmost?.model.reviewLinks()
+            case "instructionsSnapshot":
+                guard let content = InstructionsWindowController.frontmost?.window?.contentView, let file = value.string else { continue }
+                draw(content, to: URL(fileURLWithPath: file))
+            case "instructionsSheetSnapshot":
+                guard let sheet = InstructionsWindowController.frontmost?.window?.attachedSheet, let content = sheet.contentView,
+                    let file = value.string
+                else { continue }
+                draw(content, to: URL(fileURLWithPath: file))
             case "sheetSnapshot":
                 guard let sheet = mainWindow?.window?.attachedSheet, let content = sheet.contentView, let file = value.string else {
                     continue

@@ -7,7 +7,7 @@ import CoincideKit
 /// focus: an agent's reply, a terminal or the diff.
 @MainActor
 protocol ComposerSelectionSource: AnyObject {
-    /// The menu item's title for this view's selection, such as "Quote in Composer".
+    /// The menu item's title for this view's selection, such as "Reply".
     var addToComposerTitle: String { get }
     var canAddSelectionToComposer: Bool { get }
     func addSelectionToComposer()
@@ -36,11 +36,12 @@ extension MessageContext {
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
-    /// What the card is called: whose reply, which terminal and lines, which file and lines, or the file's name.
+    /// What the card is called: whose reply it answers, which terminal and lines, which file and lines, or the file's
+    /// name.
     var title: String {
         switch content {
         case .quote(let quote):
-            quote.provider.map { String(localized: "Quote from \($0.displayName)") } ?? String(localized: "Quote")
+            quote.provider.map { String(localized: "Replying to \($0.displayName)") } ?? String(localized: "Quote")
         case .terminal(let excerpt):
             if let start = excerpt.lineStart, let end = excerpt.lineEnd {
                 start == end

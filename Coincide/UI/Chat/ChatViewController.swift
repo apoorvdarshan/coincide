@@ -71,6 +71,8 @@ final class ChatViewController: NSViewController {
     /// The displayed thread's turn as last seen running, to look for its checkpoint once it ends.
     private var runningTurn: ThreadRunner.TurnState?
     private let findBar = TranscriptFindBar()
+    /// "Reply" by the text selected in a reply, plan or message.
+    private let replyButton = TranscriptReplyButton()
     private let finder = TranscriptFinder()
     /// The last query, kept while the find bar is closed, as the find pasteboard would.
     private var findQuery = ""
@@ -117,6 +119,8 @@ final class ChatViewController: NSViewController {
         findBar.isHidden = true
 
         addChild(composer)
+        composer.onRevealItem = { [weak self] itemID in self?.revealItem(itemID) }
+        composer.onOpenLink = { [weak self] link in self?.openLink(link) ?? false }
         welcomeView.onChooseAgent = { [weak self] kind in self?.switchAgent(to: kind) }
         for subview in [list.scrollView, welcomeView, welcomeView.setupView, composerContainer, jumpButton, findBar, noThreadView] as [NSView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
@@ -173,6 +177,12 @@ final class ChatViewController: NSViewController {
         ])
         jumpButton.isHidden = true
         jumpButton.alphaValue = 0
+        // Placed by frame over the transcript, under the find bar.
+        root.addSubview(replyButton.button, positioned: .below, relativeTo: findBar)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(transcriptSelectionChanged(_:)), name: ChatTextView.selectionDidChange, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(transcriptScrolled), name: NSView.boundsDidChangeNotification, object: list.scrollView.contentView)
         appliedFontSize = store.settings.fontSize
         appliedReplyTypeface = store.settings.replyTypeface
         appliedThemes = (store.settings.darkTheme, store.settings.lightTheme)
@@ -228,6 +238,7 @@ final class ChatViewController: NSViewController {
 
     private func loadThread() {
         guard isViewLoaded else { return }
+        replyButton.hide()
         // Find belongs to the thread it was opened in, as in T3.
         hideFindBar(relayout: false)
         composer.threadID = threadID
@@ -758,6 +769,19 @@ final class ChatViewController: NSViewController {
         }
     }
 
+    /// Scrolls the conversation to an item, opening the turn or group that folds it away, as the plan card's
+    /// "Open in Transcript" asks.
+    private func revealItem(_ itemID: UUID) {
+        guard let threadID = displayedThreadID, let thread = store.thread(threadID), itemsByID[itemID] != nil else { return }
+        let open = rowsOpened(toShow: itemID, in: thread)
+        if open != (expanded[threadID] ?? []) {
+            expanded[threadID] = open
+            rebuild()
+        }
+        guard let index = list.index(of: .item(itemID)) else { return }
+        list.reveal(row: index)
+    }
+
     /// Escape in the conversation closes the find bar first, then returns to the composer.
     private func escapeFromTranscript() {
         if findBar.isHidden {
@@ -1019,7 +1043,24 @@ extension ChatViewController: TranscriptHost {
     }
 
     func quote(_ text: String, from itemID: UUID) {
-        composer.addContext(MessageContext(.quote(.init(text: text, provider: item(itemID)?.provider))))
+        composer.addContext(Self.quote(text, from: item(itemID)))
+    }
+
+    /// A reply to text selected in `item`: from its agent, or from no agent when it is the user's own message.
+    static func quote(_ text: String, from item: TranscriptItem?) -> MessageContext {
+        MessageContext(.quote(.init(text: text, provider: item?.kind == .user ? nil : item?.provider)))
+    }
+
+    // MARK: Reply button
+
+    @objc private func transcriptSelectionChanged(_ notification: Notification) {
+        guard let textView = notification.object as? ChatTextView, textView.isDescendant(of: list.tableView) else { return }
+        replyButton.update(for: textView, within: list.scrollView.frame)
+    }
+
+    /// The button stays with the text it replies to only until the transcript moves.
+    @objc private func transcriptScrolled() {
+        if replyButton.isShown { replyButton.hide() }
     }
 
     func openContext(_ context: MessageContext, from anchor: NSView) {

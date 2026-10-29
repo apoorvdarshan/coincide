@@ -26,13 +26,20 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private let store: AppStore
     private let registry: ProviderRegistry
     private let runner: ThreadRunner
+    private let planCardMemory: ComposerPlanCardMemory
+
+    /// Scrolls the transcript to an item, for the plan card's "Open in Transcript". Set by the chat.
+    var onRevealItem: ((UUID) -> Void)?
+    /// Opens a link clicked in the plan card as the transcript would. Set by the chat.
+    var onOpenLink: ((Any) -> Bool)?
 
     private let rootView = ComposerRootView()
     private let column = NSStackView()
     private let queueBanner = ComposerQueueBanner()
     private let usageBanner = ComposerUsageBanner()
     private let handoffBanner = ComposerHandoffBanner()
-    private let planBanner = ComposerPlanBanner()
+    /// Internal so tests can read the plan card.
+    let planCard = ComposerPlanCard()
     private let questionBanner = ComposerQuestionBanner()
     private let approvalBanner = ComposerApprovalBanner()
     private let surface = FlatSurfaceView(style: .composer)
@@ -68,6 +75,10 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private var history: (index: Int, text: String)?
     /// The plan to implement when the thread is in plan mode and the last turn proposed one.
     private var proposedPlan: String?
+    /// The transcript item the proposed plan comes from: the plan, or the reply that stands in for one.
+    private var proposedPlanItemID: UUID?
+    /// Plans whose card the user hid; the next plan shows again. Implement stays offered either way.
+    private var hiddenPlanCards: Set<UUID> = []
     private var previewURLs: [URL] = []
     private var previewIndex = 0
     private var measuredWidth: CGFloat = 0
@@ -82,10 +93,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     /// The alternate send's modifiers are held: send does the other of the follow-up behavior.
     private var alternateHeld = false
 
-    init(store: AppStore = .shared, registry: ProviderRegistry = .shared, runner: ThreadRunner = .shared) {
+    init(
+        store: AppStore = .shared, registry: ProviderRegistry = .shared, runner: ThreadRunner = .shared,
+        planCardMemory: ComposerPlanCardMemory = .shared
+    ) {
         self.store = store
         self.registry = registry
         self.runner = runner
+        self.planCardMemory = planCardMemory
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -184,7 +199,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         column.spacing = 6
         column.detachesHiddenViews = true
         // What needs an answer sits closest to the input.
-        let banners: [NSView] = [handoffBanner, planBanner, usageBanner, queueBanner, questionBanner, approvalBanner]
+        let banners: [NSView] = [handoffBanner, planCard, usageBanner, queueBanner, questionBanner, approvalBanner]
         for view in banners + [surface, branchToolbar] {
             column.addArrangedSubview(view)
         }
@@ -222,9 +237,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     private func wireActions() {
         footer.modelButton.popupProvider = { [weak self] in self?.modelPicker() }
-        for button in [footer.modelButton, footer.effortButton, footer.speedButton, footer.accessButton] {
-            button.popupClearance = surface
-        }
+        // The model picker is tall, so it opens clear of the composer; the short effort, speed and access menus open
+        // right above their own control.
+        footer.modelButton.popupClearance = surface
         footer.effortButton.menuProvider = { [weak self] in self?.effortMenu() }
         footer.speedButton.menuProvider = { [weak self] in self?.speedMenu() }
         footer.accessButton.menuProvider = { [weak self] in self?.accessMenu() }
@@ -271,6 +286,44 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             focus()
         }
         suggestions.onChoose = { [weak self] suggestion in self?.choose(suggestion) }
+        planCard.onToggleCollapsed = { [weak self] collapsed in
+            guard let self, let threadID else { return }
+            planCardMemory.setCollapsed(collapsed, for: threadID)
+        }
+        planCard.onHeightChange = { [weak self] in self?.animateComposerLayout() }
+        planCard.onOpenInTranscript = { [weak self] in
+            guard let self, let id = proposedPlanItemID else { return }
+            onRevealItem?(id)
+        }
+        planCard.onOpenLink = { [weak self] link in self?.onOpenLink?(link) ?? false }
+        planCard.onDismiss = { [weak self] in self?.hidePlanCard() }
+    }
+
+    /// Hides the plan card until the agent proposes another plan. The plan stays in the transcript and Implement stays
+    /// offered.
+    private func hidePlanCard() {
+        guard let id = proposedPlanItemID else { return }
+        hiddenPlanCards.insert(id)
+        planCard.isHidden = true
+        NSAccessibility.post(
+            element: textView, notification: .announcementRequested,
+            userInfo: [
+                .announcement: String(localized: "Plan hidden. It stays in the transcript."),
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ])
+        focus()
+    }
+
+    /// Animates the composer to its new height, such as when the plan card collapses or appears. The conversation
+    /// above gives way in step.
+    private func animateComposerLayout() {
+        guard let window = view.window, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.22
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+            (parent?.view ?? window.contentView ?? view).layoutSubtreeIfNeeded()
+        }
     }
 
     override func viewWillAppear() {
@@ -312,6 +365,18 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             updateTextHeight()
         }
         suggestions.reposition(above: surface)
+        updatePlanCardLimit()
+    }
+
+    /// Keeps the plan card within its share of the conversation's height, leaving room for the input, the other
+    /// banners and some of the conversation, so it never pushes the composer out of the window.
+    private func updatePlanCardLimit() {
+        guard !planCard.isHidden else { return }
+        let available = parent?.view.bounds.height ?? view.window?.contentLayoutRect.height ?? 800
+        // Everything in the composer but the card, from the last layout; the column's margins are 8 and 12.
+        let others = column.frame.height - planCard.frame.height - column.spacing + 20
+        planCard.maximumHeight = ComposerPlanCardLayout.maximumCardHeight(
+            availableHeight: available, otherComposerHeight: max(0, others))
     }
 
     /// Replaces the text, attachments and context, for example when the user edits a message they already sent.
@@ -365,6 +430,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     @objc private func windowDidResize() {
         updateTextHeight()
+        updatePlanCardLimit()
     }
 
     @objc private func windowDidResignKey() {
@@ -672,30 +738,56 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         handoffBanner.isHidden = false
     }
 
-    /// In plan mode, once a turn has settled with a plan, the empty composer offers to implement it.
+    /// In plan mode, once a turn has settled with a plan, the empty composer offers to implement it and the plan card
+    /// shows the plan above it.
     private func refreshPlan() {
         proposedPlan = nil
-        defer {
-            planBanner.isHidden = proposedPlan == nil
-            if let proposedPlan { planBanner.show(planTitle: Self.title(ofPlan: proposedPlan)) }
-        }
+        proposedPlanItemID = nil
+        defer { showPlanCard() }
         guard let threadID, let thread, thread.interactionMode == .plan, !runner.isRunning(threadID), attachments.isEmpty,
             attachedContext.isEmpty
         else { return }
-        var plan: String?
-        var reply: String?
+        var plan: TranscriptItem?
+        var reply: TranscriptItem?
         // The latest turn's plan or reply, past any message steered into it.
         for item in thread.items.reversed() {
             if item.opensUserTurn { break }
             switch item.kind {
             case .error: return
-            case .plan where plan == nil: plan = item.text
-            case .assistant where reply == nil: reply = item.text
+            case .plan where plan == nil: plan = item
+            case .assistant where reply == nil: reply = item
             default: continue
             }
         }
-        let text = (plan ?? reply)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        proposedPlan = text.isEmpty ? nil : text
+        let source = plan ?? reply
+        let text = source?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let source, !text.isEmpty else { return }
+        proposedPlan = text
+        proposedPlanItemID = source.id
+    }
+
+    /// Shows the proposed plan in its card, collapsed as the user left it in this thread, unless they hid it. The card
+    /// fades in and the composer grows smoothly when it appears.
+    private func showPlanCard() {
+        let wasHidden = planCard.isHidden
+        guard let threadID, let proposedPlan, let id = proposedPlanItemID, !hiddenPlanCards.contains(id) else {
+            planCard.isHidden = true
+            planCard.alphaValue = 1
+            return
+        }
+        planCard.show(
+            plan: proposedPlan, title: Self.title(ofPlan: proposedPlan), isCollapsed: planCardMemory.isCollapsed(threadID))
+        planCard.isHidden = false
+        guard wasHidden, view.window != nil else { return }
+        updatePlanCardLimit()
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            planCard.alphaValue = 0
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.25
+                planCard.animator().alphaValue = 1
+            }
+        }
+        animateComposerLayout()
     }
 
     /// "Resume at Reset" for a thread with a conversation that isn't running while the agent's limit stops work.
