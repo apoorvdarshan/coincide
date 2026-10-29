@@ -38,10 +38,11 @@ final class MainRootViewController: NSViewController {
     }
 }
 
-/// The slim column at the window's left edge with a button for each place and panel in the app: the thread list, a
-/// new thread, search, the terminal, the diff, the pull requests, the project's editor, the agents and settings.
-/// The diff and the pull requests share the inspector column, so at most one of the two is lit. Buttons send their
-/// actions up the responder chain, the way menu items do, so they run whatever the menu bar would.
+/// The slim column at the window's left edge with a button for each place in the app: the thread list, a new thread,
+/// search, the terminal (which opens along the bottom), the project's editor, usage, instructions, the agents and
+/// settings. The panels that open on the right (the diff, the pull requests and the browser preview) have their buttons
+/// on the right too, in the toolbar (`InspectorPanelButtons`). Buttons send their actions up the responder chain, the
+/// way menu items do, so they run whatever the menu bar would.
 final class NavigationRailViewController: NSViewController {
     static let width: CGFloat = 60
 
@@ -57,15 +58,6 @@ final class NavigationRailViewController: NSViewController {
     private lazy var terminalButton = RailButton(
         symbol: "terminal", label: String(localized: "Terminal"), command: .toggleTerminal,
         action: #selector(MainWindowController.toggleTerminalPanel(_:)))
-    private lazy var diffButton = RailButton(
-        symbol: "plus.forwardslash.minus", label: String(localized: "Diff"), command: .toggleDiff,
-        action: #selector(MainWindowController.toggleDiffPanel(_:)))
-    private lazy var pullRequestsButton = RailButton(
-        symbol: "arrow.triangle.pull", label: String(localized: "Pull Requests"), command: nil,
-        action: #selector(MainWindowController.togglePullRequestsPanel(_:)))
-    private lazy var previewButton = RailButton(
-        symbol: "globe", label: String(localized: "Browser Preview"), command: nil,
-        action: #selector(MainWindowController.togglePreviewPanel(_:)))
     private lazy var openInButton = RailButton(
         symbol: "arrow.up.forward.app", label: String(localized: "Open In"), command: .openInEditor,
         action: #selector(MainWindowController.openInPreferred(_:)))
@@ -83,7 +75,7 @@ final class NavigationRailViewController: NSViewController {
     override func loadView() {
         let root = RailBackgroundView()
         let top = stack([threadsButton, newThreadButton, searchButton])
-        let panels = stack([terminalButton, diffButton, pullRequestsButton, previewButton, openInButton])
+        let panels = stack([terminalButton, openInButton])
         let bottom = stack([usageButton, instructionsButton, agentsButton, settingsButton])
         let divider = RailDivider()
         for view in [top, divider, panels, bottom] as [NSView] {
@@ -129,19 +121,14 @@ final class NavigationRailViewController: NSViewController {
     }
 
     /// Lights the buttons of the panels that are open, and enables Open In only when there is a folder to open.
-    func update(threadsOpen: Bool, terminalOpen: Bool, diffOpen: Bool, pullRequestsOpen: Bool, previewOpen: Bool = false, canOpenFolder: Bool) {
+    func update(threadsOpen: Bool, terminalOpen: Bool, canOpenFolder: Bool) {
         threadsButton.isActive = threadsOpen
         terminalButton.isActive = terminalOpen
-        diffButton.isActive = diffOpen
-        pullRequestsButton.isActive = pullRequestsOpen
-        previewButton.isActive = previewOpen
         openInButton.isEnabled = canOpenFolder
     }
 
     @objc private func updateShortcuts() {
-        let buttons = [
-            threadsButton, newThreadButton, searchButton, terminalButton, diffButton, pullRequestsButton, previewButton, openInButton,
-        ]
+        let buttons = [threadsButton, newThreadButton, searchButton, terminalButton, openInButton]
         for button in buttons {
             button.updateToolTip()
         }
@@ -298,6 +285,8 @@ private final class RailDivider: NSView {
 /// The thread's title over its project and branch, shown in the toolbar right after the thread list. The window's
 /// own title is hidden, since the toolbar would put it over the thread list, beside the traffic lights.
 final class ThreadTitleView: NSView {
+    /// The narrowest the toolbar makes the title, truncated, before it moves items into its overflow menu.
+    static let minimumWidth: CGFloat = 80
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
     /// The bot's avatar, in a bot's conversation.
@@ -310,7 +299,9 @@ final class ThreadTitleView: NSView {
         subtitleLabel.textColor = .secondaryLabelColor
         for label in [titleLabel, subtitleLabel] {
             label.lineBreakMode = .byTruncatingTail
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            // Below the toolbar's own sizing, so a narrow toolbar truncates the title rather than moving it, or the
+            // scripts and panel buttons after it, into its overflow menu.
+            label.setContentCompressionResistancePriority(.init(1), for: .horizontal)
         }
         let labels = NSStackView(views: [titleLabel, subtitleLabel])
         labels.orientation = .vertical
@@ -327,6 +318,8 @@ final class ThreadTitleView: NSView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            // The toolbar sizes the item between these, as it does a search field.
+            widthAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumWidth),
             widthAnchor.constraint(lessThanOrEqualToConstant: 520),
             heightAnchor.constraint(equalToConstant: 32),
         ])

@@ -29,7 +29,8 @@ public struct MenuBarUsageReading: Sendable, Hashable {
     /// The balance figure shown, for `.balance`.
     public var figure: UsageFigure?
     public var credits: UsageCredits?
-    /// "52%", "$12.40" or "1,250"; nil when the chosen figure is not reported now.
+    /// "52%" ("48% left" when showing what is left), "$12.40" or "1,250"; nil when the chosen figure is not reported
+    /// now.
     public var text: String?
 
     public nonisolated init(
@@ -46,20 +47,23 @@ public struct MenuBarUsageReading: Sendable, Hashable {
 }
 
 public enum MenuBarUsage {
-    /// What `choice` shows given the accounts and the last agent used. A last active agent whose provider is off (or
-    /// that never ran) shows the closest limit across all, as does a fixed account that no longer exists.
+    /// What `choice` shows given the accounts and the last agent used, with windows read as `mode` says. A last active
+    /// agent whose provider is off (or that never ran) shows the closest limit across all, as does a fixed account that
+    /// no longer exists. A balance reads the same either way: it is what is left.
     public nonisolated static func reading(
-        for choice: MenuBarUsageChoice, accounts: [UsageInsights.AccountLimits], lastActive: LastActiveAgent?
+        for choice: MenuBarUsageChoice, accounts: [UsageInsights.AccountLimits], lastActive: LastActiveAgent?,
+        mode: UsageDisplayMode = .used
     ) -> MenuBarUsageReading? {
+        func text(_ window: UsageLimitWindow) -> String { percentText(window, mode: mode) }
         switch choice {
         case .closest:
-            return closest(accounts)
+            return closest(accounts, mode: mode)
         case .lastActive:
             guard let lastActive, let account = account(lastActive.provider, lastActive.accountID, in: accounts) else {
-                return closest(accounts)
+                return closest(accounts, mode: mode)
             }
             if let window = mostUsedWindow(account) {
-                return MenuBarUsageReading(provider: account.provider, account: account, window: window, text: percentText(window))
+                return MenuBarUsageReading(provider: account.provider, account: account, window: window, text: text(window))
             }
             // An account with no windows (an API key, say) shows its balance when it has one.
             var reading = balanceReading(account)
@@ -67,15 +71,15 @@ public enum MenuBarUsage {
             return reading
         case .account(let provider, let accountID, let metric):
             guard let account = accounts.first(where: { $0.provider == provider && $0.account.id == accountID }) else {
-                return closest(accounts)
+                return closest(accounts, mode: mode)
             }
             switch metric {
             case .mostUsed:
                 let window = mostUsedWindow(account)
-                return MenuBarUsageReading(provider: provider, account: account, window: window, text: window.map(percentText))
+                return MenuBarUsageReading(provider: provider, account: account, window: window, text: window.map(text))
             case .window(let id):
                 let window = allWindows(account).first { $0.id == id }
-                return MenuBarUsageReading(provider: provider, account: account, window: window, text: window.map(percentText))
+                return MenuBarUsageReading(provider: provider, account: account, window: window, text: window.map(text))
             case .balance:
                 return balanceReading(account)
             }
@@ -90,10 +94,11 @@ public enum MenuBarUsage {
             ?? accounts.first { $0.provider == provider && $0.account.isDefault }
     }
 
-    private nonisolated static func closest(_ accounts: [UsageInsights.AccountLimits]) -> MenuBarUsageReading? {
+    private nonisolated static func closest(_ accounts: [UsageInsights.AccountLimits], mode: UsageDisplayMode) -> MenuBarUsageReading? {
         guard let constrained = UsageInsights.mostConstrained(accounts) else { return nil }
         return MenuBarUsageReading(
-            provider: nil, account: constrained.account, window: constrained.window, text: percentText(constrained.window))
+            provider: nil, account: constrained.account, window: constrained.window,
+            text: percentText(constrained.window, mode: mode))
     }
 
     /// The account's windows, main ones first.
@@ -135,8 +140,10 @@ public enum MenuBarUsage {
         credits.balance.flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
     }
 
-    /// "52%", the share of the window used.
-    public nonisolated static func percentText(_ window: UsageLimitWindow) -> String {
-        (window.usedPercent.rounded() / 100).formatted(.percent.precision(.fractionLength(0)))
+    /// "52%", the share of the window used, or "48% left" when showing what is left. The menu bar has room for little,
+    /// so a bare percentage means used and only the other way says so.
+    public nonisolated static func percentText(_ window: UsageLimitWindow, mode: UsageDisplayMode = .used) -> String {
+        let percent = (Double(window.shownPercent(mode)) / 100).formatted(.percent.precision(.fractionLength(0)))
+        return mode == .used ? percent : String(localized: "\(percent) left")
     }
 }

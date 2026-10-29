@@ -11,14 +11,17 @@ extension NSToolbarItem.Identifier {
     static let openIn = NSToolbarItem.Identifier("coincide.openIn")
     static let toggleTerminal = NSToolbarItem.Identifier("coincide.toggleTerminal")
     static let toggleDiff = NSToolbarItem.Identifier("coincide.toggleDiff")
+    /// The diff, pull request and browser preview buttons (`InspectorPanelButtons`).
+    static let inspectorPanels = NSToolbarItem.Identifier("coincide.inspectorPanels")
 }
 
-/// The unified toolbar: sidebar toggle and new thread over the sidebar; the thread title, run status,
-/// "Open in" picker and terminal toggle over the chat; and the diff toggle over the inspector.
+/// The unified toolbar: the thread title, project scripts and run status over the chat, then the buttons of the panels
+/// that open on the right (`InspectorPanelButtons`) at the window's top-right corner, over the inspector when it is
+/// open. The sidebar, new thread, "Open in", terminal and diff buttons can be added with Customize Toolbar.
 extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMenuDelegate {
     func makeToolbar() -> NSToolbar {
-        // A new identifier, so toolbars saved before the project scripts control start from the new defaults.
-        let toolbar = NSToolbar(identifier: "MainToolbar4")
+        // A new identifier, so toolbars saved before the right panels' buttons moved here start from the new defaults.
+        let toolbar = NSToolbar(identifier: "MainToolbar5")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
@@ -26,12 +29,14 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         return toolbar
     }
 
-    /// The navigation rail has the panel buttons, so by default the toolbar holds only the run status; the buttons
-    /// can still be added with Customize Toolbar.
+    /// The navigation rail has the buttons of the places and of the terminal; the panels that open on the right have
+    /// theirs on the right, after the inspector's tracking separator. That keeps them at the window's top-right corner
+    /// whether the inspector is open (they sit over its top edge) or closed (they follow the scripts and status), so
+    /// they don't move when it opens. The flexible space before them pushes them to the trailing edge.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             .flexibleSpace, .sidebarTrackingSeparator, .threadTitle, .flexibleSpace, .projectScripts, .runStatus,
-            .inspectorTrackingSeparator,
+            .inspectorTrackingSeparator, .flexibleSpace, .inspectorPanels,
         ]
     }
 
@@ -78,6 +83,16 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
                 action: #selector(toggleDiffPanel(_:)))
         case .projectScripts where !flag:
             return paletteItem(itemIdentifier, label: String(localized: "Scripts"), symbol: "play.rectangle")
+        case .inspectorPanels where !flag:
+            return paletteItem(itemIdentifier, label: String(localized: "Right Panels"), symbol: "sidebar.right")
+        case .inspectorPanels:
+            item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.view = panelButtons
+            // The group draws its own themed pill, like the scripts control, so the toolbar adds no bezel of its own.
+            item.isBordered = false
+            item.label = String(localized: "Right Panels")
+            item.paletteLabel = String(localized: "Right Panels")
+            item.visibilityPriority = .high
         case .projectScripts:
             item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.view = projectScripts
@@ -170,12 +185,12 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
         updateOpenInItem()
     }
 
-    /// Lights the rail's buttons for the open panels and enables Open In when there is a folder.
+    /// Lights the rail's and the toolbar's buttons for the open panels and enables Open In when there is a folder.
     func updateRail() {
         rail.update(
             threadsOpen: splitController.isSidebarOpen, terminalOpen: splitController.content.isTerminalOpen,
-            diffOpen: splitController.isDiffOpen, pullRequestsOpen: splitController.isPullRequestsOpen, previewOpen: splitController.isPreviewOpen,
             canOpenFolder: openFolder != nil)
+        panelButtons.update(open: splitController.isInspectorOpen ? splitController.inspector.panel : nil)
     }
 
     /// Shows the preferred app's icon and name on the "Open in" button.

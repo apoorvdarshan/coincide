@@ -58,7 +58,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         NSLayoutConstraint.activate([
             toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
             toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
-            toolbar.topAnchor.constraint(equalTo: root.topAnchor, constant: 8),
+            toolbar.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 8),
             status.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 6),
             status.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
             status.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),

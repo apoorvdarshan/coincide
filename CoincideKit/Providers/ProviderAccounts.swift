@@ -271,4 +271,28 @@ public struct ProviderAccountSecrets: Sendable {
     public nonisolated func removeAPIKey(for account: ProviderAccount) throws {
         try keychain.remove(account.id)
     }
+
+    // MARK: Admin API keys
+
+    /// The Keychain item of an account's Admin API key, beside its API key's.
+    private nonisolated func adminItem(_ account: ProviderAccount) -> String { account.id + ".admin" }
+
+    /// The optional Admin API key of an Anthropic API-key account, which reads the organization's usage and cost
+    /// reports (`AnthropicAdminUsage`).
+    public nonisolated func adminKey(for account: ProviderAccount) -> String? {
+        guard !account.isDefault else { return nil }
+        return (try? keychain.value(for: adminItem(account))) ?? nil
+    }
+
+    public nonisolated func hasAdminKey(_ account: ProviderAccount) -> Bool {
+        !account.isDefault && keychain.contains(adminItem(account))
+    }
+
+    public nonisolated func setAdminKey(_ key: String, for account: ProviderAccount) throws {
+        try keychain.set(key, for: adminItem(account), label: "Coincide: \(account.name) (Admin API key)")
+    }
+
+    public nonisolated func removeAdminKey(for account: ProviderAccount) throws {
+        try keychain.remove(adminItem(account))
+    }
 }

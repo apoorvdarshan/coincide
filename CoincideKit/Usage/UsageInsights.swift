@@ -202,6 +202,13 @@ public final class UsageInsights {
                 if let rateLimits = rateLimitReadings[UsageReport.accountKey(kind, account.id)] {
                     limits = limits.map { $0.adding(rateLimits) } ?? rateLimits
                 }
+                if let admin = adminLimits(UsageReport.accountKey(kind, account.id)) {
+                    // The reports answer the note that only an Admin key reads them; what they can't show stays noted.
+                    let unanswered = Set(APIKeyUsage.notes(for: .anthropic))
+                    var base = limits ?? UsageLimits(windows: [], checkedAt: admin.checkedAt)
+                    base.notes.removeAll { unanswered.contains($0) }
+                    limits = base.adding(admin)
+                }
                 return AccountLimits(
                     provider: kind, account: account, showsAccountName: accounts.count > 1,
                     status: registry.status(kind, account: account.id), limits: limits?.current(at: now))
@@ -243,6 +250,79 @@ public final class UsageInsights {
         return outcome.limits != nil
     }
 
+    // MARK: Anthropic Admin API reports
+
+    /// An account's Admin API reports are read again at most this often, unless the user refreshes.
+    public var adminReportsInterval: TimeInterval = 15 * 60
+    /// The last report of each account with an Admin key, by `UsageReport.accountKey`.
+    private var adminReports: [String: AnthropicAdminUsage.Report] = [:]
+    /// Why an account's last read failed, by `UsageReport.accountKey`; cleared by a read that works.
+    private var adminProblems: [String: String] = [:]
+    private var adminChecked: [String: Date] = [:]
+    private var adminReading: Set<String> = []
+    /// Sends the report reads; tests answer them without the network.
+    var adminFetch: UsageLimitsFetch = UsageLimitsHTTP.live
+
+    /// Whether the account is an Anthropic API-key account, which can hold an Admin API key.
+    public nonisolated static func takesAdminKey(_ account: ProviderAccount) -> Bool {
+        !account.isDefault && account.auth == .apiKey && APIKeyUsage.service(forVariable: account.keyVariable) == .anthropic
+    }
+
+    /// The account's last Admin API report, if it has an Admin key and a read worked.
+    public func adminReport(for account: ProviderAccount) -> AnthropicAdminUsage.Report? {
+        adminReports[UsageReport.accountKey(account.provider, account.id)]
+    }
+
+    /// The report (or why it failed) as limits to add to the account's.
+    private func adminLimits(_ key: String) -> UsageLimits? {
+        let report = adminReports[key]
+        let problem = adminProblems[key]
+        guard report != nil || problem != nil else { return nil }
+        return UsageLimits(
+            windows: [], checkedAt: report?.checkedAt ?? adminChecked[key] ?? Date(),
+            figures: report.map(AnthropicAdminUsage.figures) ?? [],
+            notes: [problem, AnthropicAdminUsage.balanceNote].compactMap { $0 })
+    }
+
+    /// Reads the Admin API reports of every Anthropic API-key account with an Admin key, each at most every
+    /// `adminReportsInterval` unless `force`.
+    public func readAdminReports(force: Bool = false) async {
+        let accounts = registry.accounts(for: .claude).filter(Self.takesAdminKey)
+        await withTaskGroup(of: Void.self) { group in
+            for account in accounts {
+                group.addTask { await self.readAdminReport(account, force: force) }
+            }
+        }
+    }
+
+    /// Reads one account's Admin API reports. An account without an Admin key (or no longer one) is forgotten.
+    public func readAdminReport(_ account: ProviderAccount, force: Bool = false) async {
+        let key = UsageReport.accountKey(account.provider, account.id)
+        guard Self.takesAdminKey(account), let adminKey = registry.secrets.adminKey(for: account) else {
+            if adminReports.removeValue(forKey: key) != nil || adminProblems.removeValue(forKey: key) != nil { changed() }
+            adminChecked[key] = nil
+            return
+        }
+        guard !adminReading.contains(key) else { return }
+        if !force, let checked = adminChecked[key], Date().timeIntervalSince(checked) < adminReportsInterval { return }
+        adminReading.insert(key)
+        let outcome = await AnthropicAdminUsage.read(adminKey: adminKey, apiKey: registry.secrets.apiKey(for: account), fetch: adminFetch)
+        adminReading.remove(key)
+        adminChecked[key] = Date()
+        switch outcome {
+        case .report(let report):
+            adminReports[key] = report
+            adminProblems[key] = nil
+        case .unauthorized, .forbidden:
+            // A refused key's old figures would mislead.
+            adminReports[key] = nil
+            adminProblems[key] = AnthropicAdminUsage.problem(outcome)
+        case .failed:
+            adminProblems[key] = AnthropicAdminUsage.problem(outcome)
+        }
+        changed()
+    }
+
     /// Checks the providers again when the last check is older than `limitsInterval` (or always, with `force`).
     public func checkLimits(force: Bool = false) async {
         guard !isCheckingLimits else { return }
@@ -260,7 +340,8 @@ public final class UsageInsights {
         Task {
             async let scan: Void = scan()
             async let limits: Void = checkLimits()
-            _ = await (scan, limits)
+            async let admin: Void = readAdminReports()
+            _ = await (scan, limits, admin)
         }
     }
 
@@ -268,7 +349,8 @@ public final class UsageInsights {
     public func refreshNow() async {
         async let scan: Void = scan(force: true)
         async let limits: Void = checkLimits(force: true)
-        _ = await (scan, limits)
+        async let admin: Void = readAdminReports(force: true)
+        _ = await (scan, limits, admin)
     }
 
     /// The most used window across `accounts`: the one closest to its limit, which the menu bar shows. Model-specific
