@@ -144,7 +144,7 @@ final class FlowingButtonRow: NSView {
 }
 
 /// A pull request's description, rendered with the transcript's Markdown and as tall as its text at the width it
-/// is given. Links open in the browser; anything else a link could name is ignored.
+/// is given. Web links open as the transcript's do (`LinkRouting`); anything else a link could name is ignored.
 final class PullRequestMarkdownView: NSView {
     private let textView = ChatTextView()
     private var rendered = NSAttributedString()
@@ -152,10 +152,8 @@ final class PullRequestMarkdownView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         textView.onOpenLink = { [weak self] link in
-            guard let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:)),
-                let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http"
-            else { return false }
-            SafeLinks.openExternal(url, from: self?.window)
+            guard let request = link as? WebLinkRequest else { return false }
+            LinkRouting.open(request, from: self?.window)
             return true
         }
         textView.setAccessibilityLabel(String(localized: "Description"))
@@ -168,8 +166,9 @@ final class PullRequestMarkdownView: NSView {
     override var isFlipped: Bool { true }
 
     func setMarkdown(_ markdown: String) {
-        rendered = ChatMarkdownRenderer.render(markdown, style: ChatMarkdownStyle(fontSize: Theme.fontSize, textColor: Theme.ink))
-            .string
+        var style = ChatMarkdownStyle(fontSize: Theme.fontSize, textColor: Theme.ink)
+        style.webLinkHint = LinkRouting.hint(opensInDefaultBrowser: LinkRouting.opensInDefaultBrowser)
+        rendered = ChatMarkdownRenderer.render(markdown, style: style).string
         textView.setText(rendered)
         invalidateIntrinsicContentSize()
         needsLayout = true
