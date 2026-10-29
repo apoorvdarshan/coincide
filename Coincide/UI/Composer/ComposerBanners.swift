@@ -478,8 +478,9 @@ final class ComposerHandoffBanner: ComposerBanner {
         content.addArrangedSubview(message)
     }
 
-    func show(provider: ProviderKind, missedMessages: Int, joining: Bool) {
-        let name = provider.displayName
+    /// `name` names the agent's account when it has several.
+    func show(provider: ProviderKind, name: String? = nil, missedMessages: Int, joining: Bool) {
+        let name = name ?? provider.displayName
         iconView.image = Theme.logo(for: provider)
         message.stringValue =
             if joining {

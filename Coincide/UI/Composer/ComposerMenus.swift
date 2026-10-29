@@ -66,9 +66,12 @@ enum ComposerMenus {
     }
 
     /// Why a provider cannot be used right now, with its setup hint when it has one.
-    static func statusText(_ kind: ProviderKind, registry: ProviderRegistry) -> String {
-        let status = registry.status(kind)
-        let hint = registry.provider(kind)?.setupHint
+    /// For one of the agent's accounts (nil for its default one). An added account's setup is in Settings, not the
+    /// CLI's hint, so it shows the account's own message.
+    static func statusText(_ kind: ProviderKind, account: String? = nil, registry: ProviderRegistry) -> String {
+        let status = registry.status(kind, account: account)
+        let isDefault = registry.account(account, of: kind).isDefault
+        let hint = isDefault ? registry.provider(kind)?.setupHint : status.message
         switch status.state {
         case .ready:
             return String(localized: "Ready")

@@ -22,15 +22,16 @@ enum ThreadTitles {
     /// The agent the thread uses, with its lightest model and reasoning when the catalog has one meant for quick
     /// work (Claude's Haiku, Codex's Luna), as T3 Code titles with a small model.
     static func titleSelection(for selection: ModelSelection, registry: ProviderRegistry) -> ModelSelection {
-        let models = registry.models(for: selection.provider)
+        let models = registry.models(for: selection.provider, account: selection.accountID)
         let quick = models.first { model in
             let id = model.modelID.lowercased()
             return id.contains("haiku") || id.contains("luna") || id.contains("mini") || id.contains("flash")
         }
         let model = quick ?? registry.model(for: selection)
+        // The thread's account pays for its title too.
         return ModelSelection(
             provider: selection.provider, modelID: model?.modelID ?? selection.modelID,
-            effort: model?.efforts.first ?? selection.effort)
+            effort: model?.efforts.first ?? selection.effort, accountID: selection.accountID)
     }
 
     /// T3 Code's title brief, trimmed to what applies before the agent has done any work.

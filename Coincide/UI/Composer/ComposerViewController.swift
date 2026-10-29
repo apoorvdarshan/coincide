@@ -260,7 +260,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         usageBanner.onShowDetails = { [weak self] in self?.footer.usageMeter.showDetails() }
         usageBanner.onToggleResume = { [weak self] in self?.toggleResumeAtReset() }
         usageBanner.onDismiss = { [weak self] in
-            guard let self, let thread, let warning = runner.usageLimits(for: thread.selection.provider)?.current(at: Date()).warning
+            guard let self, let thread, let warning = runner.usageLimits(for: thread.selection.provider, account: thread.selection.accountID)?.current(at: Date()).warning
             else { return }
             dismissedUsageWarnings.insert(UsageLimits.warningKey(for: warning, provider: thread.selection.provider))
             refreshUsageLimits()
@@ -528,7 +528,11 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         let model = registry.model(for: selection)
         let noneReady = noProviderReady
         let modelName = registry.displayName(for: selection)
-        let title = selection.modelID == "default" ? provider.displayName : modelName
+        let accountName = registry.accountName(for: selection)
+        let agentName = accountName.map { "\(provider.displayName) · \($0)" } ?? provider.displayName
+        var title = selection.modelID == "default" ? provider.displayName : modelName
+        // Another account of the agent is named on the control, so the user sees which one pays.
+        if let accountName, !registry.account(for: selection).isDefault { title += " · \(accountName)" }
         // A faster speed shows as a bolt on the control and is named with the model.
         let speedName = selection.speed.map { model?.speed($0)?.name ?? $0 }
         let modelDescription = speedName.map { String(localized: "\(modelName), \($0)") } ?? modelName
@@ -541,9 +545,9 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         footer.modelButton.accentSymbol = noneReady || speedName == nil ? nil : "bolt.fill"
         let keyBindings = KeyBindingsController.shared
         footer.modelButton.toolTip = keyBindings.toolTip(
-            String(localized: "\(provider.displayName) · \(modelDescription). Choose the agent and model"), for: .chooseModel)
+            String(localized: "\(agentName) · \(modelDescription). Choose the agent and model"), for: .chooseModel)
         footer.modelButton.setAccessibilityLabel(
-            String(localized: "Agent and model: \(provider.displayName), \(modelDescription)"))
+            String(localized: "Agent and model: \(agentName), \(modelDescription)"))
 
         if let model, !model.efforts.isEmpty {
             let effort = selection.effort ?? model.defaultEffort
@@ -639,14 +643,19 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             return
         }
         let provider = thread.selection.provider
-        let missed = Handoff.missedItems(in: thread, for: provider)
+        // The thread as the next turn sees it: with the selected account's own session, when it has one.
+        var next = thread
+        let switchedAccount = next.activateAccount(thread.selection.account, for: provider)
+        let missed = Handoff.missedItems(in: next, for: provider)
         let count = missed.filter { $0.kind == .user || $0.kind == .assistant }.count
-        guard count > 0, missed.contains(where: { $0.provider != nil && $0.provider != provider }) else {
+        let fromOtherAccount = switchedAccount || next.sessions[provider]?.foreignItemsBefore != nil
+        guard count > 0, fromOtherAccount || missed.contains(where: { $0.provider != nil && $0.provider != provider }) else {
             handoffBanner.isHidden = true
             return
         }
-        let joining = (thread.sessions[provider]?.seenItemCount ?? 0) == 0
-        handoffBanner.show(provider: provider, missedMessages: count, joining: joining)
+        let joining = (next.sessions[provider]?.seenItemCount ?? 0) == 0
+        let name = registry.accountName(for: thread.selection).map { "\(provider.displayName) · \($0)" }
+        handoffBanner.show(provider: provider, name: name, missedMessages: count, joining: joining)
         handoffBanner.isHidden = false
     }
 
@@ -680,14 +689,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private func resumeOffer(provider: ProviderKind, now: Date) -> ComposerUsageBanner.ResumeOffer? {
         guard let threadID, store.summary(threadID)?.hasUserMessages == true, !runner.isRunning(threadID) else { return nil }
         if let date = runner.scheduledResumes[threadID] { return .scheduled(date) }
-        return runner.blockingLimitReset(for: provider, now: now) == nil ? nil : .available
+        return runner.blockingLimitReset(for: provider, account: thread?.selection.accountID, now: now) == nil ? nil : .available
     }
 
     private func toggleResumeAtReset() {
         guard let threadID, let provider = thread?.selection.provider else { return }
         if runner.scheduledResumes[threadID] != nil {
             runner.cancelResume(threadID)
-        } else if let reset = runner.blockingLimitReset(for: provider) {
+        } else if let reset = runner.blockingLimitReset(for: provider, account: thread?.selection.accountID) {
             runner.resumeAtReset(threadID, at: reset)
         }
         refreshUsageLimits()
@@ -696,7 +705,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     /// The selected agent's subscription limits: the footer meter, and a banner once a window is nearly used up.
     private func refreshUsageLimits() {
         let now = Date()
-        guard let thread, let reported = runner.usageLimits(for: thread.selection.provider), !reported.windows.isEmpty
+        guard let thread, let reported = runner.usageLimits(for: thread.selection.provider, account: thread.selection.accountID), !reported.windows.isEmpty
         else {
             footer.usageMeter.isHidden = true
             usageBanner.isHidden = true
@@ -775,7 +784,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     /// A provider counts as usable until a check says otherwise, so nothing is blocked while statuses load.
     private func isUsable(_ provider: ProviderKind) -> Bool {
-        switch registry.status(provider).state {
+        switch registry.status(provider, account: thread?.selection.provider == provider ? thread?.selection.accountID : nil).state {
         case .ready: true
         case .unknown: store.settings.settings(for: provider).isEnabled
         case .notInstalled, .notAuthenticated, .error: false
@@ -1174,7 +1183,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     /// The built-in commands plus one for each other agent that is ready, such as `/codex`.
     private var availableCommands: [ComposerCommand] {
         let provider = thread?.selection.provider
-        let hasLimits = provider.flatMap { runner.usageLimits(for: $0) }.map { !$0.windows.isEmpty } ?? false
+        let hasLimits = provider.flatMap { runner.usageLimits(for: $0, account: thread?.selection.accountID) }.map { !$0.windows.isEmpty } ?? false
         return ComposerCommand.available(agents: registry.readyKinds.filter { $0 != provider }, usageLimits: hasLimits)
     }
 
@@ -1196,12 +1205,19 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     /// Continues the thread with `provider`, on the model it last used here or else its first model.
     func switchAgent(to provider: ProviderKind) {
         guard let thread else { return }
-        let models = registry.models(for: provider)
+        // The account the thread last ran the agent with, while it can run; else its first account that can.
+        let accounts = registry.accounts(for: provider)
+        let isReady = { (account: ProviderAccount) in self.registry.status(provider, account: account.id).state == .ready }
+        let lastAccount = thread.sessions[provider]?.account
+        let account =
+            accounts.first { $0.id == lastAccount && isReady($0) } ?? accounts.first(where: isReady)
+            ?? .defaultAccount(for: provider)
+        let models = registry.models(for: provider, account: account.id)
         let lastUsed = thread.items.last { $0.provider == provider && $0.modelID != nil }?.modelID
         let modelID =
             lastUsed.flatMap { id in models.contains { $0.modelID == id } ? id : nil } ?? models.first?.modelID
             ?? "default"
-        select(ModelSelection(provider: provider, modelID: modelID))
+        select(ModelSelection(provider: provider, modelID: modelID, accountID: account.storedID))
     }
 
     // MARK: Menus and modes
@@ -1241,14 +1257,17 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             selection.effort = model?.defaultEffort
         }
         selection.speed = model?.speed(thread.selection.speed)?.id
-        let switched = selection.provider != thread.selection.provider
+        // Another account of the same agent is a switch too: it runs its own session and gets a recap.
+        let switched = selection.provider != thread.selection.provider || selection.account != thread.selection.account
         store.updateThread(threadID) { $0.selection = selection }
         if switched {
+            let name = registry.accountName(for: selection).map { "\(selection.provider.displayName) · \($0)" }
+                ?? selection.provider.displayName
             footer.modelButton.flash(Theme.color(for: selection.provider))
             NSAccessibility.post(
                 element: textView, notification: .announcementRequested,
                 userInfo: [
-                    .announcement: String(localized: "Switched to \(selection.provider.displayName)"),
+                    .announcement: String(localized: "Switched to \(name)"),
                     .priority: NSAccessibilityPriorityLevel.high.rawValue,
                 ])
             if !handoffBanner.isHidden {

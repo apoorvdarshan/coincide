@@ -52,6 +52,12 @@ final class SettingsModel {
     private(set) var models: [ProviderKind: [ModelOption]] = [:]
     /// Models the providers reported themselves, without custom ids.
     private(set) var discoveredModels: [ProviderKind: [ModelOption]] = [:]
+    /// The added accounts' statuses, by account id.
+    private(set) var accountStatuses: [String: ProviderStatus] = [:]
+    /// Accounts with an API key in the Keychain. The Keychain is only asked whether a key exists, never for it.
+    private(set) var accountsWithKeys: Set<String> = []
+    /// Accounts being checked or having their key saved.
+    private(set) var busyAccounts: Set<String> = []
     private(set) var isCheckingAll = false
     private(set) var checking: Set<ProviderKind> = []
     private(set) var lastChecked: Date?
@@ -196,6 +202,129 @@ final class SettingsModel {
         updateProvider(kind, recheck: false) { $0.customModels.removeAll { $0 == id } }
     }
 
+    // MARK: Accounts
+
+    /// The provider's default account and the ones the user added.
+    func accounts(_ kind: ProviderKind) -> [ProviderAccount] { providerSettings(kind).allAccounts(of: kind) }
+
+    func accountStatus(_ account: ProviderAccount) -> ProviderStatus {
+        account.isDefault ? status(account.provider) : accountStatuses[account.id] ?? .unknown
+    }
+
+    func hasAPIKey(_ account: ProviderAccount) -> Bool { accountsWithKeys.contains(account.id) }
+
+    func isBusy(_ account: ProviderAccount) -> Bool {
+        busyAccounts.contains(account.id) || (account.isDefault && isChecking(account.provider))
+    }
+
+    /// Adds an account signing in with `auth`, named after the provider and its method, and returns it.
+    @discardableResult
+    func addAccount(_ kind: ProviderKind, auth: ProviderAccountAuth) -> ProviderAccount {
+        let existing = Set(accounts(kind).map(\.name))
+        let base =
+            switch auth {
+            case .login: String(localized: "\(kind.displayName) (Login)")
+            case .apiKey: String(localized: "\(kind.displayName) (API)")
+            }
+        var name = base
+        var number = 2
+        while existing.contains(name) {
+            name = "\(base) \(number)"
+            number += 1
+        }
+        let account = ProviderAccount(provider: kind, name: name, auth: auth)
+        updateProvider(kind, recheck: false) { $0.accounts.append(account) }
+        checkAccount(account)
+        return account
+    }
+
+    /// Changes an added account. A new sign-in method or key type is checked again.
+    func updateAccount(_ account: ProviderAccount, _ mutate: (inout ProviderAccount) -> Void) {
+        guard !account.isDefault else { return }
+        var changed = account
+        mutate(&changed)
+        guard changed != account else { return }
+        updateProvider(account.provider, recheck: false) { settings in
+            if let index = settings.accounts.firstIndex(where: { $0.id == account.id }) { settings.accounts[index] = changed }
+        }
+        if changed.auth != account.auth || changed.apiKeyVariable != account.apiKeyVariable
+            || changed.environment != account.environment
+        {
+            checkAccount(changed)
+        }
+    }
+
+    /// Removes an added account with its Keychain key and its home, where the CLI kept its login. Threads that used
+    /// it continue with the provider's default account.
+    func removeAccount(_ account: ProviderAccount) {
+        guard !account.isDefault else { return }
+        updateProvider(account.provider, recheck: false) { $0.accounts.removeAll { $0.id == account.id } }
+        if settings.defaultSelection.provider == account.provider, settings.defaultSelection.accountID == account.id {
+            update { $0.defaultSelection.accountID = nil }
+        }
+        try? registry.secrets.removeAPIKey(for: account)
+        try? FileManager.default.removeItem(at: account.home(in: store.directory))
+        registry.forgetAccount(account.id)
+        accountsWithKeys.remove(account.id)
+    }
+
+    /// Saves the account's API key to the Keychain; returns a message when that failed.
+    func saveAPIKey(_ key: String, for account: ProviderAccount) async -> String? {
+        busyAccounts.insert(account.id)
+        defer { busyAccounts.remove(account.id) }
+        do {
+            try await registry.saveAPIKey(key, for: account)
+        } catch {
+            syncKeys()
+            return error.localizedDescription
+        }
+        syncKeys()
+        return nil
+    }
+
+    func removeAPIKey(for account: ProviderAccount) {
+        busyAccounts.insert(account.id)
+        Task {
+            try? await registry.removeAPIKey(for: account)
+            busyAccounts.remove(account.id)
+            syncKeys()
+        }
+    }
+
+    func checkAccount(_ account: ProviderAccount) {
+        guard !account.isDefault else { return check(account.provider) }
+        busyAccounts.insert(account.id)
+        Task {
+            await registry.refresh(account.provider, account: account.id)
+            busyAccounts.remove(account.id)
+        }
+    }
+
+    /// Runs the CLI's sign-in for the account in a terminal with the account's home, and checks it when that closes.
+    func signIn(_ account: ProviderAccount) {
+        guard let arguments = account.provider.loginArguments else { return }
+        Task {
+            let executable = await registry.executable(for: account.provider)
+            let command = ([executable?.path ?? executableNames(account.provider).first ?? account.provider.rawValue] + arguments)
+                .map(Self.shellQuoted).joined(separator: " ")
+            let environment = registry.signInEnvironment(for: account.provider, account: account.id)
+            AccountSignInWindowController.show(
+                title: String(localized: "Sign In to \(account.name)"), command: command, environment: environment
+            ) { [weak self] in self?.checkAccount(account) }
+        }
+    }
+
+    private static func shellQuoted(_ word: String) -> String {
+        word.range(of: #"^[A-Za-z0-9_./~=-]+$"#, options: .regularExpression) != nil
+            ? word : "'" + word.replacingOccurrences(of: "'", with: #"'"'"'"#) + "'"
+    }
+
+    private func syncKeys() {
+        let ids = Set(
+            kinds.flatMap { accounts($0) }.filter { !$0.isDefault && $0.auth == .apiKey && registry.secrets.hasAPIKey($0) }.map(\.id))
+        if ids != accountsWithKeys { accountsWithKeys = ids }
+    }
+
     // MARK: Sync
 
     private func syncSettings() {
@@ -211,6 +340,10 @@ final class SettingsModel {
         if newStatuses != statuses { statuses = newStatuses }
         if newModels != models { models = newModels }
         if newDiscovered != discoveredModels { discoveredModels = newDiscovered }
+        let added = kinds.flatMap { registry.accounts(for: $0) }.filter { !$0.isDefault }
+        let newAccountStatuses = Dictionary(added.map { ($0.id, registry.status($0.provider, account: $0.id)) }) { first, _ in first }
+        if newAccountStatuses != accountStatuses { accountStatuses = newAccountStatuses }
+        syncKeys()
         let refreshing = registry.isRefreshing
         if refreshing != isCheckingAll {
             if !refreshing { lastChecked = Date() }
