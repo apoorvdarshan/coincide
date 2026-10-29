@@ -87,6 +87,22 @@ private final class RevealingTranscriptHost: TranscriptHost {
         #expect(host.revealed == [item])
     }
 
+    /// A background command's title is often its whole script; it must stay on its own line, not draw over the next.
+    @Test func multiLineTitlesStayOnOneLine() {
+        let script = BackgroundTask(
+            id: "c1", title: "python3 -c \"\np = 'Tests.swift'\ns = open(p).read()\n\"", kind: .command, toolCallID: "toolu_3")
+        let agent = BackgroundTask(id: "a1", title: "Right-align user messages", kind: .agent)
+        let (_, lines) = cell([script, agent])
+        #expect(TranscriptBackgroundTaskLine.oneLine(script.title) == "python3 -c \" p = 'Tests.swift' s = open(p).read() \"")
+        #expect(lines.first?.accessibilityLabel()?.contains("\n") == false)
+        for line in lines {
+            for field in line.subviews.compactMap({ $0 as? NSTextField }) where !field.isHidden {
+                #expect(field.frame.minY >= 0 && field.frame.maxY <= line.bounds.height, "\(field.stringValue)")
+            }
+        }
+        #expect(lines.map(\.frame.minY) == [TranscriptMetrics.workRowHeight, TranscriptMetrics.workRowHeight + TranscriptBackgroundTaskLine.height])
+    }
+
     @Test func linesFollowTheTasksAsTheyFinish() {
         let host = self.host
         let cell = TranscriptLiveCell(frame: NSRect(x: 0, y: 0, width: 720, height: 200))
