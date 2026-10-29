@@ -61,6 +61,7 @@ public final class AgentHostCore {
         var turnActive = false
         var pendingApprovals: [ApprovalRequest] = []
         var pendingQuestions: [UserInputRequest] = []
+        var backgroundTasks: [BackgroundTask] = []
 
         init(key: AgentSessionKey, log: AgentEventLog, thread: AgentHostThreadInfo) {
             self.key = key
@@ -302,10 +303,13 @@ public final class AgentHostCore {
             record.turnActive = false
             record.pendingApprovals = []
             record.pendingQuestions = []
+        case .backgroundWork(let tasks):
+            record.backgroundTasks = tasks
         case .sessionExited:
             record.turnActive = false
             record.pendingApprovals = []
             record.pendingQuestions = []
+            record.backgroundTasks = []
             record.session = nil
         default:
             break
@@ -373,7 +377,8 @@ public final class AgentHostCore {
             hasBackgroundWork: (record.session as? BackgroundWorkReporting)?.hasBackgroundWork ?? false,
             lastSequence: record.log.lastSequence, acknowledgedSequence: record.log.acknowledgedSequence,
             turnWasActiveAtAcknowledged: record.log.turnWasActiveAtAcknowledged, isTurnActive: record.turnActive,
-            pendingApprovals: record.pendingApprovals, pendingQuestions: record.pendingQuestions)
+            pendingApprovals: record.pendingApprovals, pendingQuestions: record.pendingQuestions,
+            backgroundTasks: record.session == nil ? [] : record.backgroundTasks)
     }
 
     // MARK: Lifecycle

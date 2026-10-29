@@ -148,12 +148,16 @@ public struct AgentHostSessionInfo: Codable, Sendable, Hashable {
     /// Approvals and questions waiting for an answer, which the app shows again even if it lost them.
     public var pendingApprovals: [ApprovalRequest]
     public var pendingQuestions: [UserInputRequest]
+    /// The background work the session last reported (`AgentEvent.backgroundWork`), which the app shows again: the
+    /// event that reported it may be one the app applied before it quit. Nil from a host older than this field.
+    public var backgroundTasks: [BackgroundTask]?
 
     public nonisolated init(
         key: AgentSessionKey, isLive: Bool, sessionID: String?, supportsSteering: Bool, hasBackgroundWork: Bool,
         lastSequence: Int, acknowledgedSequence: Int, turnWasActiveAtAcknowledged: Bool, isTurnActive: Bool,
-        pendingApprovals: [ApprovalRequest], pendingQuestions: [UserInputRequest]
+        pendingApprovals: [ApprovalRequest], pendingQuestions: [UserInputRequest], backgroundTasks: [BackgroundTask]? = nil
     ) {
+        self.backgroundTasks = backgroundTasks
         self.key = key
         self.isLive = isLive
         self.sessionID = sessionID

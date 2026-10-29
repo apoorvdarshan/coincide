@@ -546,18 +546,19 @@ final class TranscriptReasoningCell: TranscriptCell {
 // MARK: - Live status
 
 /// The bottom line while a turn runs and nothing else shows activity: "Thinking…", beside the rail's breathing dot.
-/// Between turns it says what an agent still runs in the background.
+/// Between turns it says what an agent still runs in the background, with a line per task (T3 Code's "now" line).
 final class TranscriptLiveCell: TranscriptCell {
     override var railNodeY: CGFloat { TranscriptMetrics.workRowHeight / 2 }
 
     private let label = NSTextField(labelWithString: "")
+    private var taskLines: [TranscriptBackgroundTaskLine] = []
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         label.textColor = .secondaryLabelColor
         addSubview(label)
-        setAccessibilityElement(true)
-        setAccessibilityRole(.staticText)
+        setAccessibilityElement(false)
+        label.setAccessibilityRole(.staticText)
     }
 
     required init?(coder: NSCoder) {
@@ -568,22 +569,46 @@ final class TranscriptLiveCell: TranscriptCell {
         super.configure(row, host: host)
         guard case .live(let status) = row.kind else { return }
         label.font = .systemFont(ofSize: Theme.fontSize - 1)
-        switch status {
-        case .starting(let provider): label.stringValue = String(localized: "Starting \(provider.displayName)…")
-        case .thinking: label.stringValue = String(localized: "Thinking…")
-        case .background(let provider, let titles):
-            label.stringValue =
-                titles.count == 1
-                ? String(localized: "\(provider.displayName) is working in the background: \(titles[0])")
-                : String(localized: "\(provider.displayName) is running \(titles.count) tasks in the background")
+        label.stringValue = Self.title(status)
+        var tasks: [BackgroundTask] = []
+        if case .background(let provider, let shown) = status {
+            tasks = shown
+            while taskLines.count < tasks.count {
+                let line = TranscriptBackgroundTaskLine()
+                addSubview(line)
+                taskLines.append(line)
+            }
+            for (line, task) in zip(taskLines, tasks) {
+                let item = task.toolCallID.flatMap { host.toolCallItem($0, provider: provider) }
+                line.configure(task, onSelect: item.map { item in { [weak host] in host?.reveal(item) } })
+            }
         }
-        if case .background(_, let titles) = status { toolTip = titles.joined(separator: "\n") } else { toolTip = nil }
-        setAccessibilityLabel(label.stringValue)
+        for (index, line) in taskLines.enumerated() { line.isHidden = index >= tasks.count }
+        label.setAccessibilityLabel(label.stringValue)
         TranscriptShimmer.set(true, on: label)
+        needsLayout = true
+    }
+
+    /// The line itself: what starts, thinks, or runs in the background.
+    static func title(_ status: LiveStatus) -> String {
+        switch status {
+        case .starting(let provider): String(localized: "Starting \(provider.displayName)…")
+        case .thinking: String(localized: "Thinking…")
+        case .background(let provider, let tasks):
+            tasks.count == 1
+                ? String(localized: "\(provider.displayName) is working in the background")
+                : String(localized: "\(provider.displayName) is running \(tasks.count) tasks in the background")
+        }
+    }
+
+    override func refreshLiveState() {
+        for line in taskLines where !line.isHidden { line.refreshElapsed() }
     }
 
     override class func height(for row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> CGFloat {
-        TranscriptMetrics.workRowHeight + TranscriptMetrics.workSpacing
+        var tasks = 0
+        if case .live(.background(_, let shown)) = row.kind { tasks = shown.count }
+        return TranscriptMetrics.workRowHeight + CGFloat(tasks) * TranscriptBackgroundTaskLine.height + TranscriptMetrics.workSpacing
     }
 
     override func layout() {
@@ -594,6 +619,163 @@ final class TranscriptLiveCell: TranscriptCell {
             x: column.x + 4, y: ((TranscriptMetrics.workRowHeight - size.height) / 2).rounded(),
             width: min(ceil(size.width) + 2, column.width - 8), height: size.height)
         TranscriptShimmer.layout(label)
+        var y = TranscriptMetrics.workRowHeight
+        for line in taskLines where !line.isHidden {
+            line.frame = NSRect(x: column.x, y: y, width: column.width, height: TranscriptBackgroundTaskLine.height)
+            y += TranscriptBackgroundTaskLine.height
+        }
+    }
+}
+
+/// One task an agent runs in the background, under the live line: what it is, what it does now and for how long it
+/// has run. Clicking it shows the tool call that started it.
+final class TranscriptBackgroundTaskLine: NSView {
+    static let height: CGFloat = 24
+
+    private let iconView = NSImageView()
+    private let titleField = NSTextField(labelWithString: "")
+    private let detailField = NSTextField(labelWithString: "")
+    private let elapsedField = NSTextField(labelWithString: "")
+    private var startedAt: Date?
+    private var onSelect: (() -> Void)?
+    private var isHovered = false
+
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        iconView.imageScaling = .scaleProportionallyDown
+        for field in [titleField, detailField, elapsedField] {
+            field.lineBreakMode = .byTruncatingTail
+            field.maximumNumberOfLines = 1
+            field.cell?.truncatesLastVisibleLine = true
+        }
+        titleField.textColor = .secondaryLabelColor
+        detailField.textColor = .tertiaryLabelColor
+        elapsedField.textColor = .tertiaryLabelColor
+        elapsedField.alignment = .right
+        for view in [iconView, titleField, detailField, elapsedField] as [NSView] { addSubview(view) }
+        setAccessibilityElement(true)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// `onSelect` is nil when the tool call that started the task is not in the transcript.
+    func configure(_ task: BackgroundTask, onSelect: (() -> Void)?) {
+        self.onSelect = onSelect
+        startedAt = task.startedAt
+        iconView.image = Theme.symbol(Self.symbol(task.kind), size: 11, weight: .medium)
+        iconView.contentTintColor = .tertiaryLabelColor
+        titleField.font = .systemFont(ofSize: Theme.fontSize - 1)
+        titleField.stringValue = task.title
+        detailField.font = .systemFont(ofSize: Theme.fontSize - 2)
+        detailField.stringValue = Self.detail(task)
+        elapsedField.font = .monospacedDigitSystemFont(ofSize: Theme.fontSize - 2, weight: .regular)
+        toolTip = [task.title, Self.detail(task)].filter { !$0.isEmpty }.joined(separator: "\n")
+        setAccessibilityRole(onSelect == nil ? .staticText : .button)
+        refreshElapsed()
+        updateHover()
+        window?.invalidateCursorRects(for: self)
+        needsLayout = true
+    }
+
+    /// "Subagent · general-purpose · Running the tests", "Command", "Task".
+    static func detail(_ task: BackgroundTask) -> String {
+        let kind =
+            switch task.kind {
+            case .agent: TranscriptLabels.categoryName(.task)
+            case .command: TranscriptLabels.categoryName(.command)
+            case .other: String(localized: "Task")
+            }
+        return [kind, task.agentType, task.progress].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    static func symbol(_ kind: BackgroundTask.Kind) -> String {
+        switch kind {
+        case .agent: ToolCategory.task.symbolName
+        case .command: ToolCategory.command.symbolName
+        case .other: "circle.dashed"
+        }
+    }
+
+    /// How long it has run, as the live line's clock ticks.
+    func refreshElapsed() {
+        elapsedField.stringValue = startedAt.map { TranscriptLabels.elapsed(Date().timeIntervalSince($0)) } ?? ""
+        elapsedField.isHidden = startedAt == nil
+        setAccessibilityLabel(
+            [titleField.stringValue, detailField.stringValue, elapsedField.stringValue].filter { !$0.isEmpty }.joined(separator: ", "))
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let height = bounds.height
+        iconView.frame = NSRect(x: 6, y: (height - 14) / 2, width: 14, height: 14)
+        var trailing = bounds.width - 6
+        if !elapsedField.isHidden {
+            let width = ceil(elapsedField.cell?.cellSize.width ?? 0)
+            let elapsedHeight = ceil(elapsedField.intrinsicContentSize.height)
+            elapsedField.frame = NSRect(
+                x: trailing - width, y: ((height - elapsedHeight) / 2).rounded(), width: width, height: elapsedHeight)
+            trailing -= width + 8
+        }
+        let x: CGFloat = 26
+        let titleHeight = ceil(titleField.intrinsicContentSize.height)
+        // The title keeps room before the details, which give way first.
+        let titleWidth = min(ceil(titleField.cell?.cellSize.width ?? 0), max(0, (trailing - x) * 0.6))
+        titleField.frame = NSRect(x: x, y: ((height - titleHeight) / 2).rounded(), width: titleWidth, height: titleHeight)
+        let detailX = titleField.frame.maxX + 6
+        let detailHeight = ceil(detailField.intrinsicContentSize.height)
+        detailField.frame = NSRect(
+            x: detailX, y: ((height - detailHeight) / 2).rounded(), width: max(0, trailing - detailX), height: detailHeight)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard isHovered, onSelect != nil else { return }
+        NSColor.labelColor.withAlphaComponent(0.05).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateHover()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateHover()
+    }
+
+    private func updateHover() {
+        titleField.textColor = isHovered && onSelect != nil ? .labelColor : .secondaryLabelColor
+        needsDisplay = true
+    }
+
+    override func resetCursorRects() {
+        if onSelect != nil { addCursorRect(bounds, cursor: .pointingHand) }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard onSelect != nil else { return super.mouseDown(with: event) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let onSelect, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        onSelect()
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard let onSelect else { return false }
+        onSelect()
+        return true
     }
 }
 

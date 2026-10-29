@@ -142,6 +142,43 @@ struct AgentHostCatchUpTests {
         #expect(agent.sent.map(\.message) == ["hi", "again"])
     }
 
+    /// The report of background work the app already applied is not replayed, so it comes with the session instead.
+    @Test func backgroundWorkStillShowsWhenTheAppComesBack() async throws {
+        claude.configure = { session in
+            session.onSend = { session, _ in
+                session.emit(.backgroundWork([BackgroundTask(id: "a1", title: "Audit the port", kind: .agent, toolCallID: "toolu_1")]))
+            }
+        }
+        let audit = BackgroundTask(id: "a1", title: "Audit the port", kind: .agent, toolCallID: "toolu_1")
+        let first = launchApp()
+        await first.runner.send(threadID: threadID, text: "audit it in the background")
+        let agent = try #require(claude.last)
+        agent.emit(.turnCompleted(.completed))
+        #expect(await eventually { !first.runner.isRunning(threadID) })
+        #expect(first.runner.backgroundTasks(threadID).map(\.task) == [audit])
+        quit(first)
+
+        let second = launchApp()
+        try await catchUp(second)
+        #expect(second.runner.backgroundTasks(threadID).map(\.task) == [audit])
+        #expect(!second.runner.isRunning(threadID))
+        agent.emit(.backgroundWork([]))
+        #expect(await eventually { second.runner.backgroundTasks(threadID).isEmpty })
+
+        // A report made while the app was closed is caught up on like any event, and wins over the snapshot.
+        quit(second)
+        let tests = BackgroundTask(id: "b1", title: "Run the tests", kind: .command)
+        agent.emit(.backgroundWork([audit]))
+        agent.emit(.backgroundWork([tests]))
+        let third = launchApp()
+        try await catchUp(third)
+        #expect(await eventually { third.runner.backgroundTasks(threadID).map(\.task) == [tests] })
+        #expect(third.runner.backgroundTasks(threadID).map(\.task) == [tests])
+        // Work ends with the session.
+        agent.emit(.sessionExited(error: nil))
+        #expect(await eventually { third.runner.backgroundTasks(threadID).isEmpty })
+    }
+
     @Test func aTurnThatEndedWhileTheAppWasClosedIsSettled() async throws {
         claude.configure = { session in
             session.onSend = { session, _ in session.emit(.assistantTextDelta(itemID: "reply", delta: "Working")) }
