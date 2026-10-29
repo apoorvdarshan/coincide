@@ -159,11 +159,11 @@ public struct ModelSelection: Codable, Hashable, Sendable {
         self.modelID = modelID
         self.effort = effort
         self.speed = speed
-        self.accountID = ProviderAccount.storedID(accountID)
+        self.accountID = ProviderAccountID.stored(accountID)
     }
 
     /// The account's id, the default account's for nil.
-    public nonisolated var account: String { accountID ?? ProviderAccount.defaultID }
+    public nonisolated var account: String { accountID ?? ProviderAccountID.default }
 
     /// The provider and model are required; an effort, speed or account this version cannot read is left unset.
     public nonisolated init(from decoder: Decoder) throws {
@@ -172,7 +172,7 @@ public struct ModelSelection: Codable, Hashable, Sendable {
         modelID = try container.decode(String.self, forKey: .modelID)
         effort = container.lenient(String.self, forKey: .effort)
         speed = container.lenient(String.self, forKey: .speed)
-        accountID = ProviderAccount.storedID(container.lenient(String.self, forKey: .accountID))
+        accountID = ProviderAccountID.stored(container.lenient(String.self, forKey: .accountID))
     }
 }
 
@@ -545,18 +545,18 @@ public struct ProviderSessionRef: Codable, Hashable, Sendable {
     public nonisolated init(sessionID: String, seenItemCount: Int, accountID: String? = nil, foreignItemsBefore: Int? = nil) {
         self.sessionID = sessionID
         self.seenItemCount = seenItemCount
-        self.accountID = ProviderAccount.storedID(accountID)
+        self.accountID = ProviderAccountID.stored(accountID)
         self.foreignItemsBefore = foreignItemsBefore
     }
 
-    public nonisolated var account: String { accountID ?? ProviderAccount.defaultID }
+    public nonisolated var account: String { accountID ?? ProviderAccountID.default }
 
     /// A negative count, which only a damaged file could hold, loads as 0 (nothing seen).
     public nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         sessionID = try container.decode(String.self, forKey: .sessionID)
         seenItemCount = max(try container.decode(Int.self, forKey: .seenItemCount), 0)
-        accountID = ProviderAccount.storedID(container.lenient(String.self, forKey: .accountID))
+        accountID = ProviderAccountID.stored(container.lenient(String.self, forKey: .accountID))
         foreignItemsBefore = container.lenient(Int.self, forKey: .foreignItemsBefore).map { max($0, 0) }
     }
 }
@@ -695,5 +695,18 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         draft = container.lenient(String.self, forKey: .draft)
         draftContext = container.contains(.draftContext) ? container.lenientArray(MessageContext.self, forKey: .draftContext) : nil
         importedSession = container.lenient(ImportedSession.self, forKey: .importedSession)
+    }
+}
+
+/// How selections and sessions store a provider account's id (`ProviderAccount.id`).
+public enum ProviderAccountID {
+    /// The account every agent has: the CLI's own login in its usual home.
+    public nonisolated static let `default` = "default"
+
+    /// `id` as selections and sessions store it: nil for the default account or an empty id, so their files stay as
+    /// before accounts.
+    public nonisolated static func stored(_ id: String?) -> String? {
+        guard let id, !id.isEmpty, id != `default` else { return nil }
+        return id
     }
 }

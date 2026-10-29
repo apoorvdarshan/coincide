@@ -18,7 +18,7 @@ public enum ProviderAccountAuth: String, Codable, Sendable, CaseIterable {
 /// its usual home, with the provider's environment. Settings only store the accounts added besides it, so nothing
 /// changes for anyone who never adds one.
 public struct ProviderAccount: Codable, Hashable, Sendable, Identifiable {
-    public nonisolated static let defaultID = "default"
+    public nonisolated static let defaultID = ProviderAccountID.default
 
     public var id: String
     public var provider: ProviderKind
@@ -71,10 +71,7 @@ public struct ProviderAccount: Codable, Hashable, Sendable, Identifiable {
     public nonisolated var storedID: String? { Self.storedID(id) }
 
     /// `id` as selections and sessions store it: nil for the default account or an empty id.
-    public nonisolated static func storedID(_ id: String?) -> String? {
-        guard let id, !id.isEmpty, id != defaultID else { return nil }
-        return id
-    }
+    public nonisolated static func storedID(_ id: String?) -> String? { ProviderAccountID.stored(id) }
 
     /// Whether the account keeps the CLI's state in a home of its own. Logins always do. So do API keys of the agents
     /// that would otherwise also sign in with the default account's stored login: Codex, whose app server reads a key
