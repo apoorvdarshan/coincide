@@ -1,13 +1,14 @@
 #!/bin/bash
 # Runs the checks GitHub Actions ran, on this Mac, and reports "Build and test" on the PR's head commit so main's
 # ruleset can merge it. Usage: scripts/local-ci.sh <PR number>, or no argument to test the checked-out commit
-# without reporting. Waits for any other xcodebuild on this Mac first, so builds run one at a time.
+# without reporting. Up to COINCIDE_MAX_BUILDS xcodebuilds (default 3) run at once on this Mac; each concurrent run
+# takes its own slot, with its own DerivedData, so runs never share build products.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 root="$PWD"
 pr="${1:-}"
-derived="$HOME/Library/Developer/Xcode/DerivedData/coincide-local-ci"
+max_builds="${COINCIDE_MAX_BUILDS:-3}"
 context="Build and test"
 log="$(mktemp -t coincide-ci).log"
 
@@ -17,7 +18,6 @@ if [ -n "$pr" ]; then
     work="$(mktemp -d -t coincide-ci)"
     git fetch -q origin "$sha" 2>/dev/null || git fetch -q origin "pull/$pr/head"
     git worktree add -q --detach "$work" "$sha"
-    trap 'git -C "$root" worktree remove --force "$work"' EXIT
     # Signing settings are local and untracked; the worktree needs them to build like the main checkout.
     if [ -f "$root/Local.xcconfig" ]; then cp "$root/Local.xcconfig" "$work/"; fi
     cd "$work"
@@ -32,7 +32,23 @@ report() {
 }
 
 report pending "Running local CI"
-while pgrep -x xcodebuild >/dev/null; do sleep 5; done
+# Wait for a free slot (a lock directory per slot) and for this Mac to have fewer than max_builds xcodebuilds running.
+slot=""
+while [ -z "$slot" ]; do
+    if [ "$(pgrep -x xcodebuild | wc -l)" -lt "$max_builds" ]; then
+        for i in $(seq 1 "$max_builds"); do
+            if mkdir "${TMPDIR:-/tmp}/coincide-local-ci-slot-$i" 2>/dev/null; then slot="$i"; break; fi
+        done
+    fi
+    [ -n "$slot" ] || sleep 5
+done
+cleanup() {
+    rmdir "${TMPDIR:-/tmp}/coincide-local-ci-slot-$slot" 2>/dev/null || true
+    if [ -n "$pr" ]; then git -C "$root" worktree remove --force "$work"; fi
+}
+trap cleanup EXIT
+derived="$HOME/Library/Developer/Xcode/DerivedData/coincide-local-ci"
+[ "$slot" = 1 ] || derived="$derived-$slot"
 
 status=0
 {
