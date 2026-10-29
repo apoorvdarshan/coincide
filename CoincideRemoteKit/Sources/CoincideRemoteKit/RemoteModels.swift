@@ -17,10 +17,14 @@ public struct RemoteServerInfo: Codable, Hashable, Sendable {
     public var showsReasoning: Bool
     /// The follow-up behavior while a turn runs: `steer` or `queue`.
     public var followUpBehavior: String
+    /// Whether the Mac notifies about finished turns, approvals and questions (its "Notify…" setting), which also
+    /// decides whether it sends any to the phone. Nil from a Mac older than notification routing.
+    public var notifies: Bool?
 
     public init(
         serverID: String, name: String, appVersion: String, protocolVersion: Int = RemoteProtocol.version,
-        theme: RemoteThemeInfo = RemoteThemeInfo(), showsReasoning: Bool = true, followUpBehavior: String = "steer"
+        theme: RemoteThemeInfo = RemoteThemeInfo(), showsReasoning: Bool = true, followUpBehavior: String = "steer",
+        notifies: Bool? = nil
     ) {
         self.serverID = serverID
         self.name = name
@@ -29,6 +33,7 @@ public struct RemoteServerInfo: Codable, Hashable, Sendable {
         self.theme = theme
         self.showsReasoning = showsReasoning
         self.followUpBehavior = followUpBehavior
+        self.notifies = notifies
     }
 }
 

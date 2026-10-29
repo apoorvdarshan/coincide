@@ -622,8 +622,8 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     /// the user never renamed are written as before.
     public var titledByUser: Bool?
     /// The follow-up titles the agent has had a look at, so none runs twice. Nil for a thread whose first message
-    /// was sent before follow-up titles existed, or that came with its messages (an import, a fork): those keep
-    /// their titles.
+    /// was sent before follow-up titles existed, which joins them at its next completed turn, or that came with its
+    /// messages (an import, a fork), which keeps its title.
     public var titleRefreshes: [TitleRefresh]?
     /// The bot whose conversation this is (`Bot.id`), in the Bots container. Nil for every other thread, so their
     /// files are written as before.

@@ -180,8 +180,15 @@ nonisolated final class ChatLayoutManager: NSLayoutManager {
 final class ChatTextView: NSTextView, ComposerSelectionSource {
     /// Called for link clicks; return true when handled.
     var onOpenLink: ((Any) -> Bool)?
-    /// Set on agents' replies, whose selected text "Quote in Composer" attaches to the message.
+    /// Set on text the user can reply to (agents' replies and plans, the user's messages): "Reply" attaches the
+    /// selected text to the message as a quote.
     var onQuote: ((String) -> Void)?
+
+    /// Posted with the text view whenever the user changes its selection, also while a drag still extends it
+    /// (`isDraggingSelection`), and when new text loses it. The chat places its Reply button by it.
+    static let selectionDidChange = Notification.Name("ChatTextView.selectionDidChange")
+    /// True while the mouse is still dragging out the selection.
+    private(set) var isDraggingSelection = false
 
     convenience init() {
         let storage = NSTextStorage()
@@ -227,10 +234,12 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
         pieces = []
         guard let storage = textStorage, !storage.isEqual(to: text) else { return }
         let selection = selectedRanges
-        storage.setAttributedString(text)
-        let length = storage.length
-        let kept = selection.map(\.rangeValue).filter { $0.length > 0 && NSMaxRange($0) <= length }
-        if !kept.isEmpty { selectedRanges = kept.map { NSValue(range: $0) } }
+        replacingText {
+            storage.setAttributedString(text)
+            let length = storage.length
+            let kept = selection.map(\.rangeValue).filter { $0.length > 0 && NSMaxRange($0) <= length }
+            if !kept.isEmpty { selectedRanges = kept.map { NSValue(range: $0) } }
+        }
         drawFindHighlights()
     }
 
@@ -244,9 +253,24 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
             return
         }
         guard rendered.pieces != pieces else { return }
-        ChatIncrementalText.apply(rendered, to: storage, replacing: pieces)
+        replacingText { ChatIncrementalText.apply(rendered, to: storage, replacing: pieces) }
         pieces = rendered.pieces
         drawFindHighlights()
+    }
+
+    /// Set while new text goes in: the selection it keeps is not a new one of the user's.
+    private var isReplacingText = false
+
+    /// Makes a change to the text that reports no selection change, unless the selection is lost.
+    private func replacingText(_ change: () -> Void) {
+        let hadSelection = canAddSelectionToComposer
+        let wasReplacing = isReplacingText
+        isReplacingText = true
+        change()
+        isReplacingText = wasReplacing
+        if hadSelection, !wasReplacing, !canAddSelectionToComposer {
+            NotificationCenter.default.post(name: Self.selectionDidChange, object: self)
+        }
     }
 
     // MARK: Find
@@ -326,14 +350,47 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
             .map { text.substring(with: $0) }.joined(separator: "\n")
     }
 
-    /// The themed text menu over a selection: Copy and, in an agent's reply, Quote in Composer. Anywhere else the row's
-    /// menu shows, as it does around the text.
+    /// Where the selection ends: the box of its last character that is not whitespace, in the text view's coordinates.
+    var selectionEndRect: NSRect? {
+        let text = string as NSString
+        guard let last = selectedRanges.map(\.rangeValue).filter({ $0.length > 0 && NSMaxRange($0) <= text.length })
+            .max(by: { NSMaxRange($0) < NSMaxRange($1) })
+        else { return nil }
+        var index = NSMaxRange(last) - 1
+        let blank = CharacterSet.whitespacesAndNewlines
+        while index > last.location, let scalar = UnicodeScalar(text.character(at: index)), blank.contains(scalar) { index -= 1 }
+        return rect(for: text.rangeOfComposedCharacterSequence(at: index))
+    }
+
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        isDraggingSelection = stillSelecting
+        guard onQuote != nil, !isReplacingText else { return }
+        NotificationCenter.default.post(name: Self.selectionDidChange, object: self)
+    }
+
+    /// The themed text menu over a selection: Copy and, where the text can be replied to, Reply. Anywhere else the
+    /// row's menu shows, as it does around the text.
     override func menu(for event: NSEvent) -> NSMenu? {
-        guard selectedPlainText.contains(where: { !$0.isWhitespace }) else {
-            var view = superview
-            while let current = view, !(current is NSTableView) { view = current.superview }
-            return view?.menu(for: event)
-        }
+        // One click opens one menu, however many ways AppKit asks for it.
+        guard event.timestamp != lastMenuEventTime else { return nil }
+        lastMenuEventTime = event.timestamp
+        guard let menu = selectionMenu() else { return enclosingTable?.menu(for: event) }
+        return ThemedContextMenu.show(menu, for: event, in: window)
+    }
+
+    /// When the last context menu was asked for.
+    private var lastMenuEventTime: TimeInterval?
+
+    private var enclosingTable: NSTableView? {
+        var view = superview
+        while let current = view, !(current is NSTableView) { view = current.superview }
+        return view as? NSTableView
+    }
+
+    /// Copy and Reply for the selected text; nil when nothing but whitespace is selected.
+    func selectionMenu() -> NSMenu? {
+        guard selectedPlainText.contains(where: { !$0.isWhitespace }) else { return nil }
         let menu = NSMenu()
         menu.autoenablesItems = false
         let copy = NSMenuItem(title: String(localized: "Copy"), action: #selector(copy(_:)), keyEquivalent: "")
@@ -344,7 +401,24 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
             quote.target = self
             menu.addItem(quote)
         }
-        return ThemedContextMenu.show(menu, for: event, in: window)
+        return menu
+    }
+
+    /// Opens the menu here and nowhere else. `menu(for:)` always returns nil, the themed popup having opened in place
+    /// of the system menu, and NSView passes a click whose menu is nil up the responder chain: the transcript table
+    /// then opened its row menu (Copy, Fork from Here) over the selection's, so Reply could never be reached.
+    override func rightMouseDown(with event: NSEvent) {
+        // Outside the transcript, with nothing selected, the click goes on as before.
+        guard selectionMenu() != nil || enclosingTable != nil else { return super.rightMouseDown(with: event) }
+        _ = menu(for: event)
+    }
+
+    /// A Control-click opens the same menu rather than starting a new selection over the one it is meant for.
+    override func mouseDown(with event: NSEvent) {
+        guard event.modifierFlags.intersection([.command, .option, .control, .shift]) == .control else {
+            return super.mouseDown(with: event)
+        }
+        rightMouseDown(with: event)
     }
 
     @objc private func quoteSelection() {
@@ -353,7 +427,7 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
         onQuote?(text)
     }
 
-    var addToComposerTitle: String { String(localized: "Quote in Composer") }
+    var addToComposerTitle: String { String(localized: "Reply") }
 
     var canAddSelectionToComposer: Bool {
         onQuote != nil && selectedPlainText.contains { !$0.isWhitespace }

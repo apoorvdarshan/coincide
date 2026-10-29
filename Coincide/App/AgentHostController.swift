@@ -28,6 +28,8 @@ final class AgentHostController {
     private(set) var welcome: AgentHostWelcome?
     /// Makes and routes the sessions that run in the host, while connected.
     private(set) var client: AgentHostClient?
+    /// Whether what's being applied now happened while the app was away (see `AgentHostClient.isApplyingBacklog`).
+    var isApplyingBacklog: Bool { client?.isApplyingBacklog ?? false }
     private var settingsObservation: ObservationToken?
     private var notifiesWhileAppIsClosed: Bool?
 

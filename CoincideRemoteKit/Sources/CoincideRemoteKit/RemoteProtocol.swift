@@ -9,7 +9,9 @@ import Foundation
 ///
 /// Versioning: a peer accepts messages from `minimumVersion` through its own `version`. Request, result and event
 /// types it doesn't know are answered with `unsupported` (requests) or ignored (results and events), so a newer phone
-/// and an older Mac, or the reverse, keep working with what they share.
+/// and an older Mac, or the reverse, keep working with what they share. New message types are added this way rather
+/// than by raising `version`, which an older peer would refuse outright: `presence` (phone to Mac) and the `notify`
+/// and `clearNotifications` events (Mac to phone) came later, and a peer without them simply never sends or shows them.
 public enum RemoteProtocol {
     public static let version = 1
     public static let minimumVersion = 1
@@ -223,6 +225,9 @@ public enum RemoteRequest: Hashable, Sendable {
     case diff(threadID: UUID, turnID: UUID?)
     case runScript(threadID: UUID, scriptID: UUID)
     case usageLimits
+    /// Whether the app is in front, what it shows and how long since it was touched (see `RemotePresence`). An older
+    /// Mac answers `unsupported`, which the phone ignores.
+    case presence(RemotePresence)
 
     /// The request's name on the wire.
     public var name: String {
@@ -248,6 +253,7 @@ public enum RemoteRequest: Hashable, Sendable {
         case .diff: "diff"
         case .runScript: "runScript"
         case .usageLimits: "usageLimits"
+        case .presence: "presence"
         }
     }
 }
@@ -351,6 +357,7 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
             let f = try fields()
             request = .runScript(threadID: try need(f.threadID, "threadID"), scriptID: try need(f.scriptID, "scriptID"))
         case "usageLimits": request = .usageLimits
+        case "presence": request = .presence(try body(RemotePresence.self))
         default: throw RemoteProtocolError.unsupported(type)
         }
     }
@@ -366,6 +373,7 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case .pair(let pair): try container.encode(pair, forKey: .body); return
         case .send(let send): try container.encode(send, forKey: .body); return
         case .updateSettings(let settings): try container.encode(settings, forKey: .body); return
+        case .presence(let presence): try container.encode(presence, forKey: .body); return
         case .ping, .usageLimits: return
         case .workspace(let includeArchived): f.includeArchived = includeArchived
         case .openThread(let threadID, let limit):
@@ -454,6 +462,11 @@ public enum RemoteEvent: Hashable, Sendable {
     case threadRemoved(UUID)
     /// The Mac revoked this phone; it should forget its token.
     case revoked
+    /// Something the user should hear about, sent only to the phone the Mac decided they're using. An older phone
+    /// ignores it, and the Mac never sends it to a phone that hasn't reported its presence.
+    case notify(RemoteNotification)
+    /// The user saw the thread somewhere: remove what was posted about it.
+    case clearNotifications(threadID: UUID)
 
     var name: String {
         switch self {
@@ -464,6 +477,8 @@ public enum RemoteEvent: Hashable, Sendable {
         case .turn: "turn"
         case .threadRemoved: "threadRemoved"
         case .revoked: "revoked"
+        case .notify: "notify"
+        case .clearNotifications: "clearNotifications"
         }
     }
 }
@@ -560,6 +575,8 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
                 self = .event(.turn(threadID: turn.threadID, state: turn.state))
             case "threadRemoved": self = .event(.threadRemoved(try body(ValueBody<UUID>.self).value))
             case "revoked": self = .event(.revoked)
+            case "notify": self = .event(.notify(try body(RemoteNotification.self)))
+            case "clearNotifications": self = .event(.clearNotifications(threadID: try body(ValueBody<UUID>.self).value))
             default: self = .unknown(type)
             }
         default:
@@ -603,6 +620,8 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case .turn(let threadID, let state): try container.encode(TurnBody(threadID: threadID, state: state), forKey: .body)
             case .threadRemoved(let id): try container.encode(ValueBody(value: id), forKey: .body)
             case .revoked: break
+            case .notify(let notification): try container.encode(notification, forKey: .body)
+            case .clearNotifications(let threadID): try container.encode(ValueBody(value: threadID), forKey: .body)
             }
         case .unknown(let type):
             try container.encode("unknown", forKey: .kind)

@@ -79,6 +79,8 @@ final class MainMenu: NSObject, NSMenuDelegate {
         menu.addItem(openIn)
         menu.addItem(item(String(localized: "Reveal in Finder"), #selector(MainWindowController.revealInFinder(_:)), .revealInFinder))
         menu.addItem(.separator())
+        menu.addItem(item(String(localized: "Edit Instructions…"), #selector(MainWindowController.editInstructions(_:))))
+        menu.addItem(.separator())
         menu.addItem(standard(String(localized: "Close Window"), #selector(NSWindow.performClose(_:)), "w"))
         return menu
     }

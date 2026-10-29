@@ -6,4 +6,12 @@
 //
 // macOS ties privacy permissions (such as access to Documents) to the app's signature. Ad-hoc builds
 // get a new identity on every build, so macOS asks again each time; a stable identity keeps the answer.
+//
+// Lock-screen alerts for Coincide Remote need the Mac app signed for the iCloud container
+// iCloud.com.apoorvdarshan.coincide, with a provisioning profile that includes it:
+//
+//   COINCIDE_MAC_ENTITLEMENTS = Coincide/CoincideCloudKit.entitlements
+//   COINCIDE_MAC_PROFILE = <name of a Developer ID provisioning profile with that container>
+//
+// Without them Coincide never touches CloudKit, and alerts stay on the local network.
 #include? "Local.xcconfig"
