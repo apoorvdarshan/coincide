@@ -54,6 +54,8 @@ struct ThreadRowModel: Equatable {
     }
 
     var title: String
+    /// Where the thread lives, shown quietly after the title where its list doesn't say: the Pinned section.
+    var place: String?
     var provider: ProviderKind
     var isPinned: Bool
     var isArchived: Bool
@@ -177,19 +179,22 @@ final class StatusDot: NSView {
 
 /// A section heading with an add button and optional sidebar options.
 final class SidebarHeaderCell: NSTableCellView {
-    init(title: String, target: AnyObject, addAction: Selector, addSymbol: String, addLabel: String, optionsAction: Selector? = nil) {
+    /// `add` is the section's add button: its action, symbol and label. `optionsLabel` names the options button.
+    init(
+        title: String, target: AnyObject, add: (action: Selector, symbol: String, label: String)? = nil,
+        optionsAction: Selector? = nil, optionsLabel: String = String(localized: "Sidebar Options")
+    ) {
         super.init(frame: .zero)
         let title = NSTextField(labelWithString: title)
         title.font = .systemFont(ofSize: 11, weight: .semibold)
         title.textColor = .secondaryLabelColor
         var views: [NSView] = [title, NSView()]
         if let optionsAction {
-            views.append(sidebarAccessoryButton(
-                symbol: "ellipsis.circle", label: String(localized: "Sidebar Options"), target: target, action: optionsAction))
+            views.append(sidebarAccessoryButton(symbol: "ellipsis.circle", label: optionsLabel, target: target, action: optionsAction))
         }
-        let add = sidebarAccessoryButton(
-            symbol: addSymbol, label: addLabel, target: target, action: addAction)
-        views.append(add)
+        if let add {
+            views.append(sidebarAccessoryButton(symbol: add.symbol, label: add.label, target: target, action: add.action))
+        }
         let stack = NSStackView(views: views)
         stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -312,12 +317,20 @@ final class ThreadCell: HoverCellView {
     private let icon = NSImageView()
     private let spinner = NSProgressIndicator()
     private let titleField = NSTextField(labelWithString: "")
+    private let placeField = NSTextField(labelWithString: "")
     private let pin = NSImageView()
     private let badge = StatusBadge()
     private let unseenDot = StatusDot()
     private let timeField = NSTextField(labelWithString: "")
     private let archiveButton: NSButton
     private var model: ThreadRowModel?
+    /// Place the project name after the title; active while it shows.
+    private lazy var placeConstraints = [
+        placeField.leadingAnchor.constraint(equalTo: titleField.trailingAnchor, constant: 5),
+        placeField.firstBaselineAnchor.constraint(equalTo: titleField.firstBaselineAnchor),
+        placeField.trailingAnchor.constraint(lessThanOrEqualTo: accessories.leadingAnchor, constant: -4),
+    ]
+    private let accessories = NSStackView()
     var onCommand: ((Command) -> Void)?
 
     override init(frame frameRect: NSRect) {
@@ -335,6 +348,13 @@ final class ThreadCell: HoverCellView {
         titleField.lineBreakMode = .byTruncatingTail
         titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        placeField.font = .systemFont(ofSize: 11)
+        placeField.textColor = .tertiaryLabelColor
+        placeField.lineBreakMode = .byTruncatingTail
+        placeField.isHidden = true
+        // The project name gives way before the title does.
+        placeField.setContentCompressionResistancePriority(.defaultLow - 10, for: .horizontal)
+        placeField.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         pin.image = Theme.symbol("pin.fill", size: 9)
         pin.contentTintColor = .tertiaryLabelColor
         pin.setAccessibilityLabel(String(localized: "Pinned"))
@@ -344,13 +364,13 @@ final class ThreadCell: HoverCellView {
         imageView = icon
         textField = titleField
 
-        let accessories = NSStackView(views: [pin, badge, unseenDot, timeField, archiveButton])
+        for view: NSView in [pin, badge, unseenDot, timeField, archiveButton] { accessories.addArrangedSubview(view) }
         accessories.spacing = 4
         for view: NSView in [pin, badge, unseenDot, timeField] {
             view.setContentHuggingPriority(.required, for: .horizontal)
             view.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
-        for view: NSView in [icon, spinner, titleField, accessories] {
+        for view: NSView in [icon, spinner, titleField, placeField, accessories] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -381,6 +401,9 @@ final class ThreadCell: HoverCellView {
         self.model = model
         // During an inline rename this would replace what the user typed; ending the rename sets the title.
         if titleField.currentEditor() == nil { titleField.stringValue = model.title }
+        placeField.stringValue = model.place ?? ""
+        placeField.isHidden = (model.place ?? "").isEmpty
+        if placeField.isHidden { NSLayoutConstraint.deactivate(placeConstraints) } else { NSLayoutConstraint.activate(placeConstraints) }
         let unseen = model.status == .completed || model.status == .failed
         titleField.font = .systemFont(ofSize: 13, weight: unseen ? .semibold : .regular)
         pin.isHidden = !model.isPinned

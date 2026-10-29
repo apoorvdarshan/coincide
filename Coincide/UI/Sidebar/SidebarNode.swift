@@ -5,6 +5,8 @@ import CoincideKit
 /// (and its selection and expansion) across reloads.
 final class SidebarNode: NSObject {
     enum Kind: Hashable {
+        /// The "Pinned" section header, above Projects: pinned threads of every project and of Chats.
+        case pinned
         /// The "Projects" section header.
         case header
         /// The "Chats" section header, backed by the existing project-free chat store.
@@ -35,15 +37,25 @@ final class SidebarNode: NSObject {
     var projectID: UUID? {
         switch kind {
         case .chats(let id), .project(let id), .showMore(let id), .showLess(let id), .empty(let id): id
-        case .header, .thread: nil
+        case .pinned, .header, .thread: nil
         }
     }
 
     var isSelectable: Bool { threadID != nil }
 
+    /// The top-level section this node heads.
+    var section: SidebarSection? {
+        switch kind {
+        case .pinned: .pinned
+        case .header: .projects
+        case .chats: .chats
+        default: nil
+        }
+    }
+
     var isSection: Bool {
         switch kind {
-        case .header, .chats: true
+        case .pinned, .header, .chats: true
         default: false
         }
     }
@@ -51,6 +63,7 @@ final class SidebarNode: NSObject {
 
 /// Hands out one node per kind, so identity survives rebuilding the tree.
 struct SidebarNodeCache {
+    let pinned = SidebarNode(.pinned)
     let header = SidebarNode(.header)
     private var nodes: [SidebarNode.Kind: SidebarNode] = [:]
 
@@ -67,7 +80,7 @@ struct SidebarNodeCache {
     mutating func prune(keeping projectIDs: Set<UUID>, threadIDs: Set<UUID>) {
         nodes = nodes.filter { kind, _ in
             switch kind {
-            case .header: true
+            case .pinned, .header: true
             case .thread(let id): threadIDs.contains(id)
             case .chats(let id), .project(let id), .showMore(let id), .showLess(let id), .empty(let id): projectIDs.contains(id)
             }

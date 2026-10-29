@@ -483,6 +483,12 @@
         }
       }
     },
+    "%@ (API)" : {
+
+    },
+    "%@ (Login)" : {
+
+    },
     "%@ (truncated)" : {
       "localizations" : {
         "de" : {
@@ -938,6 +944,7 @@
       }
     },
     "%@ are still running in its terminals. Deleting the thread stops them." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -1384,6 +1391,9 @@
           }
         }
       }
+    },
+    "%@ can only keep one login, so added accounts use API keys." : {
+
     },
     "%@ can't take messages while it works." : {
       "localizations" : {
@@ -3885,6 +3895,9 @@
         }
       }
     },
+    "%@ login" : {
+
+    },
     "%@ may not be able to read images." : {
       "localizations" : {
         "de" : {
@@ -6355,17 +6368,6 @@
         }
       }
     },
-    "%@, %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@, %2$@"
-          }
-        }
-      },
-      "shouldTranslate" : false
-    },
     "%@, %@, %lld added, %lld removed" : {
       "localizations" : {
         "de" : {
@@ -8239,6 +8241,12 @@
           }
         }
       }
+    },
+    "%@’s own sign-in and settings, as set up on this Mac." : {
+
+    },
+    "%lld accounts" : {
+
     },
     "%lld agents are still working." : {
       "localizations" : {
@@ -10206,6 +10214,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%lld 張影像"
+          }
+        }
+      }
+    },
+    "%lld in this window" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld in diesem Fenster"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld en esta ventana"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld en esta ventana"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld dans cette fenêtre"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस विंडो में %lld"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld di jendela ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld in questa finestra"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このウインドウでは%lld件"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 윈도우에서 %lld개"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld in dit venster"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld w tym oknie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld nesta janela"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld в этом окне"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu pencerede %lld"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld у цьому вікні"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld trong cửa sổ này"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此窗口中 %lld 个"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此視窗中 %lld 個"
           }
         }
       }
@@ -15432,6 +15552,9 @@
         }
       }
     },
+    "A login account signs in to %@ in a folder of its own, apart from your usual sign-in." : {
+
+    },
     "A run was skipped while Coincide was closed or the Mac was asleep." : {
       "localizations" : {
         "de" : {
@@ -17280,6 +17403,12 @@
         }
       }
     },
+    "Account name" : {
+
+    },
+    "Accounts" : {
+
+    },
     "Acknowledgements" : {
       "localizations" : {
         "de" : {
@@ -17728,6 +17857,9 @@
         }
       }
     },
+    "Add API Key Account" : {
+
+    },
     "Add Custom Model" : {
       "localizations" : {
         "de" : {
@@ -17839,6 +17971,9 @@
           }
         }
       }
+    },
+    "Add Login Account" : {
+
     },
     "Add Project" : {
       "localizations" : {
@@ -18512,6 +18647,9 @@
         }
       }
     },
+    "Add a Gemini API key in Settings to use this account." : {
+
+    },
     "Add a custom model" : {
       "localizations" : {
         "de" : {
@@ -19183,6 +19321,12 @@
           }
         }
       }
+    },
+    "Add an API key for %@ in Settings › Providers." : {
+
+    },
+    "Add as many accounts as you like and pick one per thread in the model picker. API keys are kept in the macOS Keychain." : {
+
     },
     "Add feedback to refine the plan, or leave this blank to implement it" : {
       "localizations" : {
@@ -21324,6 +21468,9 @@
         }
       }
     },
+    "Agent host" : {
+
+    },
     "Agent processes idle this long shut down to free memory. Threads pick up where they left off." : {
       "localizations" : {
         "de" : {
@@ -21883,6 +22030,18 @@
           }
         }
       }
+    },
+    "Agents run in Coincide" : {
+
+    },
+    "Agents run in the background" : {
+
+    },
+    "Agents stop when Coincide quits." : {
+
+    },
+    "Agents work in Coincide’s background agent host, so quitting, updating or a crash doesn’t stop them. Coincide catches up on what they did when it opens." : {
+
     },
     "Ahead of pace" : {
       "localizations" : {
@@ -25026,6 +25185,9 @@
         }
       }
     },
+    "An agent host from another version of Coincide still runs agents. New agents run in Coincide until those finish." : {
+
+    },
     "An agent is still working." : {
       "localizations" : {
         "de" : {
@@ -25809,6 +25971,12 @@
           }
         }
       }
+    },
+    "Anthropic" : {
+
+    },
+    "Anthropic API key" : {
+
     },
     "Antigravity Runtime" : {
       "localizations" : {
@@ -29785,6 +29953,7 @@
       }
     },
     "Attach images" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -36280,6 +36449,118 @@
         }
       }
     },
+    "Chats Options" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chat-Optionen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opciones de chats"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opciones de chats"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Options des discussions"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "चैट विकल्प"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opsi Obrolan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opzioni chat"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "チャットのオプション"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "채팅 옵션"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chatopties"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opcje czatów"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opções de Conversas"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Параметры чатов"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sohbet Seçenekleri"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Параметри чатів"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tùy chọn trò chuyện"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "聊天选项"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "聊天選項"
+          }
+        }
+      }
+    },
     "Check Again" : {
       "localizations" : {
         "de" : {
@@ -40537,6 +40818,7 @@
       }
     },
     "Choose images to send with your message." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -47878,6 +48160,9 @@
         }
       }
     },
+    "Codex didn’t accept the API key (status %lld)." : {
+
+    },
     "Codex exited unexpectedly (status %lld)." : {
       "localizations" : {
         "de" : {
@@ -48668,6 +48953,9 @@
         }
       }
     },
+    "Coincide" : {
+
+    },
     "Coincide can't find this repository’s page on %@." : {
       "localizations" : {
         "de" : {
@@ -49340,6 +49628,9 @@
         }
       }
     },
+    "Coincide is turned off under Allow in the Background in Login Items. Turn it on to keep agents running after Coincide quits." : {
+
+    },
     "Coincide is up to date." : {
       "localizations" : {
         "de" : {
@@ -49899,6 +50190,9 @@
           }
         }
       }
+    },
+    "Coincide’s agent host sent a reply this version can’t read." : {
+
     },
     "Coincide’s data folder path contains a character that stops Antigravity’s browser launches from being redirected to Coincide. Move the data folder to a path without colons." : {
       "localizations" : {
@@ -54945,6 +55239,9 @@
           }
         }
       }
+    },
+    "Connecting to the agent host…" : {
+
     },
     "Connecting…" : {
       "localizations" : {
@@ -70986,6 +71283,118 @@
         }
       }
     },
+    "Date Created" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erstellungsdatum"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fecha de creación"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fecha de creación"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Date de création"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बनाने की तारीख"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tanggal Dibuat"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Data di creazione"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "作成日"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "생성일"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aanmaakdatum"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Data utworzenia"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Data de Criação"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дата создания"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oluşturma Tarihi"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дата створення"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ngày tạo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "创建日期"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "建立日期"
+          }
+        }
+      }
+    },
     "Debug" : {
       "localizations" : {
         "de" : {
@@ -71433,6 +71842,9 @@
           }
         }
       }
+    },
+    "DeepSeek" : {
+
     },
     "Default" : {
       "localizations" : {
@@ -73904,6 +74316,9 @@
         }
       }
     },
+    "Development builds run agents in the app. Launch with COINCIDE_AGENT_HOST=1 to use the agent host." : {
+
+    },
     "Diff" : {
       "localizations" : {
         "de" : {
@@ -75698,6 +76113,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "草稿"
+          }
+        }
+      }
+    },
+    "Drag projects to reorder them" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Projekte zum Umordnen ziehen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrastra los proyectos para reordenarlos"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrastra los proyectos para reordenarlos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Faites glisser les projets pour les réordonner"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "क्रम बदलने के लिए प्रोजेक्ट खींचें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seret proyek untuk mengurutkan ulang"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trascina i progetti per riordinarli"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ドラッグしてプロジェクトを並べ替え"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "드래그하여 프로젝트 순서 변경"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sleep projecten om ze te herschikken"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przeciągnij projekty, aby zmienić ich kolejność"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arraste os projetos para reordená-los"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перетащите проекты, чтобы изменить порядок"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Projeleri yeniden sıralamak için sürükleyin"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перетягніть проєкти, щоб змінити порядок"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kéo dự án để sắp xếp lại"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "拖移项目以重新排序"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "拖移專案以重新排序"
           }
         }
       }
@@ -85744,6 +86271,118 @@
         }
       }
     },
+    "Fit to Sidebar" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "An Seitenleiste anpassen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajustar a la barra lateral"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajustar a la barra lateral"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Adapter à la barre latérale"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "साइडबार के अनुसार"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sesuaikan dengan Bar Samping"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Adatta alla barra laterale"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サイドバーに合わせる"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사이드바에 맞추기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aanpassen aan navigatiekolom"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dopasuj do paska bocznego"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajustar à Barra Lateral"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "По размеру бокового меню"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kenar Çubuğuna Sığdır"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "За розміром бічної панелі"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vừa với thanh bên"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "适应边栏"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "符合側邊欄"
+          }
+        }
+      }
+    },
     "Folder" : {
       "localizations" : {
         "de" : {
@@ -87990,6 +88629,9 @@
         }
       }
     },
+    "Gemini API key" : {
+
+    },
     "General" : {
       "localizations" : {
         "de" : {
@@ -90006,6 +90648,9 @@
         }
       }
     },
+    "Google Gemini" : {
+
+    },
     "Google doesn’t publish an Antigravity runtime for this Mac (%@). Choose your own executable instead." : {
       "localizations" : {
         "de" : {
@@ -92021,6 +92666,9 @@
           }
         }
       }
+    },
+    "Groq" : {
+
     },
     "HEAD is not on a branch." : {
       "localizations" : {
@@ -96093,6 +96741,7 @@
       }
     },
     "Input needed" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -98948,6 +99597,9 @@
         }
       }
     },
+    "Its API key and sign-in are deleted from this Mac. Threads that used it continue with %@’s default account." : {
+
+    },
     "Jump to Bottom" : {
       "localizations" : {
         "de" : {
@@ -99172,6 +99824,9 @@
         }
       }
     },
+    "Keep agents running when Coincide quits" : {
+
+    },
     "Keep planning" : {
       "localizations" : {
         "de" : {
@@ -99283,6 +99938,12 @@
           }
         }
       }
+    },
+    "Key for" : {
+
+    },
+    "Key not accepted" : {
+
     },
     "Keybindings" : {
       "localizations" : {
@@ -102986,6 +103647,9 @@
         }
       }
     },
+    "Login Items" : {
+
+    },
     "Look for %@ again and reload its models" : {
       "localizations" : {
         "de" : {
@@ -103097,6 +103761,9 @@
           }
         }
       }
+    },
+    "Lost the connection to Coincide’s agent host." : {
+
     },
     "Lost the connection to the OpenCode server." : {
       "localizations" : {
@@ -103879,6 +104546,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "管理模型…"
+          }
+        }
+      }
+    },
+    "Manual" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manuell"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manual"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manual"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manuel"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "मैन्युअल"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manual"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manuale"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "手動"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "수동"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Handmatig"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ręcznie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manual"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вручную"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elle"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вручну"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Thủ công"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "手动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "手動"
           }
         }
       }
@@ -106913,6 +107692,9 @@
         }
       }
     },
+    "Mistral" : {
+
+    },
     "Mode" : {
       "localizations" : {
         "de" : {
@@ -108034,6 +108816,7 @@
       }
     },
     "Models your providers offer, plus custom model IDs you add. Right-click a model to use it for new threads." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -109502,6 +110285,118 @@
         }
       }
     },
+    "Move Threads" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Threads verschieben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mover conversaciones"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mover conversaciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Déplacer les discussions"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "थ्रेड ले जाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pindahkan Utas"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sposta thread"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スレッドを移動"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "스레드 이동"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Threads verplaatsen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przenieś wątki"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mover Conversas"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Переместить чаты"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sohbetleri Taşı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перемістити чати"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Di chuyển luồng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "移动对话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "移動對話"
+          }
+        }
+      }
+    },
     "Move by word" : {
       "localizations" : {
         "de" : {
@@ -110730,6 +111625,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "向右移動一個空間"
+          }
+        }
+      }
+    },
+    "Move to Project" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In Projekt verschieben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mover a proyecto"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mover a proyecto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Déplacer vers le projet"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "प्रोजेक्ट में ले जाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pindahkan ke Proyek"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sposta nel progetto"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プロジェクトへ移動"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "프로젝트로 이동"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verplaats naar project"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przenieś do projektu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mover para Projeto"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Переместить в проект"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Projeye Taşı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перемістити в проєкт"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Di chuyển đến dự án"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "移到项目"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "移到專案"
           }
         }
       }
@@ -113870,7 +114877,120 @@
         }
       }
     },
+    "New threads start with this model. Choosing a model, effort, speed or access in a thread makes that the new default." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neue Threads starten mit diesem Modell. Wählst du in einem Thread Modell, Denkaufwand, Geschwindigkeit oder Zugriff, wird das zum neuen Standard."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las conversaciones nuevas empiezan con este modelo. Al elegir modelo, esfuerzo, velocidad o acceso en una conversación, esa elección pasa a ser la nueva opción predeterminada."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las conversaciones nuevas empiezan con este modelo. Al elegir modelo, esfuerzo, velocidad o acceso en una conversación, esa elección pasa a ser la nueva opción predeterminada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les nouvelles discussions démarrent avec ce modèle. Choisir un modèle, un effort, une vitesse ou un accès dans une discussion en fait le nouveau réglage par défaut."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "नए थ्रेड इसी मॉडल से शुरू होते हैं। किसी थ्रेड में मॉडल, रीज़निंग स्तर, गति या ऐक्सेस चुनने पर वही नया डिफ़ॉल्ट बन जाता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utas baru dimulai dengan model ini. Memilih model, tingkat penalaran, kecepatan, atau akses di sebuah utas menjadikannya default baru."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I nuovi thread iniziano con questo modello. Scegliere modello, livello di ragionamento, velocità o accesso in un thread lo rende il nuovo predefinito."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新規スレッドはこのモデルで開始します。スレッドでモデル、推論レベル、速度、アクセスを選ぶと、それが新しいデフォルトになります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "새 스레드는 이 모델로 시작합니다. 스레드에서 모델, 추론 수준, 속도 또는 접근 권한을 선택하면 그것이 새 기본값이 됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nieuwe threads starten met dit model. Kies je in een thread een model, redeneerniveau, snelheid of toegang, dan wordt dat de nieuwe standaard."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nowe wątki zaczynają się z tym modelem. Wybór modelu, wysiłku, szybkości lub dostępu w wątku staje się nowym ustawieniem domyślnym."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As novas conversas começam com este modelo. Escolher modelo, esforço, velocidade ou acesso em uma conversa torna essa escolha o novo padrão."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Новые чаты начинаются с этой модели. Модель, уровень рассуждений, скорость или доступ, выбранные в чате, становятся новыми значениями по умолчанию."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yeni sohbetler bu modelle başlar. Bir sohbette model, akıl yürütme düzeyi, hız veya erişim seçmek bunu yeni varsayılan yapar."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нові чати починаються з цією моделлю. Модель, рівень міркувань, швидкість або доступ, вибрані в чаті, стають новими типовими значеннями."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Luồng mới bắt đầu với mô hình này. Chọn mô hình, mức suy luận, tốc độ hoặc quyền truy cập trong một luồng sẽ biến lựa chọn đó thành mặc định mới."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新对话将使用此模型开始。在任意对话中选择模型、推理强度、速度或访问权限后，它就会成为新的默认设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新對話會使用此模型開始。在任一對話中選擇模型、推理強度、速度或取用權限後，它就會成為新的預設設定。"
+          }
+        }
+      }
+    },
     "New threads start with this model. You can switch models and agents in any thread." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -115108,6 +116228,9 @@
           }
         }
       }
+    },
+    "No API key" : {
+
     },
     "No Changes on This Branch" : {
       "localizations" : {
@@ -123062,6 +124185,230 @@
         }
       }
     },
+    "Only pinned chats" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nur fixierte Chats"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo chats fijados"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo chats fijados"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uniquement des discussions épinglées"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "केवल पिन की गई चैट"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hanya obrolan yang disematkan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo chat fissate"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ピンで固定したチャットのみ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "고정된 채팅만 있음"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alleen vastgezette chats"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tylko przypięte czaty"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Só conversas fixadas"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Только закреплённые чаты"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yalnızca sabitlenmiş sohbetler"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Лише закріплені чати"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chỉ có cuộc trò chuyện đã ghim"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "只有已置顶的聊天"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "只有已置頂的聊天"
+          }
+        }
+      }
+    },
+    "Only pinned threads" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nur fixierte Threads"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo conversaciones fijadas"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo conversaciones fijadas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uniquement des discussions épinglées"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "केवल पिन किए गए थ्रेड"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hanya utas yang disematkan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo thread fissati"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ピンで固定したスレッドのみ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "고정된 스레드만 있음"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alleen vastgezette threads"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tylko przypięte wątki"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Só conversas fixadas"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Только закреплённые чаты"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yalnızca sabitlenmiş konuşmalar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Лише закріплені гілки"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chỉ có luồng đã ghim"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "只有已置顶的对话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "只有已置頂的對話"
+          }
+        }
+      }
+    },
     "Open" : {
       "localizations" : {
         "de" : {
@@ -124069,6 +125416,9 @@
           }
         }
       }
+    },
+    "Open Login Items…" : {
+
     },
     "Open Pull Requests" : {
       "localizations" : {
@@ -125862,6 +127212,9 @@
         }
       }
     },
+    "OpenAI" : {
+
+    },
     "OpenAI API key" : {
       "localizations" : {
         "de" : {
@@ -126265,6 +127618,9 @@
           }
         }
       }
+    },
+    "OpenCode Zen" : {
+
     },
     "OpenCode can't take a message for this turn now." : {
       "localizations" : {
@@ -127498,6 +128854,9 @@
         }
       }
     },
+    "OpenRouter" : {
+
+    },
     "Opened MR !%lld" : {
       "localizations" : {
         "de" : {
@@ -127945,6 +129304,9 @@
           }
         }
       }
+    },
+    "Opens a terminal that runs %@’s sign-in for this account only." : {
+
     },
     "Option" : {
       "localizations" : {
@@ -129626,6 +130988,9 @@
           }
         }
       }
+    },
+    "Paste the API key" : {
+
     },
     "Paste the complete address from the Google sign-in page." : {
       "localizations" : {
@@ -143402,6 +144767,118 @@
         }
       }
     },
+    "Recent Activity" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Letzte Aktivität"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actividad reciente"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actividad reciente"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activité récente"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "हाल की गतिविधि"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktivitas Terbaru"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Attività recente"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "最近のアクティビティ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "최근 활동"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recente activiteit"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ostatnia aktywność"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Atividade Recente"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Недавняя активность"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Son Etkinlik"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нещодавня активність"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hoạt động gần đây"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "最近活动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "最近活動"
+          }
+        }
+      }
+    },
     "Recent Threads" : {
       "localizations" : {
         "de" : {
@@ -144971,6 +146448,9 @@
         }
       }
     },
+    "Remove Account" : {
+
+    },
     "Remove Custom Model" : {
       "localizations" : {
         "de" : {
@@ -145195,6 +146675,9 @@
         }
       }
     },
+    "Remove Key" : {
+
+    },
     "Remove Shortcut" : {
       "localizations" : {
         "de" : {
@@ -145418,6 +146901,9 @@
           }
         }
       }
+    },
+    "Remove account" : {
+
     },
     "Remove custom model" : {
       "localizations" : {
@@ -146992,6 +148478,9 @@
           }
         }
       }
+    },
+    "Replace" : {
+
     },
     "Reply font" : {
       "localizations" : {
@@ -154614,6 +156103,9 @@
           }
         }
       }
+    },
+    "Saved in the Keychain" : {
+
     },
     "Scanning local sessions…" : {
       "localizations" : {
@@ -167920,6 +169412,12 @@
         }
       }
     },
+    "Sign In to %@" : {
+
+    },
+    "Sign In…" : {
+
+    },
     "Sign Out" : {
       "localizations" : {
         "de" : {
@@ -168368,6 +169866,9 @@
         }
       }
     },
+    "Sign in with" : {
+
+    },
     "Sign in with Google" : {
       "localizations" : {
         "de" : {
@@ -168815,6 +170316,9 @@
           }
         }
       }
+    },
+    "Signed in" : {
+
     },
     "Signed in with Google." : {
       "localizations" : {
@@ -171070,6 +172574,342 @@
         }
       }
     },
+    "Sort Chats By" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chats sortieren nach"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordenar chats por"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordenar chats por"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trier les discussions par"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "चैट इस क्रम में लगाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Urutkan Obrolan Menurut"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordina chat per"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "チャットの並べ替え"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "채팅 정렬 기준"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sorteer chats op"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sortuj czaty według"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordenar Conversas Por"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сортировать чаты по"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sohbetleri Sırala"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сортувати чати за"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sắp xếp trò chuyện theo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "聊天排序方式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "聊天排序方式"
+          }
+        }
+      }
+    },
+    "Sort Projects By" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Projekte sortieren nach"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordenar proyectos por"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordenar proyectos por"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trier les projets par"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "प्रोजेक्ट इस क्रम में लगाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Urutkan Proyek Menurut"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordina progetti per"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プロジェクトの並べ替え"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "프로젝트 정렬 기준"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sorteer projecten op"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sortuj projekty według"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordenar Projetos Por"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сортировать проекты по"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Projeleri Sırala"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сортувати проєкти за"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sắp xếp dự án theo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "项目排序方式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "專案排序方式"
+          }
+        }
+      }
+    },
+    "Sort Threads By" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Threads sortieren nach"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordenar conversaciones por"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordenar conversaciones por"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trier les fils par"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "थ्रेड इस क्रम में लगाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Urutkan Utas Menurut"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordina thread per"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スレッドの並べ替え"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "스레드 정렬 기준"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sorteer threads op"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sortuj wątki według"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ordenar Conversas do Projeto Por"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сортировать ветки по"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Konuşmaları Sırala"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сортувати гілки за"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sắp xếp luồng theo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "对话排序方式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "對話排序方式"
+          }
+        }
+      }
+    },
     "Source Code" : {
       "localizations" : {
         "de" : {
@@ -171514,6 +173354,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "速度"
+          }
+        }
+      }
+    },
+    "Speed: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geschwindigkeit: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Velocidad: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Velocidad: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vitesse : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "गति: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kecepatan: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Velocità: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "速度：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "속도: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Snelheid: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Szybkość: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Velocidade: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Скорость: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hız: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Швидкість: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tốc độ: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "速度：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "速度：%@"
           }
         }
       }
@@ -175216,6 +177168,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "停止任務 %@"
+          }
+        }
+      }
+    },
+    "Stop the running agent first" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zuerst den laufenden Agenten stoppen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Detén primero el agente en ejecución"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Detén primero el agente en ejecución"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrêtez d’abord l’agent en cours"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पहले चल रहे एजेंट को रोकें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hentikan agen yang berjalan terlebih dahulu"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrompi prima l’agente in esecuzione"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "先に実行中のエージェントを停止してください"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "먼저 실행 중인 에이전트를 중지하세요"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stop eerst de actieve agent"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Najpierw zatrzymaj działającego agenta"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pare o agente em execução primeiro"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сначала остановите работающего агента"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Önce çalışan ajanı durdurun"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Спершу зупиніть агента, що працює"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy dừng tác tử đang chạy trước"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请先停止正在运行的代理"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "請先停止正在執行的代理"
           }
         }
       }
@@ -180490,6 +182554,9 @@
         }
       }
     },
+    "The Keychain refused the request: %@" : {
+
+    },
     "The MCP server “%@” could not start." : {
       "localizations" : {
         "de" : {
@@ -182182,6 +184249,18 @@
         }
       }
     },
+    "The agent host didn’t answer, so agents stop when Coincide quits. Coincide tries again when it next opens." : {
+
+    },
+    "The agent host from Coincide %@ keeps its agents running, and gives way to this version’s once they finish." : {
+
+    },
+    "The agent host is missing from this copy of Coincide. Reinstall Coincide to keep agents running after it quits." : {
+
+    },
+    "The agent host stopped unexpectedly." : {
+
+    },
     "The agent needs approval" : {
       "localizations" : {
         "de" : {
@@ -182519,6 +184598,7 @@
       }
     },
     "The agent working in it is stopped and the conversation is deleted. Files on disk are not changed." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -187564,114 +189644,114 @@
         }
       }
     },
-    "The thread's agent titles it from your first message, with its quickest model." : {
+    "The thread's agent titles it from your first message with its quickest model, and may refresh the title as the thread develops. Threads you rename keep your name." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Der Agent der Unterhaltung erstellt den Titel anhand deiner ersten Nachricht mit seinem schnellsten Modell."
+            "value" : "Der Agent der Unterhaltung erstellt den Titel anhand deiner ersten Nachricht mit seinem schnellsten Modell und kann ihn im Verlauf der Unterhaltung aktualisieren. Unterhaltungen, die du umbenennst, behalten deinen Namen."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El agente del hilo crea el título a partir de tu primer mensaje con su modelo más rápido."
+            "value" : "El agente del hilo crea el título a partir de tu primer mensaje con su modelo más rápido y puede actualizarlo a medida que avanza el hilo. Los hilos que renombras conservan tu nombre."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El agente del hilo crea el título a partir de tu primer mensaje con su modelo más rápido."
+            "value" : "El agente del hilo crea el título a partir de tu primer mensaje con su modelo más rápido y puede actualizarlo a medida que avanza el hilo. Los hilos a los que les cambias el nombre conservan tu nombre."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "L’agent de la conversation crée son titre à partir de votre premier message, avec son modèle le plus rapide."
+            "value" : "L’agent de la conversation crée son titre à partir de votre premier message, avec son modèle le plus rapide, et peut l’actualiser au fil de la conversation. Les conversations que vous renommez gardent votre nom."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "बातचीत का एजेंट अपने सबसे तेज़ मॉडल से आपके पहले संदेश के आधार पर शीर्षक बनाता है।"
+            "value" : "बातचीत का एजेंट अपने सबसे तेज़ मॉडल से आपके पहले संदेश के आधार पर शीर्षक बनाता है, और बातचीत आगे बढ़ने पर उसे अपडेट कर सकता है। जिन बातचीतों का नाम आप बदलते हैं, उनका नाम वही रहता है।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Agen percakapan membuat judul dari pesan pertama Anda menggunakan model tercepatnya."
+            "value" : "Agen percakapan membuat judul dari pesan pertama Anda menggunakan model tercepatnya, dan dapat memperbaruinya seiring percakapan berkembang. Percakapan yang Anda ganti namanya tetap memakai nama Anda."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "L’agente della conversazione crea il titolo dal tuo primo messaggio, con il suo modello più veloce."
+            "value" : "L’agente della conversazione crea il titolo dal tuo primo messaggio, con il suo modello più veloce, e può aggiornarlo man mano che la conversazione procede. Le conversazioni che rinomini mantengono il tuo nome."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "スレッドのエージェントが最も高速なモデルを使い、最初のメッセージからタイトルを付けます。"
+            "value" : "スレッドのエージェントが最も高速なモデルを使い、最初のメッセージからタイトルを付け、スレッドの進行に合わせて更新することがあります。名前を変更したスレッドはその名前のままです。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "스레드의 에이전트가 가장 빠른 모델로 첫 메시지를 바탕으로 제목을 지정합니다."
+            "value" : "스레드의 에이전트가 가장 빠른 모델로 첫 메시지를 바탕으로 제목을 지정하며, 스레드가 진행됨에 따라 제목을 새로 고칠 수 있습니다. 이름을 변경한 스레드는 그 이름을 유지합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "De agent van het gesprek maakt de titel op basis van je eerste bericht, met zijn snelste model."
+            "value" : "De agent van het gesprek maakt de titel op basis van je eerste bericht, met zijn snelste model, en kan die bijwerken naarmate het gesprek vordert. Gesprekken die je hernoemt, houden jouw naam."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Agent wątku tworzy tytuł na podstawie pierwszej wiadomości, używając swojego najszybszego modelu."
+            "value" : "Agent wątku tworzy tytuł na podstawie pierwszej wiadomości, używając swojego najszybszego modelu, i może go odświeżyć w miarę rozwoju wątku. Wątki, których nazwę zmienisz, zachowują Twoją nazwę."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O agente da conversa cria o título a partir da sua primeira mensagem, com seu modelo mais rápido."
+            "value" : "O agente da conversa cria o título a partir da sua primeira mensagem, com seu modelo mais rápido, e pode atualizá-lo conforme a conversa avança. Conversas que você renomeia mantêm o seu nome."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Агент обсуждения создаёт заголовок по первому сообщению с помощью своей самой быстрой модели."
+            "value" : "Агент обсуждения создаёт заголовок по первому сообщению с помощью своей самой быстрой модели и может обновлять его по ходу обсуждения. Обсуждения, которые вы переименовали, сохраняют ваше название."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Konuşmanın aracısı, en hızlı modelini kullanarak ilk mesajınızdan bir başlık oluşturur."
+            "value" : "Konuşmanın aracısı, en hızlı modelini kullanarak ilk mesajınızdan bir başlık oluşturur ve konuşma ilerledikçe başlığı yenileyebilir. Yeniden adlandırdığınız konuşmalar verdiğiniz adı korur."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Агент обговорення створює заголовок із першого повідомлення, використовуючи свою найшвидшу модель."
+            "value" : "Агент обговорення створює заголовок із першого повідомлення, використовуючи свою найшвидшу модель, і може оновлювати його в міру розвитку обговорення. Обговорення, які ви перейменували, зберігають вашу назву."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tác nhân của cuộc trò chuyện đặt tiêu đề từ tin nhắn đầu tiên của bạn bằng mô hình nhanh nhất của nó."
+            "value" : "Tác nhân của cuộc trò chuyện đặt tiêu đề từ tin nhắn đầu tiên của bạn bằng mô hình nhanh nhất của nó và có thể làm mới tiêu đề khi cuộc trò chuyện tiếp diễn. Cuộc trò chuyện bạn đã đổi tên sẽ giữ tên của bạn."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "会话的代理使用最快的模型，根据你的第一条消息生成标题。"
+            "value" : "会话的代理使用最快的模型，根据你的第一条消息生成标题，并可能随着会话的进展更新标题。你重命名过的会话会保留你的名称。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "對話的代理程式使用最快的模型，根據你的第一則訊息產生標題。"
+            "value" : "對話的代理程式使用最快的模型，根據你的第一則訊息產生標題，並可能隨著對話進展更新標題。你重新命名過的對話會保留你的名稱。"
           }
         }
       }
@@ -189244,6 +191324,9 @@
         }
       }
     },
+    "They keep working after Coincide quits. The agent host exits once nothing runs." : {
+
+    },
     "Thinking" : {
       "localizations" : {
         "de" : {
@@ -189811,6 +191894,9 @@
         }
       }
     },
+    "This agent host doesn’t know that command." : {
+
+    },
     "This branch has no upstream yet. Push it first." : {
       "localizations" : {
         "de" : {
@@ -190147,6 +192233,9 @@
         }
       }
     },
+    "This build isn’t signed with a Developer ID, which the agent host needs. Agents stop when Coincide quits." : {
+
+    },
     "This folder is not a Git repository." : {
       "localizations" : {
         "de" : {
@@ -190260,6 +192349,7 @@
       }
     },
     "This permanently deletes the conversation. Files on disk are not changed." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -192420,6 +194510,7 @@
       }
     },
     "Thread completed" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -192532,6 +194623,7 @@
       }
     },
     "Thread failed" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -193087,6 +195179,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "對話從側邊欄頂端開始計數。按住 %@ 即可查看編號。"
+          }
+        }
+      }
+    },
+    "Threads in a worktree stay with their project" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Threads in einem Worktree bleiben bei ihrem Projekt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las conversaciones de un worktree se quedan en su proyecto"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las conversaciones de un worktree se quedan en su proyecto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les fils d’un worktree restent dans leur projet"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "वर्कट्री वाले थ्रेड अपने प्रोजेक्ट में ही रहते हैं"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utas di worktree tetap di proyeknya"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I thread in un worktree restano nel loro progetto"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ワークツリーのスレッドはプロジェクトから移動できません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "워크트리의 스레드는 해당 프로젝트에 남습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Threads in een worktree blijven bij hun project"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wątki w worktree pozostają w swoim projekcie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conversas em um worktree ficam no seu projeto"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Чаты в worktree остаются в своём проекте"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Worktree’deki konuşmalar projelerinde kalır"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Гілки в робочому дереві залишаються у своєму проєкті"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Luồng trong worktree ở lại dự án của nó"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "工作树中的对话会留在其项目中"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "工作樹中的對話會留在其專案中"
           }
         }
       }
@@ -198268,6 +200472,9 @@
           }
         }
       }
+    },
+    "Until it answers, new agents start in Coincide." : {
+
     },
     "Untracked" : {
       "localizations" : {
@@ -210259,6 +212466,9 @@
         }
       }
     },
+    "macOS couldn’t start the agent host: %@" : {
+
+    },
     "macOS uses %@ for %@." : {
       "localizations" : {
         "de" : {
@@ -212680,6 +214890,9 @@
         }
       }
     },
+    "xAI" : {
+
+    },
     "xAI API key" : {
       "localizations" : {
         "de" : {
@@ -213359,6 +215572,7 @@
       }
     },
     "“%@” is still running in its terminal. Deleting the thread stops it." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

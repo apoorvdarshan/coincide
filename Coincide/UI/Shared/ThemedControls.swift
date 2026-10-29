@@ -384,6 +384,21 @@ final class ThemedTableRowView: NSTableRowView {
         Theme.sidebarSelection.setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: inset, dy: 1), xRadius: 7, yRadius: 7).fill()
     }
+
+    override var isTargetForDropOperation: Bool {
+        didSet { if isTargetForDropOperation != oldValue { needsDisplay = true } }
+    }
+
+    /// A row something is dropped on, such as a project a thread moves to: the theme's accent, in place of the
+    /// system's blue.
+    override func drawDraggingDestinationFeedback(in dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: inset + 0.5, dy: 1.5), xRadius: 7, yRadius: 7)
+        Theme.textSelection.setFill()
+        path.fill()
+        Theme.accent.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
 }
 
 /// A thin bar showing how full something is, on a quiet track, in place of the system's accent-colored progress bar.

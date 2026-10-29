@@ -3,11 +3,14 @@ import CoincideKit
 
 extension NSPasteboard.PasteboardType {
     static let coincideProject = NSPasteboard.PasteboardType("com.apoorvdarshan.coincide.project")
+    static let coincideThread = NSPasteboard.PasteboardType("com.apoorvdarshan.coincide.thread")
+    static let coincideSection = NSPasteboard.PasteboardType("com.apoorvdarshan.coincide.section")
 }
 
 /// Projects and their threads, ported from T3's sidebar: a source list with a search field,
 /// per-project new-thread buttons, status badges, context menus, inline rename, drag to reorder
-/// projects and drop to add folders.
+/// projects, drag threads to another project and drop to add folders. Pinned threads of every
+/// project are listed together in a section of their own; sections can be dragged into any order.
 final class SidebarViewController: NSViewController {
     /// Called when the user picks a thread, or when the open thread disappears (with its neighbour, or nil).
     var onSelectThread: ((UUID?) -> Void)?
@@ -15,10 +18,12 @@ final class SidebarViewController: NSViewController {
     private let store = AppStore.shared
     private var nodes = SidebarNodeCache()
     private var header: SidebarNode { nodes.header }
+    private var pinnedSection: SidebarNode { nodes.pinned }
     private var sections: [SidebarNode] = []
-    /// Real projects live under Projects; project-free conversations live directly under Chats.
+    /// Real projects live under Projects; project-free conversations live directly under Chats, and pinned threads
+    /// of both directly under Pinned. In the order the sidebar shows them.
     private var threadContainers: [SidebarNode] {
-        header.children + sections.filter { $0.kind != .header }
+        sections.flatMap { $0 === header ? header.children : [$0] }
     }
     private var token: ObservationToken?
 
@@ -60,6 +65,8 @@ final class SidebarViewController: NSViewController {
     private var jumpOrder: [UUID] = []
     /// The open thread when it is listed past its project's "Show more" cut.
     private var openThreadPastCut: UUID?
+    /// The cut the lists were last built with, which follows the sidebar's height unless the user chose one.
+    private var appliedThreadLimit = 0
     /// The folder the context menu's "Open In" items act on.
     private var menuFolder: URL?
 
@@ -71,7 +78,7 @@ final class SidebarViewController: NSViewController {
         selectedThreadID = threadID
         selectedInboxIDs = Set([threadID].compactMap { $0 })
         guard hasLoaded else { return }
-        if let threadID, let thread = store.summary(threadID), !isSearching,
+        if let threadID, let thread = store.summary(threadID), !isSearching, !thread.isPinned,
             let project = store.project(thread.projectID), !project.isChats, !project.isExpanded
         {
             store.updateProject(thread.projectID) { $0.isExpanded = true }
@@ -101,7 +108,7 @@ final class SidebarViewController: NSViewController {
             searchField.stringValue = ""
             searchChanged()
         }
-        if let project = store.project(thread.projectID), !project.isChats, !project.isExpanded {
+        if !thread.isPinned, let project = store.project(thread.projectID), !project.isChats, !project.isExpanded {
             store.updateProject(thread.projectID) { $0.isExpanded = true }
         }
         guard let node = nodes.existing(.thread(threadID)) else { return }
@@ -146,7 +153,7 @@ final class SidebarViewController: NSViewController {
         outlineView.doubleAction = #selector(rowDoubleClicked)
         outlineView.menu = NSMenu()
         outlineView.menu?.delegate = self
-        outlineView.registerForDraggedTypes([.coincideProject, .fileURL])
+        outlineView.registerForDraggedTypes([.coincideSection, .coincideProject, .coincideThread, .fileURL])
         outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
         outlineView.setDraggingSourceOperationMask(.copy, forLocal: false)
         outlineView.setAccessibilityLabel(String(localized: "Projects and threads"))
@@ -154,6 +161,8 @@ final class SidebarViewController: NSViewController {
         outlineView.onActivate = { AppEvents.post(.coincideFocusComposer) }
 
         scrollView.documentView = outlineView
+        // The "Show more" cut follows the sidebar's height.
+        scrollView.contentView.postsFrameChangedNotifications = true
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
@@ -201,6 +210,10 @@ final class SidebarViewController: NSViewController {
         // Project folders are moved and deleted in other apps.
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sidebarResized), name: NSView.frameDidChangeNotification, object: scrollView.contentView)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sidebarResized), name: NSWindow.didEndLiveResizeNotification, object: nil)
         hasLoaded = true
         rebuild()
         if let selectedThreadID { select(threadID: selectedThreadID) }
@@ -236,6 +249,14 @@ final class SidebarViewController: NSViewController {
         refreshProjectRows()
     }
 
+    /// Rebuilds when a taller or shorter sidebar moves the automatic "Show more" cut, once a live resize ends.
+    @objc private func sidebarResized() {
+        guard hasLoaded, UIState.shared.values.sidebarThreadsPerProject == nil, view.window?.inLiveResize != true,
+            threadLimit != appliedThreadLimit
+        else { return }
+        rebuild()
+    }
+
     @objc private func activityChanged(_ note: Notification) {
         guard let id = note.userInfo?["threadID"] as? UUID else { return }
         refreshSnoozedThread(id)
@@ -259,20 +280,26 @@ final class SidebarViewController: NSViewController {
         let oldProjects = header.children
         let oldChildren = Dictionary(uniqueKeysWithValues: threadContainers.map { (ObjectIdentifier($0), $0.children) })
         openThreadPastCut = nil
+        let ui = UIState.shared.values
+        let limit = threadLimit
+        appliedThreadLimit = limit
         var projectNodes: [SidebarNode] = []
         var chatsNode: SidebarNode?
+        var pinned: [ThreadSummary] = []
         var allThreadIDs = Set<UUID>()
         let now = Date()
-        for project in store.projects {
-            let all = store.threads(in: project.id, includeArchived: showsArchived).filter { thread in
+        let lastActivity = SidebarOrdering.lastActivity(of: store.threadSummaries.values)
+        for project in SidebarOrdering.sortedProjects(store.projects, by: ui.projectSort, lastActivity: lastActivity) {
+            let listed = store.threads(in: project.id, includeArchived: showsArchived).filter { thread in
                 (showsSnoozed || isSearching || !ThreadSnooze.isHidden(thread, now: now))
                     && (showsSettled || isSearching || !ThreadInbox.isHidden(thread))
             }
+            let all = SidebarOrdering.sortedThreads(listed, by: project.isChats ? ui.chatSort : ui.threadSort)
             allThreadIDs.formUnion(all.map(\.id))
             var threads = all
+            var projectMatches = true
             if isSearching {
-                let projectMatches =
-                    PaletteSearch.scoreTerms(searchQuery, name: project.name, keywords: [], typos: false) != nil
+                projectMatches = PaletteSearch.scoreTerms(searchQuery, name: project.name, keywords: [], typos: false) != nil
                 if !projectMatches {
                     threads = all.filter { thread in
                         messageMatches[thread.id] != nil
@@ -281,26 +308,29 @@ final class SidebarViewController: NSViewController {
                                 updatedAt: thread.updatedAt, typos: false,
                                 branchPrefix: store.settings.worktreeBranchPrefix) != nil
                     }
-                    if threads.isEmpty { continue }
                 }
             }
+            // Pinned threads are listed under Pinned instead, though they stay in their project.
+            pinned += threads.filter(\.isPinned)
+            threads.removeAll(where: \.isPinned)
+            if !projectMatches && threads.isEmpty { continue }
             let node = nodes.node(project.isChats ? .chats(project.id) : .project(project.id))
-            node.children = children(for: project, threads: threads)
+            node.children = children(for: project, threads: threads, limit: limit)
             if project.isChats { chatsNode = node } else { projectNodes.append(node) }
         }
+        pinnedSection.children = pinnedOrder().filter(Set(pinned.map(\.id)).contains).map { nodes.node(.thread($0)) }
         header.children = projectNodes
-        sections = (!isSearching || !projectNodes.isEmpty) ? [header] : []
-        if let chatsNode { sections.append(chatsNode) }
+        var shown: [SidebarSection: SidebarNode] = [:]
+        if !pinnedSection.children.isEmpty { shown[.pinned] = pinnedSection }
+        if !isSearching || !projectNodes.isEmpty { shown[.projects] = header }
+        if let chatsNode { shown[.chats] = chatsNode }
+        sections = SidebarOrdering.sectionOrder(saved: ui.sidebarSections).compactMap { shown[$0] }
         handOffSelectionIfNeeded(oldChildren: oldChildren)
 
         if !outlineView.hasRows || oldProjects != projectNodes || oldSections != sections {
             outlineView.reloadData()
         } else {
-            for node in threadContainers {
-                let old = oldChildren[ObjectIdentifier(node)] ?? []
-                guard old != node.children else { continue }
-                apply(from: old, to: node)
-            }
+            apply(threadContainers.filter { oldChildren[ObjectIdentifier($0)] != $0.children }, from: oldChildren)
         }
         syncExpansion()
         syncSelection()
@@ -312,9 +342,23 @@ final class SidebarViewController: NSViewController {
         keptIDs = (projectIDs, allThreadIDs)
     }
 
-    private func children(for project: Project, threads: [ThreadSummary]) -> [SidebarNode] {
+    /// Threads a list shows before "Show more": the user's choice, or as many as a little more than fill the sidebar.
+    private var threadLimit: Int {
+        UIState.shared.values.sidebarThreadsPerProject
+            ?? SidebarOrdering.automaticThreadLimit(visibleHeight: scrollView.contentView.bounds.height)
+    }
+
+    /// The Pinned section's order, saved as threads are pinned and unpinned anywhere.
+    private func pinnedOrder() -> [UUID] {
+        let saved = UIState.shared.values.pinnedThreads
+        let order = SidebarOrdering.pinnedOrder(saved: saved, pinned: store.threadSummaries.values.filter(\.isPinned))
+        let strings = order.map(\.uuidString)
+        if strings != saved { UIState.shared.update { $0.pinnedThreads = strings } }
+        return order
+    }
+
+    private func children(for project: Project, threads: [ThreadSummary], limit: Int) -> [SidebarNode] {
         if threads.isEmpty { return [nodes.node(.empty(project.id))] }
-        let limit = UIState.shared.values.sidebarThreadLimit
         if isSearching || limit <= 0 || threads.count <= limit {
             return threads.map { nodes.node(.thread($0.id)) }
         }
@@ -338,29 +382,39 @@ final class SidebarViewController: NSViewController {
         return result
     }
 
-    /// Inserts and removes changed rows with a fade, so new and reordered threads are easy to follow.
-    private func apply(from old: [SidebarNode], to node: SidebarNode) {
-        guard outlineView.isItemExpanded(node) else {
-            outlineView.reloadItem(node, reloadChildren: true)
-            return
-        }
-        let difference = node.children.difference(from: old)
-        var removed = IndexSet()
-        var inserted = IndexSet()
-        for change in difference {
-            switch change {
-            case .remove(let offset, _, _): removed.insert(offset)
-            case .insert(let offset, _, _): inserted.insert(offset)
-            }
-        }
+    /// Inserts and removes changed rows with a fade, so new and reordered threads are easy to follow. A thread that
+    /// changes lists (pinned, unpinned or moved to another project) leaves its old list before it joins the new one,
+    /// so the outline never holds it twice.
+    private func apply(_ changed: [SidebarNode], from oldChildren: [ObjectIdentifier: [SidebarNode]]) {
+        guard !changed.isEmpty else { return }
+        let expanded = changed.filter { outlineView.isItemExpanded($0) }
+        var insertions: [(node: SidebarNode, rows: IndexSet)] = []
         outlineView.beginUpdates()
-        if !removed.isEmpty { outlineView.removeItems(at: removed, inParent: node, withAnimation: .effectFade) }
-        if !inserted.isEmpty { outlineView.insertItems(at: inserted, inParent: node, withAnimation: .effectFade) }
+        for node in expanded {
+            var removed = IndexSet()
+            var inserted = IndexSet()
+            for change in node.children.difference(from: oldChildren[ObjectIdentifier(node)] ?? []) {
+                switch change {
+                case .remove(let offset, _, _): removed.insert(offset)
+                case .insert(let offset, _, _): inserted.insert(offset)
+                }
+            }
+            if !removed.isEmpty { outlineView.removeItems(at: removed, inParent: node, withAnimation: .effectFade) }
+            insertions.append((node, inserted))
+        }
+        outlineView.endUpdates()
+        for node in changed where !outlineView.isItemExpanded(node) { outlineView.reloadItem(node, reloadChildren: true) }
+        outlineView.beginUpdates()
+        for (node, rows) in insertions where !rows.isEmpty {
+            outlineView.insertItems(at: rows, inParent: node, withAnimation: .effectFade)
+        }
         outlineView.endUpdates()
         // Rows that kept their place may still show stale "Show more" counts.
-        for child in node.children where child.threadID == nil {
-            let row = outlineView.row(forItem: child)
-            if row >= 0 { outlineView.reloadData(forRowIndexes: [row], columnIndexes: [0]) }
+        for node in expanded {
+            for child in node.children where child.threadID == nil {
+                let row = outlineView.row(forItem: child)
+                if row >= 0 { outlineView.reloadData(forRowIndexes: [row], columnIndexes: [0]) }
+            }
         }
     }
 
@@ -493,7 +547,8 @@ final class SidebarViewController: NSViewController {
             jumpHint = KeyBindingsController.shared.displayString(for: command)
         }
         return ThreadRowModel(
-            title: thread.title, provider: thread.selection.provider, isPinned: thread.isPinned,
+            title: thread.title, place: thread.isPinned ? project?.name : nil, provider: thread.selection.provider,
+            isPinned: thread.isPinned,
             isArchived: thread.isArchived, status: status, updatedAt: thread.updatedAt,
             canArchive: ThreadActions.canArchive(thread.id), canFork: ThreadForking.canFork(thread.id),
             hasBackgroundWork: !background.isEmpty, toolTip: lines.joined(separator: "\n"),
@@ -537,7 +592,7 @@ final class SidebarViewController: NSViewController {
 
     private func collapsedStatus(of node: SidebarNode) -> ThreadRowModel.Status? {
         guard !outlineView.isItemExpanded(node), let id = node.projectID else { return nil }
-        return strongestStatus(of: store.threads(in: id).map(\.id))
+        return strongestStatus(of: store.threads(in: id).filter { !$0.isPinned }.map(\.id))
     }
 
     private func configureShowMore(_ cell: SidebarNoteCell, _ node: SidebarNode) {
@@ -662,7 +717,7 @@ final class SidebarViewController: NSViewController {
             showAllThreads(true, in: id)
         case .showLess(let id):
             showAllThreads(false, in: id)
-        case .header, .chats, .thread, .empty:
+        case .pinned, .header, .chats, .thread, .empty:
             break
         }
     }
@@ -696,18 +751,9 @@ final class SidebarViewController: NSViewController {
         let settled = item(String(localized: "Show Settled Threads"), #selector(toggleShowSettled))
         settled.state = showsSettled ? .on : .off
         menu.addItem(settled)
-        let limitItem = NSMenuItem(title: String(localized: "Threads per Project"), action: nil, keyEquivalent: "")
-        let limits = NSMenu()
-        for limit in [3, 6, 10, 20, 0] {
-            let title = limit == 0 ? String(localized: "All") : limit.formatted()
-            let item = NSMenuItem(title: title, action: #selector(setThreadLimit(_:)), keyEquivalent: "")
-            item.target = self
-            item.tag = limit
-            item.state = UIState.shared.values.sidebarThreadLimit == limit ? .on : .off
-            limits.addItem(item)
-        }
-        limitItem.submenu = limits
-        menu.addItem(limitItem)
+        menu.addItem(.separator())
+        addSortMenus(to: menu)
+        menu.addItem(threadLimitMenu())
         menu.addItem(.separator())
         let expand = NSMenuItem(title: String(localized: "Expand All Projects"), action: #selector(expandAll), keyEquivalent: "")
         expand.target = self
@@ -724,10 +770,92 @@ final class SidebarViewController: NSViewController {
         rebuild()
     }
 
+    /// "Threads per Project": fit to the sidebar (the default), a fixed number, or all.
+    private func threadLimitMenu() -> NSMenuItem {
+        let limitItem = NSMenuItem(title: String(localized: "Threads per Project"), action: nil, keyEquivalent: "")
+        let current = UIState.shared.values.sidebarThreadsPerProject
+        let limits = NSMenu()
+        let fit = item(String(localized: "Fit to Sidebar"), #selector(setThreadLimit(_:)))
+        fit.tag = -1
+        fit.state = current == nil ? .on : .off
+        let fitted = SidebarOrdering.automaticThreadLimit(visibleHeight: scrollView.contentView.bounds.height)
+        fit.subtitle = String(localized: "\(fitted) in this window")
+        limits.addItem(fit)
+        limits.addItem(.separator())
+        // A number chosen in an earlier version stays offered.
+        for limit in Set([10, 20, 50] + [current ?? 10].filter { $0 > 0 }).sorted() + [0] {
+            let entry = item(limit == 0 ? String(localized: "All") : limit.formatted(), #selector(setThreadLimit(_:)))
+            entry.tag = limit
+            entry.state = current == limit ? .on : .off
+            limits.addItem(entry)
+        }
+        limitItem.submenu = limits
+        return limitItem
+    }
+
     @objc private func setThreadLimit(_ sender: NSMenuItem) {
-        UIState.shared.update { $0.sidebarThreadLimit = sender.tag }
+        UIState.shared.update { $0.sidebarThreadsPerProject = sender.tag < 0 ? nil : sender.tag }
         expandedLists.removeAll()
         rebuild()
+    }
+
+    /// "Sort Projects By" and "Sort Threads By", for the Projects options and the sidebar's context menu.
+    private func addSortMenus(to menu: NSMenu) {
+        let values = UIState.shared.values
+        let projects = NSMenu()
+        for sort in ProjectSort.allCases {
+            let entry = item(sort.title, #selector(setProjectSort(_:)))
+            entry.representedObject = sort.rawValue
+            entry.state = values.projectSort == sort ? .on : .off
+            if sort == .manual { entry.subtitle = String(localized: "Drag projects to reorder them") }
+            projects.addItem(entry)
+        }
+        let projectsItem = NSMenuItem(title: String(localized: "Sort Projects By"), action: nil, keyEquivalent: "")
+        projectsItem.submenu = projects
+        menu.addItem(projectsItem)
+        let threadsItem = NSMenuItem(title: String(localized: "Sort Threads By"), action: nil, keyEquivalent: "")
+        threadsItem.submenu = threadSortMenu(selected: values.threadSort, action: #selector(setThreadSort(_:)))
+        menu.addItem(threadsItem)
+    }
+
+    private func threadSortMenu(selected: ThreadSort, action: Selector) -> NSMenu {
+        let menu = NSMenu()
+        for sort in ThreadSort.allCases {
+            let entry = item(sort.title, action)
+            entry.representedObject = sort.rawValue
+            entry.state = selected == sort ? .on : .off
+            menu.addItem(entry)
+        }
+        return menu
+    }
+
+    @objc private func setProjectSort(_ sender: NSMenuItem) {
+        guard let sort = (sender.representedObject as? String).flatMap(ProjectSort.init(rawValue:)) else { return }
+        UIState.shared.update { $0.projectSort = sort }
+        rebuild()
+    }
+
+    @objc private func setThreadSort(_ sender: NSMenuItem) {
+        guard let sort = (sender.representedObject as? String).flatMap(ThreadSort.init(rawValue:)) else { return }
+        UIState.shared.update { $0.threadSort = sort }
+        rebuild()
+    }
+
+    @objc private func setChatSort(_ sender: NSMenuItem) {
+        guard let sort = (sender.representedObject as? String).flatMap(ThreadSort.init(rawValue:)) else { return }
+        UIState.shared.update { $0.chatSort = sort }
+        rebuild()
+    }
+
+    /// The Chats header's options: how chats are sorted.
+    @objc private func showChatOptions(_ sender: NSButton) {
+        let menu = NSMenu()
+        menu.addItem(.sectionHeader(title: String(localized: "Sort Chats By")))
+        for entry in threadSortMenu(selected: UIState.shared.values.chatSort, action: #selector(setChatSort(_:))).items {
+            entry.menu?.removeItem(entry)
+            menu.addItem(entry)
+        }
+        ThemedPopup.show(menu: menu, from: sender, preferAbove: false)
     }
 
     @objc private func expandAll() {
@@ -810,7 +938,7 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         guard let node = item as? SidebarNode else { return false }
         switch node.kind {
-        case .header, .chats, .project: return true
+        case .pinned, .header, .chats, .project: return true
         default: return false
         }
     }
@@ -834,7 +962,7 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
         guard let node = item as? SidebarNode else { return 28 }
         switch node.kind {
-        case .header, .chats: return 26
+        case .pinned, .header, .chats: return 26
         case .project, .thread: return 28
         case .showMore, .showLess, .empty: return 24
         }
@@ -851,18 +979,21 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? SidebarNode else { return nil }
         switch node.kind {
+        case .pinned:
+            return reuse("pinnedHeader") { SidebarHeaderCell(title: String(localized: "Pinned"), target: self) }
         case .header:
             return reuse("header") {
                 SidebarHeaderCell(
-                    title: String(localized: "Projects"), target: self, addAction: #selector(addProject),
-                    addSymbol: "folder.badge.plus", addLabel: String(localized: "Add Project…"),
+                    title: String(localized: "Projects"), target: self,
+                    add: (#selector(addProject), "folder.badge.plus", String(localized: "Add Project…")),
                     optionsAction: #selector(showOptions(_:)))
             }
         case .chats:
             return reuse("chatsHeader") {
                 SidebarHeaderCell(
-                    title: String(localized: "Chats"), target: self, addAction: #selector(newChat),
-                    addSymbol: "square.and.pencil", addLabel: String(localized: "New Chat"))
+                    title: String(localized: "Chats"), target: self,
+                    add: (#selector(newChat), "square.and.pencil", String(localized: "New Chat")),
+                    optionsAction: #selector(showChatOptions(_:)), optionsLabel: String(localized: "Chats Options"))
             }
         case .project(let id):
             let cell = reuse("project") { ProjectCell(frame: .zero) }
@@ -891,7 +1022,13 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
         case .empty(let id):
             let cell = reuse("note") { SidebarNoteCell(frame: .zero) }
             let isChats = store.project(id)?.isChats == true
-            cell.configure(text: isChats ? String(localized: "No chats yet") : String(localized: "No threads yet"), symbol: nil)
+            let text: String
+            if store.threads(in: id, includeArchived: showsArchived).contains(where: \.isPinned) {
+                text = isChats ? String(localized: "Only pinned chats") : String(localized: "Only pinned threads")
+            } else {
+                text = isChats ? String(localized: "No chats yet") : String(localized: "No threads yet")
+            }
+            cell.configure(text: text, symbol: nil)
             return cell
         }
     }
@@ -942,8 +1079,19 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     // MARK: Drag and drop
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
-        guard let node = item as? SidebarNode, case .project(let id) = node.kind, !isSearching,
-            let project = store.project(id), !project.isChats
+        guard let node = item as? SidebarNode, editing == nil else { return nil }
+        if let section = node.section {
+            guard !isSearching else { return nil }
+            let pasteboardItem = NSPasteboardItem()
+            pasteboardItem.setString(section.rawValue, forType: .coincideSection)
+            return pasteboardItem
+        }
+        if let id = node.threadID {
+            let pasteboardItem = NSPasteboardItem()
+            pasteboardItem.setString(id.uuidString, forType: .coincideThread)
+            return pasteboardItem
+        }
+        guard case .project(let id) = node.kind, !isSearching, let project = store.project(id), !project.isChats
         else { return nil }
         let pasteboardItem = NSPasteboardItem()
         pasteboardItem.setString(id.uuidString, forType: .coincideProject)
@@ -955,14 +1103,42 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
         _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int
     ) -> NSDragOperation {
         let pasteboard = info.draggingPasteboard
-        if pasteboard.availableType(from: [.coincideProject]) != nil, (info.draggingSource as AnyObject?) === outlineView {
+        if pasteboard.availableType(from: [.coincideSection]) != nil, (info.draggingSource as AnyObject?) === outlineView {
             guard !isSearching else { return [] }
+            outlineView.setDropItem(nil, dropChildIndex: sectionDropIndex(item: item as? SidebarNode, childIndex: index))
+            return .move
+        }
+        if pasteboard.availableType(from: [.coincideProject]) != nil, (info.draggingSource as AnyObject?) === outlineView {
+            // Sorted by name or activity, projects have no order of the user's to change.
+            guard !isSearching, UIState.shared.values.projectSort == .manual else { return [] }
             outlineView.setDropItem(header, dropChildIndex: projectDropIndex(item: item as? SidebarNode, childIndex: index))
             return .move
+        }
+        if (info.draggingSource as AnyObject?) === outlineView, let threads = draggedThreads(info), !threads.isEmpty {
+            return validateThreadDrop(threads, item: item as? SidebarNode, childIndex: index)
         }
         guard !SidebarEmptyView.folders(on: pasteboard).isEmpty else { return [] }
         outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
         return .copy
+    }
+
+    /// Places pinned threads before `target` in the Pinned order (at the end without one). The saved order also holds
+    /// pinned threads hidden for now, such as snoozed ones, which keep their places.
+    private func reorderPinned(_ threads: [UUID], before target: UUID?) {
+        let order = pinnedOrder()
+        let index = target.flatMap { order.firstIndex(of: $0) } ?? order.count
+        let reordered = SidebarOrdering.reordered(order, moving: threads, to: index)
+        UIState.shared.update { $0.pinnedThreads = reordered.map(\.uuidString) }
+        rebuild()
+    }
+
+    /// Turns any proposed drop point into a gap between sections: above a section's header, below its rows.
+    private func sectionDropIndex(item: SidebarNode?, childIndex: Int) -> Int {
+        guard let item else { return childIndex == NSOutlineViewDropOnItemIndex ? sections.count : childIndex }
+        var owner: SidebarNode? = item
+        while let node = owner, !sections.contains(node) { owner = outlineView.parent(forItem: node) as? SidebarNode }
+        guard let owner, let position = sections.firstIndex(of: owner) else { return sections.count }
+        return owner === item && childIndex == NSOutlineViewDropOnItemIndex ? position : position + 1
     }
 
     /// Turns any proposed drop point into a gap between projects.
@@ -978,7 +1154,55 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
         return owner + 1
     }
 
+    private func draggedThreads(_ info: NSDraggingInfo) -> [UUID]? {
+        let ids = info.draggingPasteboard.pasteboardItems?.compactMap { $0.string(forType: .coincideThread).flatMap(UUID.init) }
+        return ids?.isEmpty == false ? ids : nil
+    }
+
+    /// Pinned threads dragged within Pinned change its order. Threads dropped on a project, on Chats or among a
+    /// project's threads move there, the project's row lighting up as the target.
+    private func validateThreadDrop(_ threads: [UUID], item: SidebarNode?, childIndex: Int) -> NSDragOperation {
+        guard let item else { return [] }
+        if item === pinnedSection || pinnedSection.children.contains(item) {
+            guard !isSearching, threads.allSatisfy({ store.summary($0)?.isPinned == true }) else { return [] }
+            let index = item === pinnedSection
+                ? (childIndex == NSOutlineViewDropOnItemIndex ? pinnedSection.children.count : childIndex)
+                : pinnedSection.children.firstIndex(of: item) ?? pinnedSection.children.count
+            outlineView.setDropItem(pinnedSection, dropChildIndex: index)
+            return .move
+        }
+        let destination = item.projectID ?? item.threadID.flatMap { store.summary($0)?.projectID }
+        guard let destination, let project = store.project(destination), ThreadActions.canMove(threads, to: destination),
+            let target = nodes.existing(project.isChats ? .chats(destination) : .project(destination)),
+            outlineView.row(forItem: target) >= 0
+        else { return [] }
+        outlineView.setDropItem(target, dropChildIndex: NSOutlineViewDropOnItemIndex)
+        return .move
+    }
+
     func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+        if (info.draggingSource as AnyObject?) === outlineView,
+            let section = info.draggingPasteboard.string(forType: .coincideSection).flatMap(SidebarSection.init(rawValue:))
+        {
+            let target = sections.indices.contains(index) ? sections[index].section : nil
+            guard target != section else { return true }
+            UIState.shared.update { values in
+                values.sidebarSections = SidebarOrdering.savedSectionOrder(saved: values.sidebarSections, moving: section, before: target)
+            }
+            rebuild()
+            return true
+        }
+        if (info.draggingSource as AnyObject?) === outlineView, let threads = draggedThreads(info) {
+            guard let node = item as? SidebarNode else { return false }
+            if node === pinnedSection {
+                reorderPinned(threads, before: index < pinnedSection.children.count ? pinnedSection.children[index].threadID : nil)
+            } else if let projectID = node.projectID {
+                ThreadActions.move(threads, to: projectID)
+            } else {
+                return false
+            }
+            return true
+        }
         let pasteboard = info.draggingPasteboard
         if let value = pasteboard.string(forType: .coincideProject), (info.draggingSource as AnyObject?) === outlineView {
             guard let id = UUID(uuidString: value), let source = store.projects.firstIndex(where: { $0.id == id }) else {
@@ -1013,8 +1237,10 @@ extension SidebarViewController: NSMenuDelegate {
             }
         case .chats(let id), .project(let id), .showMore(let id), .showLess(let id), .empty(let id):
             buildProjectMenu(menu, id)
-        case .header, nil:
+        case .pinned, .header, nil:
             menu.addItem(item(String(localized: "Add Project…"), #selector(addProject)))
+            menu.addItem(.separator())
+            addSortMenus(to: menu)
             menu.addItem(.separator())
             let archived = item(String(localized: "Show Archived Threads"), #selector(toggleShowArchived))
             archived.state = showsArchived ? .on : .off
@@ -1044,6 +1270,7 @@ extension SidebarViewController: NSMenuDelegate {
         let fork = item(String(localized: "Fork Thread"), #selector(forkFromMenu(_:)), id)
         fork.isEnabled = ThreadForking.canFork(id)
         menu.addItem(fork)
+        addMoveMenu(to: menu, [id])
         menu.addItem(.separator())
         addOpenItems(to: menu)
         menu.addItem(item(String(localized: "Copy Thread ID"), #selector(copyThreadID(_:)), id))
@@ -1095,10 +1322,50 @@ extension SidebarViewController: NSMenuDelegate {
             }
             menu.addItem(entry)
         }
+        addMoveMenu(to: menu, ids)
         let delete = item(String(localized: "Delete Threads"), #selector(deleteMany(_:)))
         delete.representedObject = ids
         menu.addItem(.separator())
         menu.addItem(delete)
+    }
+
+    /// "Move to Project": every other project in the sidebar's order, then Chats. Disabled, with the reason, while a
+    /// thread can't move.
+    private func addMoveMenu(to menu: NSMenu, _ ids: [UUID]) {
+        let move = NSMenuItem(title: String(localized: "Move to Project"), action: nil, keyEquivalent: "")
+        if let blocker = ids.lazy.compactMap(ThreadActions.moveBlocker).first {
+            move.isEnabled = false
+            move.subtitle = blocker
+            menu.addItem(move)
+            return
+        }
+        let current = Set(ids.compactMap { store.summary($0)?.projectID })
+        let projects = SidebarOrdering.sortedProjects(
+            store.projects, by: UIState.shared.values.projectSort,
+            lastActivity: SidebarOrdering.lastActivity(of: store.threadSummaries.values))
+        let destinations = NSMenu()
+        for project in projects where !project.isChats && !(current.count == 1 && current.contains(project.id)) {
+            let entry = item(project.name, #selector(moveFromMenu(_:)))
+            entry.representedObject = (ids, project.id) as ([UUID], UUID?)
+            entry.image = Theme.symbol("folder", size: 12)
+            destinations.addItem(entry)
+        }
+        // Chats is offered before the first chat made it.
+        if !(current.count == 1 && current.contains(store.chatsProject?.id ?? UUID())) {
+            if !destinations.items.isEmpty { destinations.addItem(.separator()) }
+            let chats = item(String(localized: "Chats"), #selector(moveFromMenu(_:)))
+            chats.representedObject = (ids, store.chatsProject?.id) as ([UUID], UUID?)
+            chats.image = Theme.symbol("bubble.left.and.bubble.right", size: 12)
+            destinations.addItem(chats)
+        }
+        move.submenu = destinations
+        move.isEnabled = !destinations.items.isEmpty
+        menu.addItem(move)
+    }
+
+    @objc private func moveFromMenu(_ sender: NSMenuItem) {
+        guard let (ids, projectID) = sender.representedObject as? ([UUID], UUID?) else { return }
+        ThreadActions.move(ids, to: projectID ?? store.ensureChatsProject().id)
     }
 
     @objc private func archiveMany(_ sender: NSMenuItem) {
