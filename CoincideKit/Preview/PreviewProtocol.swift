@@ -32,11 +32,25 @@ public enum PreviewCommand: Sendable, Equatable {
             let suffix = trimmed[trimmed.index(after: colon)...].split(separator: "/", maxSplits: 1).first ?? ""
             guard !suffix.isEmpty, suffix.allSatisfy({ $0.isNumber }) else { return nil }
         }
-        let normalized = trimmed.contains("://") ? trimmed : "http://" + trimmed
+        let normalized = trimmed.contains("://") ? trimmed : (Self.isLocal(trimmed) ? "http://" : "https://") + trimmed
         guard let url = URL(string: normalized), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
             let host = url.host, !host.isEmpty, url.user == nil, url.password == nil
         else { return nil }
         return url
+    }
+
+    /// Whether an address typed without a scheme names a development server, which gets `http://` like browsers give
+    /// it: localhost, an IP address, a `.local` or `.localhost` name, a single-label name, or any address with a port.
+    /// Everything else gets `https://`.
+    static func isLocal(_ address: String) -> Bool {
+        let authority = address.split(whereSeparator: { "/?#".contains($0) }).first.map(String.init) ?? address
+        if authority.hasPrefix("[") { return true }
+        let parts = authority.split(separator: ":", omittingEmptySubsequences: false)
+        if parts.count > 1 { return true }
+        let host = authority.lowercased()
+        if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") || !host.contains(".") { return true }
+        let labels = host.split(separator: ".")
+        return labels.count == 4 && labels.allSatisfy { UInt8($0) != nil }
     }
 
     private static func selector(_ json: JSONValue) throws -> String {
