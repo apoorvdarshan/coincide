@@ -57,7 +57,8 @@ extension InspectorPanelButtonsTests {
         let split = harness.split
         // The button left the rail, and Open In took its place.
         #expect(!shownRailLabels(harness).contains(String(localized: "Terminal")))
-        #expect(shownRailLabels(harness).contains(String(localized: "Open In")))
+        let openIn = harness.controller.rail.openInButton
+        #expect(railButtons(harness).contains { $0 === openIn && !$0.isHiddenOrHasHiddenAncestor && $0.window != nil })
         #expect(buttons.shownButtons.last === buttons.terminalButton)
         #expect(buttons.terminalButton.accessibilityLabel() == String(localized: "Terminal"))
         #expect(buttons.terminalButton.toolTip == KeyBindingsController.shared.toolTip(String(localized: "Terminal"), for: .toggleTerminal))
@@ -247,7 +248,8 @@ extension InspectorPanelButtonsTests {
         let after = shown()
         #expect(after.count == before.count - 1)
         #expect(!after.contains { $0.accessibilityLabel() == "Terminal" })
-        let openIn = try #require(after.first { $0.accessibilityLabel() == "Open In" })
+        // Open In names its app ("Open in Xcode"), so it is found by identity rather than by label.
+        let openIn = try #require(after.first { $0 === rail.openInButton })
         #expect(openIn.convert(openIn.bounds, to: rail.view) == terminalFrame)
 
         rail.showsTerminalButton = true
