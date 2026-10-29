@@ -16979,6 +16979,242 @@
         }
       }
     },
+    "%lld%% of your %@ %@ limit is left." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld %% deines Limits (%2$@ %3$@) sind übrig."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld%% of your %2$@ %3$@ limit is left."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Te queda el %1$lld%% de tu límite de %2$@ (%3$@)."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Te queda el %1$lld%% de tu límite de %2$@ (%3$@)."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il vous reste %1$lld %% de votre limite %2$@ (%3$@)."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "आपकी %2$@ की %3$@ सीमा का %1$lld%% बाकी है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld%% dari batas %3$@ %2$@ Anda masih tersisa."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ti resta il %1$lld%% del tuo limite di %2$@ (%3$@)."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@の%3$@上限の残りは %1$lld%% です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ %3$@ 한도가 %1$lld%% 남았습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld%% van je limiet (%2$@ %3$@) is over."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozostało %1$lld%% limitu (%2$@ %3$@)."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resta %1$lld%% do seu limite do %2$@ (%3$@)."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Осталось %1$lld%% лимита «%3$@» (%2$@)."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ %3$@ limitinizin %%%1$lld kadarı kaldı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Залишилося %1$lld%% ліміту «%3$@» (%2$@)."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bạn còn %1$lld%% giới hạn %3$@ của %2$@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "你的 %2$@ %3$@上限还剩 %1$lld%%。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "你的 %2$@ %3$@上限還剩 %1$lld%%。"
+          }
+        }
+      }
+    },
+    "%lld%% of your %@ %@ limit is left. It resets in %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld %% deines Limits (%2$@ %3$@) sind übrig. Es wird in %4$@ zurückgesetzt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld%% of your %2$@ %3$@ limit is left. It resets in %4$@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Te queda el %1$lld%% de tu límite de %2$@ (%3$@). Se restablece dentro de %4$@."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Te queda el %1$lld%% de tu límite de %2$@ (%3$@). Se restablece en %4$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il vous reste %1$lld %% de votre limite %2$@ (%3$@). Réinitialisation dans %4$@."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "आपकी %2$@ की %3$@ सीमा का %1$lld%% बाकी है। यह %4$@ में रीसेट होगी।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld%% dari batas %3$@ %2$@ Anda masih tersisa. Batas direset dalam %4$@."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ti resta il %1$lld%% del tuo limite di %2$@ (%3$@). Si ripristina tra %4$@."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@の%3$@上限の残りは %1$lld%% です。%4$@後にリセットされます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ %3$@ 한도가 %1$lld%% 남았습니다. %4$@ 후 초기화됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld%% van je limiet (%2$@ %3$@) is over. Wordt over %4$@ gereset."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozostało %1$lld%% limitu (%2$@ %3$@). Reset za %4$@."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resta %1$lld%% do seu limite do %2$@ (%3$@). Ele será redefinido em %4$@."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Осталось %1$lld%% лимита «%3$@» (%2$@). Сброс через %4$@."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ %3$@ limitinizin %%%1$lld kadarı kaldı. %4$@ sonra sıfırlanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Залишилося %1$lld%% ліміту «%3$@» (%2$@). Скидання через %4$@."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bạn còn %1$lld%% giới hạn %3$@ của %2$@. Giới hạn sẽ đặt lại sau %4$@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "你的 %2$@ %3$@上限还剩 %1$lld%%，将在 %4$@后重置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "你的 %2$@ %3$@上限還剩 %1$lld%%，將於 %4$@後重設。"
+          }
+        }
+      }
+    },
     "%lld%% of your %@ %@ limit is used." : {
       "localizations" : {
         "de" : {
@@ -221783,6 +222019,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "顯示帳號用量"
+          }
+        }
+      }
+    },
+    "Show every usage limit and when it resets" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle Nutzungslimits anzeigen und wann sie zurückgesetzt werden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar todos los límites de uso y cuándo se restablecen"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar todos los límites de uso y cuándo se restablecen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Afficher toutes les limites d’utilisation et leur réinitialisation"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सभी उपयोग सीमाएँ और उनके रीसेट होने का समय दिखाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tampilkan semua batas penggunaan dan kapan direset"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostra tutti i limiti di utilizzo e quando si ripristinano"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "すべての使用上限とリセット時刻を表示"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모든 사용 한도와 초기화 시점 보기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle gebruikslimieten tonen en wanneer ze worden gereset"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pokaż wszystkie limity użycia i czas ich resetu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar todos os limites de uso e quando são redefinidos"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Показать все лимиты и время их сброса"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tüm kullanım limitlerini ve ne zaman sıfırlanacaklarını göster"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Показати всі ліміти та час їх скидання"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hiện mọi giới hạn sử dụng và thời điểm đặt lại"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "显示所有用量上限及其重置时间"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "顯示所有用量上限及其重設時間"
           }
         }
       }

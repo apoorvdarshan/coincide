@@ -581,3 +581,143 @@ final class ComposerQueueBanner: ComposerBanner {
         if let id = sender.identifier.flatMap({ UUID(uuidString: $0.rawValue) }) { onRemove?(id) }
     }
 }
+
+/// A borderless action on a banner: a short title in the theme's accent, or a symbol with its own accessibility label,
+/// with a quiet rounded fill under the pointer and while pressed. The frame is the hit area: titles get padding on
+/// either side, and a symbol a square as tall as the titled buttons. A titled button given a `compactSymbol` can draw
+/// that symbol in place of its title where a banner is short of room (`isCompact`); its title still names it to
+/// VoiceOver.
+final class ComposerBannerButton: NSButton {
+    static let height: CGFloat = 24
+    static let titlePadding: CGFloat = 8
+
+    /// What the button draws in place of its title while `isCompact`.
+    var compactSymbol: String? {
+        didSet { compactImage = compactSymbol.flatMap { Theme.symbol($0, size: 12, weight: .medium) } }
+    }
+
+    /// Whether the button draws its `compactSymbol` rather than its title.
+    var isCompact = false {
+        didSet {
+            guard isCompact != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    /// The width the button takes with its title showing.
+    var titledWidth: CGFloat {
+        let text = (title as NSString).size(withAttributes: [.font: font ?? .systemFont(ofSize: 12)])
+        return ceil(text.width) + Self.titlePadding * 2
+    }
+
+    private var symbolImage: NSImage?
+    private var compactImage: NSImage?
+    private var isHovered = false
+
+    /// The symbol drawn: the button's own, or its compact one while the title is hidden.
+    private var drawnSymbol: NSImage? { symbolImage ?? (isCompact ? compactImage : nil) }
+
+    init(title: String) {
+        super.init(frame: .zero)
+        setUp()
+        self.title = title
+    }
+
+    init(symbol: String, label: String) {
+        super.init(frame: .zero)
+        setUp()
+        title = ""
+        symbolImage = Theme.symbol(symbol, size: 11, weight: .semibold)
+        setAccessibilityLabel(label)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private func setUp() {
+        isBordered = false
+        bezelStyle = .regularSquare
+        font = .systemFont(ofSize: 12, weight: .medium)
+        focusRingType = .default
+        setContentHuggingPriority(.init(999), for: .horizontal)
+        setContentHuggingPriority(.init(999), for: .vertical)
+        // Below required, so a title too long for the narrowest banner is cut short rather than drawn past its edge.
+        setContentCompressionResistancePriority(.init(999), for: .horizontal)
+        setAccessibilityRole(.button)
+    }
+
+    override var title: String {
+        didSet {
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: drawnSymbol == nil ? titledWidth : Self.height, height: Self.height)
+    }
+
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsetsZero }
+
+    override var isHighlighted: Bool {
+        didSet { needsDisplay = true }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if isHighlighted || isHovered {
+            (isHighlighted ? Theme.sidebarSelection : Theme.sidebarHover).setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: Theme.smallCornerRadius, yRadius: Theme.smallCornerRadius).fill()
+        }
+        if let symbolImage = drawnSymbol {
+            let color = isHovered || isHighlighted ? Theme.ink : NSColor.secondaryLabelColor
+            let size = symbolImage.size
+            let rect = NSRect(
+                x: ((bounds.width - size.width) / 2).rounded(), y: ((bounds.height - size.height) / 2).rounded(),
+                width: size.width, height: size.height)
+            NSImage(size: size, flipped: false) { frame in
+                symbolImage.draw(in: frame)
+                color.set()
+                frame.fill(using: .sourceIn)
+                return true
+            }.draw(in: rect)
+            return
+        }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font ?? .systemFont(ofSize: 12, weight: .medium), .foregroundColor: Theme.accent,
+        ]
+        var size = (title as NSString).size(withAttributes: attributes)
+        size.width = min(size.width, bounds.width - Self.titlePadding * 2)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        var truncating = attributes
+        truncating[.paragraphStyle] = paragraph
+        (title as NSString).draw(
+            with: NSRect(
+                origin: NSPoint(x: ((bounds.width - size.width) / 2).rounded(), y: ((bounds.height - size.height) / 2).rounded()),
+                size: size),
+            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: truncating)
+    }
+
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: bounds, xRadius: Theme.smallCornerRadius, yRadius: Theme.smallCornerRadius).fill()
+    }
+
+    override var focusRingMaskBounds: NSRect { bounds }
+}

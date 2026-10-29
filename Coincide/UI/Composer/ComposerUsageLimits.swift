@@ -231,7 +231,14 @@ final class UsageLimitBar: NSView {
     }
 }
 
-/// Warns when the selected agent's plan is near or at one of its limits, with when it resets.
+/// Warns when the selected agent's plan is near or at one of its limits, with when it resets. It sits on the same quiet
+/// surface as the composer's other banners: only the gauge and a thin bar of how much of the window is used (or left)
+/// carry the warning color. The message keeps to one line and cuts long text short with an ellipsis (its tooltip and
+/// accessibility label have all of it); the actions are grouped at the trailing edge with the dismiss button last.
+///
+/// The views are placed with their own constraints rather than a stack, so nothing can be stretched to fill the row: the
+/// old stack could widen the dismiss button instead of the message, drawing its × in the middle of the banner. Where
+/// the resume offer's title would leave the message narrower than `minimumMessageWidth`, the offer shows as a symbol.
 final class ComposerUsageBanner: ComposerBanner {
     /// What the banner offers for a thread its agent stopped working on at the limit (T3 Code's "Resume at reset").
     enum ResumeOffer: Equatable {
@@ -243,53 +250,147 @@ final class ComposerUsageBanner: ComposerBanner {
     var onShowDetails: (() -> Void)?
     var onToggleResume: (() -> Void)?
 
-    private let resumeButton = ThemedButton(title: "", style: .secondary, target: nil, action: nil)
+    /// The message gets at least this much room before the resume offer gives up its title for a symbol.
+    static let minimumMessageWidth: CGFloat = 120
+    /// The bar under the message stops at this width on a wide composer, so it reads as a meter rather than a rule.
+    static let maximumMeterWidth: CGFloat = 240
 
-    private let iconView = ComposerBanner.icon("gauge.with.needle", color: .systemOrange)
-    private let message = NSTextField(wrappingLabelWithString: "")
+    let message = ComposerBanner.label()
+    let meter = ThemedProgressBar(fraction: 0, color: Theme.warning)
+    let resumeButton = ComposerBannerButton(title: "")
+    let detailsButton = ComposerBannerButton(title: String(localized: "Details"))
+    let dismissButton = ComposerBannerButton(symbol: "xmark", label: String(localized: "Dismiss"))
 
-    init() {
-        super.init(tint: Theme.approvalTint)
-        message.font = .systemFont(ofSize: 12)
-        message.maximumNumberOfLines = 2
-        message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let details = ThemedButton(title: String(localized: "Details"), target: self, action: #selector(showDetails))
-        details.bezelStyle = .push
-        details.controlSize = .small
-        details.setContentCompressionResistancePriority(.required, for: .horizontal)
-        let dismiss = NSButton(
-            image: NSImage(systemSymbolName: "xmark", accessibilityDescription: String(localized: "Dismiss")) ?? NSImage(),
-            target: self, action: #selector(dismiss))
-        dismiss.isBordered = false
-        dismiss.contentTintColor = .secondaryLabelColor
-        dismiss.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
-        dismiss.toolTip = String(localized: "Dismiss")
-        dismiss.setContentCompressionResistancePriority(.required, for: .horizontal)
-        resumeButton.target = self
-        resumeButton.action = #selector(toggleResume)
-        resumeButton.controlSize = .small
-        resumeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        content.alignment = .centerY
-        for view in [iconView, message, resumeButton, details, dismiss] as [NSView] { content.addArrangedSubview(view) }
+    private let body = NSView()
+    private let iconView = ComposerBanner.icon("gauge.with.needle", color: Theme.warning)
+    private let actions = NSStackView()
+    /// The resume offer's own tooltip, if it has one; while it shows as a symbol, its title stands in.
+    private var resumeToolTip: String?
+
+    /// Insets of the banner's contents, and the gaps between them.
+    private enum Metrics {
+        static let top: CGFloat = 9
+        static let bottom: CGFloat = 9
+        static let leading: CGFloat = 12
+        static let trailing: CGFloat = 6
+        static let iconGap: CGFloat = 9
+        static let meterGap: CGFloat = 5
+        static let meterHeight: CGFloat = 3
+        /// Between the message and the first action.
+        static let actionsGap: CGFloat = 8
+        /// Between the actions, and between the last one and the ×: their padding already spaces their titles.
+        static let buttonGap: CGFloat = 2
+        static let iconWidth: CGFloat = 16
     }
 
-    func show(_ window: UsageLimitWindow, provider: ProviderKind, now: Date, resume: ResumeOffer? = nil) {
-        iconView.contentTintColor = window.blocksWork ? .systemRed : .systemOrange
-        var text = UsageLimits.warningText(for: window, provider: provider, at: now)
+    init() {
+        super.init(tint: Theme.questionTint)
+        message.textColor = Theme.ink
+        message.maximumNumberOfLines = 1
+        message.usesSingleLineMode = true
+        message.cell?.truncatesLastVisibleLine = true
+        message.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        actions.orientation = .horizontal
+        actions.alignment = .centerY
+        actions.spacing = Metrics.buttonGap
+        actions.detachesHiddenViews = true
+        actions.setHuggingPriority(.required, for: .horizontal)
+        actions.setHuggingPriority(.required, for: .vertical)
+
+        resumeButton.target = self
+        resumeButton.action = #selector(toggleResume)
+        resumeButton.isHidden = true
+        detailsButton.target = self
+        detailsButton.action = #selector(showDetails)
+        detailsButton.toolTip = String(localized: "Show every usage limit and when it resets")
+        dismissButton.target = self
+        dismissButton.action = #selector(dismiss)
+        dismissButton.toolTip = String(localized: "Dismiss")
+        for view in [resumeButton, detailsButton] { actions.addArrangedSubview(view) }
+
+        for view in [iconView, message, meter, actions, dismissButton] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            body.addSubview(view)
+        }
+        content.edgeInsets = NSEdgeInsetsZero
+        content.addArrangedSubview(body)
+
+        let meterWidth = meter.widthAnchor.constraint(equalToConstant: Self.maximumMeterWidth)
+        meterWidth.priority = .init(200)
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: body.leadingAnchor, constant: Metrics.leading),
+            iconView.widthAnchor.constraint(equalToConstant: Metrics.iconWidth),
+            iconView.centerYAnchor.constraint(equalTo: message.centerYAnchor),
+            message.topAnchor.constraint(equalTo: body.topAnchor, constant: Metrics.top),
+            message.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: Metrics.iconGap),
+            message.trailingAnchor.constraint(equalTo: actions.leadingAnchor, constant: -Metrics.actionsGap),
+            // On a banner too narrow for everything, the action titles get cut short before the message turns inside out.
+            message.widthAnchor.constraint(greaterThanOrEqualToConstant: 0),
+            meter.topAnchor.constraint(equalTo: message.bottomAnchor, constant: Metrics.meterGap),
+            meter.leadingAnchor.constraint(equalTo: message.leadingAnchor),
+            meter.heightAnchor.constraint(equalToConstant: Metrics.meterHeight),
+            meter.widthAnchor.constraint(lessThanOrEqualToConstant: Self.maximumMeterWidth),
+            meter.widthAnchor.constraint(lessThanOrEqualTo: message.widthAnchor),
+            meterWidth,
+            body.bottomAnchor.constraint(equalTo: meter.bottomAnchor, constant: Metrics.bottom),
+            // The actions and the × line up on the message, whatever the bar under it adds.
+            actions.trailingAnchor.constraint(equalTo: dismissButton.leadingAnchor, constant: -Metrics.buttonGap),
+            actions.centerYAnchor.constraint(equalTo: message.centerYAnchor),
+            dismissButton.trailingAnchor.constraint(equalTo: body.trailingAnchor, constant: -Metrics.trailing),
+            dismissButton.centerYAnchor.constraint(equalTo: message.centerYAnchor),
+            dismissButton.widthAnchor.constraint(equalToConstant: ComposerBannerButton.height),
+            dismissButton.heightAnchor.constraint(equalToConstant: ComposerBannerButton.height),
+            dismissButton.topAnchor.constraint(greaterThanOrEqualTo: body.topAnchor, constant: 2),
+        ])
+    }
+
+    func show(
+        _ window: UsageLimitWindow, provider: ProviderKind, mode: UsageDisplayMode = .used, now: Date,
+        resume: ResumeOffer? = nil
+    ) {
+        let color = ComposerUsageDetails.color(for: window, provider: provider)
+        iconView.contentTintColor = color
+        meter.color = color
+        meter.fraction = CGFloat(window.barFill(mode))
+        meter.setAccessibilityLabel(window.label)
+        meter.setAccessibilityValueDescription(UsageFormat.shown(window, mode: mode))
+        var text = UsageLimits.warningText(for: window, provider: provider, mode: mode, at: now)
         switch resume {
         case .available?:
             resumeButton.title = String(localized: "Resume at Reset")
-            resumeButton.toolTip = String(localized: "Continue this thread on its own once the limit resets.")
+            resumeButton.compactSymbol = "clock.arrow.circlepath"
+            resumeToolTip = String(localized: "Continue this thread on its own once the limit resets.")
         case .scheduled(let date)?:
             resumeButton.title = String(localized: "Cancel Auto-Resume")
-            resumeButton.toolTip = nil
+            resumeButton.compactSymbol = "clock.badge.xmark"
+            resumeToolTip = nil
             text += " " + String(localized: "This thread continues at \(date.formatted(date: .omitted, time: .shortened)).")
         case nil:
             break
         }
         resumeButton.isHidden = resume == nil
         message.stringValue = text
-        setAccessibilityLabel(message.stringValue)
+        // The whole text, for when one line cuts it short.
+        message.toolTip = text
+        setAccessibilityLabel(text)
+        needsLayout = true
+    }
+
+    /// Whether the resume offer shows as a symbol at `width`: with its title, the message would get narrower than
+    /// `minimumMessageWidth`.
+    func needsCompactResume(width: CGFloat) -> Bool {
+        guard !resumeButton.isHidden else { return false }
+        let leading = Metrics.leading + Metrics.iconWidth + Metrics.iconGap + Metrics.actionsGap
+        let trailing = resumeButton.titledWidth + Metrics.buttonGap + detailsButton.titledWidth + Metrics.buttonGap
+            + ComposerBannerButton.height + Metrics.trailing
+        return width - leading - trailing < Self.minimumMessageWidth
+    }
+
+    override func layout() {
+        resumeButton.isCompact = needsCompactResume(width: bounds.width)
+        resumeButton.toolTip = resumeToolTip ?? (resumeButton.isCompact ? resumeButton.title : nil)
+        super.layout()
     }
 
     @objc private func toggleResume() { onToggleResume?() }
