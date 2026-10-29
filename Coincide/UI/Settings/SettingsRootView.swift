@@ -39,6 +39,7 @@ struct SettingsRootView: View {
         case .section(.usage): UsageSettingsView()
         case .section(.instructions): InstructionsSettingsView()
         case .section(.keyboard): KeyboardSettingsView(model: model)
+        case .section(.browser): BrowserSettingsView()
         case .section(.about): AboutSettingsView()
         case .provider(let kind): ProviderSettingsView(model: model, kind: kind).id(kind)
         }
@@ -66,6 +67,7 @@ private struct SettingsSidebar: View {
                     row(.usage)
                     row(.instructions)
                     row(.keyboard)
+                    row(.browser)
                 }
                 Section("Providers") {
                     Label {
@@ -136,6 +138,7 @@ extension SettingsSection {
         case .usage: .green
         case .instructions: .teal
         case .keyboard: Color(nsColor: .darkGray)
+        case .browser: .cyan
         case .about: .blue
         }
     }
@@ -290,6 +293,14 @@ struct SettingsSearchResults: View {
             SettingsSearchEntry(
                 title: String(localized: "Keyboard shortcuts"), pane: .section(.keyboard),
                 keywords: [String(localized: "Keybindings"), String(localized: "Hotkeys")]),
+            SettingsSearchEntry(
+                title: String(localized: "Browser"), pane: .section(.browser),
+                keywords: [
+                    String(localized: "Cookies"), String(localized: "History"), String(localized: "Bookmarks"),
+                    String(localized: "Import"), String(localized: "Private sessions"), String(localized: "Agent Control"),
+                    "Chrome", "Safari", "Firefox", String(localized: "Passwords"), String(localized: "Saved Logins"),
+                    "1Password", "Bitwarden", String(localized: "Keychain"),
+                ]),
             SettingsSearchEntry(
                 title: String(localized: "About Coincide"), pane: .section(.about),
                 keywords: [

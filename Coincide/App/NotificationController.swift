@@ -207,15 +207,27 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
             body: detail.flatMap { $0.isEmpty ? nil : String($0.prefix(240)) })
     }
 
+    /// An agent needs the user in a thread's browser (to sign in, say) while they look at another thread or app.
+    /// Only this Mac is told: the browser is here. Clicking opens the thread with its browser.
+    func browserNeedsUser(_ threadID: UUID, message: String) {
+        guard AppStore.shared.settings.notifyWhenInBackground, let thread = AppStore.shared.summary(threadID), !thread.isArchived
+        else { return }
+        postOnMac(
+            AlertContent(
+                id: "\(threadID.uuidString).browser", threadID: threadID, kind: .question, title: thread.title,
+                subtitle: String(localized: "Your turn in the browser"), body: String(message.prefix(240))),
+            opensBrowser: true)
+    }
+
     /// Posts on this Mac, named by the event's id so a repeat replaces it.
-    private func postOnMac(_ alert: AlertContent) {
+    private func postOnMac(_ alert: AlertContent, opensBrowser: Bool = false) {
         let content = UNMutableNotificationContent()
         content.title = alert.title
         content.subtitle = alert.subtitle
         if let body = alert.body { content.body = body }
         content.sound = .default
         content.threadIdentifier = alert.threadID.uuidString
-        content.userInfo = ["threadID": alert.threadID.uuidString]
+        content.userInfo = ["threadID": alert.threadID.uuidString, "opensBrowser": opensBrowser]
         let request = UNNotificationRequest(identifier: alert.id, content: content, trigger: nil)
         let center = center
         Task {
@@ -246,9 +258,11 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
         guard let value = response.notification.request.content.userInfo["threadID"] as? String,
             let threadID = UUID(uuidString: value)
         else { return }
+        let opensBrowser = response.notification.request.content.userInfo["opensBrowser"] as? Bool == true
         await MainActor.run {
             NSApp.activate()
             AppEvents.openThread(threadID)
+            if opensBrowser { _ = PreviewSessions.shared.reveal(threadID) }
         }
     }
 }

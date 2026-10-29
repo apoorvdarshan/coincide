@@ -649,6 +649,7 @@ final class TranscriptBackgroundTaskLine: NSView {
             field.lineBreakMode = .byTruncatingTail
             field.maximumNumberOfLines = 1
             field.cell?.truncatesLastVisibleLine = true
+            field.usesSingleLineMode = true
         }
         titleField.textColor = .secondaryLabelColor
         detailField.textColor = .tertiaryLabelColor
@@ -669,9 +670,9 @@ final class TranscriptBackgroundTaskLine: NSView {
         iconView.image = Theme.symbol(Self.symbol(task.kind), size: 11, weight: .medium)
         iconView.contentTintColor = .tertiaryLabelColor
         titleField.font = .systemFont(ofSize: Theme.fontSize - 1)
-        titleField.stringValue = task.title
+        titleField.stringValue = Self.oneLine(task.title)
         detailField.font = .systemFont(ofSize: Theme.fontSize - 2)
-        detailField.stringValue = Self.detail(task)
+        detailField.stringValue = Self.oneLine(Self.detail(task))
         elapsedField.font = .monospacedDigitSystemFont(ofSize: Theme.fontSize - 2, weight: .regular)
         toolTip = [task.title, Self.detail(task)].filter { !$0.isEmpty }.joined(separator: "\n")
         setAccessibilityRole(onSelect == nil ? .staticText : .button)
@@ -690,6 +691,12 @@ final class TranscriptBackgroundTaskLine: NSView {
             case .other: String(localized: "Task")
             }
         return [kind, task.agentType, task.progress].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// A task's text on one line: a background command's title is often the whole multi-line script, which would
+    /// otherwise draw over the lines below. The tooltip keeps the full text.
+    static func oneLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     static func symbol(_ kind: BackgroundTask.Kind) -> String {
@@ -722,12 +729,12 @@ final class TranscriptBackgroundTaskLine: NSView {
             trailing -= width + 8
         }
         let x: CGFloat = 26
-        let titleHeight = ceil(titleField.intrinsicContentSize.height)
+        let titleHeight = min(ceil(titleField.intrinsicContentSize.height), height)
         // The title keeps room before the details, which give way first.
         let titleWidth = min(ceil(titleField.cell?.cellSize.width ?? 0), max(0, (trailing - x) * 0.6))
         titleField.frame = NSRect(x: x, y: ((height - titleHeight) / 2).rounded(), width: titleWidth, height: titleHeight)
         let detailX = titleField.frame.maxX + 6
-        let detailHeight = ceil(detailField.intrinsicContentSize.height)
+        let detailHeight = min(ceil(detailField.intrinsicContentSize.height), height)
         detailField.frame = NSRect(
             x: detailX, y: ((height - detailHeight) / 2).rounded(), width: max(0, trailing - detailX), height: detailHeight)
     }
