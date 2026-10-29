@@ -4439,120 +4439,114 @@
         }
       }
     },
-    "%@ is working in the background: %@" : {
+    "%@ is working in the background" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ arbeitet im Hintergrund: %2$@"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@ is working in the background: %2$@"
+            "value" : "%@ arbeitet im Hintergrund"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ está trabajando en segundo plano: %2$@"
+            "value" : "%@ está trabajando en segundo plano"
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ está trabajando en segundo plano: %2$@"
+            "value" : "%@ está trabajando en segundo plano"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ travaille en arrière-plan : %2$@"
+            "value" : "%@ travaille en arrière-plan"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ पृष्ठभूमि में काम कर रहा है: %2$@"
+            "value" : "%@ पृष्ठभूमि में काम कर रहा है"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ bekerja di latar belakang: %2$@"
+            "value" : "%@ bekerja di latar belakang"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ sta lavorando in background: %2$@"
+            "value" : "%@ sta lavorando in background"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@がバックグラウンドで作業中：%2$@"
+            "value" : "%@がバックグラウンドで作業中"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@이(가) 백그라운드에서 작업 중: %2$@"
+            "value" : "%@이(가) 백그라운드에서 작업 중"
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ werkt op de achtergrond: %2$@"
+            "value" : "%@ werkt op de achtergrond"
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ pracuje w tle: %2$@"
+            "value" : "%@ pracuje w tle"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ está trabalhando em segundo plano: %2$@"
+            "value" : "%@ está trabalhando em segundo plano"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ работает в фоне: %2$@"
+            "value" : "%@ работает в фоне"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ arka planda çalışıyor: %2$@"
+            "value" : "%@ arka planda çalışıyor"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ працює у фоні: %2$@"
+            "value" : "%@ працює у фоні"
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ đang làm việc trong nền: %2$@"
+            "value" : "%@ đang làm việc trong nền"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ 正在后台工作：%2$@"
+            "value" : "%@ 正在后台工作"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%1$@ 正在背景工作：%2$@"
+            "value" : "%@ 正在背景工作"
           }
         }
       }
@@ -37153,6 +37147,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "背景"
+          }
+        }
+      }
+    },
+    "Background work" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hintergrundarbeit"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trabajo en segundo plano"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trabajo en segundo plano"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Travail en arrière-plan"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पृष्ठभूमि का काम"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pekerjaan latar belakang"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Attività in background"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "バックグラウンド作業"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "백그라운드 작업"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Achtergrondwerk"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Praca w tle"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trabalho em segundo plano"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Фоновая работа"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arka plan işi"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Фонова робота"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Công việc nền"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "后台工作"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "背景工作"
           }
         }
       }

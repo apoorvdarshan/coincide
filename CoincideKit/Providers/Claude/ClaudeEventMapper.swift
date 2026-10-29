@@ -30,6 +30,10 @@ struct ClaudeEventMapper {
     private(set) var permissionMode: String?
     /// Claude's live background work (commands, agents, monitors), by task id, as `background_tasks_changed` lists it.
     private(set) var backgroundTasks: [String: String] = [:]
+    /// The background work last reported, in Claude's order, with what `task_started` and `task_progress` added.
+    private(set) var backgroundReport: [BackgroundTask] = []
+    /// When background work started; tests pin it.
+    var now: () -> Date = { Date() }
     /// The current turn showed reply text; otherwise its result text is the reply.
     private(set) var emittedReply = false
     /// The current turn compacted the conversation, or tried to. The compaction item shows the outcome, so
@@ -81,7 +85,18 @@ struct ClaudeEventMapper {
         var succeeded = false
     }
 
+    /// What `task_started` and `task_progress` said about a task Claude runs. `background_tasks_changed` lists only
+    /// ids, types and descriptions, and comes just before the `task_started` of the task it adds.
+    private struct TaskDetails {
+        var toolCallID: String?
+        var agentType: String?
+        var progress: String?
+        var startedAt: Date
+    }
+
     private var tools: [String: ToolCall] = [:]
+    /// By task id.
+    private var taskDetails: [String: TaskDetails] = [:]
     /// The current turn's subagent calls the turn waits for: Agent (or Task) calls not sent to the background.
     private var foregroundAgents: Set<String> = []
     private var compaction: Compaction?
@@ -131,6 +146,8 @@ struct ClaudeEventMapper {
         messageUsage = nil
         permissionMode = nil
         backgroundTasks = [:]
+        backgroundReport = []
+        taskDetails = [:]
         compaction = nil
     }
 
@@ -476,20 +493,21 @@ struct ClaudeEventMapper {
         case "compact_boundary"?:
             return compactionBoundary(frame)
         case "background_tasks_changed"?:
-            // Replaces the whole set; ambient tasks (watchers) are not work anyone waits for.
-            var tasks: [String: String] = [:]
-            var report: [BackgroundTask] = []
-            for task in frame["tasks"]?.array ?? [] where task["ambient"]?.bool != true {
-                guard let id = task["task_id"]?.string else { continue }
-                let type = task["task_type"]?.string ?? ""
-                let title = Self.cleaned(task["description"]?.string) ?? (type.isEmpty ? id : type)
-                tasks[id] = title
-                let kind: BackgroundTask.Kind =
-                    type.contains("agent") ? .agent : type.contains("bash") || type.contains("shell") ? .command : .other
-                report.append(BackgroundTask(id: id, title: title, kind: kind, toolCallID: task["tool_use_id"]?.string))
-            }
-            backgroundTasks = tasks
-            return [.backgroundWork(report)]
+            return backgroundTasksChanged(frame)
+        case "task_started"?:
+            guard let id = frame["task_id"]?.string else { return [] }
+            var details = taskDetails[id] ?? TaskDetails(startedAt: now())
+            details.toolCallID = frame["tool_use_id"]?.string ?? details.toolCallID
+            details.agentType = Self.cleaned(frame["subagent_type"]?.string) ?? details.agentType
+            taskDetails[id] = details
+            return reportBackgroundWork()
+        case "task_progress"?:
+            // A subagent's latest step, such as "Running Sleep for 20 seconds".
+            guard let id = frame["task_id"]?.string, backgroundTasks[id] != nil, var details = taskDetails[id] else { return [] }
+            details.toolCallID = details.toolCallID ?? frame["tool_use_id"]?.string
+            details.progress = Self.cleaned(frame["description"]?.string) ?? details.progress
+            taskDetails[id] = details
+            return reportBackgroundWork()
         case "api_retry"?:
             guard !retryNoticed else { return [] }
             retryNoticed = true
@@ -504,13 +522,58 @@ struct ClaudeEventMapper {
             guard let content = Self.cleaned(frame["content"]?.string) else { return [] }
             return [.assistantText(itemID: frame["uuid"]?.string ?? UUID().uuidString, text: content)]
         case "task_notification"?:
-            // A background command or agent finished after its tool call already returned.
+            // A background command or agent finished after its tool call already returned. Background work keeps its
+            // details until it leaves the set; other tasks (a subagent's own commands) are done with.
+            if let task = frame["task_id"]?.string, backgroundTasks[task] == nil { taskDetails[task] = nil }
             guard let id = frame["tool_use_id"]?.string, let call = tools[id], call.completed, call.info != nil,
                 let summary = Self.cleaned(frame["summary"]?.string)
             else { return [] }
             return [.toolOutput(id: id, delta: "\n" + summary)]
         default:
             return []
+        }
+    }
+
+    /// `background_tasks_changed` replaces the whole set; ambient tasks (watchers) are not work anyone waits for.
+    private mutating func backgroundTasksChanged(_ frame: JSONValue) -> [AgentEvent] {
+        var tasks: [String: String] = [:]
+        var report: [BackgroundTask] = []
+        for task in frame["tasks"]?.array ?? [] where task["ambient"]?.bool != true {
+            guard let id = task["task_id"]?.string else { continue }
+            let type = task["task_type"]?.string ?? ""
+            let title = Self.cleaned(task["description"]?.string) ?? (type.isEmpty ? id : type)
+            tasks[id] = title
+            let kind: BackgroundTask.Kind =
+                type.contains("agent") ? .agent : type.contains("bash") || type.contains("shell") ? .command : .other
+            var details = taskDetails[id] ?? TaskDetails(startedAt: now())
+            details.toolCallID = task["tool_use_id"]?.string ?? details.toolCallID
+            details.agentType = Self.cleaned(task["subagent_type"]?.string) ?? details.agentType
+            taskDetails[id] = details
+            report.append(BackgroundTask(id: id, title: title, kind: kind))
+        }
+        for id in backgroundTasks.keys where tasks[id] == nil { taskDetails[id] = nil }
+        backgroundTasks = tasks
+        backgroundReport = detailed(report)
+        return [.backgroundWork(backgroundReport)]
+    }
+
+    /// The background work again, when what Claude said about one of its tasks changed how it shows.
+    private mutating func reportBackgroundWork() -> [AgentEvent] {
+        let report = detailed(backgroundReport)
+        guard report != backgroundReport else { return [] }
+        backgroundReport = report
+        return [.backgroundWork(report)]
+    }
+
+    private func detailed(_ report: [BackgroundTask]) -> [BackgroundTask] {
+        report.map { task in
+            guard let details = taskDetails[task.id] else { return task }
+            var task = task
+            task.toolCallID = details.toolCallID
+            task.startedAt = details.startedAt
+            task.agentType = task.kind == .agent ? details.agentType : nil
+            task.progress = details.progress
+            return task
         }
     }
 

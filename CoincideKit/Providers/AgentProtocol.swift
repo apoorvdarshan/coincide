@@ -387,12 +387,24 @@ public struct BackgroundTask: Sendable, Hashable, Identifiable, Codable {
     public var kind: Kind
     /// The provider's id of the tool call that started it, when known.
     public var toolCallID: String?
+    /// When it started, or when the session first heard of it.
+    public var startedAt: Date?
+    /// For a subagent, the kind of agent it runs as (Claude's `subagent_type`, such as "general-purpose").
+    public var agentType: String?
+    /// What it does right now, as the provider last reported (a subagent's current tool call, say).
+    public var progress: String?
 
-    public nonisolated init(id: String, title: String, kind: Kind, toolCallID: String? = nil) {
+    public nonisolated init(
+        id: String, title: String, kind: Kind, toolCallID: String? = nil, startedAt: Date? = nil, agentType: String? = nil,
+        progress: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.kind = kind
         self.toolCallID = toolCallID
+        self.startedAt = startedAt
+        self.agentType = agentType
+        self.progress = progress
     }
 }
 

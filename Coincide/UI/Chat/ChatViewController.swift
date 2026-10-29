@@ -316,7 +316,7 @@ final class ChatViewController: NSViewController {
         builder.runningProvider = turn?.provider ?? thread.selection.provider
         let background = runner.backgroundTasks(thread.id)
         if let first = background.first {
-            builder.backgroundWork = (first.provider, background.map(\.task.title))
+            builder.backgroundWork = (first.provider, background.map(\.task))
         }
         builder.showReasoning = store.settings.showReasoning
         builder.expanded = expanded[thread.id] ?? []
@@ -492,8 +492,9 @@ final class ChatViewController: NSViewController {
         scheduleFindRefresh()
     }
 
+    /// Ticks the live rows' clocks: the running turn's, and each background task's.
     private func updateLiveTimer() {
-        let running = displayedThreadID.map(runner.isRunning) ?? false
+        let running = displayedThreadID.map { runner.isRunning($0) || !runner.backgroundTasks($0).isEmpty } ?? false
         guard running else {
             liveTimer?.invalidate()
             liveTimer = nil
@@ -1101,6 +1102,15 @@ extension ChatViewController: TranscriptHost {
 
     func findHighlights(for itemID: UUID) -> TranscriptFindHighlights? {
         findBar.isHidden ? nil : finder.highlights(for: itemID)
+    }
+
+    func toolCallItem(_ toolCallID: String, provider: ProviderKind) -> UUID? {
+        guard let threadID = displayedThreadID, let thread = store.thread(threadID) else { return nil }
+        return thread.items.last { $0.kind == .tool && $0.externalID == toolCallID && $0.provider == provider }?.id
+    }
+
+    func reveal(_ itemID: UUID) {
+        revealItem(itemID)
     }
 }
 

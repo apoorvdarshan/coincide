@@ -128,7 +128,7 @@ enum LiveStatus: Hashable {
     case starting(ProviderKind)
     case thinking
     /// No turn runs, but the agent still works on its own: a subagent, a long command (T3 Code's "now" line).
-    case background(ProviderKind, titles: [String])
+    case background(ProviderKind, tasks: [BackgroundTask])
 }
 
 /// Builds rows from a thread's transcript, the way T3 Code lays out its timeline: each turn opens
@@ -147,7 +147,7 @@ struct TranscriptBuilder {
     var isStarting = false
     var runningProvider: ProviderKind?
     /// What the thread's agents still run after their reply, shown on the live line when no turn runs.
-    var backgroundWork: (provider: ProviderKind, titles: [String])?
+    var backgroundWork: (provider: ProviderKind, tasks: [BackgroundTask])?
     var showReasoning = true
     var expanded: Set<TranscriptRowID> = []
     /// Notices that opened turns an agent started on its own (see `AgentTurns`).
@@ -228,8 +228,8 @@ struct TranscriptBuilder {
             let status: LiveStatus =
                 isStarting ? .starting(runningProvider ?? .claude) : .thinking
             live = row(.live, .live(status))
-        } else if runningTurnID == nil, let backgroundWork, !backgroundWork.titles.isEmpty {
-            live = row(.live, .live(.background(backgroundWork.provider, titles: backgroundWork.titles)))
+        } else if runningTurnID == nil, let backgroundWork, !backgroundWork.tasks.isEmpty {
+            live = row(.live, .live(.background(backgroundWork.provider, tasks: backgroundWork.tasks)))
         }
         guard !turns.isEmpty || !later.isEmpty || live != nil else { return [] }
         var rows: [TranscriptRow] = []

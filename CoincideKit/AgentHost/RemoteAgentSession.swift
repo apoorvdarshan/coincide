@@ -58,6 +58,12 @@ public final class AgentHostClient {
     /// Catches an adopted session up: the events it missed, then every new one. The prompts still waiting are
     /// shown again afterwards, so one the app lost (a crash before it saved them) can still be answered.
     public func attach(_ session: RemoteAgentSession) async {
+        // The background work it runs, first: the event that reported it may be one the app applied before it quit,
+        // and any later report comes with the events that follow.
+        if case .adopted(let info) = session.mode {
+            let tasks = Self.backgroundTasks(of: info)
+            if !tasks.isEmpty { session.deliver(.backgroundWork(tasks)) }
+        }
         let after = applied[session.key] ?? 0
         guard (try? await transport.run(.attach(key: session.key, after: after))) != nil else { return }
         guard case .adopted(let info) = session.mode, sessions[session.key] === session else { return }
@@ -65,6 +71,14 @@ public final class AgentHostClient {
         defer { isApplyingBacklog = false }
         for request in info.pendingApprovals { session.deliver(.approvalRequested(request)) }
         for request in info.pendingQuestions { session.deliver(.userInputRequested(request)) }
+    }
+
+    /// What an adopted session runs in the background. A host older than the list only says whether it runs
+    /// anything, which shows as one unnamed task until the session reports its work again.
+    nonisolated static func backgroundTasks(of info: AgentHostSessionInfo) -> [BackgroundTask] {
+        guard info.isLive else { return [] }
+        if let tasks = info.backgroundTasks { return tasks }
+        return info.hasBackgroundWork ? [BackgroundTask(id: "coincide.unlisted", title: String(localized: "Background work"), kind: .other)] : []
     }
 
     /// Ends a session the app no longer wants, such as one of a deleted thread.

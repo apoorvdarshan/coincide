@@ -417,10 +417,11 @@ struct TranscriptBuilderTests {
         let user = transcript.add(.user)
         transcript.add(.assistant)
         var builder = TranscriptBuilder(items: transcript.items)
-        builder.backgroundWork = (.claude, ["Audit the port"])
-        #expect(layout(builder.build()).last?.kind == .live(.background(.claude, titles: ["Audit the port"])))
+        let tasks = [BackgroundTask(id: "a1", title: "Audit the port", kind: .agent, toolCallID: "toolu_1")]
+        builder.backgroundWork = (.claude, tasks)
+        #expect(layout(builder.build()).last?.kind == .live(.background(.claude, tasks: tasks)))
         builder.runningTurnID = user
-        #expect(!layout(builder.build()).contains { $0.kind == .live(.background(.claude, titles: ["Audit the port"])) })
+        #expect(!layout(builder.build()).contains { $0.kind == .live(.background(.claude, tasks: tasks)) })
     }
 
     @Test func aTurnRunningBeforeAQueuedMessageStillShowsLive() {
