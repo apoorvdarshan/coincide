@@ -2,7 +2,7 @@ import CoincideKit
 import Foundation
 
 /// What a send from the composer does, ported from T3 Code's `resolveComposerDispatchMode`: while a turn runs, the
-/// follow-up behavior setting picks steer or queue, and the alternate send does the other for one message.
+/// thread's follow-up behavior picks steer, queue or interrupt, and the alternate send does the other for one message.
 nonisolated enum ComposerDispatch: Equatable, Sendable {
     /// No turn runs, so the message starts one.
     case send
@@ -10,6 +10,8 @@ nonisolated enum ComposerDispatch: Equatable, Sendable {
     case steer
     /// The message waits for the running turn to finish.
     case queue
+    /// The running turn is stopped and the message sent next (`ThreadRunner.interrupt`).
+    case interrupt
 
     /// What the main send does while a turn runs: the setting, except that it steers while an approval is shown, as in
     /// T3 Code. Sending declines the approval to redirect the agent, so the message must reach the waiting turn rather
@@ -18,15 +20,32 @@ nonisolated enum ComposerDispatch: Equatable, Sendable {
         approvalShown ? .steer : setting
     }
 
-    /// The send's outcome. `alternate` is the alternate send; a turn that can't take a message now
-    /// (`ThreadRunner.canSteer`) gets it queued either way.
+    /// The send's outcome. `alternate` is the alternate send. A message meant to steer a turn that can't take one now
+    /// (`ThreadRunner.canSteer`) is queued; `ThreadRunner.steer` then sends it next even if the turn is stopped.
     static func resolve(running: Bool, canSteer: Bool, alternate: Bool, behavior: FollowUpBehavior) -> ComposerDispatch {
         guard running else { return .send }
-        guard canSteer else { return .queue }
         switch alternate ? behavior.opposite : behavior {
-        case .steer: return .steer
+        case .steer: return canSteer ? .steer : .queue
         case .queue: return .queue
+        case .interrupt: return .interrupt
         }
+    }
+
+    /// Whether the message is meant for the running turn itself, even when it is queued because the turn can't take
+    /// one right now.
+    static func meansToSteer(alternate: Bool, behavior: FollowUpBehavior) -> Bool {
+        (alternate ? behavior.opposite : behavior) == .steer
+    }
+
+    /// The behaviors the composer offers for a thread's agent: Steer only for agents that take messages while they
+    /// work (`ProviderKind.takesMessagesWhileWorking`), shown but unavailable for the rest.
+    static func isAvailable(_ behavior: FollowUpBehavior, for provider: ProviderKind) -> Bool {
+        behavior != .steer || provider.takesMessagesWhileWorking
+    }
+
+    /// What the thread's choice comes to with its agent: Steer is Queue for an agent that can't take a message mid-turn.
+    static func effective(_ behavior: FollowUpBehavior, for provider: ProviderKind) -> FollowUpBehavior {
+        isAvailable(behavior, for: provider) ? behavior : .queue
     }
 }
 
@@ -57,16 +76,25 @@ struct ComposerSendKeys: Equatable {
             let text = String(localized: "Send")
             return send.map { String(localized: "\(text) (\($0.displayString))") } ?? text
         }
-        guard canSteer else { return String(localized: "Queue message. It is sent when the current turn finishes.") }
         let others = alternate.map { String(localized: "\($0.displayString) or ⌘-click") } ?? String(localized: "⌘-click")
-        switch (behavior, send?.displayString) {
-        case (.steer, let keys?):
+        let steers: Bool
+        switch behavior {
+        case .interrupt:
+            return send.map {
+                String(localized: "Interrupt: stop the current turn and send this now (\($0.displayString)). \(others) queues it for after the turn.")
+            } ?? String(localized: "Interrupt: stop the current turn and send this now. \(others) queues it for after the turn.")
+        case .steer: steers = true
+        case .queue: steers = false
+        }
+        guard canSteer else { return String(localized: "Queue message. It is sent when the current turn finishes.") }
+        switch (steers, send?.displayString) {
+        case (true, let keys?):
             return String(localized: "Steer: send into the current turn (\(keys)). \(others) queues it for after the turn.")
-        case (.steer, nil):
+        case (true, nil):
             return String(localized: "Steer: send into the current turn. \(others) queues it for after the turn.")
-        case (.queue, let keys?):
+        case (false, let keys?):
             return String(localized: "Queue: send when the current turn finishes (\(keys)). \(others) sends it into the current turn instead.")
-        case (.queue, nil):
+        case (false, nil):
             return String(localized: "Queue: send when the current turn finishes. \(others) sends it into the current turn instead.")
         }
     }

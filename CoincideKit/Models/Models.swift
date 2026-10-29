@@ -628,13 +628,16 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     /// The bot whose conversation this is (`Bot.id`), in the Bots container. Nil for every other thread, so their
     /// files are written as before.
     public var botID: UUID?
+    /// What a message sent while the agent works does in this thread. Nil for a thread made before threads kept their
+    /// own, which does what `AppSettings.existingThreadsFollowUpBehavior` says (`AppStore.followUpBehavior(of:)`).
+    public var followUpBehavior: FollowUpBehavior?
 
     public nonisolated init(
         id: UUID = UUID(), projectID: UUID, title: String = String(localized: "New thread"),
         selection: ModelSelection, accessMode: AccessMode = .fullAccess, interactionMode: InteractionMode = .build,
         items: [TranscriptItem] = [], sessions: [ProviderKind: ProviderSessionRef] = [:], isPinned: Bool = false,
         isArchived: Bool = false, worktreePath: String? = nil, branch: String? = nil, draft: String? = nil, draftContext: [MessageContext]? = nil,
-        botID: UUID? = nil, createdAt: Date = Date()
+        botID: UUID? = nil, followUpBehavior: FollowUpBehavior? = nil, createdAt: Date = Date()
     ) {
         self.id = id
         self.projectID = projectID
@@ -654,6 +657,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         self.draft = draft
         self.draftContext = draftContext
         self.botID = botID
+        self.followUpBehavior = followUpBehavior
     }
 
     public nonisolated var hasUserMessages: Bool { items.contains { $0.kind == .user } }
@@ -729,6 +733,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
             container.contains(.titleRefreshes) && !((try? container.decodeNil(forKey: .titleRefreshes)) ?? true)
             ? container.lenientArray(TitleRefresh.self, forKey: .titleRefreshes) : nil
         botID = container.lenient(UUID.self, forKey: .botID)
+        followUpBehavior = container.lenient(FollowUpBehavior.self, forKey: .followUpBehavior)
     }
 }
 

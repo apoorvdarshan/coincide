@@ -240,13 +240,15 @@ final class ComposerControlButton: NSButton {
     }
 }
 
-/// The round primary button: sends, steers or queues while a turn runs, or stops the turn.
+/// The round primary button: sends, steers, queues or interrupts while a turn runs, or stops the turn.
 final class ComposerSendButton: NSButton {
     enum Mode {
         case send
         /// Sends the message into the running turn.
         case steer
         case queue
+        /// Stops the running turn and sends the message next.
+        case interrupt
         case stop
     }
 
@@ -294,6 +296,7 @@ final class ComposerSendButton: NSButton {
             case .send: "arrow.up"
             case .steer: "arrow.turn.up.right"
             case .queue: "text.line.last.and.arrowtriangle.forward"
+            case .interrupt: ComposerMenus.symbolName(for: FollowUpBehavior.interrupt)
             case .stop: "stop.fill"
             }
         image = Theme.symbol(symbol, size: mode == .stop ? 10 : 12, weight: .bold)

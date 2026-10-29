@@ -72,6 +72,7 @@ struct ThreadFile: Decodable {
         case "createdAt", "updatedAt", "snoozedUntil": container.reads(Date.self, key)
         case "accessMode": container.reads(AccessMode.self, key)
         case "interactionMode": container.reads(InteractionMode.self, key)
+        case "followUpBehavior": container.reads(FollowUpBehavior.self, key)
         case "isPinned", "isArchived", "titledByUser": container.reads(Bool.self, key)
         // Read strictly: a refresh this version does not know is left out of the thread.
         case "titleRefreshes": container.reads([TitleRefresh].self, key)

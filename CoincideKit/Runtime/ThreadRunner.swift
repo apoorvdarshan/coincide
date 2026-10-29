@@ -443,6 +443,24 @@ public final class ThreadRunner {
         return interruptAndSend(threadID: threadID, id: id)
     }
 
+    /// Sends a message by stopping the running turn first (the composer's Interrupt): it goes as the next turn once
+    /// the turn has stopped, ahead of anything queued. With no turn running it is sent at once, as `send` does.
+    /// Nil when there is nothing to send.
+    @discardableResult
+    public func interrupt(threadID: UUID, text: String, imagePaths: [String] = [], context: [MessageContext] = []) async
+        -> FollowUpDelivery?
+    {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || !imagePaths.isEmpty || !context.isEmpty else { return nil }
+        guard isRunning(threadID) else {
+            await send(threadID: threadID, text: trimmed, imagePaths: imagePaths, context: context)
+            return .sent
+        }
+        let message = QueuedMessage(id: UUID(), text: trimmed, imagePaths: imagePaths, context: context, createdAt: Date())
+        enqueue(message, threadID: threadID, at: 0)
+        return interruptAndSend(threadID: threadID, id: message.id)
+    }
+
     /// Stops the running turn and sends the queued message as the next turn once it has stopped. With no turn
     /// running, it is sent at once. Nil when no such message is queued.
     @discardableResult
