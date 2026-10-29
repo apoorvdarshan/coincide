@@ -117,7 +117,7 @@ struct LinkRoutingTests {
         let url = try #require(URL(string: "https://example.com/docs"))
         let menu = view.linkMenu(for: url)
         let items = menu.items.filter { !$0.isSeparatorItem }
-        #expect(items.map(\.title) == ["Open in Coincide Browser", "Open in Default Browser", "Copy Link"])
+        #expect(items.map(\.title) == ["Open in Coincide Browser", "Open in New Tab", "Open in Default Browser", "Copy Link"])
         #expect(items.allSatisfy { $0.isEnabled && $0.target === view })
 
         for item in items {
@@ -125,7 +125,8 @@ struct LinkRoutingTests {
             #expect(NSApp.sendAction(action, to: item.target, from: item))
         }
         #expect(opened().compactMap { $0 as? WebLinkRequest } == [
-            WebLinkRequest(url: url, destination: .coincideBrowser), WebLinkRequest(url: url, destination: .defaultBrowser),
+            WebLinkRequest(url: url, destination: .coincideBrowser), WebLinkRequest(url: url, destination: .coincideBrowserNewTab),
+            WebLinkRequest(url: url, destination: .defaultBrowser),
         ])
         #expect(pasteboard.string(forType: .string) == "https://example.com/docs")
     }
