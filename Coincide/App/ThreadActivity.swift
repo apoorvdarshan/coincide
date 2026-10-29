@@ -63,7 +63,9 @@ final class ThreadActivity {
         setUnseen(unseen(threadID) ?? .completed, for: threadID)
     }
 
+    /// The user is looking at the thread: its badge and any notifications about it in Notification Center go away.
     func markSeen(_ threadID: UUID) {
+        NotificationController.shared.clearDelivered(for: threadID)
         guard unseen(threadID) != nil else { return }
         UIState.shared.update { $0.unseen[threadID.uuidString] = nil }
         changed(threadID)
