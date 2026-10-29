@@ -111,16 +111,132 @@ struct UsageRowTests {
 
     // MARK: Codex
 
-    @Test func codexCreditsAreABalanceWithoutABar() {
+    @Test func codexCreditsWithoutAMarkAreABalanceWithoutABar() {
         let credits = UsageCredits(hasCredits: true, unlimited: false, balance: "39547.01")
         let used = UsageRow.credits(credits, mode: .used)
         #expect(used.title == "Credits")
         #expect(used.value == 39_547.01.formatted(.number.precision(.fractionLength(0...2))))
         #expect(used.bar == nil && !used.isState)
         #expect(UsageRow.credits(credits, mode: .remaining).value == "\(used.value) left")
-        #expect(UsageRow.credits(UsageCredits(hasCredits: true, unlimited: true), mode: .remaining).value == "Unlimited credits")
+        #expect(UsageRow.credits(UsageCredits(hasCredits: true, unlimited: true), mode: .remaining).value == "Unlimited")
         let none = UsageRow.credits(UsageCredits(hasCredits: false, unlimited: false), mode: .used)
         #expect(none.value == "No credits" && none.isState)
+    }
+
+    // MARK: Balances against Coincide's high-water mark
+
+    private func number(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(0...2))) }
+
+    private func mark(_ highest: Double) -> UsageBalanceMark {
+        UsageBalanceMark(highest: highest, seenAt: now.addingTimeInterval(-86_400))
+    }
+
+    private var sinceDate: String { UsageFormat.markDate(now.addingTimeInterval(-86_400)) }
+
+    @Test func codexCreditsMeasureAgainstTheHighestBalanceSeen() throws {
+        let credits = UsageCredits(hasCredits: true, unlimited: false, balance: "39547.01")
+        let used = UsageRow.credits(credits, mark: mark(40_120), mode: .used)
+        #expect(used.title == "Credits")
+        #expect(used.value == "\(number(572.99)) used of \(number(40_120))")
+        #expect(abs(try #require(used.bar).fill - 572.99 / 40_120) < 0.000_001)
+        #expect(used.bar?.paceMark == nil)
+        #expect(used.details == ["\(number(39_547.01)) left", "since \(number(40_120)) on \(sinceDate)"])
+        #expect(used.level == .normal && !used.isState)
+        #expect(used.help?.contains("highest balance Coincide has seen") == true)
+
+        let left = UsageRow.credits(credits, mark: mark(40_120), mode: .remaining)
+        #expect(left.value == "\(number(39_547.01)) left")
+        #expect(abs(try #require(left.bar).fill - 39_547.01 / 40_120) < 0.000_001)
+        #expect(left.details == ["since \(number(40_120)) on \(sinceDate)"])
+        #expect(left.level == .normal)
+    }
+
+    @Test func aBalanceAtItsMarkShowsNothingSpent() throws {
+        let credits = UsageCredits(hasCredits: true, unlimited: false, balance: "250")
+        let used = UsageRow.credits(credits, mark: mark(250), mode: .used)
+        #expect(used.value == "0 used of 250")
+        #expect(try #require(used.bar).fill == 0)
+        let left = UsageRow.credits(credits, mark: mark(250), mode: .remaining)
+        #expect(left.value == "250 left")
+        #expect(try #require(left.bar).fill == 1)
+        // A mark below the balance (seen before a top-up was recorded) counts the balance as the total.
+        #expect(try #require(UsageRow.credits(credits, mark: mark(100), mode: .remaining).bar).fill == 1)
+    }
+
+    @Test func aLowSelfObservedBalanceStaysNeutralUntilNothingIsLeft() throws {
+        let low = UsageRow.credits(UsageCredits(hasCredits: true, unlimited: false, balance: "1"), mark: mark(1_000), mode: .used)
+        #expect(abs(try #require(low.bar).fill - 0.999) < 0.000_001)
+        #expect(low.level == .normal)
+        for mode in UsageDisplayMode.allCases {
+            let empty = UsageRow.credits(UsageCredits(hasCredits: false, unlimited: false, balance: "0"), mark: mark(1_000), mode: mode)
+            #expect(empty.level == .critical)
+            #expect(try #require(empty.bar).fill == (mode == .used ? 1 : 0))
+            let negative = UsageRow.credits(UsageCredits(hasCredits: false, unlimited: false, balance: "-5"), mark: mark(1_000), mode: mode)
+            #expect(negative.level == .critical)
+            #expect(try #require(negative.bar).fill == (mode == .used ? 1 : 0))
+        }
+        #expect(
+            UsageRow.credits(UsageCredits(hasCredits: false, unlimited: false, balance: "-5"), mark: mark(1_000), mode: .used).value
+                == "\(number(1_005)) used of \(number(1_000))")
+    }
+
+    @Test func aBalanceNeverAboveZeroHasAnEmptyBarAndNoNaN() throws {
+        for balance in [0.0, -3] {
+            let credits = UsageCredits(hasCredits: false, unlimited: false, balance: String(balance))
+            for mode in UsageDisplayMode.allCases {
+                let row = UsageRow.credits(credits, mark: UsageBalanceMark(highest: balance, seenAt: now), mode: mode)
+                let fill = try #require(row.bar).fill
+                #expect(fill.isFinite && fill == (mode == .used ? 1 : 0))
+                #expect(row.level == .critical)
+                #expect(row.value == (mode == .used ? number(balance) : "\(number(balance)) left"))
+                #expect(!row.details.contains { $0.hasPrefix("since") })
+            }
+        }
+    }
+
+    @Test func unlimitedCreditsHaveNoBarEvenWithAMark() {
+        for mode in UsageDisplayMode.allCases {
+            let row = UsageRow.credits(UsageCredits(hasCredits: true, unlimited: true, balance: "10"), mark: mark(10), mode: mode)
+            #expect(row.value == "Unlimited" && row.bar == nil && !row.isState)
+        }
+    }
+
+    @Test func aBareMoneyBalanceFigureMeasuresAgainstItsMark() throws {
+        let balance = UsageFigure(
+            id: "balance", label: "Balance", unit: .currency("USD"), remaining: 12.5, expiresAt: now.addingTimeInterval(86_400))
+        let used = UsageRow.figure(balance, mark: mark(20), mode: .used, now: now)
+        #expect(used.value == "\(dollars(7.5)) used of \(dollars(20))")
+        #expect(abs(try #require(used.bar).fill - 0.375) < 0.000_001)
+        #expect(used.details.prefix(2) == ["\(dollars(12.5)) left", "since \(dollars(20)) on \(sinceDate)"])
+        #expect(used.details.last?.hasPrefix("expires ") == true)
+        let left = UsageRow.figure(balance, mark: mark(20), mode: .remaining, now: now)
+        #expect(left.value == "\(dollars(12.5)) left")
+        #expect(abs(try #require(left.bar).fill - 0.625) < 0.000_001)
+        // Without a mark, or for a figure with a real total or a count, nothing changes.
+        #expect(UsageRow.figure(balance, mode: .used, now: now).bar == nil)
+        let resets = UsageFigure(id: "reset_credits", label: "Limit resets available", unit: .count, remaining: 2)
+        #expect(UsageRow.figure(resets, mark: mark(5), mode: .used, now: now).bar == nil)
+        let capped = UsageFigure(id: "individual", label: "Credit limit", unit: .credits, used: 400, limit: 1_000)
+        #expect(UsageRow.figure(capped, mark: mark(5), mode: .used, now: now).value == "400 of 1,000 credits used")
+    }
+
+    @Test func anAccountsRowsUseItsMarks() throws {
+        let limits = UsageLimits(
+            windows: [], checkedAt: now, credits: UsageCredits(hasCredits: true, unlimited: false, balance: "75"),
+            figures: [UsageFigure(id: "balance", label: "Balance", unit: .credits, remaining: 40)])
+        let rows = UsageRow.rows(
+            limits, marks: [UsageBalanceMarks.creditsID: mark(100), "balance": mark(50)], mode: .remaining, now: now)
+        #expect(rows.map(\.title) == ["Credits", "Balance"])
+        #expect(abs(try #require(rows[0].bar).fill - 0.75) < 0.000_001)
+        #expect(abs(try #require(rows[1].bar).fill - 0.8) < 0.000_001)
+        #expect(UsageRow.rows(limits, mode: .remaining, now: now).allSatisfy { $0.bar == nil })
+    }
+
+    @Test func theMarksDayHasTheYearOnlyWhenItIsAnotherYears() {
+        let calendar = Calendar.current
+        let lastYear = calendar.date(byAdding: .year, value: -1, to: now)!
+        #expect(UsageFormat.markDate(now, now: now) == now.formatted(.dateTime.day().month(.abbreviated)))
+        #expect(UsageFormat.markDate(lastYear, now: now) == lastYear.formatted(.dateTime.day().month(.abbreviated).year()))
     }
 
     @Test func codexCreditLimitAndResetsAvailable() throws {

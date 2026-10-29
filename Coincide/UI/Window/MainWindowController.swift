@@ -68,8 +68,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         // A script started in the open thread shows its terminal.
         ProjectScripts.shared.onShowTerminal = { [weak self] threadID in
-            guard let self, threadID == selectedThreadID, !splitController.content.isTerminalOpen else { return }
-            splitController.content.toggleTerminal()
+            guard let self, threadID == selectedThreadID, !splitController.isTerminalOpen else { return }
+            splitController.toggleTerminalPanel()
         }
         runStatus.onVisibilityChange = { [weak self] visible in
             self?.toolbarItems[.runStatus]?.isHidden = !visible
@@ -93,7 +93,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let initial = saved.flatMap { ThreadSnooze.isHidden($0) ? nil : $0.id }
             ?? store.recentThreads.first(where: { !ThreadSnooze.isHidden($0) })?.id
         open(initial, unsnooze: false)
-        updatePanelItems()
+        updateTerminalPlacement()
     }
 
     @objc func importCLISession(_ sender: Any?) {
@@ -162,6 +162,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             updateRunStatus()
         case .bots:
             updateTitle()
+        case .settings:
+            updateTerminalPlacement()
         default:
             break
         }
@@ -286,7 +288,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func toggleTerminalPanel(_ sender: Any?) {
         showWindow(nil)
-        splitController.content.toggleTerminal()
+        splitController.toggleTerminalPanel()
     }
 
     @objc func toggleDiffPanel(_ sender: Any?) {
@@ -544,7 +546,7 @@ extension MainWindowController: NSMenuItemValidation {
             menuItem.title = splitController.isSidebarOpen ? String(localized: "Hide Sidebar") : String(localized: "Show Sidebar")
         case #selector(toggleTerminalPanel(_:)):
             menuItem.title =
-                splitController.content.isTerminalOpen ? String(localized: "Hide Terminal") : String(localized: "Show Terminal")
+                splitController.isTerminalOpen ? String(localized: "Hide Terminal") : String(localized: "Show Terminal")
         case #selector(toggleDiffPanel(_:)):
             menuItem.title = splitController.isDiffOpen ? String(localized: "Hide Diff") : String(localized: "Show Diff")
         case #selector(togglePreviewPanel(_:)):

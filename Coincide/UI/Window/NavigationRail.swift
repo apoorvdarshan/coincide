@@ -39,7 +39,7 @@ final class MainRootViewController: NSViewController {
 }
 
 /// The slim column at the window's left edge with a button for each place in the app: the thread list, a new thread,
-/// search, the terminal (which opens along the bottom), the project's editor, usage, instructions, the agents and
+/// search, the terminal (when it opens along the bottom), the project's editor, usage, instructions, the agents and
 /// settings. The panels that open on the right (the diff, the pull requests and the browser preview) have their buttons
 /// on the right too, in the toolbar (`InspectorPanelButtons`). Buttons send their actions up the responder chain, the
 /// way menu items do, so they run whatever the menu bar would.
@@ -118,6 +118,14 @@ final class NavigationRailViewController: NSViewController {
             ])
         }
         return stack
+    }
+
+    /// Whether the rail has the Terminal button: it does while the terminal opens in the drawer below the chat. With the
+    /// terminal on the right, its button is in the toolbar's top-right group (`InspectorPanelButtons`) instead, and
+    /// Open In moves up into its place.
+    var showsTerminalButton: Bool {
+        get { !terminalButton.isHidden }
+        set { terminalButton.isHidden = !newValue }
     }
 
     /// Lights the buttons of the panels that are open, and enables Open In only when there is a folder to open.

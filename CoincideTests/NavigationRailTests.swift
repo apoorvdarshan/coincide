@@ -69,6 +69,46 @@ struct InspectorPanelTests {
         #expect(split.isDiffOpen)
     }
 
+    /// With the terminal on the right it is a fourth panel, switched to and from like the others; below the chat the
+    /// inspector has no terminal panel.
+    @Test func theTerminalIsAFourthPanelOnTheRight() {
+        let saved = UIState.shared.values
+        defer { UIState.shared.update { $0 = saved } }
+        UIState.shared.update {
+            $0.isInspectorOpen = false
+            $0.inspectorPanel = .diff
+            $0.isTerminalOpen = false
+        }
+        let below = MainSplitViewController(terminalPlacement: .bottom)
+        below.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 800)
+        #expect(below.inspector.panels == [.diff, .pullRequests, .preview])
+        #expect(!below.inspector.hasTerminal)
+
+        let split = MainSplitViewController(terminalPlacement: .right)
+        split.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 800)
+        #expect(split.inspector.panels == [.diff, .pullRequests, .preview, .terminal])
+        #expect(!split.isTerminalOpen)
+
+        split.toggleTerminalPanel()
+        #expect(split.isTerminalOpen && split.isInspectorOpen && !split.content.isTerminalOpen)
+        #expect(split.inspector.selectedTabViewItemIndex == 3)
+        #expect(UIState.shared.values.inspectorPanel == .terminal)
+
+        // Another panel takes the open column over, and the terminal's toggle takes it back.
+        split.toggleDiffPanel()
+        #expect(split.isDiffOpen && !split.isTerminalOpen)
+        split.toggleTerminalPanel()
+        #expect(split.isTerminalOpen && !split.isDiffOpen)
+        split.toggleTerminalPanel()
+        #expect(!split.isInspectorOpen)
+
+        // Without the terminal, the inspector can't show it.
+        split.inspector.detachTerminal()
+        #expect(!split.inspector.hasTerminal)
+        split.inspector.show(.terminal)
+        #expect(split.inspector.panel == .diff)
+    }
+
     @Test func theInspectorReopensOnThePanelLastShown() {
         let saved = UIState.shared.values
         defer { UIState.shared.update { $0 = saved } }

@@ -14,11 +14,13 @@ final class UIState {
         case failed
     }
 
-    /// What the inspector column at the window's right shows.
+    /// What the inspector column at the window's right shows. The terminal is one of them only while Settings › General
+    /// puts it on the right (`TerminalPlacement.right`).
     enum InspectorPanel: String, Codable {
         case diff
         case pullRequests
         case preview
+        case terminal
     }
 
     struct Values: Codable {
@@ -40,6 +42,8 @@ final class UIState {
         /// Each thread's browser tabs, by thread id. Threads saved before tabs have only `previewAddresses`.
         var previewTabs: [String: BrowserTabsState] = [:]
         var terminalHeight: Double?
+        /// Whether the terminal's drawer below the chat is open. With the terminal on the right, it is open when the
+        /// inspector is open on it.
         var isTerminalOpen = false
         /// Bundle identifier of the app the toolbar's "Open in" button uses.
         var preferredOpenTarget: String?

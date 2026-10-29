@@ -28,6 +28,21 @@ public enum ReplyTypeface: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Where the terminal opens, and with it where its button sits: in a drawer below the chat, with its button in the
+/// navigation rail on the window's left edge, or in the column on the right beside the diff, the pull requests and the
+/// browser preview, with its button among theirs in the toolbar's top-right corner.
+public enum TerminalPlacement: String, Codable, CaseIterable, Sendable {
+    case bottom
+    case right
+
+    public nonisolated var displayName: String {
+        switch self {
+        case .bottom: String(localized: "Bottom panel")
+        case .right: String(localized: "Right panel")
+        }
+    }
+}
+
 /// What sending does while the agent works, as T3 Code's `followUpBehavior`: steer the message into the running turn,
 /// queue it for after the turn, or interrupt the turn and send it now. The alternate send does the other for one
 /// message. Each thread keeps its own (`ChatThread.followUpBehavior`); the last one picked is the default for new
@@ -136,6 +151,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Font size for the transcript and composer.
     public var fontSize: Double
     public var replyTypeface: ReplyTypeface
+    /// Where the terminal opens: below the chat (its button in the rail), as it always has, or in the right column (its
+    /// button in the toolbar's top-right group).
+    public var terminalPlacement: TerminalPlacement
     /// The color themes used in dark and light mode, by id. An id this version does not know falls back to the first
     /// theme of its kind.
     public var darkTheme: String
@@ -187,6 +205,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         worktreeBranchPrefix = "coincide/"
         fontSize = 13
         replyTypeface = .newYork
+        terminalPlacement = .bottom
         darkTheme = "carbon"
         lightTheme = "carbon-light"
         shortcutOverrides = [:]
@@ -234,6 +253,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         worktreeBranchPrefix = value(.worktreeBranchPrefix, defaults.worktreeBranchPrefix)
         fontSize = value(.fontSize, defaults.fontSize)
         replyTypeface = value(.replyTypeface, defaults.replyTypeface)
+        terminalPlacement = value(.terminalPlacement, defaults.terminalPlacement)
         darkTheme = value(.darkTheme, defaults.darkTheme)
         lightTheme = value(.lightTheme, defaults.lightTheme)
         // A value that is not text stays as written, so the Keyboard pane can point it out.
