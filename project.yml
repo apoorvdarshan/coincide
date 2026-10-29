@@ -10,6 +10,9 @@ packages:
     url: https://github.com/migueldeicaza/SwiftTerm
     # 1.19 and later run a build-tool plug-in that xcodebuild refuses without -skipPackagePluginValidation.
     exactVersion: 1.18.0
+  # The remote protocol, pairing and theme palettes, shared by the Mac app and Coincide Remote on iOS.
+  CoincideRemoteKit:
+    path: CoincideRemoteKit
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -113,6 +116,7 @@ targets:
         link: false
         embed: false
       - package: SwiftTerm
+      - package: CoincideRemoteKit
     postBuildScripts:
       - name: Embed update helper
         script: /usr/bin/install -m 755 "$BUILT_PRODUCTS_DIR/CoincideUpdater" "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/CoincideUpdater"
@@ -129,6 +133,8 @@ targets:
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Apoorv Darshan"
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        # Coincide Remote (Settings › General › Remote) listens on the local network.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Coincide lets Coincide Remote on your iPhone or iPad connect over the local network.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_APP_SANDBOX: NO

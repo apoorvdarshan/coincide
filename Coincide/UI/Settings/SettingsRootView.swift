@@ -253,6 +253,12 @@ private struct SettingsSearchResults: View {
                     String(localized: "Quit"),
                 ]),
             SettingsSearchEntry(
+                title: String(localized: "Coincide Remote"), pane: general, setting: .remote,
+                keywords: [
+                    String(localized: "iPhone"), String(localized: "iPad"), String(localized: "Pair"), String(localized: "Tailscale"),
+                    String(localized: "Phone"),
+                ]),
+            SettingsSearchEntry(
                 title: String(localized: "Providers"), pane: .section(.providers),
                 keywords: [String(localized: "Agents"), String(localized: "Check again"), String(localized: "Status")]),
             SettingsSearchEntry(

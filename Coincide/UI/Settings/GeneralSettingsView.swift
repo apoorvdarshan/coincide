@@ -134,6 +134,11 @@ struct GeneralSettingsView: View {
                         .settingsRevealable(.backgroundAgents, highlighted: highlighted)
                 }
 
+                Section("Remote") {
+                    RemoteSettingsRows()
+                        .settingsRevealable(.remote, highlighted: highlighted)
+                }
+
                 Section {
                     HStack {
                         Spacer()
