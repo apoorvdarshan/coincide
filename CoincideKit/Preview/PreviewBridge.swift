@@ -24,6 +24,9 @@ public final class PreviewBridge {
                 - ask-user with message (one or two short sentences) and optional timeout in seconds (default 300, \
                 at most 900): opens the panel, shows the user your message with a Done button, and waits. Returns \
                 result done, declined or timeout.
+                - fill-login with optional item (a title or username): on a sign-in or two-factor page, Coincide fills \
+                the user's saved login from their password manager after the user allows it. You get the username at \
+                most, never the password or code; submit the form yourself afterwards. If no login matches, use ask-user.
                 Work in the background by default; don't open the panel just to show progress. When the user must act \
                 (sign in, a CAPTCHA or other human check, two-factor codes, a payment or a personal choice), use \
                 ask-user, saying exactly what to do in the browser, then read the page again after done. Never try to \

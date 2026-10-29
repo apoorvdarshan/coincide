@@ -228,15 +228,15 @@ import WebKit
         url = URL(string: "http://127.0.0.1:\(port)/")!
     }
 
-    static func start(title: String) async throws -> LoopbackPage {
+    static func start(title: String, html page: String? = nil) async throws -> LoopbackPage {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         let listener = try NWListener(using: parameters)
         listener.newConnectionHandler = { connection in
             connection.start(queue: .main)
             connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { _, _, _, _ in
-                let html = "<!doctype html><meta charset=utf-8><title>\(title)</title><h1>\(title)</h1>"
-                    + "<input id=user><input id=pw type=password value=hidden-password-value><button id=go>Go</button>"
+                let html = page ?? ("<!doctype html><meta charset=utf-8><title>\(title)</title><h1>\(title)</h1>"
+                    + "<input id=user><input id=pw type=password value=hidden-password-value><button id=go>Go</button>")
                 let body = Data(html.utf8)
                 var response = Data("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
                 response.append(body)

@@ -13,12 +13,24 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
     public var agentControlByDefault: Bool
     /// Threads where the user turned Agent Control on or off in the browser panel, by thread id.
     public var agentControl: [String: Bool]
+    /// Password managers the user turned on; none by default.
+    public var passwordManagers: [PasswordManagerKind]
+    /// Sites where the user let agents sign in with a login ("Always for this site").
+    public var loginGrants: [LoginGrant]
+    /// Offer to save a login in Coincide after the user signs in on a page (with Coincide's saved logins on).
+    public var offersToSaveLogins: Bool
+    /// Sites the user said never to offer saving for.
+    public var neverSaveSites: [String]
 
     public init(profileID: UUID = UUID()) {
         self.profileID = profileID
         usesPrivateSessions = false
         agentControlByDefault = true
         agentControl = [:]
+        passwordManagers = []
+        loginGrants = []
+        offersToSaveLogins = true
+        neverSaveSites = []
     }
 
     public init(from decoder: Decoder) throws {
@@ -31,6 +43,16 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
         usesPrivateSessions = value(.usesPrivateSessions, defaults.usesPrivateSessions)
         agentControlByDefault = value(.agentControlByDefault, defaults.agentControlByDefault)
         agentControl = value(.agentControl, defaults.agentControl)
+        // A manager this version doesn't know is dropped rather than failing the whole list.
+        passwordManagers = value(.passwordManagers, [String]()).compactMap(PasswordManagerKind.init(rawValue:))
+        loginGrants = value(.loginGrants, [FailableGrant]()).compactMap(\.grant)
+        offersToSaveLogins = value(.offersToSaveLogins, defaults.offersToSaveLogins)
+        neverSaveSites = value(.neverSaveSites, defaults.neverSaveSites)
+    }
+
+    private struct FailableGrant: Decodable {
+        let grant: LoginGrant?
+        init(from decoder: Decoder) throws { grant = try? LoginGrant(from: decoder) }
     }
 
     public func isAgentControlEnabled(for threadID: UUID) -> Bool {

@@ -22,10 +22,14 @@ final class PreviewSessions {
     private var usesPrivateSessions: Bool
     static let sessionLimit = 8
 
+    /// The password managers agents and the address bar's key fill from. Tests replace it.
+    var vault: PasswordVault
+
     init(profile: BrowserProfile = .shared, bridge: PreviewBridge = PreviewBridge()) {
         self.profile = profile
         self.bridge = bridge
         usesPrivateSessions = profile.usesPrivateSessions
+        vault = PasswordVault(settings: profile.settings, providers: profile.passwordProviders())
     }
 
     func start() {
@@ -67,6 +71,10 @@ final class PreviewSessions {
         session.onNavigate = { [weak self] url, title in
             UIState.shared.update { $0.previewAddresses[id.uuidString] = url.absoluteString }
             if !isPrivate { self?.profile.library.recordVisit(url: url, title: title) }
+        }
+        session.onLoginSubmitted = { [weak self, weak session] url, username, password in
+            guard let self, let session else { return }
+            self.offerToSave(url, username: username, password: password, in: session)
         }
         sessions[id] = session
         if let address = UIState.shared.values.previewAddresses[id.uuidString] { try? session.navigate(address) }
@@ -174,6 +182,8 @@ final class PreviewSessions {
             if !reveal(id) { notifyUser(id, session.userTurn.request?.message ?? message) }
             let result = await waiting.value
             return ["result": .string(result.rawValue)]
+        case .fillLogin(let hint):
+            return try await fillLogin(threadID: id, hint: hint)
         default:
             return try await session(for: id).perform(command, directory: directory)
         }

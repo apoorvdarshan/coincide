@@ -294,7 +294,8 @@ struct SettingsSearchResults: View {
                 keywords: [
                     String(localized: "Cookies"), String(localized: "History"), String(localized: "Bookmarks"),
                     String(localized: "Import"), String(localized: "Private sessions"), String(localized: "Agent Control"),
-                    "Chrome", "Safari", "Firefox",
+                    "Chrome", "Safari", "Firefox", String(localized: "Passwords"), String(localized: "Saved Logins"),
+                    "1Password", "Bitwarden", String(localized: "Keychain"),
                 ]),
             SettingsSearchEntry(
                 title: String(localized: "About Coincide"), pane: .section(.about),
