@@ -669,7 +669,11 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             return
         }
         let queued = runner.queuedMessages(threadID)
-        if !queued.isEmpty { queueBanner.show(queued, canSteer: runner.canSteer(threadID), steerKey: sendKeys.steerQueued) }
+        if !queued.isEmpty {
+            queueBanner.show(
+                queued, isRunning: runner.isRunning(threadID) && !runner.isStopping(threadID),
+                canSteer: runner.canSteer(threadID), steerKey: sendKeys.steerQueued)
+        }
         queueBanner.isHidden = queued.isEmpty
 
         // Usage belongs to whichever agent ran last; after a switch it says nothing about the new one.
@@ -934,6 +938,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             hasContent && importingImages == 0 && isUsable(thread.selection.provider)
             && !WorktreeService.shared.isPreparing(threadID) && missingFolder == nil
         footer.stopButton.isHidden = !running
+        // A stop shows at once, while the agent is still confirming it.
+        let stopping = runner.isStopping(threadID)
+        footer.stopButton.isEnabled = !stopping
+        footer.stopButton.setAccessibilityLabel(stopping ? String(localized: "Stopping…") : String(localized: "Stop"))
+        footer.stopButton.toolTip =
+            stopping
+            ? String(localized: "Stopping…")
+            : KeyBindingsController.shared.toolTip(String(localized: "Stop"), for: .stopTurn)
         footer.implementButton.isHidden = !(proposedPlan != nil && !hasContent && !running)
         send.isHidden = !footer.implementButton.isHidden
         send.isEnabled = canSend
@@ -1508,6 +1520,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         switch delivery {
         case .steered?: message = String(localized: "Sent into the current turn")
         case .queued?: message = String(localized: "Queued for after the current turn")
+        case .interrupting?: message = String(localized: "Stopping the current turn to send it")
         case .sent?, nil: return
         }
         NSAccessibility.post(
@@ -1515,18 +1528,21 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
     }
 
-    /// Sends a queued message into the running turn now, or as a new turn when none runs.
+    /// Sends a queued message now: into the running turn when it takes it, otherwise by stopping that turn and
+    /// sending the message next. As a new turn when none runs.
     private func steerQueued(_ id: UUID) {
         guard let threadID else { return }
         Task {
-            let delivery = await runner.steerQueued(threadID: threadID, id: id)
+            let delivery = await runner.sendQueuedNow(threadID: threadID, id: id)
             announce(delivery)
         }
     }
 
-    /// Sends the oldest queued message into the running turn. False when there is none or the turn can't take it.
+    /// Sends the oldest queued message now. False when there is none, or the turn is already being stopped.
     private func steerNextQueued() -> Bool {
-        guard let threadID, runner.canSteer(threadID), let next = runner.queuedMessages(threadID).first else { return false }
+        guard let threadID, runner.isRunning(threadID), !runner.isStopping(threadID),
+            let next = runner.queuedMessages(threadID).first
+        else { return false }
         steerQueued(next.id)
         return true
     }

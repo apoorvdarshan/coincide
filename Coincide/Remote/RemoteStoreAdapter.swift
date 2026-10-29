@@ -409,6 +409,7 @@ final class RemoteStoreAdapter {
         switch delivery {
         case .steered?: "steered"
         case .queued?: "queued"
+        case .interrupting?: "interrupting"
         case .sent?, nil: "sent"
         }
     }
