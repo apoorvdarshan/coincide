@@ -144,7 +144,7 @@ final class MainSplitViewController: NSSplitViewController {
 
     func toggleSidebarPanel() {
         if !sidebarItem.isCollapsed { saveLayout() }
-        sidebarItem.animator().isCollapsed.toggle()
+        setCollapsed(sidebarItem, !sidebarItem.isCollapsed)
     }
 
     /// Opens the inspector on the diff.
@@ -245,7 +245,7 @@ final class MainSplitViewController: NSSplitViewController {
         // The split view animates back to the width the inspector closed at. When that is still its width, let it
         // animate and hold the share afterwards; otherwise (a first opening, the window resized meanwhile) open it in
         // place at the share, rather than animate to one width and then jump to another.
-        if let closedInspectorWidth, abs(Double(closedInspectorWidth) - target) < 1, view.window?.isVisible == true {
+        if let closedInspectorWidth, abs(Double(closedInspectorWidth) - target) < 1, showsPanelChanges {
             NSAnimationContext.runAnimationGroup { _ in
                 self.inspectorItem.animator().isCollapsed = false
             } completionHandler: { [weak self] in
@@ -264,7 +264,7 @@ final class MainSplitViewController: NSSplitViewController {
     private func closeInspector() {
         closedInspectorWidth = inspector.view.frame.width
         releaseProportion()
-        inspectorItem.animator().isCollapsed = true
+        setCollapsed(inspectorItem, true)
     }
 
     /// Widens the window (on its screen, keeping it there) so the chat and the inspector both fit. Full screen stays.
@@ -499,7 +499,7 @@ final class ChatTerminalSplitViewController: NSSplitViewController {
         let opening = terminalItem.isCollapsed
         if opening {
             if hasSizedTerminal {
-                terminalItem.animator().isCollapsed = false
+                setCollapsed(terminalItem, false)
             } else {
                 terminalItem.isCollapsed = false
                 sizeTerminal()
@@ -507,7 +507,7 @@ final class ChatTerminalSplitViewController: NSSplitViewController {
         } else {
             let terminalHadFocus = (view.window?.firstResponder as? NSView)?.isDescendant(of: terminal.view) ?? false
             saveLayout()
-            terminalItem.animator().isCollapsed = true
+            setCollapsed(terminalItem, true)
             if terminalHadFocus { AppEvents.post(.coincideFocusComposer) }
         }
         UIState.shared.update { $0.isTerminalOpen = opening }
@@ -526,5 +526,23 @@ final class ChatTerminalSplitViewController: NSSplitViewController {
         let position = splitView.bounds.height - height - splitView.dividerThickness
         splitView.setPosition(max(200, position), ofDividerAt: 0)
     }
+}
 
+extension NSSplitViewController {
+    /// Whether the window shows a panel opening or closing. The split view animates that on the display's refresh, so
+    /// in a window no screen shows (off every screen, covered, or on a display that is asleep) the animation can stall
+    /// and leave the columns at their old widths.
+    var showsPanelChanges: Bool {
+        guard let window = view.window else { return false }
+        return window.isVisible && window.screen != nil && window.occlusionState.contains(.visible)
+    }
+
+    /// Opens or closes `item`: animated when the window shows it, otherwise in place.
+    func setCollapsed(_ item: NSSplitViewItem, _ collapsed: Bool) {
+        if showsPanelChanges {
+            item.animator().isCollapsed = collapsed
+        } else {
+            item.isCollapsed = collapsed
+        }
+    }
 }
