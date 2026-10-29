@@ -237,6 +237,124 @@
         }
       }
     },
+    "%@ %@ limit %lld%% left" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ %2$@-Limit: %3$lld %% übrig"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@ limit %3$lld%% left"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Límite %2$@ de %1$@: %3$lld%% restante"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Límite %2$@ de %1$@: %3$lld%% restante"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Limite %2$@ de %1$@ : %3$lld %% restant"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ की %2$@ सीमा का %3$lld%% बाकी"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batas %2$@ %1$@ sisa %3$lld%%"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Limite %2$@ di %1$@: %3$lld%% rimanente"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ の%2$@上限 残り %3$lld%%"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ %2$@ 한도 %3$lld%% 남음"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ limiet van %1$@: %3$lld%% over"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Limit %2$@ (%1$@): pozostało %3$lld%%"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Limite %2$@ de %1$@ com %3$lld%% restante"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@, лимит «%2$@»: осталось %3$lld%%"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ %2$@ sınırının %%%3$lld’i kaldı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@, ліміт «%2$@»: залишилося %3$lld%%"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giới hạn %2$@ của %1$@ còn %3$lld%%"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ 的%2$@限额剩余 %3$lld%%"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ 的%2$@限額剩餘 %3$lld%%"
+          }
+        }
+      }
+    },
     "%@ %@ limit %lld%% used" : {
       "localizations" : {
         "de" : {
@@ -6697,6 +6815,118 @@
         }
       }
     },
+    "%@ over the limit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ über dem Limit"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ por encima del límite"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ por encima del límite"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ au-delà de la limite"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सीमा से %@ ज़्यादा"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ melebihi batas"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ oltre il limite"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "上限を %@ 超過"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "한도를 %@ 초과"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ boven de limiet"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ ponad limit"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ acima do limite"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ сверх лимита"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sınırın %@ üzerinde"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ понад ліміт"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vượt giới hạn %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "超出限额 %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "超出限額 %@"
+          }
+        }
+      }
+    },
     "%@ picks up where the other agents left off, with a recap of the %lld messages it missed." : {
       "localizations" : {
         "de" : {
@@ -8917,16 +9147,6 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$@ · %2$@"
-          }
-        }
-      }
-    },
-    "%@ · %@ · %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "%1$@ · %2$@ · %3$@"
           }
         }
       }
@@ -25235,6 +25455,230 @@
         }
       }
     },
+    "Admin API key" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin-API-Schlüssel"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clave de API de administrador"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clave de API de administrador"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clé d’API administrateur"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एडमिन API कुंजी"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci API admin"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chiave API amministratore"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin API キー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "관리자 API 키"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin-API-sleutel"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klucz API administratora"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chave de API de administrador"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключ Admin API"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yönetici API anahtarı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключ Admin API"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khóa Admin API"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin API 密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin API 金鑰"
+          }
+        }
+      }
+    },
+    "Admin API key (optional)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin-API-Schlüssel (optional)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clave de API de administrador (opcional)"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clave de API de administrador (opcional)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clé d’API administrateur (facultative)"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एडमिन API कुंजी (वैकल्पिक)"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci API admin (opsional)"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chiave API amministratore (facoltativa)"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin API キー（任意）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "관리자 API 키(선택 사항)"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin-API-sleutel (optioneel)"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klucz API administratora (opcjonalny)"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chave de API de administrador (opcional)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключ Admin API (необязательно)"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yönetici API anahtarı (isteğe bağlı)"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключ Admin API (необов’язково)"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khóa Admin API (tùy chọn)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin API 密钥（可选）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin API 金鑰（選用）"
+          }
+        }
+      }
+    },
     "After Change" : {
       "localizations" : {
         "de" : {
@@ -32527,6 +32971,118 @@
         }
       }
     },
+    "Anthropic didn’t accept the Admin API key. Check it in Settings › Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic hat den Admin-API-Schlüssel nicht akzeptiert. Prüfe ihn unter Einstellungen › Anbieter."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic no aceptó la clave de API de administrador. Revísala en Ajustes › Proveedores."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic no aceptó la clave de API de administrador. Revísala en Configuración › Proveedores."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic n’a pas accepté la clé d’API administrateur. Vérifiez-la dans Réglages › Fournisseurs."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic ने एडमिन API कुंजी स्वीकार नहीं की। इसे सेटिंग्स › प्रदाता में जाँचें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic tidak menerima kunci API admin. Periksa di Pengaturan › Penyedia."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic non ha accettato la chiave API amministratore. Controllala in Impostazioni › Fornitori."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic が Admin API キーを受け付けませんでした。設定 › プロバイダで確認してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic이 관리자 API 키를 받아들이지 않았습니다. 설정 › 제공자에서 확인하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic heeft de Admin-API-sleutel niet geaccepteerd. Controleer hem in Instellingen › Aanbieders."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic nie zaakceptował klucza API administratora. Sprawdź go w Ustawienia › Dostawcy."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A Anthropic não aceitou a chave de API de administrador. Verifique em Ajustes › Provedores."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic не принял ключ Admin API. Проверьте его в разделе Настройки › Провайдеры."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic yönetici API anahtarını kabul etmedi. Ayarlar › Sağlayıcılar bölümünden kontrol edin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic не прийняв ключ Admin API. Перевірте його в розділі Параметри › Постачальники."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic không chấp nhận khóa Admin API. Hãy kiểm tra trong Cài đặt › Nhà cung cấp."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic 未接受该 Admin API 密钥。请在“设置 › 提供方”中检查。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic 未接受此 Admin API 金鑰。請在「設定 › 供應商」中檢查。"
+          }
+        }
+      }
+    },
     "Anthropic doesn’t show an API key its credit balance; the Console’s usage and cost reports need an Admin API key." : {
       "localizations" : {
         "de" : {
@@ -32635,6 +33191,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Anthropic 不會向 API 金鑰提供點數餘額；Console 的用量和費用報告需要 Admin API key。"
+          }
+        }
+      }
+    },
+    "Anthropic’s API doesn’t report the prepaid credit balance; the Claude Console shows it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die API von Anthropic meldet das Prepaid-Guthaben nicht; die Claude Console zeigt es."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La API de Anthropic no informa del saldo de crédito prepago; la Claude Console lo muestra."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La API de Anthropic no informa el saldo de crédito prepago; la Claude Console lo muestra."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’API d’Anthropic n’indique pas le solde de crédit prépayé ; la Claude Console l’affiche."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic का API प्रीपेड क्रेडिट बैलेंस नहीं बताता; Claude Console में यह दिखता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "API Anthropic tidak melaporkan saldo kredit prabayar; Claude Console menampilkannya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’API di Anthropic non riporta il saldo del credito prepagato; la Claude Console lo mostra."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic の API はプリペイドのクレジット残高を返しません。Claude Console で確認できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic API는 선불 크레딧 잔액을 알려 주지 않습니다. Claude Console에서 볼 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De API van Anthropic geeft het prepaid tegoed niet door; de Claude Console toont het."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "API Anthropic nie podaje salda kredytów przedpłaconych; pokazuje je Claude Console."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A API da Anthropic não informa o saldo de crédito pré-pago; o Claude Console mostra."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "API Anthropic не сообщает баланс предоплаченных кредитов; его показывает Claude Console."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic API’si ön ödemeli kredi bakiyesini bildirmez; Claude Console gösterir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "API Anthropic не повідомляє залишок передплачених кредитів; його показує Claude Console."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "API của Anthropic không báo số dư tín dụng trả trước; Claude Console có hiển thị."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic 的 API 不提供预付额度余额；可在 Claude Console 中查看。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic 的 API 不提供預付點數餘額；可在 Claude Console 中查看。"
+          }
+        }
+      }
+    },
+    "Anthropic’s usage and cost reports couldn’t be read. Coincide tries again later." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Nutzungs- und Kostenberichte von Anthropic konnten nicht gelesen werden. Coincide versucht es später erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudieron leer los informes de uso y coste de Anthropic. Coincide lo volverá a intentar más tarde."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudieron leer los informes de uso y costo de Anthropic. Coincide lo intentará de nuevo más tarde."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de lire les rapports d’utilisation et de coûts d’Anthropic. Coincide réessaiera plus tard."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic की उपयोग और लागत रिपोर्ट पढ़ी नहीं जा सकीं। Coincide बाद में फिर कोशिश करेगा।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laporan penggunaan dan biaya Anthropic tidak dapat dibaca. Coincide akan mencoba lagi nanti."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossibile leggere i report di utilizzo e costi di Anthropic. Coincide riproverà più tardi."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic の使用量・コストレポートを読み取れませんでした。Coincide は後でもう一度試します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic의 사용량 및 비용 보고서를 읽지 못했습니다. Coincide가 나중에 다시 시도합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De gebruiks- en kostenrapporten van Anthropic konden niet worden gelezen. Coincide probeert het later opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie udało się odczytać raportów użycia i kosztów Anthropic. Coincide spróbuje ponownie później."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível ler os relatórios de uso e custo da Anthropic. O Coincide tentará novamente mais tarde."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не удалось прочитать отчёты Anthropic об использовании и расходах. Coincide попробует позже."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anthropic’in kullanım ve maliyet raporları okunamadı. Coincide daha sonra yeniden deneyecek."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не вдалося прочитати звіти Anthropic про використання й витрати. Coincide спробує пізніше."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không đọc được báo cáo sử dụng và chi phí của Anthropic. Coincide sẽ thử lại sau."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法读取 Anthropic 的用量和费用报告。Coincide 稍后会重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法讀取 Anthropic 的用量與費用報告。Coincide 稍後會再試。"
           }
         }
       }
@@ -117033,6 +117813,124 @@
         }
       }
     },
+    "Input %@ · output %@ · cache %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eingabe %1$@ · Ausgabe %2$@ · Cache %3$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Input %1$@ · output %2$@ · cache %3$@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrada %1$@ · salida %2$@ · caché %3$@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrada %1$@ · salida %2$@ · caché %3$@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrée %1$@ · sortie %2$@ · cache %3$@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इनपुट %1$@ · आउटपुट %2$@ · कैश %3$@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Input %1$@ · output %2$@ · cache %3$@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Input %1$@ · output %2$@ · cache %3$@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "入力 %1$@ · 出力 %2$@ · キャッシュ %3$@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "입력 %1$@ · 출력 %2$@ · 캐시 %3$@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Invoer %1$@ · uitvoer %2$@ · cache %3$@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wejście %1$@ · wyjście %2$@ · pamięć podręczna %3$@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrada %1$@ · saída %2$@ · cache %3$@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ввод %1$@ · вывод %2$@ · кэш %3$@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Girdi %1$@ · çıktı %2$@ · önbellek %3$@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ввід %1$@ · вивід %2$@ · кеш %3$@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đầu vào %1$@ · đầu ra %2$@ · bộ nhớ đệm %3$@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "输入 %1$@ · 输出 %2$@ · 缓存 %3$@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "輸入 %1$@ · 輸出 %2$@ · 快取 %3$@"
+          }
+        }
+      }
+    },
     "Input tokens per minute" : {
       "localizations" : {
         "de" : {
@@ -122019,6 +122917,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "金鑰未被接受"
+          }
+        }
+      }
+    },
+    "Key “%@”" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schlüssel „%@“"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clave «%@»"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clave “%@”"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clé « %@ »"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कुंजी “%@”"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci “%@”"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chiave “%@”"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "キー「%@」"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "키 “%@”"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sleutel ‘%@’"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klucz „%@”"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chave “%@”"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключ «%@»"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” anahtarı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключ «%@»"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khóa “%@”"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "密钥“%@”"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "金鑰「%@」"
           }
         }
       }
@@ -149719,6 +150729,118 @@
         }
       }
     },
+    "No turns recorded with this key yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit diesem Schlüssel wurden noch keine Turns erfasst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aún no hay turnos registrados con esta clave."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Todavía no hay turnos registrados con esta clave."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun tour enregistré avec cette clé pour l’instant."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस कुंजी से अभी तक कोई टर्न दर्ज नहीं हुआ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Belum ada giliran yang tercatat dengan kunci ini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ancora nessun turno registrato con questa chiave."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このキーで記録されたターンはまだありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 키로 기록된 턴이 아직 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nog geen beurten vastgelegd met deze sleutel."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie zarejestrowano jeszcze tur z tym kluczem."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhum turno registrado com esta chave ainda."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "С этим ключом ещё не записано ни одного хода."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu anahtarla henüz kayıtlı tur yok."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "З цим ключем ще не записано жодного ходу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chưa có lượt nào được ghi lại với khóa này."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "尚未记录使用此密钥的轮次。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "尚未記錄使用此金鑰的輪次。"
+          }
+        }
+      }
+    },
     "No usage in this period." : {
       "localizations" : {
         "de" : {
@@ -160365,6 +161487,118 @@
         }
       }
     },
+    "Organization" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Organisation"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Organización"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Organización"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Organisation"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "संगठन"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Organisasi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Organizzazione"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "組織"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "조직"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Organisatie"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Organizacja"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Organização"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Организация"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kuruluş"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Організація"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tổ chức"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "组织"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "組織"
+          }
+        }
+      }
+    },
     "Other" : {
       "localizations" : {
         "de" : {
@@ -163054,6 +164288,118 @@
         }
       }
     },
+    "Paste an Admin API key" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin-API-Schlüssel einfügen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pega una clave de API de administrador"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pega una clave de API de administrador"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Collez une clé d’API administrateur"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एडमिन API कुंजी पेस्ट करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tempel kunci API admin"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Incolla una chiave API amministratore"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin API キーを貼り付け"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "관리자 API 키 붙여넣기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plak een Admin-API-sleutel"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wklej klucz API administratora"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cole uma chave de API de administrador"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вставьте ключ Admin API"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir yönetici API anahtarı yapıştırın"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вставте ключ Admin API"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dán khóa Admin API"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "粘贴 Admin API 密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "貼上 Admin API 金鑰"
+          }
+        }
+      }
+    },
     "Paste and Match Style" : {
       "localizations" : {
         "de" : {
@@ -165738,6 +167084,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "方案限額，以及你的代理程式在這台 Mac 上使用的權杖。"
+          }
+        }
+      }
+    },
+    "Plan limits, credits and the menu bar read as what is used or what is left." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plan-Limits, Guthaben und die Menüleiste zeigen, was verbraucht oder was noch übrig ist."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los límites del plan, los créditos y la barra de menús muestran lo usado o lo que queda."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los límites del plan, los créditos y la barra de menús muestran lo usado o lo que queda."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les limites du forfait, les crédits et la barre des menus indiquent ce qui est utilisé ou ce qui reste."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "प्लान की सीमाएँ, क्रेडिट और मेन्यू बार इस्तेमाल हुआ या बाकी हिस्सा दिखाते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batas paket, kredit, dan bar menu menampilkan yang terpakai atau sisanya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I limiti del piano, i crediti e la barra dei menu mostrano quanto è usato o quanto rimane."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プランの上限、クレジット、メニューバーに使用量と残量のどちらを表示するかを選びます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "요금제 한도, 크레딧, 메뉴 막대에 사용량 또는 남은 양을 표시합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Planlimieten, tegoed en de menubalk tonen wat er is gebruikt of wat er over is."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Limity planu, kredyty i pasek menu pokazują, ile wykorzystano lub ile zostało."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os limites do plano, os créditos e a barra de menus mostram o que foi usado ou o que resta."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Лимиты тарифа, кредиты и строка меню показывают, сколько использовано или сколько осталось."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plan sınırları, krediler ve menü çubuğu kullanılan veya kalan miktarı gösterir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ліміти тарифу, кредити й рядок меню показують, скільки використано або скільки залишилося."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giới hạn gói, tín dụng và thanh menu hiển thị phần đã dùng hoặc phần còn lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "套餐限额、额度和菜单栏显示已用量或剩余量。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "方案限額、點數和選單列顯示已用量或剩餘量。"
           }
         }
       }
@@ -177724,6 +179182,118 @@
         }
       }
     },
+    "Read-only access to your organization’s usage and cost reports, shown in Settings › Usage. Kept in the Keychain and sent only to Anthropic." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lesezugriff auf die Nutzungs- und Kostenberichte deiner Organisation, angezeigt unter Einstellungen › Nutzung. Im Schlüsselbund gespeichert und nur an Anthropic gesendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Acceso de solo lectura a los informes de uso y coste de tu organización, mostrados en Ajustes › Uso. Se guarda en el llavero y solo se envía a Anthropic."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Acceso de solo lectura a los informes de uso y costo de tu organización, que se muestran en Configuración › Uso. Se guarda en el llavero y solo se envía a Anthropic."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accès en lecture seule aux rapports d’utilisation et de coûts de votre organisation, affichés dans Réglages › Utilisation. Conservée dans le trousseau et envoyée uniquement à Anthropic."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "आपके संगठन की उपयोग और लागत रिपोर्ट तक केवल पढ़ने की पहुँच, जो सेटिंग्स › उपयोग में दिखती हैं। कीचेन में रखी जाती है और सिर्फ़ Anthropic को भेजी जाती है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Akses baca saja ke laporan penggunaan dan biaya organisasi Anda, ditampilkan di Pengaturan › Penggunaan. Disimpan di Rantai Kunci dan hanya dikirim ke Anthropic."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accesso in sola lettura ai report di utilizzo e costi della tua organizzazione, mostrati in Impostazioni › Utilizzo. Conservata nel portachiavi e inviata solo ad Anthropic."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "組織の使用量・コストレポートを読み取り専用で取得し、設定 › 使用量に表示します。キーチェーンに保存され、Anthropic にのみ送信されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "조직의 사용량 및 비용 보고서에 대한 읽기 전용 접근으로, 설정 › 사용량에 표시됩니다. 키체인에 보관되며 Anthropic에만 전송됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alleen-lezentoegang tot de gebruiks- en kostenrapporten van je organisatie, getoond in Instellingen › Gebruik. Bewaard in de sleutelhanger en alleen naar Anthropic verstuurd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dostęp tylko do odczytu do raportów użycia i kosztów Twojej organizacji, wyświetlanych w Ustawienia › Użycie. Przechowywany w pęku kluczy i wysyłany tylko do Anthropic."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Acesso somente leitura aos relatórios de uso e custo da sua organização, exibidos em Ajustes › Uso. Guardada nas Chaves e enviada apenas à Anthropic."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Доступ только для чтения к отчётам об использовании и расходах вашей организации в разделе Настройки › Использование. Хранится в связке ключей и отправляется только в Anthropic."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kuruluşunuzun kullanım ve maliyet raporlarına salt okunur erişim; Ayarlar › Kullanım’da gösterilir. Anahtar Zinciri’nde saklanır ve yalnızca Anthropic’e gönderilir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Доступ лише для читання до звітів про використання й витрати вашої організації в розділі Параметри › Використання. Зберігається у в’язці ключів і надсилається лише до Anthropic."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quyền chỉ đọc đối với báo cáo sử dụng và chi phí của tổ chức, hiển thị trong Cài đặt › Mức sử dụng. Được lưu trong Chuỗi khóa và chỉ gửi đến Anthropic."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "以只读方式访问你所在组织的用量和费用报告，显示在“设置 › 用量”中。保存在钥匙串中，仅发送给 Anthropic。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "以唯讀方式存取你組織的用量與費用報告，顯示在「設定 › 用量」中。保存在鑰匙圈，只會傳送給 Anthropic。"
+          }
+        }
+      }
+    },
     "Reading logs…" : {
       "localizations" : {
         "de" : {
@@ -180188,6 +181758,119 @@
         }
       }
     },
+    "Remaining" : {
+      "comment" : "Usage shows what is left of each limit",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verbleibend"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Restante"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Restante"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Restant"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बाकी"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sisa"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rimanente"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "残り"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "남은 양"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resterend"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozostałe"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Restante"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Осталось"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kalan"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Залишилося"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Còn lại"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "剩余"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "剩餘"
+          }
+        }
+      }
+    },
     "Remote" : {
       "localizations" : {
         "de" : {
@@ -180632,6 +182315,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "移除帳號"
+          }
+        }
+      }
+    },
+    "Remove Admin Key" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin-Schlüssel entfernen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eliminar clave de administrador"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eliminar clave de administrador"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Supprimer la clé administrateur"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एडमिन कुंजी हटाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hapus Kunci Admin"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rimuovi chiave amministratore"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Admin キーを削除"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "관리자 키 제거"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verwijder Admin-sleutel"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usuń klucz administratora"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Remover chave de administrador"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Удалить ключ администратора"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yönetici Anahtarını Kaldır"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вилучити ключ адміністратора"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Xóa khóa quản trị"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "移除 Admin 密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "移除 Admin 金鑰"
           }
         }
       }
@@ -206161,6 +207956,118 @@
         }
       }
     },
+    "Show usage as" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nutzung anzeigen als"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar uso como"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar uso como"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Afficher l’utilisation en"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "उपयोग ऐसे दिखाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tampilkan penggunaan sebagai"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostra l’uso come"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用量の表示"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사용량 표시 방식"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gebruik tonen als"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pokaż użycie jako"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar uso como"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Показывать использование как"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kullanımı şöyle göster"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Показувати використання як"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hiển thị mức dùng theo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "用量显示方式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "用量顯示方式"
+          }
+        }
+      }
+    },
     "Show usage in the menu bar" : {
       "localizations" : {
         "de" : {
@@ -206381,6 +208288,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "顯示值"
+          }
+        }
+      }
+    },
+    "Show what is used of each limit, or what is left" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zeigt, wie viel von jedem Limit verbraucht oder noch übrig ist"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muestra lo usado de cada límite o lo que queda"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muestra lo usado de cada límite o lo que queda"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Afficher ce qui est utilisé de chaque limite, ou ce qui reste"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "हर सीमा का इस्तेमाल हुआ हिस्सा या बाकी हिस्सा दिखाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tampilkan bagian yang terpakai dari tiap batas, atau sisanya"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostra quanto è usato di ogni limite o quanto rimane"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "各上限の使用量と残量のどちらを表示するかを切り替えます"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "각 한도의 사용량 또는 남은 양을 표시합니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toon wat er van elke limiet is gebruikt, of wat er over is"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pokaż, ile wykorzystano z każdego limitu lub ile zostało"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar o que foi usado de cada limite ou o que resta"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Показывать, сколько использовано из каждого лимита или сколько осталось"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Her sınırın kullanılan veya kalan kısmını göster"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Показувати, скільки використано з кожного ліміту або скільки залишилося"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hiển thị phần đã dùng của mỗi giới hạn hoặc phần còn lại"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "显示每项限额的已用量或剩余量"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "顯示每項限額的已用量或剩餘量"
           }
         }
       }
@@ -238132,6 +240151,230 @@
         }
       }
     },
+    "This key can’t read usage reports. Use an Admin API key (sk-ant-admin01-…) from the Claude Console." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Schlüssel kann keine Nutzungsberichte lesen. Verwende einen Admin-API-Schlüssel (sk-ant-admin01-…) aus der Claude Console."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta clave no puede leer informes de uso. Usa una clave de API de administrador (sk-ant-admin01-…) de la Claude Console."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta clave no puede leer informes de uso. Usa una clave de API de administrador (sk-ant-admin01-…) de la Claude Console."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette clé ne peut pas lire les rapports d’utilisation. Utilisez une clé d’API administrateur (sk-ant-admin01-…) de la Claude Console."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह कुंजी उपयोग रिपोर्ट नहीं पढ़ सकती। Claude Console से एडमिन API कुंजी (sk-ant-admin01-…) इस्तेमाल करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci ini tidak dapat membaca laporan penggunaan. Gunakan kunci API admin (sk-ant-admin01-…) dari Claude Console."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questa chiave non può leggere i report di utilizzo. Usa una chiave API amministratore (sk-ant-admin01-…) della Claude Console."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このキーでは使用量レポートを読み取れません。Claude Console の Admin API キー（sk-ant-admin01-…）を使用してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 키로는 사용량 보고서를 읽을 수 없습니다. Claude Console의 관리자 API 키(sk-ant-admin01-…)를 사용하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze sleutel kan geen gebruiksrapporten lezen. Gebruik een Admin-API-sleutel (sk-ant-admin01-…) uit de Claude Console."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten klucz nie może odczytać raportów użycia. Użyj klucza API administratora (sk-ant-admin01-…) z Claude Console."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta chave não pode ler relatórios de uso. Use uma chave de API de administrador (sk-ant-admin01-…) do Claude Console."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот ключ не может читать отчёты об использовании. Используйте ключ Admin API (sk-ant-admin01-…) из Claude Console."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu anahtar kullanım raporlarını okuyamaz. Claude Console’dan bir yönetici API anahtarı (sk-ant-admin01-…) kullanın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей ключ не може читати звіти про використання. Використайте ключ Admin API (sk-ant-admin01-…) з Claude Console."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khóa này không đọc được báo cáo sử dụng. Hãy dùng khóa Admin API (sk-ant-admin01-…) từ Claude Console."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此密钥无法读取用量报告。请使用 Claude Console 中的 Admin API 密钥（sk-ant-admin01-…）。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此金鑰無法讀取用量報告。請使用 Claude Console 中的 Admin API 金鑰（sk-ant-admin01-…）。"
+          }
+        }
+      }
+    },
+    "This month by model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Monat nach Modell"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este mes por modelo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este mes por modelo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce mois-ci par modèle"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस महीने मॉडल के अनुसार"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bulan ini menurut model"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questo mese per modello"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "今月のモデル別"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이번 달 모델별"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze maand per model"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten miesiąc według modelu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este mês por modelo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот месяц по моделям"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu ay modele göre"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей місяць за моделями"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tháng này theo mô hình"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "本月按模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "本月依模型"
+          }
+        }
+      }
+    },
     "This pairing code has expired. Show a new one on the Mac." : {
       "localizations" : {
         "de" : {
@@ -242084,6 +244327,230 @@
         }
       }
     },
+    "Tokens and costs of the whole organization: Anthropic’s key list didn’t identify this key. Days in UTC." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens und Kosten der gesamten Organisation: Die Schlüsselliste von Anthropic hat diesen Schlüssel nicht erkannt. Tage in UTC."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens y costes de toda la organización: la lista de claves de Anthropic no identificó esta clave. Días en UTC."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens y costos de toda la organización: la lista de claves de Anthropic no identificó esta clave. Días en UTC."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens et coûts de toute l’organisation : la liste des clés d’Anthropic n’a pas identifié cette clé. Jours en UTC."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पूरे संगठन के टोकन और लागत: Anthropic की कुंजी सूची ने इस कुंजी की पहचान नहीं की। दिन UTC में।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token dan biaya seluruh organisasi: daftar kunci Anthropic tidak mengenali kunci ini. Hari dalam UTC."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token e costi dell’intera organizzazione: l’elenco delle chiavi di Anthropic non ha identificato questa chiave. Giorni in UTC."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "組織全体のトークンとコスト：Anthropic のキー一覧でこのキーを特定できませんでした。日付は UTC。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "조직 전체의 토큰과 비용: Anthropic의 키 목록에서 이 키를 확인하지 못했습니다. 날짜는 UTC 기준입니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens en kosten van de hele organisatie: de sleutellijst van Anthropic herkende deze sleutel niet. Dagen in UTC."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokeny i koszty całej organizacji: lista kluczy Anthropic nie rozpoznała tego klucza. Dni w UTC."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens e custos de toda a organização: a lista de chaves da Anthropic não identificou esta chave. Dias em UTC."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Токены и расходы всей организации: список ключей Anthropic не определил этот ключ. Дни по UTC."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tüm kuruluşun token ve maliyetleri: Anthropic’in anahtar listesi bu anahtarı tanımlayamadı. Günler UTC’ye göre."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Токени й витрати всієї організації: список ключів Anthropic не визначив цей ключ. Дні за UTC."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token và chi phí của toàn tổ chức: danh sách khóa của Anthropic không xác định được khóa này. Ngày theo UTC."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "整个组织的 token 和费用：Anthropic 的密钥列表未能识别此密钥。日期按 UTC。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "整個組織的 token 與費用：Anthropic 的金鑰清單無法識別此金鑰。日期以 UTC 計。"
+          }
+        }
+      }
+    },
+    "Tokens of the key “%@”; costs are the organization’s, as Anthropic reports costs only for the whole organization. Days in UTC." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens des Schlüssels „%@“; Kosten gelten für die Organisation, da Anthropic Kosten nur für die gesamte Organisation meldet. Tage in UTC."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens de la clave «%@»; los costes son de la organización, ya que Anthropic solo informa costes de toda la organización. Días en UTC."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens de la clave “%@”; los costos son de la organización, porque Anthropic solo informa costos de toda la organización. Días en UTC."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens de la clé « %@ » ; les coûts sont ceux de l’organisation, car Anthropic ne les indique que pour l’organisation entière. Jours en UTC."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कुंजी “%@” के टोकन; लागत संगठन की है, क्योंकि Anthropic लागत सिर्फ़ पूरे संगठन के लिए बताता है। दिन UTC में।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token kunci “%@”; biaya adalah milik organisasi, karena Anthropic hanya melaporkan biaya untuk seluruh organisasi. Hari dalam UTC."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token della chiave “%@”; i costi sono dell’organizzazione, perché Anthropic riporta i costi solo per l’intera organizzazione. Giorni in UTC."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "キー「%@」のトークン。Anthropic はコストを組織全体でしか報告しないため、コストは組織のものです。日付は UTC。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "키 “%@”의 토큰. Anthropic은 비용을 조직 전체로만 보고하므로 비용은 조직 기준입니다. 날짜는 UTC 기준입니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens van de sleutel ‘%@’; kosten zijn die van de organisatie, omdat Anthropic kosten alleen voor de hele organisatie rapporteert. Dagen in UTC."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokeny klucza „%@”; koszty dotyczą organizacji, bo Anthropic podaje koszty tylko dla całej organizacji. Dni w UTC."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens da chave “%@”; os custos são da organização, pois a Anthropic só informa custos da organização inteira. Dias em UTC."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Токены ключа «%@»; расходы указаны по организации, так как Anthropic сообщает расходы только для всей организации. Дни по UTC."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” anahtarının tokenları; Anthropic maliyetleri yalnızca tüm kuruluş için bildirdiğinden maliyetler kuruluşa aittir. Günler UTC’ye göre."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Токени ключа «%@»; витрати подано для організації, бо Anthropic повідомляє витрати лише для всієї організації. Дні за UTC."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token của khóa “%@”; chi phí là của tổ chức, vì Anthropic chỉ báo chi phí cho toàn tổ chức. Ngày theo UTC."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "密钥“%@”的 token；费用为整个组织的，因为 Anthropic 只报告整个组织的费用。日期按 UTC。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "金鑰「%@」的 token；費用為整個組織的，因為 Anthropic 只回報整個組織的費用。日期以 UTC 計。"
+          }
+        }
+      }
+    },
     "Tokens per day" : {
       "localizations" : {
         "de" : {
@@ -242304,6 +244771,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "每分鐘權杖"
+          }
+        }
+      }
+    },
+    "Tokens this month" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens diesen Monat"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens este mes"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens este mes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens ce mois-ci"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस महीने के टोकन"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token bulan ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token questo mese"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "今月のトークン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이번 달 토큰"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens deze maand"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokeny w tym miesiącu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens neste mês"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Токены за месяц"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu ayki tokenlar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Токени за місяць"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token tháng này"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "本月 token"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "本月 token"
+          }
+        }
+      }
+    },
+    "Tokens today" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens heute"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens hoy"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens hoy"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens aujourd’hui"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "आज के टोकन"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token hari ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token oggi"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "今日のトークン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "오늘 토큰"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens vandaag"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokeny dzisiaj"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tokens hoje"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Токены за сегодня"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bugünkü tokenlar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Токени за сьогодні"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Token hôm nay"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "今日 token"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "今日 token"
           }
         }
       }
@@ -245571,6 +248262,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "回合"
+          }
+        }
+      }
+    },
+    "Turns in Coincide with this key" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Turns in Coincide mit diesem Schlüssel"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Turnos en Coincide con esta clave"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Turnos en Coincide con esta clave"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tours dans Coincide avec cette clé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस कुंजी से Coincide में टर्न"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giliran di Coincide dengan kunci ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Turni in Coincide con questa chiave"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このキーでの Coincide のターン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 키로 실행한 Coincide 턴"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beurten in Coincide met deze sleutel"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tury w Coincide z tym kluczem"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Turnos no Coincide com esta chave"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ходы в Coincide с этим ключом"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu anahtarla Coincide’daki turlar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ходи в Coincide з цим ключем"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lượt trong Coincide với khóa này"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 中使用此密钥的轮次"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 中使用此金鑰的輪次"
           }
         }
       }
@@ -251192,6 +253995,119 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "使用網路"
+          }
+        }
+      }
+    },
+    "Used" : {
+      "comment" : "Usage shows what is used of each limit",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verbraucht"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usado"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utilisé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस्तेमाल हुआ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Terpakai"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usato"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用済み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사용량"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gebruikt"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wykorzystane"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usado"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Использовано"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kullanılan"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Використано"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã dùng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已用"
           }
         }
       }
