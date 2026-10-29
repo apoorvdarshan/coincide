@@ -135,6 +135,9 @@ final class MainSplitViewController: NSSplitViewController {
 
     func togglePreviewPanel() { toggleInspector(.preview) }
 
+    /// Opens the inspector on the browser preview, leaving it open if it already shows it.
+    func showPreviewPanel() { showInspector(.preview) }
+
     func togglePullRequestsPanel() {
         toggleInspector(.pullRequests)
     }

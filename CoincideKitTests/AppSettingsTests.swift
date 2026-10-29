@@ -58,3 +58,45 @@ struct FollowUpBehaviorSettingsTests {
         #expect(saved.existingThreadsFollowUpBehavior == .queue)
     }
 }
+
+/// "Open links in your default browser": off by default, so web links open in Coincide's browser preview, and saved
+/// like the other settings.
+struct OpensLinksInDefaultBrowserSettingsTests {
+    private func decode(_ json: String) throws -> AppSettings {
+        try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+    }
+
+    @Test func offByDefaultAndForSettingsFromBeforeItExisted() throws {
+        #expect(AppSettings().opensLinksInDefaultBrowser == false)
+        #expect(try decode(#"{"fontSize": 15}"#).opensLinksInDefaultBrowser == false)
+    }
+
+    @Test func theChoiceIsSavedAndReadBack() throws {
+        var settings = AppSettings()
+        settings.opensLinksInDefaultBrowser = true
+        let data = try JSONEncoder().encode(settings)
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["opensLinksInDefaultBrowser"] as? Bool == true)
+        let saved = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(saved.opensLinksInDefaultBrowser)
+        #expect(saved == settings)
+    }
+
+    @MainActor @Test func theStoreKeepsTheChoiceAcrossLaunches() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-links-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AppStore(directory: directory)
+        #expect(store.settings.opensLinksInDefaultBrowser == false)
+        store.updateSettings { $0.opensLinksInDefaultBrowser = true }
+        store.flush()
+        #expect(AppStore(directory: directory).settings.opensLinksInDefaultBrowser)
+    }
+
+    @Test(arguments: [#""yes""#, "null", "[true]"])
+    func anUnreadableValueFallsBackToOffAndKeepsTheOtherSettings(value: String) throws {
+        let settings = try decode(#"{"opensLinksInDefaultBrowser": \#(value), "sendOnReturn": false}"#)
+        #expect(settings.opensLinksInDefaultBrowser == false)
+        #expect(settings.sendOnReturn == false)
+    }
+}
