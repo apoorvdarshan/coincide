@@ -82,7 +82,7 @@ final class FlatSurfaceView: NSView {
 }
 
 /// A view painted in one solid color that follows the appearance, for the sidebar and the conversation.
-final class SolidBackgroundView: NSView {
+class SolidBackgroundView: NSView {
     var color: NSColor {
         didSet { needsDisplay = true }
     }

@@ -1598,7 +1598,14 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         }
     }
 
-    private func setDropHighlight(_ highlighted: Bool) {
+    /// Takes files and images dropped or pasted somewhere else in the thread, then puts the caret here.
+    func takeAttachments(from pasteboard: NSPasteboard) -> Bool {
+        guard textView.takeAttachments(from: pasteboard) else { return false }
+        focus()
+        return true
+    }
+
+    func setDropHighlight(_ highlighted: Bool) {
         surface.tintColor = highlighted ? Theme.dropTint : nil
     }
 

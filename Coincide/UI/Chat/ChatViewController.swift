@@ -95,7 +95,12 @@ final class ChatViewController: NSViewController {
     // MARK: View
 
     override func loadView() {
-        let root = SolidBackgroundView(color: Theme.contentBackground)
+        let root = ChatDropView(color: Theme.contentBackground)
+        root.onDrop = { [weak self] pasteboard in
+            guard let self, self.displayedThreadID != nil else { return false }
+            return self.composer.takeAttachments(from: pasteboard)
+        }
+        root.onDragHover = { [weak self] hovering in self?.composer.setDropHighlight(hovering) }
         view = root
         list.host = self
         list.onPinnedChange = { [weak self] pinned in self?.setJumpButtonVisible(!pinned) }
@@ -1054,7 +1059,17 @@ extension ChatViewController: TranscriptHost {
 // MARK: - Find commands
 
 extension ChatViewController: NSUserInterfaceValidations {
+    /// Paste with the conversation focused: files and images go to the composer, like a drop.
+    @objc func paste(_ sender: Any?) {
+        guard displayedThreadID != nil else { return }
+        if !composer.takeAttachments(from: .general) {
+            composer.focus()
+            NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: sender)
+        }
+    }
+
     func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)) { return displayedThreadID != nil }
         guard item.action == #selector(performTextFinderAction(_:)) else { return true }
         guard displayedThreadID != nil, let action = NSTextFinder.Action(rawValue: item.tag) else { return false }
         switch action {
@@ -1135,5 +1150,35 @@ extension ChatViewController: @preconcurrency QLPreviewPanelDataSource {
 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
         previewURLs[index] as NSURL
+    }
+}
+
+// MARK: - Drop anywhere
+
+/// The thread's root. Files and images dropped anywhere on the conversation go to the composer, not only onto it.
+private final class ChatDropView: SolidBackgroundView {
+    var onDrop: ((NSPasteboard) -> Bool)?
+    var onDragHover: ((Bool) -> Void)?
+
+    override init(color: NSColor) {
+        super.init(color: color)
+        registerForDraggedTypes([.fileURL] + ComposerAttachmentImporter.pasteboardTypes)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard ComposerTextView.carriesAttachments(sender.draggingPasteboard) else { return [] }
+        onDragHover?(true)
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) { onDragHover?(false) }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) { onDragHover?(false) }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        onDrop?(sender.draggingPasteboard) ?? false
     }
 }
