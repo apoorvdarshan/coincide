@@ -5,12 +5,14 @@ extension NSPasteboard.PasteboardType {
     static let coincideProject = NSPasteboard.PasteboardType("com.apoorvdarshan.coincide.project")
     static let coincideThread = NSPasteboard.PasteboardType("com.apoorvdarshan.coincide.thread")
     static let coincideSection = NSPasteboard.PasteboardType("com.apoorvdarshan.coincide.section")
+    static let coincideBot = NSPasteboard.PasteboardType("com.apoorvdarshan.coincide.bot")
 }
 
 /// Projects and their threads, ported from T3's sidebar: a source list with a search field,
 /// per-project new-thread buttons, status badges, context menus, inline rename, drag to reorder
 /// projects, drag threads to another project and drop to add folders. Pinned threads of every
-/// project are listed together in a section of their own; sections can be dragged into any order.
+/// project are listed together in a section of their own; sections can be dragged into any order, and collapsed to
+/// their header by clicking it.
 final class SidebarViewController: NSViewController {
     /// Called when the user picks a thread, or when the open thread disappears (with its neighbour, or nil).
     var onSelectThread: ((UUID?) -> Void)?
@@ -68,17 +70,23 @@ final class SidebarViewController: NSViewController {
     private var openThreadPastCut: UUID?
     /// The cut the lists were last built with, which follows the sidebar's height unless the user chose one.
     private var appliedThreadLimit = 0
+    /// The sections the outline was last built with collapsed, so a change slides their rows in or out.
+    private var appliedCollapsed: Set<SidebarSection> = []
+    /// The threads each collapsed section hides, for the status dot on its header.
+    private var hiddenThreads: [SidebarSection: [UUID]] = [:]
     /// The folder the context menu's "Open In" items act on.
     private var menuFolder: URL?
 
     // MARK: Public API
 
-    /// Highlights the open thread, revealing it if its project is collapsed or its row is past "Show more".
+    /// Highlights the open thread, revealing it if its project is collapsed or its row is past "Show more". A newly
+    /// opened thread also expands its collapsed section; the thread open at launch leaves it as the user left it.
     func select(threadID: UUID?) {
         let changed = threadID != selectedThreadID
         selectedThreadID = threadID
         selectedInboxIDs = Set([threadID].compactMap { $0 })
         guard hasLoaded else { return }
+        if changed, let threadID { revealSection(of: threadID) }
         if let threadID, let thread = store.summary(threadID), !isSearching, !thread.isPinned,
             let project = store.project(thread.projectID), !project.isChats, !project.isExpanded
         {
@@ -112,6 +120,7 @@ final class SidebarViewController: NSViewController {
         if !thread.isPinned, let project = store.project(thread.projectID), !project.isChats, !project.isExpanded {
             store.updateProject(thread.projectID) { $0.isExpanded = true }
         }
+        if revealSection(of: threadID) { rebuild() }
         guard let node = nodes.existing(.thread(threadID)) else { return }
         beginRename(node)
     }
@@ -154,7 +163,7 @@ final class SidebarViewController: NSViewController {
         outlineView.doubleAction = #selector(rowDoubleClicked)
         outlineView.menu = NSMenu()
         outlineView.menu?.delegate = self
-        outlineView.registerForDraggedTypes([.coincideSection, .coincideProject, .coincideThread, .fileURL])
+        outlineView.registerForDraggedTypes([.coincideSection, .coincideBot, .coincideProject, .coincideThread, .fileURL])
         outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
         outlineView.setDraggingSourceOperationMask(.copy, forLocal: false)
         outlineView.setAccessibilityLabel(String(localized: "Projects and threads"))
@@ -274,16 +283,30 @@ final class SidebarViewController: NSViewController {
     private var showsSnoozed: Bool { UIState.shared.values.showsSnoozedThreads }
     private var showsSettled: Bool { UIState.shared.values.showsSettledThreads }
 
+    /// Sections collapsed to their header. A search lists every match, collapsed or not.
+    private var collapsedSections: Set<SidebarSection> {
+        isSearching ? [] : SidebarOrdering.collapsedSections(saved: UIState.shared.values.collapsedSections)
+    }
+
+    /// Every node whose children the outline shows: the sections, and the projects under Projects.
+    private var parentNodes: [SidebarNode] {
+        sections + header.children
+    }
+
     /// Recomputes the tree from the store and applies the difference to the outline.
     private func rebuild() {
         guard hasLoaded else { return }
         let oldSections = sections
         let oldProjects = header.children
-        let oldChildren = Dictionary(uniqueKeysWithValues: threadContainers.map { (ObjectIdentifier($0), $0.children) })
+        let oldChildren = Dictionary(parentNodes.map { (ObjectIdentifier($0), $0.children) }, uniquingKeysWith: { first, _ in first })
         openThreadPastCut = nil
         let ui = UIState.shared.values
         let limit = threadLimit
         appliedThreadLimit = limit
+        let collapsed = collapsedSections
+        let toggled = collapsed.symmetricDifference(appliedCollapsed)
+        appliedCollapsed = collapsed
+        hiddenThreads = [:]
         var projectNodes: [SidebarNode] = []
         var chatsNode: SidebarNode?
         var pinned: [ThreadSummary] = []
@@ -315,29 +338,43 @@ final class SidebarViewController: NSViewController {
             pinned += threads.filter(\.isPinned)
             threads.removeAll(where: \.isPinned)
             if !projectMatches && threads.isEmpty { continue }
+            let section: SidebarSection = project.isChats ? .chats : .projects
+            hiddenThreads[section, default: []] += threads.map(\.id)
             let node = nodes.node(project.isChats ? .chats(project.id) : .project(project.id))
-            node.children = children(for: project, threads: threads, limit: limit)
+            node.children = collapsed.contains(section) ? [] : children(for: project, threads: threads, limit: limit)
             if project.isChats { chatsNode = node } else { projectNodes.append(node) }
         }
-        pinnedSection.children = pinnedOrder().filter(Set(pinned.map(\.id)).contains).map { nodes.node(.thread($0)) }
-        header.children = projectNodes
-        botsSection.children = listedBots().map { nodes.node(.bot($0.id)) }
+        let pinnedIDs = pinnedOrder().filter(Set(pinned.map(\.id)).contains)
+        let bots = listedBots()
+        hiddenThreads[.pinned] = pinnedIDs
+        if collapsed.contains(.bots) { hiddenThreads[.bots] = bots.flatMap { store.conversations(of: $0.id).map(\.id) } }
+        // A collapsed section keeps its header; its rows go.
+        pinnedSection.children = collapsed.contains(.pinned) ? [] : pinnedIDs.map { nodes.node(.thread($0)) }
+        header.children = collapsed.contains(.projects) ? [] : projectNodes
+        botsSection.children = collapsed.contains(.bots) ? [] : bots.map { nodes.node(.bot($0.id)) }
         var shown: [SidebarSection: SidebarNode] = [:]
-        if !botsSection.children.isEmpty { shown[.bots] = botsSection }
-        if !pinnedSection.children.isEmpty { shown[.pinned] = pinnedSection }
+        if !bots.isEmpty { shown[.bots] = botsSection }
+        if !pinnedIDs.isEmpty { shown[.pinned] = pinnedSection }
         if !isSearching || !projectNodes.isEmpty { shown[.projects] = header }
         if let chatsNode { shown[.chats] = chatsNode }
         sections = SidebarOrdering.sectionOrder(saved: ui.sidebarSections).compactMap { shown[$0] }
         handOffSelectionIfNeeded(oldChildren: oldChildren)
 
-        if !outlineView.hasRows || oldProjects != projectNodes || oldSections != sections {
+        // Collapsing or expanding Projects slides its projects out or in rather than reloading the outline.
+        let projectsChanged = oldProjects != header.children && !toggled.contains(.projects)
+        if !outlineView.hasRows || projectsChanged || oldSections != sections {
             outlineView.reloadData()
         } else {
-            apply(threadContainers.filter { oldChildren[ObjectIdentifier($0)] != $0.children }, from: oldChildren)
+            // Nodes new to the outline arrive with their parent.
+            let changed = parentNodes.filter { node in
+                oldChildren[ObjectIdentifier(node)].map { $0 != node.children } ?? false
+            }
+            apply(changed, from: oldChildren, sliding: Set(sections.filter { $0.section.map(toggled.contains) == true }))
         }
         syncExpansion()
         syncSelection()
         refreshProjectRows()
+        refreshSectionHeaders()
         updateEmptyState()
 
         let projectIDs = Set(store.projects.map(\.id))
@@ -345,16 +382,69 @@ final class SidebarViewController: NSViewController {
         keptIDs = (projectIDs, allThreadIDs)
     }
 
-    /// The bots the Bots section lists: all of them, or while searching those whose name or conversations match.
+    /// The bots the Bots section lists, in the chosen order: all of them, or while searching those whose name or
+    /// conversations match.
     private func listedBots() -> [Bot] {
-        guard isSearching else { return store.bots }
-        return store.bots.filter { bot in
+        let bots = SidebarOrdering.sortedBots(
+            store.bots, by: UIState.shared.values.botSort,
+            lastActivity: SidebarOrdering.lastBotActivity(of: store.threadSummaries.values))
+        guard isSearching else { return bots }
+        return bots.filter { bot in
             PaletteSearch.scoreTerms(searchQuery, name: bot.displayName, keywords: [], typos: false) != nil
                 || store.conversations(of: bot.id).contains { thread in
                     messageMatches[thread.id] != nil
                         || PaletteSearch.scoreTerms(searchQuery, name: thread.title, keywords: [], typos: false) != nil
                 }
         }
+    }
+
+    /// The section a thread is listed in.
+    private func section(of threadID: UUID) -> SidebarSection? {
+        guard let thread = store.summary(threadID) else { return nil }
+        if thread.botID != nil { return .bots }
+        if thread.isPinned { return .pinned }
+        return store.project(thread.projectID)?.isChats == true ? .chats : .projects
+    }
+
+    /// Expands the collapsed section a thread is listed in. Returns whether it was collapsed; the caller rebuilds.
+    @discardableResult
+    private func revealSection(of threadID: UUID) -> Bool {
+        guard let section = section(of: threadID), collapsedSections.contains(section) else { return false }
+        UIState.shared.update { values in
+            values.collapsedSections = SidebarOrdering.savedCollapsedSections(
+                saved: values.collapsedSections, setting: section, collapsed: false)
+        }
+        return true
+    }
+
+    /// Collapses a section to its header, or expands it again. A search shows every section in full, so it waits.
+    private func toggleSection(_ section: SidebarSection) {
+        guard !isSearching else { return }
+        let collapse = !collapsedSections.contains(section)
+        UIState.shared.update { values in
+            values.collapsedSections = SidebarOrdering.savedCollapsedSections(
+                saved: values.collapsedSections, setting: section, collapsed: collapse)
+        }
+        rebuild()
+    }
+
+    /// Updates the section headers: their disclosure state, and the status a collapsed section hides.
+    private func refreshSectionHeaders() {
+        for node in sections {
+            let row = outlineView.row(forItem: node)
+            if row >= 0, let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarHeaderCell {
+                configureHeader(cell, node)
+            }
+        }
+    }
+
+    private func configureHeader(_ cell: SidebarHeaderCell, _ node: SidebarNode) {
+        guard let section = node.section else { return }
+        let collapsed = collapsedSections.contains(section)
+        cell.configure(
+            isCollapsed: collapsed, canCollapse: !isSearching,
+            hiddenStatus: collapsed ? strongestStatus(of: hiddenThreads[section] ?? []) : nil)
+        cell.onToggle = { [weak self] in self?.toggleSection(section) }
     }
 
     /// Threads a list shows before "Show more": the user's choice, or as many as a little more than fill the sidebar.
@@ -397,10 +487,13 @@ final class SidebarViewController: NSViewController {
         return result
     }
 
-    /// Inserts and removes changed rows with a fade, so new and reordered threads are easy to follow. A thread that
-    /// changes lists (pinned, unpinned or moved to another project) leaves its old list before it joins the new one,
-    /// so the outline never holds it twice.
-    private func apply(_ changed: [SidebarNode], from oldChildren: [ObjectIdentifier: [SidebarNode]]) {
+    /// Inserts and removes changed rows with a fade, so new and reordered threads are easy to follow; the rows of
+    /// `sliding` sections, which were just collapsed or expanded, also slide up or down, as a project's do. A thread
+    /// that changes lists (pinned, unpinned or moved to another project) leaves its old list before it joins the new
+    /// one, so the outline never holds it twice.
+    private func apply(
+        _ changed: [SidebarNode], from oldChildren: [ObjectIdentifier: [SidebarNode]], sliding: Set<SidebarNode> = []
+    ) {
         guard !changed.isEmpty else { return }
         let expanded = changed.filter { outlineView.isItemExpanded($0) }
         var insertions: [(node: SidebarNode, rows: IndexSet)] = []
@@ -414,14 +507,18 @@ final class SidebarViewController: NSViewController {
                 case .insert(let offset, _, _): inserted.insert(offset)
                 }
             }
-            if !removed.isEmpty { outlineView.removeItems(at: removed, inParent: node, withAnimation: .effectFade) }
+            if !removed.isEmpty {
+                outlineView.removeItems(
+                    at: removed, inParent: node, withAnimation: sliding.contains(node) ? [.effectFade, .slideUp] : .effectFade)
+            }
             insertions.append((node, inserted))
         }
         outlineView.endUpdates()
         for node in changed where !outlineView.isItemExpanded(node) { outlineView.reloadItem(node, reloadChildren: true) }
         outlineView.beginUpdates()
         for (node, rows) in insertions where !rows.isEmpty {
-            outlineView.insertItems(at: rows, inParent: node, withAnimation: .effectFade)
+            outlineView.insertItems(
+                at: rows, inParent: node, withAnimation: sliding.contains(node) ? [.effectFade, .slideDown] : .effectFade)
         }
         outlineView.endUpdates()
         // Rows that kept their place may still show stale "Show more" counts.
@@ -581,6 +678,8 @@ final class SidebarViewController: NSViewController {
     }
 
     private func refreshThreadRow(_ id: UUID) {
+        // A collapsed section's header shows what its threads are doing.
+        if !appliedCollapsed.isEmpty { refreshSectionHeaders() }
         if let botID = store.summary(id)?.botID {
             refreshBotRow(botID)
             return
@@ -770,7 +869,10 @@ final class SidebarViewController: NSViewController {
             showAllThreads(true, in: id)
         case .showLess(let id):
             showAllThreads(false, in: id)
-        case .bots, .bot, .pinned, .header, .chats, .thread, .empty:
+        case .bots, .pinned, .header, .chats:
+            // A click on a section's header, outside its buttons, collapses or expands it.
+            if let section = node.section { toggleSection(section) }
+        case .bot, .thread, .empty:
             break
         }
     }
@@ -904,6 +1006,35 @@ final class SidebarViewController: NSViewController {
         rebuild()
     }
 
+    /// The Bots header's options: how bots are sorted.
+    @objc private func showBotOptions(_ sender: NSButton) {
+        let menu = NSMenu()
+        menu.addItem(.sectionHeader(title: String(localized: "Sort Bots By")))
+        for entry in botSortMenu().items {
+            entry.menu?.removeItem(entry)
+            menu.addItem(entry)
+        }
+        ThemedPopup.show(menu: menu, from: sender, preferAbove: false)
+    }
+
+    private func botSortMenu() -> NSMenu {
+        let menu = NSMenu()
+        for sort in BotSort.allCases {
+            let entry = item(sort.title, #selector(setBotSort(_:)))
+            entry.representedObject = sort.rawValue
+            entry.state = UIState.shared.values.botSort == sort ? .on : .off
+            if sort == .manual { entry.subtitle = String(localized: "Drag bots to reorder them") }
+            menu.addItem(entry)
+        }
+        return menu
+    }
+
+    @objc private func setBotSort(_ sender: NSMenuItem) {
+        guard let sort = (sender.representedObject as? String).flatMap(BotSort.init(rawValue:)) else { return }
+        UIState.shared.update { $0.botSort = sort }
+        rebuild()
+    }
+
     /// The Chats header's options: how chats are sorted.
     @objc private func showChatOptions(_ sender: NSButton) {
         let menu = NSMenu()
@@ -1017,11 +1148,13 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     }
 
     func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
-        guard let node = item as? SidebarNode else { return 28 }
+        guard let node = item as? SidebarNode else { return SidebarMetrics.rowHeight }
         switch node.kind {
-        case .bots, .pinned, .header, .chats: return 26
+        // Reordering sections reloads the outline, so the first header's height follows it.
+        case .bots, .pinned, .header, .chats:
+            return node === sections.first ? SidebarMetrics.firstSectionHeaderHeight : SidebarMetrics.sectionHeaderHeight
         case .bot: return 44
-        case .project, .thread: return 28
+        case .project, .thread: return SidebarMetrics.rowHeight
         case .showMore, .showLess, .empty: return 24
         }
     }
@@ -1038,25 +1171,26 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
         guard let node = item as? SidebarNode else { return nil }
         switch node.kind {
         case .bots:
-            return reuse("botsHeader") {
+            return headerCell(node, "botsHeader") {
                 SidebarHeaderCell(
-                    title: String(localized: "Bots"), target: self, add: (#selector(newBot), "plus", String(localized: "New Bot…")))
+                    title: String(localized: "Bots"), target: self, add: (#selector(newBot), "plus", String(localized: "New Bot…")),
+                    optionsAction: #selector(showBotOptions(_:)), optionsLabel: String(localized: "Bots Options"))
             }
         case .bot(let id):
             let cell = reuse("bot") { BotCell(frame: .zero) }
             if let model = botRowModel(id) { cell.configure(model) }
             return cell
         case .pinned:
-            return reuse("pinnedHeader") { SidebarHeaderCell(title: String(localized: "Pinned"), target: self) }
+            return headerCell(node, "pinnedHeader") { SidebarHeaderCell(title: String(localized: "Pinned"), target: self) }
         case .header:
-            return reuse("header") {
+            return headerCell(node, "header") {
                 SidebarHeaderCell(
                     title: String(localized: "Projects"), target: self,
                     add: (#selector(addProject), "folder.badge.plus", String(localized: "Add Project…")),
                     optionsAction: #selector(showOptions(_:)))
             }
         case .chats:
-            return reuse("chatsHeader") {
+            return headerCell(node, "chatsHeader") {
                 SidebarHeaderCell(
                     title: String(localized: "Chats"), target: self,
                     add: (#selector(newChat), "square.and.pencil", String(localized: "New Chat")),
@@ -1098,6 +1232,12 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
             cell.configure(text: text, symbol: nil)
             return cell
         }
+    }
+
+    private func headerCell(_ node: SidebarNode, _ identifier: String, make: () -> SidebarHeaderCell) -> SidebarHeaderCell {
+        let cell = reuse(identifier, make: make)
+        configureHeader(cell, node)
+        return cell
     }
 
     private func reuse<Cell: NSView>(_ identifier: String, make: () -> Cell) -> Cell {
@@ -1144,7 +1284,9 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     private func expansionChanged(_ notification: Notification, expanded: Bool) {
         guard let node = notification.userInfo?["NSObject"] as? SidebarNode, case .project(let id) = node.kind else { return }
         refreshProjectRows(only: id)
-        guard !isSyncingExpansion, !isSearching, store.project(id)?.isExpanded != expanded else { return }
+        // Projects leaving with a collapsed Projects section keep their own state.
+        guard !isSyncingExpansion, !isSearching, header.children.contains(node), store.project(id)?.isExpanded != expanded
+        else { return }
         store.updateProject(id) { $0.isExpanded = expanded }
     }
 
@@ -1163,6 +1305,12 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
             pasteboardItem.setString(id.uuidString, forType: .coincideThread)
             return pasteboardItem
         }
+        if let id = node.botID {
+            guard !isSearching else { return nil }
+            let pasteboardItem = NSPasteboardItem()
+            pasteboardItem.setString(id.uuidString, forType: .coincideBot)
+            return pasteboardItem
+        }
         guard case .project(let id) = node.kind, !isSearching, let project = store.project(id), !project.isChats
         else { return nil }
         let pasteboardItem = NSPasteboardItem()
@@ -1178,6 +1326,14 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
         if pasteboard.availableType(from: [.coincideSection]) != nil, (info.draggingSource as AnyObject?) === outlineView {
             guard !isSearching else { return [] }
             outlineView.setDropItem(nil, dropChildIndex: sectionDropIndex(item: item as? SidebarNode, childIndex: index))
+            return .move
+        }
+        if pasteboard.availableType(from: [.coincideBot]) != nil, (info.draggingSource as AnyObject?) === outlineView {
+            // Sorted by name or activity, bots have no order of the user's to change.
+            guard !isSearching, UIState.shared.values.botSort == .manual,
+                let index = botDropIndex(item: item as? SidebarNode, childIndex: index)
+            else { return [] }
+            outlineView.setDropItem(botsSection, dropChildIndex: index)
             return .move
         }
         if pasteboard.availableType(from: [.coincideProject]) != nil, (info.draggingSource as AnyObject?) === outlineView {
@@ -1211,6 +1367,14 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
         while let node = owner, !sections.contains(node) { owner = outlineView.parent(forItem: node) as? SidebarNode }
         guard let owner, let position = sections.firstIndex(of: owner) else { return sections.count }
         return owner === item && childIndex == NSOutlineViewDropOnItemIndex ? position : position + 1
+    }
+
+    /// Turns a proposed drop point in Bots into a gap between bots: before the bot dropped on. Nil outside Bots.
+    private func botDropIndex(item: SidebarNode?, childIndex: Int) -> Int? {
+        if item === botsSection {
+            return childIndex == NSOutlineViewDropOnItemIndex ? botsSection.children.count : childIndex
+        }
+        return item.flatMap { botsSection.children.firstIndex(of: $0) }
     }
 
     /// Turns any proposed drop point into a gap between projects.
@@ -1276,6 +1440,15 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
             return true
         }
         let pasteboard = info.draggingPasteboard
+        if let value = pasteboard.string(forType: .coincideBot), (info.draggingSource as AnyObject?) === outlineView {
+            guard let id = UUID(uuidString: value), let source = store.bots.firstIndex(where: { $0.id == id }) else { return false }
+            // Rows follow the store's order while bots are sorted by hand; the bot it was dropped before places it.
+            let order = store.bots.map(\.id)
+            let target = botsSection.children.indices.contains(index) ? botsSection.children[index].botID : nil
+            let reordered = SidebarOrdering.reordered(order, moving: [id], to: target.flatMap(order.firstIndex(of:)) ?? order.count)
+            if let destination = reordered.firstIndex(of: id), destination != source { store.moveBot(from: source, to: destination) }
+            return true
+        }
         if let value = pasteboard.string(forType: .coincideProject), (info.draggingSource as AnyObject?) === outlineView {
             guard let id = UUID(uuidString: value), let source = store.projects.firstIndex(where: { $0.id == id }) else {
                 return false
@@ -1313,6 +1486,10 @@ extension SidebarViewController: NSMenuDelegate {
             buildBotMenu(menu, id)
         case .bots:
             menu.addItem(item(String(localized: "New Bot…"), #selector(newBot)))
+            menu.addItem(.separator())
+            let sort = NSMenuItem(title: String(localized: "Sort Bots By"), action: nil, keyEquivalent: "")
+            sort.submenu = botSortMenu()
+            menu.addItem(sort)
         case .pinned, .header, nil:
             menu.addItem(item(String(localized: "Add Project…"), #selector(addProject)))
             menu.addItem(.separator())

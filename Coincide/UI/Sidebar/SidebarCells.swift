@@ -177,18 +177,35 @@ final class StatusDot: NSView {
 
 // MARK: - Header
 
-/// A section heading with an add button and optional sidebar options.
-final class SidebarHeaderCell: NSTableCellView {
+/// A section heading with an add button and optional sidebar options. Clicking the heading collapses or expands its
+/// section (the sidebar handles the click): a chevron after the title shows which on hover, and a collapsed section
+/// shows a dot for the most pressing status among the threads it hides.
+final class SidebarHeaderCell: HoverCellView {
+    /// Collapses or expands the section, for VoiceOver.
+    var onToggle: (() -> Void)?
+
+    private let sectionTitle: String
+    private let chevron = NSImageView()
+    private let statusDot = StatusDot()
+    private var isCollapsed = false
+    private var canCollapse = true
+
     /// `add` is the section's add button: its action, symbol and label. `optionsLabel` names the options button.
     init(
         title: String, target: AnyObject, add: (action: Selector, symbol: String, label: String)? = nil,
         optionsAction: Selector? = nil, optionsLabel: String = String(localized: "Sidebar Options")
     ) {
+        sectionTitle = title
         super.init(frame: .zero)
         let title = NSTextField(labelWithString: title)
-        title.font = .systemFont(ofSize: 11, weight: .semibold)
+        title.font = .systemFont(ofSize: 12, weight: .semibold)
         title.textColor = .secondaryLabelColor
-        var views: [NSView] = [title, NSView()]
+        title.setAccessibilityElement(false)
+        chevron.contentTintColor = .tertiaryLabelColor
+        chevron.alphaValue = 0
+        chevron.setAccessibilityElement(false)
+        statusDot.isHidden = true
+        var views: [NSView] = [title, chevron, NSView(), statusDot]
         if let optionsAction {
             views.append(sidebarAccessoryButton(symbol: "ellipsis.circle", label: optionsLabel, target: target, action: optionsAction))
         }
@@ -197,18 +214,72 @@ final class SidebarHeaderCell: NSTableCellView {
         }
         let stack = NSStackView(views: views)
         stack.spacing = 10
+        stack.setCustomSpacing(4, after: title)
         stack.translatesAutoresizingMaskIntoConstraints = false
         textField = title
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            // A fixed distance from the bottom, with buttons or without, so the room a taller header adds goes above the
+            // title, between sections.
+            stack.centerYAnchor.constraint(equalTo: bottomAnchor, constant: -15),
+            statusDot.widthAnchor.constraint(equalToConstant: 7),
+            statusDot.heightAnchor.constraint(equalToConstant: 7),
         ])
+        configure(isCollapsed: false, canCollapse: true, hiddenStatus: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    /// `canCollapse` is false while a search lists every match, collapsed or not. `hiddenStatus` is the most urgent
+    /// status among the threads a collapsed section hides.
+    func configure(isCollapsed: Bool, canCollapse: Bool, hiddenStatus: ThreadRowModel.Status?) {
+        self.isCollapsed = isCollapsed
+        self.canCollapse = canCollapse
+        chevron.image = Theme.symbol(isCollapsed ? "chevron.right" : "chevron.down", size: 9, weight: .semibold)
+        updateChevron(animated: false)
+        let status = isCollapsed ? hiddenStatus : nil
+        if let status, let color = status.color {
+            statusDot.color = color
+            statusDot.toolTip = status.label
+            statusDot.isHidden = false
+        } else {
+            statusDot.isHidden = true
+        }
+        setAccessibilityLabel([sectionTitle, status?.label].compactMap(\.self).joined(separator: ", "))
+        guard canCollapse else {
+            setAccessibilityCustomActions([])
+            return
+        }
+        let name = isCollapsed ? String(localized: "Expand \(sectionTitle)") : String(localized: "Collapse \(sectionTitle)")
+        setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: name) { [weak self] in
+                self?.onToggle?()
+                return true
+            }
+        ])
+    }
+
+    /// The custom action's name, for tests.
+    var toggleActionName: String? { accessibilityCustomActions()?.first?.name }
+
+    override func hoverChanged() {
+        updateChevron(animated: true)
+    }
+
+    private func updateChevron(animated: Bool) {
+        let alpha: CGFloat = isHovered && canCollapse ? 1 : 0
+        guard animated else {
+            chevron.alphaValue = alpha
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            chevron.animator().alphaValue = alpha
+        }
+    }
 }
 
 // MARK: - Project
