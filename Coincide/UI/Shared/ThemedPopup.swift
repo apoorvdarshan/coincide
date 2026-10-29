@@ -4,11 +4,49 @@ import CoincideKit
 // MARK: - Panel
 
 /// A popup in the app's theme: a borderless child panel on a flat surface, in place of the system's menus. It opens
-/// next to a control, takes the keyboard while it is up, and closes when it loses focus or Escape is pressed. One opened
+/// next to a control, takes the keyboard while it is up, and closes when it loses focus or Escape is pressed. A second
+/// click on the control it opened from closes it, as a pop-up button's does, instead of opening it again. One opened
 /// from inside another, such as a context menu over the model picker's list, rides above it and hands the keyboard
 /// back when it closes.
 final class ThemedPopup: NSObject {
     private static var current: ThemedPopup?
+
+    /// What popups ask of the system, replaceable in tests so nothing appears on screen.
+    struct Environment {
+        /// Puts the panel on screen over its parent and gives it the keyboard.
+        var present: (ThemedPopupPanel, NSWindow) -> Void
+        var dismiss: (ThemedPopupPanel, NSWindow?) -> Void
+        /// Starts watching clicks for `clickedBeforeDispatch`; returns what stops it.
+        var watchClicks: (ThemedPopup) -> () -> Void
+        /// Keeps the mouse-up of a click the popup took from reaching the window under it.
+        var swallowNextMouseUp: () -> Void
+        var screens: () -> [StatusItemPanel.Screen]
+
+        static let live = Environment(
+            present: { panel, parent in
+                parent.addChildWindow(panel, ordered: .above)
+                panel.makeKeyAndOrderFront(nil)
+            },
+            dismiss: { panel, parent in
+                parent?.removeChildWindow(panel)
+                panel.orderOut(nil)
+            },
+            watchClicks: { popup in
+                // Local monitors see a click before its window does, so before the click makes that window key and
+                // the popup closes for losing the keyboard.
+                let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak popup] event in
+                    let (windowNumber, location) = (event.windowNumber, event.locationInWindow)
+                    let taken = MainActor.assumeIsolated { popup?.takesClick(windowNumber: windowNumber, at: location) == true }
+                    return taken ? nil : event
+                }
+                return { monitor.map(NSEvent.removeMonitor) }
+            },
+            swallowNextMouseUp: { ThemedPopup.swallowNextMouseUp() },
+            screens: { NSScreen.screens.map { StatusItemPanel.Screen($0) } }
+        )
+    }
+
+    static var environment = Environment.live
 
     private let panel: ThemedPopupPanel
     private let content: NSViewController & ThemedPopupContent
@@ -19,6 +57,10 @@ final class ThemedPopup: NSObject {
     private var child: ThemedPopup?
     /// The popup this one was opened from.
     private weak var host: ThemedPopup?
+    /// The control it opened from, and the part of it (in its coordinates) it opened beside.
+    private weak var anchor: NSView?
+    private var anchorRect = NSRect.zero
+    private var stopWatching: (() -> Void)?
 
     private init(content: NSViewController & ThemedPopupContent, over parent: NSWindow) {
         self.content = content
@@ -34,8 +76,9 @@ final class ThemedPopup: NSObject {
         onClose: (() -> Void)? = nil
     ) -> ThemedPopup? {
         guard let window = anchor.window else { return nil }
-        let frame = window.convertToScreen(anchor.convert(rect ?? anchor.bounds, to: nil))
-        return show(content, anchorRect: frame, in: window, preferAbove: preferAbove, onClose: onClose)
+        let rect = rect ?? anchor.bounds
+        let frame = window.convertToScreen(anchor.convert(rect, to: nil))
+        return show(content, anchorRect: frame, in: window, preferAbove: preferAbove, onClose: onClose, anchor: (anchor, rect))
     }
 
     /// Opens `content` at a point on screen, as a context menu opens under the pointer.
@@ -43,16 +86,18 @@ final class ThemedPopup: NSObject {
     static func show(
         _ content: NSViewController & ThemedPopupContent, at point: NSPoint, in window: NSWindow, onClose: (() -> Void)? = nil
     ) -> ThemedPopup? {
-        show(content, anchorRect: NSRect(origin: point, size: .zero), in: window, preferAbove: false, onClose: onClose)
+        show(content, anchorRect: NSRect(origin: point, size: .zero), in: window, preferAbove: false, onClose: onClose, anchor: nil)
     }
 
     private static func show(
         _ content: NSViewController & ThemedPopupContent, anchorRect: NSRect, in window: NSWindow, preferAbove: Bool,
-        onClose: (() -> Void)?
+        onClose: (() -> Void)?, anchor: (view: NSView, rect: NSRect)?
     ) -> ThemedPopup? {
         let popup = ThemedPopup(content: content, over: window)
         popup.parent = window
         popup.onClose = onClose
+        popup.anchor = anchor?.view
+        popup.anchorRect = anchor?.rect ?? .zero
         var host = current
         while let candidate = host, candidate.panel !== window { host = candidate.child }
         if let host {
@@ -63,8 +108,17 @@ final class ThemedPopup: NSObject {
             current?.close()
             current = popup
         }
-        popup.open(anchorRect: anchorRect, screen: window.screen?.visibleFrame, preferAbove: preferAbove)
+        let screen = Self.screen(for: anchorRect, screens: environment.screens()) ?? window.screen.map { StatusItemPanel.Screen($0) }
+        popup.open(anchorRect: anchorRect, screen: screen?.visibleFrame, preferAbove: preferAbove)
         return popup
+    }
+
+    /// The display showing the middle of `anchorRect`, which can differ from the one holding most of a window that
+    /// spans two.
+    static func screen(for anchorRect: NSRect, screens: [StatusItemPanel.Screen]) -> StatusItemPanel.Screen? {
+        let middle = NSPoint(x: anchorRect.midX, y: anchorRect.midY)
+        // A point on a display's top or right edge is outside its frame, so the edges count too.
+        return screens.first { $0.frame.contains(middle) } ?? screens.first { $0.frame.insetBy(dx: -1, dy: -1).contains(middle) }
     }
 
     private func open(anchorRect: NSRect, screen: NSRect?, preferAbove: Bool) {
@@ -81,11 +135,11 @@ final class ThemedPopup: NSObject {
         let frame = Self.frame(size: size, anchor: anchorRect, screen: screen, preferAbove: preferAbove)
         opensAbove = frame.minY >= anchorRect.maxY
         panel.setFrame(frame, display: false)
-        parent?.addChildWindow(panel, ordered: .above)
         // A quick fade, as menus open, unless the user asked for less motion.
         let fades = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if fades { panel.alphaValue = 0 }
-        panel.makeKeyAndOrderFront(nil)
+        if let parent { Self.environment.present(panel, parent) }
+        if anchor != nil { stopWatching = Self.environment.watchClicks(self) }
         content.popupDidOpen()
         if fades {
             NSAnimationContext.runAnimationGroup { context in
@@ -134,12 +188,53 @@ final class ThemedPopup: NSObject {
         child?.close(refocus: false)
         if Self.current === self { Self.current = nil }
         if host?.child === self { host?.child = nil }
-        parent?.removeChildWindow(panel)
-        panel.orderOut(nil)
+        stopWatching?()
+        stopWatching = nil
+        Self.environment.dismiss(panel, parent)
         if refocus, NSApp.isActive || (hadKeyboard && parent?.styleMask.contains(.nonactivatingPanel) == true) {
             parent?.makeKey()
         }
         onClose?()
+    }
+
+    /// A click on the control the popup opened from closes it and goes no further, as a click on an open pop-up
+    /// button closes its menu. Left to reach the window, the click would close the popup by taking the keyboard and
+    /// then press the control, which opened it again. Returns the event to dispatch, or nil for one taken.
+    func clickedBeforeDispatch(_ event: NSEvent) -> NSEvent? {
+        guard event.type == .leftMouseDown, takesClick(windowNumber: event.windowNumber, at: event.locationInWindow) else { return event }
+        return nil
+    }
+
+    /// Closes the popup for a left mouse-down at `location` in a window, when it lands on the anchor, and says whether
+    /// it did, so the click goes no further.
+    func takesClick(windowNumber: Int, at location: NSPoint) -> Bool {
+        guard !isClosing, isOnAnchor(windowNumber: windowNumber, location: location) else { return false }
+        close()
+        Self.environment.swallowNextMouseUp()
+        return true
+    }
+
+    /// Whether a click lands on the anchor, on the part of it the popup opened beside, with nothing over it.
+    private func isOnAnchor(windowNumber: Int, location: NSPoint) -> Bool {
+        guard let anchor, let window = anchor.window, windowNumber == window.windowNumber, !anchor.isHiddenOrHasHiddenAncestor,
+            let frameView = window.contentView?.superview
+        else { return false }
+        guard anchorRect.intersection(anchor.bounds).contains(anchor.convert(location, from: nil)) else { return false }
+        guard let hit = frameView.hitTest(frameView.convert(location, from: nil)) else { return false }
+        return hit === anchor || hit.isDescendant(of: anchor)
+    }
+
+    private static var mouseUpMonitor: Any?
+
+    private static func swallowNextMouseUp() {
+        if let mouseUpMonitor { NSEvent.removeMonitor(mouseUpMonitor) }
+        mouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { _ in
+            MainActor.assumeIsolated {
+                if let monitor = ThemedPopup.mouseUpMonitor { NSEvent.removeMonitor(monitor) }
+                ThemedPopup.mouseUpMonitor = nil
+            }
+            return nil
+        }
     }
 
     /// Losing the keyboard closes the popup, unless it went to one opened from inside it. A popup opened from another
@@ -196,6 +291,11 @@ final class ThemedPopupPanel: NSPanel {
 
     override func cancelOperation(_ sender: Any?) {
         onCancel?()
+    }
+
+    /// Escape reaches the window itself when nothing in it has the keyboard, as in a popup of details.
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { onCancel?() } else { super.keyDown(with: event) }
     }
 
     override func resignKey() {
@@ -713,9 +813,10 @@ final class ThemedPopUpButton: NSPopUpButton {
 
     private func showThemedMenu() {
         guard isEnabled, let menu else { return }
-        highlight(true)
         let content = ThemedMenuViewController(menu: menu, minimumWidth: max(200, bounds.width), dropsFirstItem: pullsDown)
-        ThemedPopup.show(content, from: self, preferAbove: false) { [weak self] in self?.highlight(false) }
+        // Highlighted while open, which is only once it opened: a popup it replaces clears the highlight as it closes.
+        let popup = ThemedPopup.show(content, from: self, preferAbove: false) { [weak self] in self?.highlight(false) }
+        highlight(popup != nil)
     }
 }
 
