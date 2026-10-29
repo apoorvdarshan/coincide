@@ -104,8 +104,20 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
     func update(_ newRows: [TranscriptRow], reload: Bool = false, keeping anchor: TranscriptRowID? = nil) {
         if reload || rows.isEmpty || newRows.isEmpty {
             let place = scrollState()
+            let around = visibleRange(margin: 1)
+            var anchorID: TranscriptRowID?
+            if case .anchor(let id, _) = place { anchorID = id }
+            let oldIndex = anchorID.flatMap { index(of: $0) }
             rows = newRows
-            exactRange = Self.tail(of: newRows.count)
+            // Scrolled up to a row that stays, the rows around the reader (wherever the new rows put them) are measured
+            // exactly from the start, so they don't change height under them once measured.
+            if let anchorID, let oldIndex, let newIndex = index(of: anchorID) {
+                let shift = newIndex - oldIndex
+                let lower = max(0, min(around.lowerBound + shift, newRows.count))
+                exactRange = lower..<max(lower, min(around.upperBound + shift, newRows.count))
+            } else {
+                exactRange = Self.tail(of: newRows.count)
+            }
             tableView.reloadData()
             tableView.tile()
             keep(place)

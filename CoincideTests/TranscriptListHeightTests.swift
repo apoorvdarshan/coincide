@@ -39,7 +39,7 @@ final class StubTranscriptHost: TranscriptHost {
 /// what it draws, so no row draws over another.
 ///
 /// The list finishes its work (measuring rows on screen, following a width change) on the main queue after
-/// each change, so the tests wait for the main queue rather than spinning the run loop, which would not run it.
+/// each change, so the tests wait with `Task.sleep` rather than spinning the run loop, which would not run it.
 @MainActor @Suite(.serialized) struct TranscriptListHeightTests {
     private let host = StubTranscriptHost()
     private let list = TranscriptListController()
@@ -49,20 +49,15 @@ final class StubTranscriptHost: TranscriptHost {
     init() {
         list.host = host
         window.contentView = list.scrollView
-        // Laid out and drawn without ever being ordered in, so nothing shows on screen.
+        // The list follows AppKit's layout and display passes, which only a window in the window list gets. It goes
+        // in behind everything, transparent and far offscreen, so nothing ever shows on a display.
         window.alphaValue = 0
+        window.orderBack(nil)
     }
 
     private func settle() async {
         try? await Task.sleep(for: .milliseconds(30))
-        // The list's queued work (measuring, following a width change) queues more as it goes; let it all run, however
-        // busy the main queue is with other suites. A window that is never ordered in gets no layout or display passes
-        // of its own, so lay it out and draw it after each round.
-        for _ in 0..<8 {
-            await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
-            window.contentView?.layoutSubtreeIfNeeded()
-            window.displayIfNeeded()
-        }
+        window.layoutIfNeeded()
     }
 
     private func reply(_ words: Int, seed: Int = 0) -> TranscriptRow {
@@ -328,7 +323,7 @@ final class StubTranscriptHost: TranscriptHost {
 
     /// Draws a transcript with every kind of message of the user's, on either side, in light and dark, narrow and
     /// wide, when `COINCIDE_TRANSCRIPT_PNG_DIR` names a folder (`TEST_RUNNER_COINCIDE_TRANSCRIPT_PNG_DIR` on the
-    /// command line). The window is never ordered in.
+    /// command line). The suite's window stays transparent and far offscreen.
     @Test func rendersUserMessagesForReview() async throws {
         guard let folder = ProcessInfo.processInfo.environment["COINCIDE_TRANSCRIPT_PNG_DIR"], !folder.isEmpty else { return }
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
@@ -384,10 +379,7 @@ final class StubTranscriptHost: TranscriptHost {
         list.scrollView.autoresizingMask = [.width, .height]
         background.addSubview(list.scrollView)
         window.contentView = background
-        defer {
-            window.contentView = list.scrollView
-            #expect(!window.isVisible, "the render put the window on screen")
-        }
+        defer { window.contentView = list.scrollView }
         let saved = AppStore.shared.settings.userMessageSide
         defer { AppStore.shared.updateSettings { $0.userMessageSide = saved } }
         for side in UserMessageSide.allCases {
