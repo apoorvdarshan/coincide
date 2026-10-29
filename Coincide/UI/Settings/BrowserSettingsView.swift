@@ -102,6 +102,8 @@ struct BrowserSettingsView: View {
                 Text("Agents")
             }
 
+            PasswordsSettingsSection()
+
             Section {
                 LabeledContent {
                     Button("Import…") { importing = true }

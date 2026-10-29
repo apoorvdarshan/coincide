@@ -11,11 +11,18 @@ public enum PreviewCommand: Sendable, Equatable {
     case show
     /// Shows the user a short "your turn" message with a Done button and waits for them, up to `timeout` seconds.
     case askUser(message: String, timeout: TimeInterval)
+    /// Has Coincide sign in on the current page with a saved login (optionally named by `item`), after the user allows
+    /// it. Coincide types the secrets itself; the reply carries the username at most.
+    case fillLogin(item: String?)
 
     /// How long the app lets the command run before answering with an error.
     public var timeout: TimeInterval {
-        if case .askUser(_, let timeout) = self { return timeout + 5 }
-        return 30
+        switch self {
+        case .askUser(_, let timeout): return timeout + 5
+        // The user's approval, then the password manager (which may ask for Touch ID).
+        case .fillLogin: return LoginApprovalGate.timeout + 90
+        default: return 30
+        }
     }
 
     public init(json: JSONValue) throws {
@@ -32,6 +39,10 @@ public enum PreviewCommand: Sendable, Equatable {
             self = .input(selector: try Self.selector(json), text: text)
         case "screenshot": self = .screenshot
         case "show": self = .show
+        case "fill-login":
+            let item = json["item"]?.string
+            guard (item?.utf8.count ?? 0) <= 200 else { throw PreviewError.invalidCommand }
+            self = .fillLogin(item: item)
         case "ask-user":
             guard let message = json["message"]?.string, message.utf8.count <= 4096 else { throw PreviewError.invalidCommand }
             let timeout = json["timeout"]?.number ?? UserTurnGate.defaultTimeout

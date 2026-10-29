@@ -14,6 +14,10 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     private let spinner = NSProgressIndicator()
     private let empty = NSTextField(wrappingLabelWithString: String(localized: "Open a page to preview it beside your conversation."))
     let userTurnBanner = PreviewUserTurnBanner()
+    let approvalBanner = PreviewLoginApprovalBanner()
+    let saveBanner = PreviewSaveLoginBanner()
+    /// The banners between the status line and the page; hidden ones take no room.
+    private let banners = NSStackView()
     private lazy var back = PanelIconButton(symbol: "chevron.left", label: String(localized: "Back"), target: self, action: #selector(goBack))
     private lazy var forward = PanelIconButton(symbol: "chevron.right", label: String(localized: "Forward"), target: self, action: #selector(goForward))
     private lazy var reload = PanelIconButton(symbol: "arrow.clockwise", label: String(localized: "Reload Preview"), target: self, action: #selector(reloadPage))
@@ -31,7 +35,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         address.delegate = self
         address.setAccessibilityLabel(String(localized: "Preview Address"))
         address.setContentCompressionResistancePriority(.init(200), for: .horizontal)
-        let toolbar = NSStackView(views: [back, forward, address, bookmark, libraryButton, reload, spinner])
+        let toolbar = NSStackView(views: [back, forward, address, keyButton, bookmark, libraryButton, reload, spinner])
         toolbar.spacing = 4
         spinner.style = .spinning
         spinner.controlSize = .small
@@ -47,11 +51,25 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         userTurnBanner.isHidden = true
         userTurnBanner.onDone = { [weak self] in self?.session?.userTurn.finish(.done) }
         userTurnBanner.onDecline = { [weak self] in self?.session?.userTurn.finish(.declined) }
+        approvalBanner.onAnswer = { [weak self] in self?.session?.loginApproval.answer($0) }
+        saveBanner.onAnswer = { [weak self] save, never in
+            guard let self, let session = self.session else { return }
+            session.answerSavePrompt(save: save, never: never, provider: self.sessions.profile.logins, settings: self.sessions.profile.settings)
+        }
+        for banner in [approvalBanner, saveBanner] as [NSView] { banner.isHidden = true }
+        banners.orientation = .vertical
+        banners.alignment = .leading
+        banners.spacing = 6
+        banners.detachesHiddenViews = true
+        for banner in [approvalBanner, userTurnBanner, saveBanner] as [NSView] {
+            banners.addArrangedSubview(banner)
+            banner.widthAnchor.constraint(equalTo: banners.widthAnchor).isActive = true
+        }
         let footer = NSStackView(views: [control, agentStatus])
         footer.alignment = .centerY
         footer.spacing = 8
         control.toolTip = String(localized: "Lets this thread's agent read and control its browser through a private local connection. Agents can't read cookies, site storage or passwords.")
-        for child in [toolbar, status, userTurnBanner, content, footer] {
+        for child in [toolbar, status, banners, content, footer] {
             child.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(child)
         }
@@ -62,9 +80,9 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
             status.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 6),
             status.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor),
             status.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor),
-            userTurnBanner.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 6),
-            userTurnBanner.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
-            userTurnBanner.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
+            banners.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 6),
+            banners.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
+            banners.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
             content.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             content.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -8),
@@ -73,7 +91,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
             footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
         ])
         contentBelowStatus = content.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 6)
-        contentBelowBanner = content.topAnchor.constraint(equalTo: userTurnBanner.bottomAnchor, constant: 8)
+        contentBelowBanner = content.topAnchor.constraint(equalTo: banners.bottomAnchor, constant: 8)
         contentBelowStatus.isActive = true
         view = root
         let center = NotificationCenter.default
@@ -152,8 +170,17 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         let request = session?.userTurn.request
         if let request { userTurnBanner.show(request.message) }
         userTurnBanner.isHidden = request == nil
-        contentBelowBanner.isActive = request != nil
-        contentBelowStatus.isActive = request == nil
+        let approval = session?.loginApproval.request
+        if let approval { approvalBanner.show(approval) }
+        approvalBanner.isHidden = approval == nil
+        let save = session?.savePrompt
+        if let save { saveBanner.show(save) }
+        saveBanner.isHidden = save == nil
+        let showsBanner = request != nil || approval != nil || save != nil
+        contentBelowStatus.isActive = false
+        contentBelowBanner.isActive = showsBanner
+        contentBelowStatus.isActive = !showsBanner
+        keyButton.isEnabled = session?.webView.url != nil
         updateBookmark()
     }
 
@@ -200,6 +227,63 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     @objc private func goBack() { session?.webView.goBack() }
     @objc private func goForward() { session?.webView.goForward() }
     @objc private func reloadPage() { session?.webView.reload() }
+
+    // MARK: Passwords
+
+    private lazy var keyButton = PanelIconButton(symbol: "key", label: String(localized: "Fill Saved Login"), target: self, action: #selector(showLogins))
+
+    /// The logins saved for this page in the password managers that are on; choosing one fills it. The user's own
+    /// choice, so no approval is asked.
+    @objc private func showLogins() {
+        guard let session, let page = session.webView.url, let host = page.host else { return }
+        let vault = sessions.vault
+        Task { [weak self] in
+            let found = await vault.candidates(for: page)
+            guard let self, self.session === session else { return }
+            let menu = NSMenu()
+            if vault.enabledKinds.isEmpty {
+                menu.addItem(NSMenuItem(title: String(localized: "No password manager is on"), action: nil, keyEquivalent: ""))
+            } else if found.items.isEmpty {
+                menu.addItem(NSMenuItem(title: String(localized: "No saved logins for \(WebDomain.siteOrHost(host))"), action: nil, keyEquivalent: ""))
+            }
+            for item in found.items.prefix(20) {
+                let name = item.username.isEmpty ? item.title : "\(item.title) — \(item.username)"
+                menu.addItem(self.action(name, image: PasswordManagerLogo.image(for: item.source, size: 14)) { [weak self] in
+                    self?.fill(item, codeOnly: false)
+                })
+                if item.hasTOTP != false {
+                    menu.addItem(self.action(String(localized: "One-Time Code for \(item.title)"), image: nil) { [weak self] in
+                        self?.fill(item, codeOnly: true)
+                    })
+                }
+            }
+            for (kind, message) in found.failures.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+                menu.addItem(NSMenuItem(title: "\(kind.displayName): \(message)", action: nil, keyEquivalent: ""))
+            }
+            menu.addItem(.separator())
+            menu.addItem(self.action(String(localized: "Password Settings…"), image: nil) { AppEvents.showSettings(section: .browser) })
+            _ = ThemedPopup.show(menu: menu, from: self.keyButton, preferAbove: false)
+        }
+    }
+
+    private func action(_ title: String, image: NSImage?, _ run: @escaping () -> Void) -> NSMenuItem {
+        let item = NSMenuItem(title: String(title.prefix(90)), action: #selector(PickerChoice.choose(_:)), keyEquivalent: "")
+        let choice = PickerChoice(run)
+        item.target = choice
+        item.representedObject = choice
+        item.image = image
+        return item
+    }
+
+    private func fill(_ item: LoginItem, codeOnly: Bool) {
+        guard let session else { return }
+        Task { [weak self] in
+            do { try await self?.sessions.autofill(item, in: session, codeOnly: codeOnly) } catch {
+                self?.status.stringValue = error.localizedDescription
+                self?.status.textColor = Theme.failure
+            }
+        }
+    }
 
     // MARK: Bookmarks
 

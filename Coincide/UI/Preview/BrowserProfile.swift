@@ -12,13 +12,29 @@ final class BrowserProfile {
 
     let settings: BrowserSettingsStore
     let library: BrowserLibrary
+    let directory: URL
+    /// Where Coincide keeps the Bitwarden session: the login Keychain, or memory while hosting tests so they never
+    /// touch the Keychain.
+    let secrets: SecretStore
+    /// Coincide's own saved logins: their list beside the store's data, their passwords in the Keychain (memory in tests).
+    let logins: CoincideLoginProvider
     private let isPersistent: Bool
     private var sharedStore: WKWebsiteDataStore?
 
     init(directory: URL, isPersistent: Bool = true) {
         settings = BrowserSettingsStore(directory: directory)
         library = BrowserLibrary(directory: directory)
+        self.directory = directory
         self.isPersistent = isPersistent
+        let testing = AppDelegate.isHostingTests
+        secrets = testing ? MemorySecretStore() : KeychainSecretStore()
+        logins = CoincideLoginProvider(directory: directory,
+            secrets: testing ? MemorySecretStore() : KeychainSecretStore(service: "com.apoorvdarshan.coincide.browser-logins"))
+    }
+
+    /// The password managers Coincide can fill from, each used only while the user has it turned on.
+    func passwordProviders() -> [PasswordProvider] {
+        [logins, OnePasswordProvider(), BitwardenProvider(sessions: secrets)]
     }
 
     var usesPrivateSessions: Bool { settings.settings.usesPrivateSessions }
