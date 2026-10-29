@@ -178,8 +178,13 @@ nonisolated final class ChatLayoutManager: NSLayoutManager {
 /// Read-only, selectable rich text for the transcript. Uses TextKit 1 so that text blocks
 /// (code panels, quotes, tables) lay out exactly as `ChatTextMeasurer` measured them.
 final class ChatTextView: NSTextView, ComposerSelectionSource {
-    /// Called for link clicks; return true when handled.
+    /// Called for link clicks; return true when handled. Web links arrive as a `WebLinkRequest` saying where to open
+    /// them (`LinkRouting`); any other link arrives as it is in the text.
     var onOpenLink: ((Any) -> Bool)?
+    /// Whether a plain click opens web links in the default browser rather than Coincide's; the setting by default.
+    var opensLinksInDefaultBrowser: () -> Bool = { LinkRouting.opensInDefaultBrowser }
+    /// Where Copy Link writes.
+    var linkPasteboard: NSPasteboard = .general
     /// Set on text the user can reply to (agents' replies and plans, the user's messages): "Reply" attaches the
     /// selected text to the message as a quote.
     var onQuote: ((String) -> Void)?
@@ -335,7 +340,64 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
     /// Links go only to `onOpenLink`. NSTextView's own handling would give any URL to the system, which
     /// launches apps and runs scripts that agent-written links can point at.
     override func clicked(onLink link: Any, at charIndex: Int) {
-        _ = onOpenLink?(link)
+        let commandKey = NSApp.currentEvent?.modifierFlags.contains(.command) == true
+        openLink(link, commandKey: commandKey)
+    }
+
+    /// Opens a clicked link: a web link where the click asks (`LinkRouting`), anything else as before.
+    func openLink(_ link: Any, commandKey: Bool) {
+        let request = LinkRouting.request(for: link, commandKey: commandKey, opensInDefaultBrowser: opensLinksInDefaultBrowser())
+        _ = onOpenLink?(request ?? link)
+    }
+
+    /// The link at a point in the view's coordinates, when the point is over its text.
+    func link(at point: NSPoint) -> Any? {
+        guard let layoutManager, let container = textContainer, let storage = textStorage, storage.length > 0 else { return nil }
+        let location = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        var fraction: CGFloat = 0
+        let glyph = layoutManager.glyphIndex(for: location, in: container, fractionOfDistanceThroughGlyph: &fraction)
+        guard glyph < layoutManager.numberOfGlyphs,
+            layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(location)
+        else { return nil }
+        let index = layoutManager.characterIndexForGlyph(at: glyph)
+        guard index < storage.length else { return nil }
+        return storage.attribute(.link, at: index, effectiveRange: nil)
+    }
+
+    /// The menu for a web link: open it in Coincide or the default browser, or copy it.
+    func linkMenu(for url: URL) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for (destination, action) in [
+            (LinkDestination.coincideBrowser, #selector(openLinkInCoincide(_:))), (.defaultBrowser, #selector(openLinkInDefaultBrowser(_:))),
+        ] {
+            let item = NSMenuItem(title: LinkRouting.menuTitle(destination), action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = url
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let copy = NSMenuItem(title: String(localized: "Copy Link"), action: #selector(copyLink(_:)), keyEquivalent: "")
+        copy.target = self
+        copy.representedObject = url
+        menu.addItem(copy)
+        return menu
+    }
+
+    @objc private func openLinkInCoincide(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        _ = onOpenLink?(WebLinkRequest(url: url, destination: .coincideBrowser))
+    }
+
+    @objc private func openLinkInDefaultBrowser(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        _ = onOpenLink?(WebLinkRequest(url: url, destination: .defaultBrowser))
+    }
+
+    @objc private func copyLink(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        linkPasteboard.clearContents()
+        linkPasteboard.setString(url.absoluteString, forType: .string)
     }
 
     /// The transcript scrolls; the text itself never does.
@@ -375,6 +437,9 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
         // One click opens one menu, however many ways AppKit asks for it.
         guard event.timestamp != lastMenuEventTime else { return nil }
         lastMenuEventTime = event.timestamp
+        if onOpenLink != nil, let link = link(at: convert(event.locationInWindow, from: nil)), let url = LinkRouting.webURL(link) {
+            return ThemedContextMenu.show(linkMenu(for: url), for: event, in: window)
+        }
         guard let menu = selectionMenu() else { return enclosingTable?.menu(for: event) }
         return ThemedContextMenu.show(menu, for: event, in: window)
     }
@@ -408,17 +473,28 @@ final class ChatTextView: NSTextView, ComposerSelectionSource {
     /// of the system menu, and NSView passes a click whose menu is nil up the responder chain: the transcript table
     /// then opened its row menu (Copy, Fork from Here) over the selection's, so Reply could never be reached.
     override func rightMouseDown(with event: NSEvent) {
-        // Outside the transcript, with nothing selected, the click goes on as before.
-        guard selectionMenu() != nil || enclosingTable != nil else { return super.rightMouseDown(with: event) }
+        // Outside the transcript, with nothing selected and no web link under the pointer, the click goes on as before.
+        guard selectionMenu() != nil || enclosingTable != nil || webLink(under: event) != nil else {
+            return super.rightMouseDown(with: event)
+        }
         _ = menu(for: event)
     }
 
-    /// A Control-click opens the same menu rather than starting a new selection over the one it is meant for.
+    /// A Control-click opens the same menu rather than starting a new selection over the one it is meant for. A
+    /// ⌘-click on a web link opens it, as NSTextView would otherwise add to the selection instead.
     override func mouseDown(with event: NSEvent) {
-        guard event.modifierFlags.intersection([.command, .option, .control, .shift]) == .control else {
-            return super.mouseDown(with: event)
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if modifiers == .command, let link = webLink(under: event) {
+            return openLink(link, commandKey: true)
         }
+        guard modifiers == .control else { return super.mouseDown(with: event) }
         rightMouseDown(with: event)
+    }
+
+    /// The web link under the pointer, for views whose links are handled.
+    private func webLink(under event: NSEvent) -> URL? {
+        guard onOpenLink != nil, let link = link(at: convert(event.locationInWindow, from: nil)) else { return nil }
+        return LinkRouting.webURL(link)
     }
 
     @objc private func quoteSelection() {

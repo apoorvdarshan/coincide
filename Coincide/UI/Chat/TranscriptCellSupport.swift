@@ -249,6 +249,12 @@ final class TranscriptTextCache {
 @MainActor
 enum TranscriptText {
     static func style(_ style: TranscriptTextCache.Style) -> ChatMarkdownStyle {
+        var markdownStyle = baseStyle(style)
+        markdownStyle.webLinkHint = LinkRouting.hint(opensInDefaultBrowser: LinkRouting.opensInDefaultBrowser)
+        return markdownStyle
+    }
+
+    private static func baseStyle(_ style: TranscriptTextCache.Style) -> ChatMarkdownStyle {
         switch style {
         case .assistant: ChatMarkdownStyle(fontSize: Theme.replyFontSize, textColor: Theme.ink, isSerif: Theme.usesSerifReplies)
         case .approval, .error, .toolDetail: ChatMarkdownStyle(fontSize: Theme.fontSize)

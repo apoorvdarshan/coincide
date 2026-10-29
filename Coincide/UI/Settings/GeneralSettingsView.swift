@@ -69,6 +69,14 @@ struct GeneralSettingsView: View {
                         Text("Include the agent’s thinking in the transcript when the model shares it.")
                     }
                     .settingsRevealable(.showReasoning, highlighted: highlighted)
+                    Toggle(isOn: model.binding(\.opensLinksInDefaultBrowser)) {
+                        Text("Open links in your default browser")
+                        Text(
+                            model.settings.opensLinksInDefaultBrowser
+                                ? String(localized: "Clicking a web link opens your default browser. ⌘-click opens it in Coincide’s browser preview.")
+                                : String(localized: "Clicking a web link opens it in Coincide’s browser preview. ⌘-click opens your default browser."))
+                    }
+                    .settingsRevealable(.openLinksInBrowser, highlighted: highlighted)
                     Toggle(isOn: model.binding(\.confirmBeforeDeletingThreads)) {
                         Text("Confirm before deleting threads")
                         Text("Ask before a thread and its history are deleted.")
@@ -212,6 +220,7 @@ struct GeneralSettingsView: View {
             settings.newThreadStartsChat = defaults.newThreadStartsChat
             settings.resumesAfterUsageLimit = defaults.resumesAfterUsageLimit
             settings.showReasoning = defaults.showReasoning
+            settings.opensLinksInDefaultBrowser = defaults.opensLinksInDefaultBrowser
             settings.confirmBeforeDeletingThreads = defaults.confirmBeforeDeletingThreads
             settings.holdToQuit = defaults.holdToQuit
             settings.defaultAccessMode = defaults.defaultAccessMode

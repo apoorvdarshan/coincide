@@ -85,6 +85,7 @@ final class ChatViewController: NSViewController {
     private var composerAtBottom: NSLayoutConstraint!
     private var composerCentered: NSLayoutConstraint!
     private var appliedShowReasoning = true
+    private var appliedOpensLinksInDefaultBrowser = false
     private var previewURLs: [URL] = []
     private var previewIndex = 0
 
@@ -190,6 +191,7 @@ final class ChatViewController: NSViewController {
         appliedReplyTypeface = store.settings.replyTypeface
         appliedThemes = (store.settings.darkTheme, store.settings.lightTheme)
         appliedShowReasoning = store.settings.showReasoning
+        appliedOpensLinksInDefaultBrowser = store.settings.opensLinksInDefaultBrowser
         observation = store.observe { [weak self] change in self?.handle(change) }
         loadThread()
     }
@@ -484,7 +486,9 @@ final class ChatViewController: NSViewController {
             settings.fontSize != appliedFontSize || settings.showReasoning != appliedShowReasoning
                 || settings.replyTypeface != appliedReplyTypeface || settings.darkTheme != appliedThemes.dark
                 || settings.lightTheme != appliedThemes.light
+                || settings.opensLinksInDefaultBrowser != appliedOpensLinksInDefaultBrowser
         else { return }
+        appliedOpensLinksInDefaultBrowser = settings.opensLinksInDefaultBrowser
         appliedThemes = (settings.darkTheme, settings.lightTheme)
         appliedFontSize = settings.fontSize
         appliedReplyTypeface = settings.replyTypeface
@@ -1020,9 +1024,14 @@ extension ChatViewController: TranscriptHost {
         AppEvents.showTurnDiff(threadID: threadID, turnID: turnID, path: path)
     }
 
-    /// Opens a link from the transcript. Agents write these links, so nothing they point at is run:
-    /// web and mail links open, other schemes ask first, and files open in an editor (see `SafeLinks`).
+    /// Opens a link from the transcript. Agents write these links, so nothing they point at is run: web links open in
+    /// the browser preview or the default browser (`LinkRouting`), mail links open, other schemes ask first, and files
+    /// open in an editor (see `SafeLinks`).
     func openLink(_ link: Any) -> Bool {
+        if let request = link as? WebLinkRequest {
+            LinkRouting.open(request, from: view.window)
+            return true
+        }
         if let url = link as? URL {
             if url.isFileURL { return openFile(url.path) }
             SafeLinks.openExternal(url, from: view.window)

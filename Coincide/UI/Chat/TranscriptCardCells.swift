@@ -119,7 +119,7 @@ final class TranscriptApprovalCell: TranscriptCell {
     static func title(_ item: TranscriptItem, cache: TranscriptTextCache) -> ChatRenderedText {
         let source = item.title ?? kindLabel(item.category)
         return cache.text(for: item.id, style: .approval, source: source) { blocks in
-            ChatMarkdownRenderer.render(source, style: ChatMarkdownStyle(fontSize: Theme.fontSize), cache: blocks)
+            ChatMarkdownRenderer.render(source, style: TranscriptText.style(.approval), cache: blocks)
         }
     }
 
