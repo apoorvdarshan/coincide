@@ -228,6 +228,8 @@ public enum RemoteRequest: Hashable, Sendable {
     /// Whether the app is in front, what it shows and how long since it was touched (see `RemotePresence`). An older
     /// Mac answers `unsupported`, which the phone ignores.
     case presence(RemotePresence)
+    /// Opens the thread in the Mac's window. Only the Mac's own command-line tool may ask; a phone gets `unsupported`.
+    case showThread(threadID: UUID)
 
     /// The request's name on the wire.
     public var name: String {
@@ -254,6 +256,7 @@ public enum RemoteRequest: Hashable, Sendable {
         case .runScript: "runScript"
         case .usageLimits: "usageLimits"
         case .presence: "presence"
+        case .showThread: "showThread"
         }
     }
 }
@@ -358,6 +361,7 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
             request = .runScript(threadID: try need(f.threadID, "threadID"), scriptID: try need(f.scriptID, "scriptID"))
         case "usageLimits": request = .usageLimits
         case "presence": request = .presence(try body(RemotePresence.self))
+        case "showThread": request = .showThread(threadID: try need(try fields().threadID, "threadID"))
         default: throw RemoteProtocolError.unsupported(type)
         }
     }
@@ -379,7 +383,7 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case .openThread(let threadID, let limit):
             f.threadID = threadID
             f.limit = limit
-        case .closeThread(let threadID), .markSeen(let threadID), .stop(let threadID): f.threadID = threadID
+        case .closeThread(let threadID), .markSeen(let threadID), .stop(let threadID), .showThread(let threadID): f.threadID = threadID
         case .loadEarlier(let threadID, let beforeIndex, let limit):
             f.threadID = threadID
             f.beforeIndex = beforeIndex

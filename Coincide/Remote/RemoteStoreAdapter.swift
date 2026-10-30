@@ -615,6 +615,8 @@ final class RemoteStoreAdapter {
         services.move(threadID, projectID)
     }
 
+    func hasThread(_ threadID: UUID) -> Bool { store.summary(threadID) != nil }
+
     func markSeen(_ threadID: UUID) throws {
         _ = try requireThread(threadID)
         services.markSeen(threadID)

@@ -38,7 +38,7 @@ final class PreviewSessions {
     func start() {
         ThreadRunner.shared.ephemeralRuntimeContext = { [weak self] id in self?.runtimeContext(for: id) }
         // Agents use the password managers unlocked in Settings › Browser with their own command-line tools.
-        ThreadRunner.shared.launchEnvironment = { [weak self] in self?.vault.agentEnvironment() ?? [:] }
+        ThreadRunner.shared.launchEnvironments["passwords"] = { [weak self] _ in self?.vault.agentEnvironment() ?? [:] }
         observation = AppStore.shared.observe { [weak self] change in
             guard change == .threadList, let self else { return }
             for id in self.sessions.keys where AppStore.shared.summary(id) == nil { self.forget(id) }

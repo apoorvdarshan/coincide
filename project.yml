@@ -58,6 +58,26 @@ targets:
         SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.updater
         SKIP_INSTALL: YES
+  # `coincide`, the command-line tool (CoincideCLI/main.swift), embedded in Coincide.app/Contents/Helpers. It speaks the
+  # Remote protocol to the app's control socket, so it links CoincideRemoteKit and nothing else.
+  CoincideCLI:
+    type: tool
+    platform: macOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    sources:
+      - path: CoincideCLI
+    dependencies:
+      - package: CoincideRemoteKit
+    settings:
+      base:
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+        PRODUCT_NAME: coincide
+        # Not "coincide": its module would overwrite the app's Coincide.swiftmodule on a case-insensitive disk.
+        PRODUCT_MODULE_NAME: CoincideCLI
+        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.cli
+        SKIP_INSTALL: YES
   # The background agent host (see AgentHostProtocol.swift): a LaunchAgent inside Coincide.app that owns agent
   # sessions so they outlive the app. An app bundle without a Dock icon, so it can post notifications.
   CoincideAgentHost:
@@ -101,6 +121,8 @@ targets:
       - path: Coincide
         excludes:
           - Info.plist
+      # The command-line tool's parsing, client and commands, also built into the app so its tests can run them.
+      - path: CoincideCLI/Shared
       # Registered with SMAppService.agent(plistName:), which looks for it here.
       - path: CoincideAgentHost/LaunchAgents
         buildPhase:
@@ -118,6 +140,9 @@ targets:
       - target: CoincideUpdater
         link: false
         embed: false
+      - target: CoincideCLI
+        link: false
+        embed: false
       - package: SwiftTerm
       - package: CoincideRemoteKit
     postBuildScripts:
@@ -127,6 +152,16 @@ targets:
           - $(BUILT_PRODUCTS_DIR)/CoincideUpdater
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/CoincideUpdater
+      # Beside the agent host, not in Contents/MacOS, where `coincide` would collide with `Coincide` on a
+      # case-insensitive disk.
+      - name: Embed command-line tool
+        script: |
+          /bin/mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
+          /usr/bin/install -m 755 "$BUILT_PRODUCTS_DIR/coincide" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/coincide"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/coincide
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/coincide
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide
