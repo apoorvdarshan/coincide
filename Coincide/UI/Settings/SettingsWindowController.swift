@@ -21,7 +21,7 @@ nonisolated enum SettingsSection: String, CaseIterable, Sendable {
         case .models: String(localized: "Models")
         case .usage: String(localized: "Usage")
         case .instructions: String(localized: "Instructions")
-        case .archive: String(localized: "Archive")
+        case .archive: String(localized: "settings.archive", defaultValue: "Archive", comment: "Settings pane listing archived threads (a noun)")
         case .keyboard: String(localized: "Keyboard")
         case .browser: String(localized: "Browser")
         case .about: String(localized: "About")

@@ -203,7 +203,7 @@ struct PaletteCatalog {
                         id: "action:archive",
                         title: thread.isArchived ? String(localized: "Unarchive Thread") : String(localized: "Archive Thread"),
                         icon: symbol("archivebox"), trailing: keys(.archiveThread), keywords: ["archive", "hide", "done"],
-                        behavior: .run { ThreadActions.toggleArchived(thread.id) }))
+                        behavior: .run { [weak window = windowController?.window] in ThreadActions.toggleArchived(thread.id, in: window) }))
             }
         }
         items.append(

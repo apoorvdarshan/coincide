@@ -1065,7 +1065,7 @@ final class SidebarViewController: NSViewController {
         case .togglePin: ThreadActions.togglePin(id)
         case .rename: beginRename(threadID: id)
         case .fork: ThreadForking.fork(id)
-        case .toggleArchived: ThreadActions.toggleArchived(id)
+        case .toggleArchived: ThreadActions.toggleArchived(id, in: view.window)
         case .delete: ThreadActions.delete(id, in: view.window)
         }
     }
@@ -1669,7 +1669,11 @@ extension SidebarViewController: NSMenuDelegate {
 
     @objc private func archiveMany(_ sender: NSMenuItem) {
         guard let (ids, archived) = sender.representedObject as? ([UUID], Bool) else { return }
-        ThreadInbox.shared.archive(ids, archived: archived)
+        if archived {
+            ThreadActions.archive(ids, in: view.window)
+        } else {
+            ThreadInbox.shared.archive(ids, archived: false)
+        }
     }
 
     @objc private func settleFromMenu(_ sender: NSMenuItem) {
@@ -1796,7 +1800,7 @@ extension SidebarViewController: NSMenuDelegate {
 
     @objc private func archiveFromMenu(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID else { return }
-        ThreadActions.toggleArchived(id)
+        ThreadActions.toggleArchived(id, in: view.window)
     }
 
     @objc private func deleteFromMenu(_ sender: NSMenuItem) {

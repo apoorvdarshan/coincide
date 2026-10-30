@@ -103,6 +103,11 @@ struct GeneralSettingsView: View {
                         Text("Ask before a thread and its history are deleted.")
                     }
                     .settingsRevealable(.confirmDelete, highlighted: highlighted)
+                    Toggle(isOn: model.binding(\.confirmBeforeArchivingThreads)) {
+                        Text("Confirm before archiving threads")
+                        Text("Ask before a thread moves to the archive.")
+                    }
+                    .settingsRevealable(.confirmArchive, highlighted: highlighted)
                     Toggle(isOn: model.binding(\.holdToQuit)) {
                         Text("Hold ⌘Q to quit")
                         Text("Pressing ⌘Q once shows a reminder; hold it or press it again to quit. Quitting from the Coincide menu or the Dock is immediate.")
@@ -250,6 +255,7 @@ struct GeneralSettingsView: View {
         settings.showReasoning = defaults.showReasoning
         settings.opensLinksInDefaultBrowser = defaults.opensLinksInDefaultBrowser
         settings.confirmBeforeDeletingThreads = defaults.confirmBeforeDeletingThreads
+        settings.confirmBeforeArchivingThreads = defaults.confirmBeforeArchivingThreads
         settings.holdToQuit = defaults.holdToQuit
         settings.defaultAccessMode = defaults.defaultAccessMode
         settings.notifyWhenInBackground = defaults.notifyWhenInBackground

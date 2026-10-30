@@ -454,7 +454,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func toggleArchiveThread(_ sender: Any?) {
         guard let id = selectedThreadID else { return }
-        ThreadActions.toggleArchived(id)
+        ThreadActions.toggleArchived(id, in: window)
     }
 
     @objc func deleteThread(_ sender: Any?) {

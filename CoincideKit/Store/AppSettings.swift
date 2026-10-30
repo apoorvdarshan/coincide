@@ -139,6 +139,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var existingThreadsFollowUpBehavior: FollowUpBehavior
     public var showReasoning: Bool
     public var confirmBeforeDeletingThreads: Bool
+    /// Archiving a thread (⌘W, its archive button, the menus) asks first.
+    public var confirmBeforeArchivingThreads: Bool
     /// ⌘Q quits only when held or pressed twice (`QuitShortcutGuard`); a single press shows a hint. Quitting from the
     /// menu, the Dock, logging out or AppleScript is never held up.
     public var holdToQuit: Bool
@@ -215,6 +217,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         existingThreadsFollowUpBehavior = .steer
         showReasoning = true
         confirmBeforeDeletingThreads = true
+        confirmBeforeArchivingThreads = true
         holdToQuit = true
         opensLinksInDefaultBrowser = false
         generatesThreadTitles = true
@@ -266,6 +269,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         existingThreadsFollowUpBehavior = value(.existingThreadsFollowUpBehavior, followUpBehavior)
         showReasoning = value(.showReasoning, defaults.showReasoning)
         confirmBeforeDeletingThreads = value(.confirmBeforeDeletingThreads, defaults.confirmBeforeDeletingThreads)
+        confirmBeforeArchivingThreads = value(.confirmBeforeArchivingThreads, defaults.confirmBeforeArchivingThreads)
         holdToQuit = value(.holdToQuit, defaults.holdToQuit)
         opensLinksInDefaultBrowser = value(.opensLinksInDefaultBrowser, defaults.opensLinksInDefaultBrowser)
         generatesThreadTitles = value(.generatesThreadTitles, defaults.generatesThreadTitles)
