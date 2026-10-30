@@ -252,6 +252,45 @@ import Testing
         }
     }
 
+    @Test(arguments: [820.0, 1470.0])
+    func activeStatusHasRoomForItsContentsAndSpaceBetweenPills(width: CGFloat) async throws {
+        let harness = Harness(width: width, title: "Toolbar spacing")
+        defer { harness.close() }
+        await harness.wait()
+        let status = harness.controller.runStatus
+        let states: [RunStatusView.State] = [.starting, .running(since: Date().addingTimeInterval(-125), note: nil), .approval(count: 12)]
+        for (index, state) in states.enumerated() {
+            status.update(state)
+            await harness.wait()
+            #expect(harness.isShown(status))
+            let pill = try #require(status.subviews.first)
+            let body = harness.frame(of: pill)
+            let scripts = harness.frame(of: harness.controller.projectScripts)
+            #expect(body.minX - scripts.maxX >= 8, "The script and status pills touch: \(scripts), \(body)")
+            #expect(harness.frame(of: harness.buttons).minX - body.maxX >= 6)
+            let label = try #require(Self.subviews(of: status, as: NSTextField.self).first)
+            let text = harness.frame(of: label)
+            #expect(text.width >= ceil(label.intrinsicContentSize.width) - 1, "The status text is clipped")
+            let stop = try #require(Self.subviews(of: status, as: NSButton.self).first)
+            let stopFrame = harness.frame(of: stop)
+            #expect(stopFrame.width >= 24)
+            #expect(body.maxX - stopFrame.maxX >= 9)
+            for spinner in Self.subviews(of: status, as: NSProgressIndicator.self) where !spinner.isHidden {
+                let icon = harness.frame(of: spinner)
+                #expect(icon.minX - body.minX >= 9)
+                #expect(abs(icon.midY - body.midY) <= 1)
+                // NSTextField's frame extends beyond the text's alignment rect.
+                let textInk = label.superview!.convert(label.alignmentRect(forFrame: label.frame), to: nil)
+                #expect(textInk.minX - icon.maxX >= 6)
+            }
+            if let folder = ProcessInfo.processInfo.environment["COINCIDE_TOOLBAR_STATUS_PNG_DIR"] {
+                try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+                harness.window.appearance = NSAppearance(named: .darkAqua)
+                try draw(harness.window, to: "\(folder)/toolbar-\(Int(width))-\(index).png")
+            }
+        }
+    }
+
     /// Draws the window's top, with the column closed and open, narrow and wide, in light and dark and every theme,
     /// when `COINCIDE_TOOLBAR_PNG_DIR` names a folder (`TEST_RUNNER_COINCIDE_TOOLBAR_PNG_DIR` on the command line).
     @Test func rendersTheToolbarForReview() async throws {

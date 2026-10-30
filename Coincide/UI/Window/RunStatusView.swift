@@ -13,6 +13,10 @@ final class RunStatusView: NSView {
         case approval(count: Int)
     }
 
+    /// Transparent space inside this toolbar item separates the two independently drawn pills, including
+    /// toolbars the user has already customized and saved.
+    static let leadingGap: CGFloat = 8
+    private let pill = NSView()
     private let spinner = NSProgressIndicator()
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
@@ -32,6 +36,8 @@ final class RunStatusView: NSView {
         spinner.isDisplayedWhenStopped = false
         label.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
         stopButton.isBordered = false
         stopButton.contentTintColor = .secondaryLabelColor
         stopButton.target = self
@@ -41,22 +47,38 @@ final class RunStatusView: NSView {
         NotificationCenter.default.addObserver(
             self, selector: #selector(keyBindingsChanged), name: KeyBindingsController.didChangeNotification, object: nil)
         let stack = NSStackView(views: [spinner, icon, label, stopButton])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
         stack.spacing = 6
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        stack.detachesHiddenViews = true
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.wantsLayer = true
+        pill.layer?.cornerRadius = 14
+        pill.layer?.cornerCurve = .continuous
+        addSubview(pill)
+        pill.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            pill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.leadingGap),
+            pill.trailingAnchor.constraint(equalTo: trailingAnchor),
+            pill.topAnchor.constraint(equalTo: topAnchor),
+            pill.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: pill.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: pill.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: pill.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: pill.bottomAnchor),
             heightAnchor.constraint(equalToConstant: 28),
             spinner.widthAnchor.constraint(equalToConstant: 14),
             spinner.heightAnchor.constraint(equalToConstant: 14),
+            icon.widthAnchor.constraint(equalToConstant: 14),
+            icon.heightAnchor.constraint(equalToConstant: 14),
+            stopButton.widthAnchor.constraint(equalToConstant: 24),
+            stopButton.heightAnchor.constraint(equalToConstant: 24),
         ])
         wantsLayer = true
-        layer?.cornerRadius = 14
-        layer?.cornerCurve = .continuous
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         apply()
@@ -66,9 +88,17 @@ final class RunStatusView: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.backgroundColor = Theme.raisedFill.cgColor
-        layer?.borderColor = Theme.surfaceBorder.cgColor
-        layer?.borderWidth = 1
+        pill.layer?.backgroundColor = Theme.raisedFill.cgColor
+        pill.layer?.borderColor = Theme.surfaceBorder.cgColor
+        pill.layer?.borderWidth = 1
+    }
+
+    /// NSToolbar needs an explicit preferred width. A plain NSView otherwise keeps the tiny width
+    /// established while idle, clipping the label and stop button when work starts.
+    override var intrinsicContentSize: NSSize {
+        let widths: [CGFloat] = [spinner.isHidden ? nil : 14, icon.isHidden ? nil : 14,
+            ceil(label.intrinsicContentSize.width), stopButton.isHidden ? nil : 24].compactMap { $0 }
+        return NSSize(width: Self.leadingGap + 20 + widths.reduce(0, +) + CGFloat(max(0, widths.count - 1)) * 6, height: 28)
     }
 
     @available(*, unavailable)
@@ -94,16 +124,19 @@ final class RunStatusView: NSView {
         switch state {
         case .idle:
             spinner.stopAnimation(nil)
+            spinner.isHidden = true
             icon.isHidden = true
             stopButton.isHidden = true
             label.stringValue = ""
         case .starting:
+            spinner.isHidden = false
             spinner.startAnimation(nil)
             icon.isHidden = true
             stopButton.isHidden = false
             label.textColor = .secondaryLabelColor
             label.stringValue = String(localized: "Connecting…")
         case .running(_, let note):
+            spinner.isHidden = false
             spinner.startAnimation(nil)
             icon.isHidden = true
             stopButton.isHidden = false
@@ -115,6 +148,7 @@ final class RunStatusView: NSView {
             }
         case .approval(let count):
             spinner.stopAnimation(nil)
+            spinner.isHidden = true
             icon.image = Theme.symbol("exclamationmark.shield.fill", size: 13)
             icon.contentTintColor = .systemOrange
             icon.isHidden = false
@@ -122,12 +156,15 @@ final class RunStatusView: NSView {
             label.textColor = .systemOrange
             label.stringValue = count > 1 ? String(localized: "\(count) approvals needed") : String(localized: "Needs approval")
         }
+        invalidateIntrinsicContentSize()
         setAccessibilityLabel(label.stringValue)
     }
 
     private func refreshElapsed() {
         guard case .running(let since, let note) = state else { return }
+        let previousWidth = ceil(label.intrinsicContentSize.width)
         label.stringValue = String(localized: "Working \(Formatting.elapsed(since: since))")
+        if ceil(label.intrinsicContentSize.width) != previousWidth { invalidateIntrinsicContentSize() }
         setAccessibilityLabel(note.map { "\(label.stringValue), \($0)" } ?? label.stringValue)
     }
 
