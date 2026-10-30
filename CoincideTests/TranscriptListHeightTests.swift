@@ -117,6 +117,35 @@ final class StubTranscriptHost: TranscriptHost {
         expectRowsInPlace("after rows came and went above the view")
     }
 
+    /// A long thread opened at launch (or switched to) loads all at once. Every row the reader can scroll to sits where
+    /// the table lays it out, from the bottom it opens at to the top.
+    @Test func aLongThreadLoadedAtOnceStaysInPlaceThroughout() async {
+        let rows = (0..<500).map { reply(4 + ($0 * 37) % 160, seed: $0) }
+        list.update(rows, reload: true)
+        list.scrollToBottom()
+        await settle()
+        expectRowsInPlace("opened at the bottom")
+        #expect(list.distanceFromBottom <= 1, "opened at the bottom: \(list.distanceFromBottom)")
+        let clip = list.scrollView.contentView
+        var y = clip.bounds.minY
+        while y > 0 {
+            y -= 2000
+            clip.setBoundsOrigin(NSPoint(x: 0, y: max(0, y)))
+            list.scrollView.reflectScrolledClipView(clip)
+            await settle()
+            expectRowsInPlace("scrolled up to \(Int(max(0, y)))")
+        }
+        // A width change measures every row again.
+        list.scrollToBottom()
+        for width in [420, 900] as [CGFloat] {
+            window.setContentSize(NSSize(width: width, height: 480))
+            await settle()
+            await settle()
+            expectRowsInPlace("at \(width)")
+            #expect(list.distanceFromBottom <= 1, "following at \(width): \(list.distanceFromBottom)")
+        }
+    }
+
     @Test func rowsBelowAReplyThatGrewAboveTheViewStayInPlace() async {
         var rows = (0..<40).map { reply(20 + ($0 * 37) % 160, seed: $0) }
         list.update(rows, reload: true)

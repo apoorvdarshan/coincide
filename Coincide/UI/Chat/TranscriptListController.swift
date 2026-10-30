@@ -119,6 +119,7 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
                 exactRange = Self.tail(of: newRows.count)
             }
             tableView.reloadData()
+            learnHeights(of: rows.indices)
             tableView.tile()
             keep(place)
             scheduleRefine()
@@ -150,11 +151,9 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
                 tableView.beginUpdates()
                 tableView.removeRows(at: removed, withAnimation: [])
                 tableView.insertRows(at: inserted, withAnimation: [])
-                // The table asks for the height of an inserted row only once it needs it, and until then places the rows
-                // below by a guess. It does not move them again when it learns the real height, so below a long reply
-                // that came in above the view (as when a finished turn lays out its reply again) the rows would draw
-                // over the reply until the reader scrolls. Asking now, before it places them, puts every row in place.
-                for index in inserted { _ = tableView.rect(ofRow: index) }
+                // Below a long reply that came in above the view (as when a finished turn lays out its reply again), rows
+                // placed by a guessed height would draw over the reply (see `learnHeights`).
+                learnHeights(of: inserted)
                 tableView.endUpdates()
             }
             guard !changed.isEmpty else { return }
@@ -205,6 +204,7 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         heights.removeAll()
         exactRange = visibleRange(margin: 1)
         tableView.reloadData()
+        learnHeights(of: rows.indices)
         keep(place)
         scheduleRefine()
     }
@@ -310,6 +310,15 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         let height = max(1, ceil(value))
         heights[row.id] = Height(revision: row.revision, continuesWork: row.continuesWork, width: width, value: height, isExact: isExact)
         return height
+    }
+
+    /// Has the table ask for the heights of `indexes` now. The table asks for a row's height only once it needs it: rows
+    /// it inserts, and every row of a long transcript it loads or reloads at once (a thread restored at launch, another
+    /// thread opened). Until then it places the rows after them by a guessed height, and it does not move them again
+    /// when it learns the real one, so rows would draw over one another, scrolling or not, and the bottom would land
+    /// short of the last row. Asking before it places them puts every row where it belongs.
+    private func learnHeights(of indexes: some Sequence<Int>) {
+        for index in indexes { _ = tableView.rect(ofRow: index) }
     }
 
     private func noteHeights(_ indexes: IndexSet) {
