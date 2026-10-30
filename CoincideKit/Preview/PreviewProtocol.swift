@@ -1,11 +1,15 @@
 import Foundation
 
-/// The preview exposes a small command vocabulary, never arbitrary JavaScript or filesystem paths.
+/// The preview exposes a small command vocabulary, never arbitrary JavaScript. The only filesystem paths it takes are
+/// the files `upload` attaches to a page, which the agent could read anyway.
 public indirect enum PreviewCommand: Sendable, Equatable {
     case read
     case navigate(URL)
     case click(String)
     case input(selector: String, text: String)
+    /// Attaches local files to the page's file input (the selector names it, or the button or label that opens it),
+    /// answering the page's file chooser with them so no dialog appears.
+    case upload(selector: String, files: [URL])
     case screenshot
     /// Opens the browser panel on this thread so the user can see the page.
     case show
@@ -25,6 +29,8 @@ public indirect enum PreviewCommand: Sendable, Equatable {
 
     /// The most tabs a thread can have.
     public static let tabLimit = 20
+    /// The most files one `upload` attaches.
+    public static let uploadLimit = 20
 
     /// How long the app lets the command run before answering with an error.
     public var timeout: TimeInterval {
@@ -46,7 +52,7 @@ public indirect enum PreviewCommand: Sendable, Equatable {
         // Page commands can name a tab; the tab commands name theirs themselves.
         guard let id = tab.string, Self.isTabID(id) else { throw PreviewError.invalidCommand }
         switch command {
-        case .read, .navigate, .click, .input, .screenshot, .fillLogin: self = .inTab(id, command)
+        case .read, .navigate, .click, .input, .upload, .screenshot, .fillLogin: self = .inTab(id, command)
         case .selectTab, .closeTab: self = command
         default: throw PreviewError.invalidCommand
         }
@@ -73,6 +79,12 @@ public indirect enum PreviewCommand: Sendable, Equatable {
         case "input":
             guard let text = json["text"]?.string, text.utf8.count <= 65_536 else { throw PreviewError.invalidCommand }
             return .input(selector: try Self.selector(json), text: text)
+        case "upload":
+            guard let paths = json["files"]?.array?.compactMap(\.string), (1...Self.uploadLimit).contains(paths.count),
+                paths.count == json["files"]?.array?.count,
+                paths.allSatisfy({ $0.hasPrefix("/") && $0.utf8.count <= 4096 })
+            else { throw PreviewError.invalidCommand }
+            return .upload(selector: try Self.selector(json), files: paths.map { URL(fileURLWithPath: $0).standardizedFileURL })
         case "screenshot": return .screenshot
         case "show": return .show
         case "fill-login":
@@ -133,6 +145,10 @@ public indirect enum PreviewCommand: Sendable, Equatable {
 
 public enum PreviewError: LocalizedError {
     case invalidAddress, invalidCommand, unavailable, connection, timedOut, tooManyTabs, noSuchTab
+    /// A file to upload is missing, a folder, or unreadable.
+    case uploadFileMissing(String)
+    /// The page didn't ask for files after its file input was activated.
+    case uploadNotAccepted
 
     public var errorDescription: String? {
         switch self {
@@ -143,6 +159,9 @@ public enum PreviewError: LocalizedError {
         case .timedOut: String(localized: "The browser didn't finish the command in time.")
         case .tooManyTabs: String(localized: "This thread has 20 tabs. Close one first.")
         case .noSuchTab: String(localized: "There's no tab with that id in this thread.")
+        case .uploadFileMissing(let path): String(localized: "\(path) isn't a readable file.")
+        case .uploadNotAccepted:
+            String(localized: "The page didn't open its file chooser. Name the file input, or the button that opens it, with selector.")
         }
     }
 }

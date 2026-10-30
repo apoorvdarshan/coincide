@@ -18,6 +18,13 @@ import Testing
             #expect(PreviewCommand.url(address) == nil)
         }
         #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "evaluate", "script": "alert(1)"]) }
+        // Uploads take 1–20 absolute paths, and may name a tab.
+        let upload = try PreviewCommand(json: ["action": "upload", "selector": "#cv", "files": ["/tmp/a/../cv.pdf"], "tab": "t1"])
+        #expect(upload == .inTab("t1", .upload(selector: "#cv", files: [URL(fileURLWithPath: "/tmp/cv.pdf")])))
+        for files: JSONValue in [[], ["cv.pdf"], ["~/cv.pdf"], [1], .array(Array(repeating: "/tmp/x", count: 21))] {
+            #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "upload", "selector": "#cv", "files": files]) }
+        }
+        #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "upload", "files": ["/tmp/cv.pdf"]]) }
         #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "input", "selector": "input", "text": .string(String(repeating: "a", count: 65_537))]) }
     }
 
