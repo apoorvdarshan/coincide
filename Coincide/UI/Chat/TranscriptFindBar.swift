@@ -191,10 +191,48 @@ final class TranscriptFindSearchField: NSSearchField {
     }
 }
 
-private final class TranscriptFindSearchFieldCell: NSSearchFieldCell {
+final class TranscriptFindSearchFieldCell: NSSearchFieldCell {
+    static let iconWidth: CGFloat = 16
+    static let gap: CGFloat = 6
+
     // Cells are copied by value, so the editor is shared rather than stored here.
     override func fieldEditor(for controlView: NSView) -> NSTextView? {
         TranscriptFindSearchFieldEditor.shared
+    }
+
+    // Without a bezel the cell lays the text out from the left edge, under the magnifying glass. These keep the glass
+    // and the clear button in their own columns, with the text (and the caret) between them.
+    override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
+        NSRect(x: rect.minX, y: rect.midY - Self.iconWidth / 2, width: Self.iconWidth, height: Self.iconWidth)
+    }
+
+    override func cancelButtonRect(forBounds rect: NSRect) -> NSRect {
+        NSRect(x: rect.maxX - Self.iconWidth, y: rect.midY - Self.iconWidth / 2, width: Self.iconWidth, height: Self.iconWidth)
+    }
+
+    override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+        let leading = Self.iconWidth + Self.gap
+        let trailing = Self.iconWidth + Self.gap
+        return NSRect(x: rect.minX + leading, y: rect.minY, width: max(0, rect.width - leading - trailing), height: rect.height)
+    }
+
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        // Centred vertically, as the bezeled field draws it.
+        let text = searchTextRect(forBounds: rect)
+        let height = min(text.height, cellSize(forBounds: text).height)
+        return NSRect(x: text.minX, y: text.midY - height / 2, width: text.width, height: height)
+    }
+
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: drawingRect(forBounds: rect), in: controlView, editor: textObj, delegate: delegate, event: event)
+    }
+
+    override func select(
+        withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int, length selLength: Int
+    ) {
+        super.select(
+            withFrame: drawingRect(forBounds: rect), in: controlView, editor: textObj, delegate: delegate, start: selStart,
+            length: selLength)
     }
 }
 
