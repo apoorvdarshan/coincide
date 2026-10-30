@@ -215,17 +215,7 @@ struct BrowserImportSheet: View {
             model.sourceID = source.id
         } label: {
             HStack(spacing: 10) {
-                BrowserIcon(appURL: source.appURL)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(source.definition.name)
-                    if source.status == .needsFullDiskAccess {
-                        Text("Needs Full Disk Access").font(.caption).foregroundStyle(.secondary)
-                    } else if source.profiles.isEmpty {
-                        Text("No profile data found").font(.caption).foregroundStyle(.secondary)
-                    } else if source.profiles.count > 1 {
-                        Text("Profiles: \(source.profiles.count)").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
+                BrowserSourceLabel(source: source)
                 Spacer()
                 if selected { Image(systemName: "checkmark").foregroundStyle(Color(nsColor: Theme.ink)) }
             }
@@ -241,17 +231,9 @@ struct BrowserImportSheet: View {
     }
 
     private func unsupportedRow(_ source: BrowserCatalog.Detected) -> some View {
-        HStack(spacing: 10) {
-            BrowserIcon(appURL: source.appURL).opacity(0.5)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(source.definition.name).foregroundStyle(.secondary)
-                if case .unsupported(let reason) = source.status {
-                    Text(Self.reason(reason)).font(.caption).foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
+        BrowserSourceLabel(source: source)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
     }
 
     static func reason(_ reason: BrowserCatalog.Unsupported) -> String {
@@ -401,8 +383,52 @@ struct BrowserImportSheet: View {
     }
 }
 
-/// An installed browser's own icon, or a neutral globe when only its data is on this Mac.
+/// A browser in the import list: its logo, its name and what Coincide found. Unsupported browsers are dimmed.
+struct BrowserSourceLabel: View {
+    let source: BrowserCatalog.Detected
+
+    private var isUnsupported: Bool {
+        if case .unsupported = source.status { true } else { false }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            BrowserIcon(definition: source.definition, appURL: source.appURL).opacity(isUnsupported ? 0.5 : 1)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(source.definition.name).foregroundStyle(isUnsupported ? .secondary : .primary)
+                if let caption = Self.caption(source) {
+                    Text(caption).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    /// The line under the name. A browser whose app is gone says so first: its leftover data still lists it, and its
+    /// bundled logo alone would make it look installed.
+    static func caption(_ source: BrowserCatalog.Detected) -> String? {
+        let status: String? =
+            switch source.status {
+            case .needsFullDiskAccess: String(localized: "Needs Full Disk Access")
+            case .unsupported(let reason): BrowserImportSheet.reason(reason)
+            case .available:
+                if source.profiles.isEmpty {
+                    String(localized: "No profile data found")
+                } else if source.profiles.count > 1 {
+                    String(localized: "Profiles: \(source.profiles.count)")
+                } else {
+                    nil
+                }
+            }
+        guard source.appURL == nil else { return status }
+        return status.map { String(localized: "Not installed · \($0)") } ?? String(localized: "Not installed")
+    }
+}
+
+/// A browser's mark in full colour: the installed app's own icon, else the browser's official logo bundled in
+/// `Assets.xcassets`, so a browser that left only its data behind is still recognisable. The globe is a last resort
+/// for a catalog entry without a logo, which `BrowserLogoTests` keeps from shipping.
 struct BrowserIcon: View {
+    let definition: BrowserCatalog.Definition
     let appURL: URL?
     var size: CGFloat = 24
 
@@ -412,6 +438,10 @@ struct BrowserIcon: View {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: appURL.path))
                     .resizable()
                     .interpolation(.high)
+            } else if let logo = BrowserLogo.bundled(definition) {
+                Image(nsImage: logo)
+                    .resizable()
+                    .interpolation(.high)
             } else {
                 Image(systemName: "globe").resizable().scaledToFit().padding(size * 0.12).foregroundStyle(.secondary)
             }
@@ -419,4 +449,13 @@ struct BrowserIcon: View {
         .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
+}
+
+/// The browsers' bundled logos, `Browser-<catalog id>.imageset`: PNGs at 64 and 128 px made from each vendor's own
+/// files or Wikimedia Commons (see THIRD_PARTY_NOTICES.md), trimmed and given a macOS app icon's margin so they sit
+/// level with installed apps' icons. Beta, Dev, Canary, Nightly and Technology Preview have their own.
+enum BrowserLogo {
+    static func assetName(_ definition: BrowserCatalog.Definition) -> String { "Browser-\(definition.id)" }
+
+    static func bundled(_ definition: BrowserCatalog.Definition) -> NSImage? { NSImage(named: assetName(definition)) }
 }
