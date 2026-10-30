@@ -12,6 +12,8 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
     private(set) var error: String?
     /// Whether the page shown asked for a passkey this browser can't provide, for the agent's `read`.
     fileprivate(set) var passkeyRequested = false
+    /// Files an agent's `upload` is attaching: the page's next file chooser gets them instead of a dialog.
+    fileprivate var pendingUpload: [URL]?
     var lastUse = Date()
     weak var owner: PreviewSession?
     private var observations: [NSKeyValueObservation] = []
@@ -134,6 +136,28 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webViewDidClose(_ webView: WKWebView) {
         owner?.closeTab(id)
+    }
+
+    /// A file chooser: an agent's pending `upload` answers it with no dialog; the user's own click on a file input gets
+    /// the standard open panel, as a sheet on the window showing the page.
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor @Sendable ([URL]?) -> Void) {
+        if let files = pendingUpload {
+            pendingUpload = nil
+            completionHandler(parameters.allowsMultipleSelection ? files : Array(files.prefix(1)))
+            return
+        }
+        guard let window = webView.window, window.isKeyWindow else {
+            completionHandler(nil)
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.beginSheetModal(for: window) { response in
+            MainActor.assumeIsolated { completionHandler(response == .OK ? panel.urls : nil) }
+        }
     }
 
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
@@ -388,6 +412,20 @@ final class PreviewSession: NSObject {
             return try await script(Self.clickScript, arguments: ["selector": selector], in: webView)
         case .input(let selector, let text):
             return try await script(Self.inputScript, arguments: ["selector": selector, "text": text], in: webView)
+        case .upload(let selector, let files):
+            for file in files {
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory), !isDirectory.boolValue,
+                    FileManager.default.isReadableFile(atPath: file.path)
+                else { throw PreviewError.uploadFileMissing(file.path) }
+            }
+            tab.pendingUpload = files
+            defer { tab.pendingUpload = nil }
+            _ = try await script(Self.uploadScript, arguments: ["selector": selector, "count": files.count], in: webView)
+            // The page asks for files right after the click; a chooser it opens itself may take a moment.
+            for _ in 0..<50 where tab.pendingUpload != nil { try await Task.sleep(for: .milliseconds(100)) }
+            guard tab.pendingUpload == nil else { throw PreviewError.uploadNotAccepted }
+            return ["uploaded": .array(files.map { .string($0.lastPathComponent) }), "tab": .string(tab.id)]
         case .screenshot:
             let configuration = WKSnapshotConfiguration()
             if webView.superview == nil { PreviewParking.shared.park(webView) }
@@ -444,6 +482,25 @@ final class PreviewSession: NSObject {
         if (!el || !el.getClientRects().length || el.disabled || el.type === 'file') throw new Error('No visible enabled element matches the selector.');
         el.scrollIntoView({block: 'center'});
         el.click();
+        return {clicked: true};
+        """#
+    /// Activates the file input the selector names, or the one inside or labelled by it; otherwise clicks the element
+    /// (a button or drop area that opens a chooser itself). Runs as a user gesture, so the page may open its chooser.
+    private static let uploadScript = #"""
+        const target = document.querySelector(selector);
+        if (!target) throw new Error('No element matches the selector.');
+        const input = target.matches('input[type=file]') ? target
+            : target.querySelector('input[type=file]')
+            || (target.control && target.control.type === 'file' ? target.control : null);
+        if (input) {
+            if (input.disabled) throw new Error('The file input is disabled.');
+            if (count > 1 && !input.multiple) throw new Error('This file input takes one file.');
+            input.click();
+        } else {
+            if (!target.getClientRects().length || target.disabled) throw new Error('No visible enabled element matches the selector.');
+            target.scrollIntoView({block: 'center'});
+            target.click();
+        }
         return {clicked: true};
         """#
     private static let inputScript = #"""

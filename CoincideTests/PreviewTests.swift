@@ -78,6 +78,61 @@ import WebKit
         #expect(session.error == PreviewError.invalidAddress.localizedDescription)
         #expect(session.webView.url?.scheme == "http")
     }
+
+    /// An agent's upload answers the page's file chooser itself: no dialog, the files arrive as if picked, through the
+    /// input or a button that opens a hidden one.
+    @Test func agentUploadsReachFileInputsWithoutADialog() async throws {
+        let fixture = try await PreviewFixture.start()
+        defer { fixture.stop() }
+        let session = PreviewSession()
+        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.alphaValue = 0
+        window.contentView = session.webView
+        window.orderBack(nil)
+        defer { window.orderOut(nil) }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-upload-test-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let resume = folder.appendingPathComponent("resume.pdf")
+        let cover = folder.appendingPathComponent("cover letter.txt")
+        try Data("%PDF-1.4 fixture".utf8).write(to: resume)
+        try Data("hello".utf8).write(to: cover)
+        try session.navigate(fixture.url.absoluteString)
+        for _ in 0..<500 {
+            if session.webView.title == "Preview fixture", !session.webView.isLoading { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        func text() async throws -> String {
+            try await session.perform(.read, directory: folder)["text"]?.string ?? ""
+        }
+
+        let direct = try await session.perform(.upload(selector: "#file", files: [resume, cover]), directory: folder)
+        #expect(direct["uploaded"]?.array?.compactMap(\.string) == ["resume.pdf", "cover letter.txt"])
+        for _ in 0..<100 {
+            if try await text().contains("Files:") { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(try await text().contains("Files: resume.pdf 16, cover letter.txt 5"))
+
+        _ = try await session.perform(.upload(selector: "#pick", files: [resume]), directory: folder)
+        for _ in 0..<100 {
+            if try await text().contains("Hidden:") { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(try await text().contains("Hidden: resume.pdf"))
+
+        await #expect(throws: PreviewError.self) {
+            _ = try await session.perform(.upload(selector: "#file", files: [folder.appendingPathComponent("missing.pdf")]), directory: folder)
+        }
+        await #expect(throws: PreviewError.self) {
+            _ = try await session.perform(.upload(selector: "#file", files: [folder]), directory: folder)
+        }
+        // An element that opens no chooser leaves the files unattached.
+        await #expect(throws: PreviewError.self) {
+            _ = try await session.perform(.upload(selector: "#apply", files: [resume]), directory: folder)
+        }
+        #expect(NSApp.windows.filter { $0.isVisible && $0 !== window }.allSatisfy { !($0 is NSOpenPanel) })
+    }
 }
 
 /// An in-process HTTP fixture, confined to loopback. The tests never navigate public or authenticated pages.
@@ -102,6 +157,10 @@ import WebKit
                     <input id="name" placeholder="Your message"><input id="secret" type="password" value="do-not-read-password">
                     <button id="apply" onclick="document.getElementById('result').textContent=document.getElementById('name').value">Apply</button>
                     <p id="result">Waiting for input</p>
+                    <input id="file" type="file" multiple onchange="document.getElementById('files').textContent='Files: '+[...this.files].map(f=>f.name+' '+f.size).join(', ')">
+                    <input id="hidden" type="file" style="display:none" onchange="document.getElementById('files').textContent='Hidden: '+this.files[0].name">
+                    <button id="pick" onclick="document.getElementById('hidden').click()">Attach</button>
+                    <p id="files">No files</p>
                     """#
                 let body = Data(html.utf8)
                 var response = Data("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)

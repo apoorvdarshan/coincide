@@ -20,6 +20,8 @@ public final class PreviewBridge {
                 page asked for a passkey this browser can't provide.
                 - navigate with url (http/https only). It returns at once; poll read until loading is false.
                 - click with selector; input with selector and text.
+                - upload with selector and files (absolute paths): attaches local files to the page's file input \
+                without any dialog. The selector can name the input or the button or drop area that opens it.
                 - screenshot: returns a local PNG path for your image viewer.
                 - show: opens the browser panel on this thread so the user can watch.
                 - ask-user with message (one or two short sentences) and optional timeout in seconds (default 300, \

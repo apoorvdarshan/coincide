@@ -5459,6 +5459,118 @@
         }
       }
     },
+    "%@ isn't a readable file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ ist keine lesbare Datei."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ no es un archivo legible."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ no es un archivo legible."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ n’est pas un fichier lisible."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ पढ़ने योग्य फ़ाइल नहीं है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ bukan file yang dapat dibaca."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ non è un file leggibile."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ は読み取れるファイルではありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@은(는) 읽을 수 있는 파일이 아닙니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ is geen leesbaar bestand."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ nie jest plikiem do odczytu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ não é um arquivo legível."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ — не читаемый файл."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ okunabilir bir dosya değil."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ — не читабельний файл."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ không phải là tệp đọc được."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 不是可读取的文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 不是可讀取的檔案。"
+          }
+        }
+      }
+    },
     "%@ isn't available. Choose another agent below." : {
       "localizations" : {
         "de" : {
@@ -253890,6 +254002,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "新工作樹會從此分支開始。"
+          }
+        }
+      }
+    },
+    "The page didn't open its file chooser. Name the file input, or the button that opens it, with selector." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Seite hat ihre Dateiauswahl nicht geöffnet. Gib mit selector das Dateifeld oder die Taste an, die es öffnet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La página no abrió su selector de archivos. Indica con selector el campo de archivo o el botón que lo abre."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La página no abrió su selector de archivos. Indica con selector el campo de archivo o el botón que lo abre."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La page n’a pas ouvert son sélecteur de fichiers. Indiquez avec selector le champ de fichier ou le bouton qui l’ouvre."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पेज ने अपना फ़ाइल चुनने वाला नहीं खोला। selector से फ़ाइल इनपुट या उसे खोलने वाला बटन बताएँ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Halaman tidak membuka pemilih filenya. Sebutkan input file, atau tombol yang membukanya, dengan selector."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La pagina non ha aperto la scelta dei file. Indica con selector il campo file o il pulsante che lo apre."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ページがファイル選択を開きませんでした。selector でファイル入力欄か、それを開くボタンを指定してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "페이지가 파일 선택기를 열지 않았습니다. selector로 파일 입력란이나 이를 여는 버튼을 지정하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De pagina opende haar bestandskiezer niet. Geef met selector het bestandsveld of de knop die het opent op."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Strona nie otworzyła wyboru plików. Wskaż w selector pole pliku albo przycisk, który je otwiera."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A página não abriu o seletor de arquivos. Indique com selector o campo de arquivo ou o botão que o abre."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Страница не открыла выбор файлов. Укажите в selector поле файла или кнопку, которая его открывает."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sayfa dosya seçicisini açmadı. selector ile dosya alanını ya da onu açan düğmeyi belirtin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сторінка не відкрила вибір файлів. Укажіть у selector поле файлу або кнопку, яка його відкриває."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trang không mở bộ chọn tệp. Hãy chỉ định ô chọn tệp, hoặc nút mở nó, bằng selector."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "页面没有打开文件选择器。请用 selector 指定文件输入框或打开它的按钮。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "頁面沒有開啟檔案選擇器。請用 selector 指定檔案輸入欄位或開啟它的按鈕。"
           }
         }
       }
