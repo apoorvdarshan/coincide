@@ -312,6 +312,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func showScheduledTasks(_ sender: Any?) { ScheduledTasksWindowController.shared.show() }
 
+    /// View › Archived Threads…: Settings › Archive.
+    @objc func showArchive(_ sender: Any?) { SettingsWindowController.shared.show(section: .archive) }
+
     @objc func togglePreviewPanel(_ sender: Any?) {
         showWindow(nil)
         splitController.togglePreviewPanel()

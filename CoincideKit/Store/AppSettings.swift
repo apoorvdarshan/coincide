@@ -633,6 +633,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
     case increaseFontSize = "view.increaseFontSize"
     case decreaseFontSize = "view.decreaseFontSize"
     case resetFontSize = "view.resetFontSize"
+    case showArchive = "archive.show"
     // Thread
     case stopTurn = "thread.stop"
     case previousThread = "thread.previous"
@@ -655,7 +656,6 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
     case archiveThread = "thread.archive"
     case copyThreadPath = "thread.copyPath"
     case deleteThread = "thread.delete"
-    case showArchive = "archive.show"
 
     /// The menu bar menu a command is in.
     public enum Menu: Sendable, CaseIterable {

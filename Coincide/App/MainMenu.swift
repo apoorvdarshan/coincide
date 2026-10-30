@@ -174,7 +174,7 @@ final class MainMenu: NSObject, NSMenuDelegate {
         menu.addItem(item(String(localized: "Scheduled Tasks…"), #selector(MainWindowController.showScheduledTasks(_:))))
         menu.addItem(item(String(localized: "Show Browser Preview"), #selector(MainWindowController.togglePreviewPanel(_:))))
         menu.addItem(item(String(localized: "Show Pull Requests"), #selector(MainWindowController.togglePullRequestsPanel(_:))))
-        menu.addItem(item(String(localized: "Archived Threads…"), #selector(AppDelegate.showArchive(_:)), .showArchive))
+        menu.addItem(item(String(localized: "Archived Threads…"), #selector(MainWindowController.showArchive(_:)), .showArchive))
         menu.addItem(.separator())
         menu.addItem(
             item(String(localized: "Command Palette…"), #selector(MainWindowController.showCommandPalette(_:)), .commandPalette))

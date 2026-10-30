@@ -166,9 +166,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showSettings(_ sender: Any?) {
         SettingsWindowController.shared.show()
     }
-
-    /// View › Archived Threads…: Settings › Archive.
-    @objc func showArchive(_ sender: Any?) {
-        SettingsWindowController.shared.show(section: .archive)
-    }
 }
