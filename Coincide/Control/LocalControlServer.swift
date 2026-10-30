@@ -99,6 +99,7 @@ final class LocalControlServer {
     private func accept() {
         let client = Darwin.accept(listener, nil, nil)
         guard client >= 0 else { return }
+        guard connections.count < 16 else { close(client); return }
         // Only this user's own processes.
         var uid: uid_t = 0
         var gid: gid_t = 0
@@ -161,6 +162,7 @@ final class LocalControlConnection: RemoteTransport {
         }
         buffer.append(contentsOf: chunk[0..<count])
         while let newline = buffer.firstIndex(of: 0x0A) {
+            guard buffer.distance(from: buffer.startIndex, to: newline) <= LocalControlServer.maxLineBytes else { close(); return }
             let line = buffer[buffer.startIndex..<newline]
             buffer.removeSubrange(buffer.startIndex...newline)
             if !line.isEmpty { onMessage?(Data(line)) }
@@ -192,7 +194,9 @@ final class LocalControlConnection: RemoteTransport {
         source?.cancel()
         source = nil
         let socket = socket
-        // After any writes already queued.
+        // Interrupt a slow reader before waiting for queued writes to finish. The descriptor stays alive until
+        // the queue drains, so it cannot be reused under an in-flight write.
+        shutdown(socket, SHUT_RDWR)
         writes.async { Darwin.close(socket) }
         let onClose = onClose
         self.onClose = nil

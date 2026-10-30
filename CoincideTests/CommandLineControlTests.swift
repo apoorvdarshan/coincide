@@ -1,3 +1,4 @@
+import Darwin
 import CoincideKit
 import CoincideRemoteKit
 import Foundation
@@ -126,6 +127,44 @@ struct CommandLineControlTests {
         fixture.server.stop()
         #expect(!FileManager.default.fileExists(atPath: fixture.path))
         #expect(throws: ControlError.self) { _ = try ControlClient(path: fixture.path) }
+    }
+
+    @Test func oversizedLinesCloseWithoutReachingTheSession() async throws {
+        let fixture = try fixture("control-size")
+        defer { fixture.server.stop() }
+        let path = fixture.path
+        let closed = await Task.detached {
+            let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+            defer { Darwin.close(fd) }
+            var address = sockaddr_un()
+            address.sun_family = sa_family_t(AF_UNIX)
+            address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+            withUnsafeMutableBytes(of: &address.sun_path) { buffer in
+                for (index, byte) in path.utf8.enumerated() { buffer[index] = byte }
+            }
+            let connected = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+            }
+            guard connected == 0 else { return false }
+            var noSignal: Int32 = 1
+            setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
+            var timeout = timeval(tv_sec: 10, tv_usec: 0)
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            let payload = Data(repeating: 0x20, count: LocalControlServer.maxLineBytes + 1) + Data([0x0A])
+            payload.withUnsafeBytes { raw in
+                var offset = 0
+                while offset < raw.count {
+                    let written = write(fd, raw.baseAddress!.advanced(by: offset), raw.count - offset)
+                    if written <= 0 { break }
+                    offset += written
+                }
+            }
+            var byte: UInt8 = 0
+            return read(fd, &byte, 1) == 0
+        }.value
+        #expect(closed)
+        // Another client still gets a response after the oversized connection was refused.
+        #expect(try await run(["projects"], at: fixture.path).status == 0)
     }
 
     @Test func threadsAreStartedListedReadArchivedAndOpened() async throws {
