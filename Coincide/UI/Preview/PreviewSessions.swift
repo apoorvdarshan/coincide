@@ -22,6 +22,9 @@ final class PreviewSessions {
     private var usesPrivateSessions: Bool
     static let sessionLimit = 8
 
+    /// Whether pages can use passkeys, from the app's signature. Tests replace it before opening browsers.
+    var passkeys = PasskeySupport.current
+
     /// The password managers agents and the address bar's key fill from. Tests replace it.
     var vault: PasswordVault
 
@@ -77,7 +80,7 @@ final class PreviewSessions {
         let state = UIState.shared.values
         let saved = state.previewTabs[id.uuidString]
             ?? state.previewAddresses[id.uuidString].map { BrowserTabsState(urls: [$0], selected: 0) }
-        let session = PreviewSession(dataStore: profile.makeDataStore(), isPrivate: usesPrivateSessions, restoring: saved)
+        let session = PreviewSession(dataStore: profile.makeDataStore(), isPrivate: usesPrivateSessions, restoring: saved, passkeys: passkeys)
         let isPrivate = session.isPrivate
         session.onNavigate = { [weak self] url, title in
             UIState.shared.update { $0.previewAddresses[id.uuidString] = url.absoluteString }

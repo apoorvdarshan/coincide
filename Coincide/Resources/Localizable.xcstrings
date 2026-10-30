@@ -177330,6 +177330,230 @@
         }
       }
     },
+    "Passkeys aren’t available in Coincide’s browser yet. Choose another way to sign in (like “Try another way” on Google), then use the key button to fill your password from your password manager." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passkeys sind im Browser von Coincide noch nicht verfügbar. Wähle eine andere Anmeldemethode (etwa „Andere Option wählen“ bei Google) und fülle dann mit der Schlüsseltaste dein Passwort aus deinem Passwortmanager aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las llaves de acceso aún no están disponibles en el navegador de Coincide. Elige otra forma de iniciar sesión (como «Probar otra manera» en Google) y luego usa el botón de la llave para rellenar tu contraseña desde tu gestor de contraseñas."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las llaves de acceso aún no están disponibles en el navegador de Coincide. Elige otra forma de iniciar sesión (como “Probar otra manera” en Google) y luego usa el botón de la llave para rellenar tu contraseña desde tu gestor de contraseñas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les clés d’identification ne sont pas encore disponibles dans le navigateur de Coincide. Choisissez une autre méthode de connexion (comme « Essayer une autre méthode » sur Google), puis utilisez le bouton en forme de clé pour remplir votre mot de passe depuis votre gestionnaire de mots de passe."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide के ब्राउज़र में पासकी अभी उपलब्ध नहीं हैं। साइन इन करने का कोई दूसरा तरीका चुनें (जैसे Google पर “दूसरा तरीका आज़माएं”), फिर अपने पासवर्ड मैनेजर से पासवर्ड भरने के लिए चाबी वाला बटन इस्तेमाल करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci sandi belum tersedia di browser Coincide. Pilih cara lain untuk masuk (seperti “Coba cara lain” di Google), lalu gunakan tombol kunci untuk mengisi kata sandi dari pengelola kata sandi Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le passkey non sono ancora disponibili nel browser di Coincide. Scegli un altro modo per accedere (come “Prova un altro metodo” su Google), poi usa il pulsante con la chiave per compilare la password dal tuo gestore di password."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide のブラウザではまだパスキーを使用できません。別のサインイン方法（Google の「別の方法を試す」など）を選んでから、鍵ボタンでパスワードマネージャのパスワードを入力してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 브라우저에서는 아직 패스키를 사용할 수 없습니다. 다른 로그인 방법(Google의 ‘다른 방법 시도’ 등)을 선택한 다음 열쇠 버튼으로 암호 관리자의 암호를 채우세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegangssleutels zijn nog niet beschikbaar in de browser van Coincide. Kies een andere manier om in te loggen (zoals ‘Andere manier proberen’ bij Google) en gebruik daarna de sleutelknop om je wachtwoord uit je wachtwoordbeheerder in te vullen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klucze dostępu nie są jeszcze dostępne w przeglądarce Coincide. Wybierz inny sposób logowania (np. „Wypróbuj inny sposób” w Google), a następnie użyj przycisku z kluczem, aby wypełnić hasło z menedżera haseł."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As chaves de acesso ainda não estão disponíveis no navegador do Coincide. Escolha outra forma de entrar (como “Tentar de outra maneira” no Google) e depois use o botão da chave para preencher sua senha com seu gerenciador de senhas."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключи доступа пока недоступны в браузере Coincide. Выберите другой способ входа (например, «Другой способ» в Google), а затем нажмите кнопку с ключом, чтобы заполнить пароль из менеджера паролей."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçiş anahtarları Coincide’ın tarayıcısında henüz kullanılamıyor. Başka bir oturum açma yöntemi seçin (Google’da “Başka bir yol deneyin” gibi), ardından parolanızı parola yöneticinizden doldurmak için anahtar düğmesini kullanın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключі доступу поки недоступні в браузері Coincide. Виберіть інший спосіб входу (наприклад, «Інший спосіб» у Google), а потім натисніть кнопку з ключем, щоб заповнити пароль із менеджера паролів."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình duyệt của Coincide chưa hỗ trợ khóa truy cập. Hãy chọn cách đăng nhập khác (như “Thử cách khác” trên Google), rồi dùng nút chìa khóa để điền mật khẩu từ trình quản lý mật khẩu của bạn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 的浏览器暂不支持通行密钥。请选择其他登录方式（例如 Google 上的“尝试其他方式”），然后使用钥匙按钮从密码管理器填充密码。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 的瀏覽器尚不支援通行密鑰。請選擇其他登入方式（例如 Google 上的「嘗試其他方式」），然後使用鑰匙按鈕從密碼管理工具填入密碼。"
+          }
+        }
+      }
+    },
+    "Passkeys unavailable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passkeys nicht verfügbar"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Llaves de acceso no disponibles"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Llaves de acceso no disponibles"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clés d’identification indisponibles"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पासकी उपलब्ध नहीं"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci sandi tidak tersedia"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passkey non disponibili"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "パスキーは使用できません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "패스키 사용 불가"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegangssleutels niet beschikbaar"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klucze dostępu niedostępne"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chaves de acesso indisponíveis"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключи доступа недоступны"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçiş anahtarları kullanılamıyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключі доступу недоступні"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không dùng được khóa truy cập"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "通行密钥不可用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "通行密鑰無法使用"
+          }
+        }
+      }
+    },
     "Password Settings…" : {
       "localizations" : {
         "de" : {
