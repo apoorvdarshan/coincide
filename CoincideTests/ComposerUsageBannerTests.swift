@@ -299,19 +299,18 @@ import Testing
         #expect(banner.detailsButton.accessibilityRole() == .button)
     }
 
-    @Test func aDismissedWarningStaysDismissedInEitherModeUntilItGetsWorse() {
-        // The composer keeps dismissed warnings by key: the key ignores the display mode and changes once the window
-        // reaches its limit or resets.
+    @Test func aDismissedWarningStaysDismissedAcrossModesSeverityAndResets() {
+        // Acknowledgment is stable across display modes, percentage changes and future reset cycles.
         let key = UsageLimits.warningKey(for: Self.weekly, provider: .claude)
         var later = Self.weekly
         later.usedPercent = 99
         #expect(UsageLimits.warningKey(for: later, provider: .claude) == key)
         var reached = Self.weekly
         reached.usedPercent = 100
-        #expect(UsageLimits.warningKey(for: reached, provider: .claude) != key)
+        #expect(UsageLimits.warningKey(for: reached, provider: .claude) == key)
         var reset = Self.weekly
         reset.resetsAt = Self.now.addingTimeInterval(8 * 86_400)
-        #expect(UsageLimits.warningKey(for: reset, provider: .claude) != key)
+        #expect(UsageLimits.warningKey(for: reset, provider: .claude) == key)
     }
 
     // MARK: Rendered banners

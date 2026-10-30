@@ -14,7 +14,7 @@ final class PasskeyRequestHandler: NSObject, WKScriptMessageHandler {
 }
 
 /// "Passkeys aren't available in Coincide's browser yet", after a page asks for one in a build without the browser
-/// passkey entitlement. It doesn't block the page; × hides it for the site.
+/// passkey entitlement. It doesn't block the page; × remembers the acknowledgment across browser sessions.
 final class PreviewPasskeyBanner: ComposerBanner {
     var onDismiss: (() -> Void)?
     private let message = NoticeLabel(wrappingLabelWithString: "")

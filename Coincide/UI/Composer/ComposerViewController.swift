@@ -40,7 +40,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     /// How strongly the column asks for its full width (see `buildColumn`).
     static let fullWidthPriority = NSLayoutConstraint.Priority(270)
     private let queueBanner = ComposerQueueBanner()
-    private let usageBanner = ComposerUsageBanner()
+    let usageBanner = ComposerUsageBanner()
     private let handoffBanner = ComposerHandoffBanner()
     /// Internal so tests can read the plan card.
     let planCard = ComposerPlanCard()
@@ -88,8 +88,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private var measuredWidth: CGFloat = 0
     private var focusWhenShown = false
     private weak var observedWindow: NSWindow?
-    /// Usage warnings the user dismissed; one comes back when its window resets or reaches its limit.
-    private var dismissedUsageWarnings: Set<String> = []
+    /// The exact warning currently shown, so a click during a reset acknowledges the visible warning too.
+    private var shownUsageWarningKey: String?
     /// Keeps reset countdowns current while the usage meter shows.
     private var usageClock: Timer?
     /// Watches the modifier keys while the composer shows, so send can show what the alternate send does.
@@ -287,9 +287,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         usageBanner.onShowDetails = { [weak self] in self?.footer.usageMeter.showDetails() }
         usageBanner.onToggleResume = { [weak self] in self?.toggleResumeAtReset() }
         usageBanner.onDismiss = { [weak self] in
-            guard let self, let thread, let warning = runner.usageLimits(for: thread.selection.provider, account: thread.selection.accountID)?.current(at: Date()).warning
-            else { return }
-            dismissedUsageWarnings.insert(UsageLimits.warningKey(for: warning, provider: thread.selection.provider))
+            guard let self, let key = shownUsageWarningKey else { return }
+            store.dismissWarning(key)
             refreshUsageLimits()
             focus()
         }
@@ -837,6 +836,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         else {
             footer.usageMeter.isHidden = true
             usageBanner.isHidden = true
+            shownUsageWarningKey = nil
             usageClock?.invalidate()
             usageClock = nil
             return
@@ -845,14 +845,15 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         let limits = reported.current(at: now)
         footer.usageMeter.update(provider: provider, limits: limits)
         footer.usageMeter.isHidden = false
-        if let warning = limits.warning,
-            !dismissedUsageWarnings.contains(UsageLimits.warningKey(for: warning, provider: provider))
-        {
+        let warningKey = limits.warning.map { UsageLimits.warningKey(for: $0, provider: provider, account: thread.selection.accountID) }
+        if let warning = limits.warning, let warningKey, !store.isWarningDismissed(warningKey) {
+            shownUsageWarningKey = warningKey
             usageBanner.show(
                 warning, provider: provider, mode: store.settings.usageDisplayMode, now: now,
                 resume: resumeOffer(provider: provider, now: now))
             usageBanner.isHidden = false
         } else {
+            shownUsageWarningKey = nil
             usageBanner.isHidden = true
         }
         if usageClock == nil, view.window != nil {

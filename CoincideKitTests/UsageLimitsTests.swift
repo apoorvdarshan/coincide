@@ -68,8 +68,8 @@ struct UsageLimitsTests {
             UsageLimits.warningText(for: reached, provider: .claude, at: now)
                 == "Claude Code usage limit reached. The session limit resets in 1h 30m.")
         #expect(UsageLimits.warningText(for: window("s", 100), provider: .claude, at: now) == "Claude Code usage limit reached.")
-        // Dismissing lasts until the window resets or reaches its limit.
-        #expect(UsageLimits.warningKey(for: near, provider: .codex) != UsageLimits.warningKey(for: window("w", 100, kind: .weekly, resetsIn: 2 * 86_400 + 3 * 3_600 + 59), provider: .codex))
+        // Dismissing persists for this warning even when usage later reaches the limit.
+        #expect(UsageLimits.warningKey(for: near, provider: .codex) == UsageLimits.warningKey(for: window("w", 100, kind: .weekly, resetsIn: 2 * 86_400 + 3 * 3_600 + 59), provider: .codex))
         #expect(UsageLimits.warningKey(for: near, provider: .codex) == UsageLimits.warningKey(for: window("w", 95, kind: .weekly, resetsIn: 2 * 86_400 + 3 * 3_600 + 59), provider: .codex))
     }
 
@@ -97,7 +97,7 @@ struct UsageLimitsTests {
                 == "Codex weekly limit reached. Using credits until it resets in 5d 5h.")
         #expect(
             UsageLimits.warningKey(for: weekly, provider: .codex)
-                != UsageLimits.warningKey(for: window("w", 100, kind: .weekly, resetsIn: 5 * 86_400 + 5 * 3_600), provider: .codex))
+                == UsageLimits.warningKey(for: window("w", 100, kind: .weekly, resetsIn: 5 * 86_400 + 5 * 3_600), provider: .codex))
         // A window that stops work is the one to warn about, even if the credit-backed one resets later.
         let limits = UsageLimits(windows: [window("s", 100, resetsIn: 600), weekly], checkedAt: now)
         #expect(limits.warning?.id == "s")

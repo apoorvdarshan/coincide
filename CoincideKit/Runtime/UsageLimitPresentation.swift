@@ -136,10 +136,10 @@ extension UsageLimits {
         return String(localized: "\(used)% of your \(name) \(limit) limit is used.")
     }
 
-    /// Identifies a warning, so dismissing it lasts until the window resets or gets worse.
-    public nonisolated static func warningKey(for window: UsageLimitWindow, provider: ProviderKind) -> String {
-        let stage = window.isExhausted ? (window.continuesOnCredits ? "credits" : "reached") : "near"
-        let reset = window.resetsAt.map { String(Int($0.timeIntervalSince1970 / 60)) } ?? "-"
-        return "\(provider.rawValue)/\(window.id)/\(stage)/\(reset)"
+    /// Acknowledgment belongs to this provider/account/window, not its changing percentage, billing mode,
+    /// localized label or reset time. A dismissed warning stays dismissed in future usage cycles too.
+    public nonisolated static func warningKey(for window: UsageLimitWindow, provider: ProviderKind, account: String? = nil) -> String {
+        let parts = ["usage", provider.rawValue, account ?? ProviderAccount.defaultID, window.kind.rawValue, window.id]
+        return parts.map { $0.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0 }.joined(separator: "/")
     }
 }

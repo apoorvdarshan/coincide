@@ -11,6 +11,7 @@ final class PreviewSessions {
     static let shared = PreviewSessions()
     let bridge: PreviewBridge
     let profile: BrowserProfile
+    private let warningStore: AppStore
     /// Asked to bring the thread's browser panel forward; true when the user can now see it. Set by the app; tests
     /// replace it.
     var reveal: (UUID) -> Bool = { _ in false }
@@ -28,8 +29,9 @@ final class PreviewSessions {
     /// The password managers agents and the address bar's key fill from. Tests replace it.
     var vault: PasswordVault
 
-    init(profile: BrowserProfile = .shared, bridge: PreviewBridge = PreviewBridge()) {
+    init(profile: BrowserProfile = .shared, bridge: PreviewBridge = PreviewBridge(), warningStore: AppStore = .shared) {
         self.profile = profile
+        self.warningStore = warningStore
         self.bridge = bridge
         usesPrivateSessions = profile.usesPrivateSessions
         vault = PasswordVault(settings: profile.settings, providers: profile.passwordProviders())
@@ -84,7 +86,7 @@ final class PreviewSessions {
         let state = UIState.shared.values
         let saved = state.previewTabs[id.uuidString]
             ?? state.previewAddresses[id.uuidString].map { BrowserTabsState(urls: [$0], selected: 0) }
-        let session = PreviewSession(dataStore: profile.makeDataStore(), isPrivate: usesPrivateSessions, restoring: saved, passkeys: passkeys)
+        let session = PreviewSession(dataStore: profile.makeDataStore(), isPrivate: usesPrivateSessions, restoring: saved, passkeys: passkeys, warningStore: warningStore)
         let isPrivate = session.isPrivate
         session.searchEngine = { [weak self] in self?.profile.settings.settings.searchEngine ?? .google }
         session.onNavigate = { [weak self] url, title in
