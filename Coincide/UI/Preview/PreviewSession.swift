@@ -489,6 +489,10 @@ final class PreviewSession: NSObject {
         tab.lastUse = Date()
         let webView = tab.load()
         onTabLoaded?()
+        if case .inFrame(let id, let inner) = command {
+            guard let target = pageTools.frames(in: webView).first(where: { $0.id == id }) else { throw PreviewError.invalidCommand }
+            return try await perform(inner, in: tab, directory: directory, frame: target.info)
+        }
         // A dialog blocks the page's scripts, so only reading it and answering it work until it's answered.
         if let dialog = tab.dialog {
             switch command {
@@ -503,9 +507,6 @@ final class PreviewSession: NSObject {
             }
         }
         switch command {
-        case .inFrame(let id, let inner):
-            guard let target = pageTools.frames(in: webView).first(where: { $0.id == id }) else { throw PreviewError.invalidCommand }
-            return try await perform(inner, in: tab, directory: directory, frame: target.info)
         case .frames:
             return ["frames": .array(pageTools.frames(in: webView).map { frame in
                 ["id": .string(frame.id), "title": .string(frame.title), "url": .string(frame.info.request.url?.absoluteString ?? "")]
