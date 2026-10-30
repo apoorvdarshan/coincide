@@ -76,6 +76,10 @@ public final class ClaudeProvider: AgentProvider {
         return ClaudeModelCatalog.fallbackModels(version: status.version)
     }
 
+    public func commands(executable: URL, environment: [String: String], directory: URL) async -> [ProviderCommand]? {
+        await ClaudeCapabilitiesProbe.run(executable: executable, environment: environment, includeUsage: false, directory: directory)?.commands
+    }
+
     public func makeSession(_ launch: AgentLaunch) -> AgentSession {
         ClaudeSession(launch: launch, knownModels: knownModels, overageIncludedName: overageIncludedName)
     }
@@ -156,7 +160,8 @@ enum ClaudeCapabilitiesProbe {
     }
 
     /// With `includeUsage`, also reads the plan's usage windows (`get_usage`), which sends no prompt either.
-    static func run(executable: URL, environment: [String: String], timeout: TimeInterval = 25, includeUsage: Bool = true)
+    static func run(executable: URL, environment: [String: String], timeout: TimeInterval = 25, includeUsage: Bool = true,
+        directory: URL = FileManager.default.homeDirectoryForCurrentUser)
         async -> ClaudeInitializeInfo?
     {
         var environment = ClaudeLaunchConfig.environment(environment)
@@ -166,7 +171,7 @@ enum ClaudeCapabilitiesProbe {
         let managed = FileManager.default.fileExists(atPath: "/Library/Application Support/ClaudeCode/managed-mcp.json")
         let process = LineProcess(
             executable: executable, arguments: arguments(managedMCPConfig: managed),
-            workingDirectory: FileManager.default.homeDirectoryForCurrentUser, environment: environment)
+            workingDirectory: directory, environment: environment)
         var waiters: [String: Waiter] = [:]
         process.onLine = { line in
             guard let frame = JSONValue.parse(line), frame["type"]?.string == "control_response",

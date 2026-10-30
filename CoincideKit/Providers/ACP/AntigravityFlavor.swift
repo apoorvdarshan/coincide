@@ -182,10 +182,10 @@ struct AntigravityFlavor: ACPAgentFlavor {
         return nil
     }
 
-    /// The agent unpacks about a gigabyte on every launch, so detection never starts it. It checks
-    /// the harness, a downloaded release's record, and whether the private profile holds a sign-in.
+    /// Checks installation and sign-in, then refreshes the native model catalog only when the persisted
+    /// account catalog is missing or stale. A cold refresh unpacks the runtime but never sends a prompt.
     func probe(executable: URL, environment: [String: String]) async -> ACPProbe {
-        let models = offlineModels(environment: environment)
+        var models = offlineModels(environment: environment)
         guard FileManager.default.isExecutableFile(atPath: Self.harnessURL(for: executable).path) else {
             return ACPProbe(
                 status: ProviderStatus(
@@ -210,6 +210,9 @@ struct AntigravityFlavor: ACPAgentFlavor {
         }
         if usesAPIKey {
             let hasKey = environment[Self.apiKeyVariable]?.isEmpty == false
+            if hasKey, let catalog = await AntigravityModelCatalog.refresh(flavor: self, executable: executable, environment: environment) {
+                models = catalog
+            }
             return ACPProbe(
                 status: ProviderStatus(
                     state: hasKey ? .ready : .notAuthenticated, version: version, executable: executable,
@@ -224,11 +227,19 @@ struct AntigravityFlavor: ACPAgentFlavor {
                     message: String(localized: "Sign in with Google in Settings to use Antigravity.")),
                 models: models)
         }
+        if let catalog = await AntigravityModelCatalog.refresh(flavor: self, executable: executable, environment: environment) {
+            models = catalog
+        }
         return ACPProbe(status: ProviderStatus(state: .ready, version: version, executable: executable), models: models)
+    }
+
+    func didDiscoverModels(_ models: [ModelOption]) {
+        AntigravityModelCatalog.save(models, profile: profile)
     }
 
     func offlineModels(environment: [String: String]) -> [ModelOption] {
         Self.knownModels[profile.geminiHome.path].flatMap { $0.isEmpty ? nil : $0 }
+            ?? AntigravityModelCatalog.cached(profile)
             ?? [ModelOption(provider: .antigravity, modelID: Self.defaultModelID, displayName: defaultModelName)]
     }
 

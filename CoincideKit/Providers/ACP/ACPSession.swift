@@ -1163,6 +1163,7 @@ public final class ACPSession: AgentSession {
         let models = flavor.models(initialize: initialized, setup: setup)
         guard !models.isEmpty, models != publishedModels else { return }
         publishedModels = models
+        flavor.didDiscoverModels(models)
         emit(.modelsDiscovered(models))
     }
 

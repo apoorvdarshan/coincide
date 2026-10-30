@@ -246,7 +246,9 @@ public final class ThreadRunner {
     /// elsewhere.
     public func commands(_ threadID: UUID, provider: ProviderKind) -> [ProviderCommand] {
         let account = store.thread(threadID)?.selection.provider == provider ? store.thread(threadID)?.selection.accountID : nil
-        return sessionCommands[threadID]?[provider] ?? registry.commands(for: provider, account: account)
+        if let live = sessionCommands[threadID]?[provider] { return live }
+        if let directory = store.workingDirectory(for: threadID) { return registry.commands(for: provider, account: account, in: directory) }
+        return registry.commands(for: provider, account: account)
     }
 
     private func setBackgroundWork(_ tasks: [BackgroundTask], threadID: UUID, provider: ProviderKind) {

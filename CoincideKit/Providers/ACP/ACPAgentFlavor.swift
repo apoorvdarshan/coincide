@@ -96,6 +96,8 @@ public protocol ACPAgentFlavor {
     /// The text of a plan document the tool call writes, for agents that keep their plan in a file.
     func planDocument(in toolCall: ACPToolCallState) -> String?
     func models(initialize: ACPInitializeResult?, setup: ACPSessionSetup) -> [ModelOption]
+    /// Persists a live catalog when the flavor needs one; pure model mapping never writes account files.
+    func didDiscoverModels(_ models: [ModelOption])
     func message(for error: Error) -> String
     /// A notice for a line the agent printed outside JSON-RPC (stdout or stderr), such as a sign-in link.
     func notice(forOutputLine line: String) -> String?
@@ -249,6 +251,8 @@ extension ACPAgentFlavor {
             provider: provider, setup: setup, initialize: initialize, defaultModelID: defaultModelID,
             defaultModelName: defaultModelName, supportsImages: supportsImagePrompts || initialize?.promptImage == true)
     }
+
+    public func didDiscoverModels(_ models: [ModelOption]) {}
 
     public func message(for error: Error) -> String {
         if let error = error as? ACPError, error.code == ACPError.authRequired {
