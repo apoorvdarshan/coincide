@@ -57,6 +57,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func configure() {
+        if let window { TitlebarDoubleClick.install(on: window) }
         // Text fields edit through the window's shared field editor; it selects in the theme's colors too.
         (window?.fieldEditor(true, for: nil) as? NSTextView)?.selectedTextAttributes = [.backgroundColor: Theme.textSelection]
         sidebar.onSelectThread = { [weak self] id in self?.open(id, unsnooze: false) }
