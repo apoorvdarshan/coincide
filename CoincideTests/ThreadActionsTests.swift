@@ -175,6 +175,11 @@ struct ThreadActionsTests {
     }
 
     @Test func pinningAndArchivingToggle() throws {
+        // Archiving asks first by default; this test archives without the question.
+        let confirm = store.settings.confirmBeforeArchivingThreads
+        #expect(AppSettings().confirmBeforeArchivingThreads)
+        store.updateSettings { $0.confirmBeforeArchivingThreads = false }
+        defer { store.updateSettings { $0.confirmBeforeArchivingThreads = confirm } }
         try withProject { project, _ in
             let id = try #require(ThreadActions.newThread(in: project.id))
             ThreadActions.togglePin(id)
@@ -184,12 +189,16 @@ struct ThreadActionsTests {
 
             // A thread that is not running can be archived and brought back.
             #expect(ThreadActions.canArchive(id))
-            ThreadActions.toggleArchived(id)
+            ThreadActions.toggleArchived(id, in: nil)
             #expect(store.thread(id)?.isArchived == true)
             #expect(!store.threads(in: project.id).contains { $0.id == id })
             #expect(ThreadActions.canArchive(id))
-            ThreadActions.toggleArchived(id)
+            ThreadActions.toggleArchived(id, in: nil)
             #expect(store.thread(id)?.isArchived == false)
+            // Archiving several at once skips duplicates and threads already archived.
+            let other = store.createThread(in: project.id).id
+            ThreadActions.archive([id, id, other], in: nil)
+            #expect(store.thread(id)?.isArchived == true && store.thread(other)?.isArchived == true)
         }
     }
 

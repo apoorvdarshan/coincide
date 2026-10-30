@@ -68,7 +68,7 @@ struct ArchiveSettingsView: View {
         let isFiltering = !model.filter.trimmingCharacters(in: .whitespaces).isEmpty
         Form {
             Section {
-                SettingsPaneHeader(title: String(localized: "Archive")) {
+                SettingsPaneHeader(title: SettingsSection.archive.title) {
                     SettingsIconTile(symbol: SettingsSection.archive.symbolName, color: SettingsSection.archive.tint, size: 44)
                 } subtitle: {
                     if let shortcut = model.archiveShortcut {

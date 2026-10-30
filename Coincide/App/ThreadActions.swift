@@ -102,10 +102,45 @@ enum ThreadActions {
         store.summary(threadID)?.isArchived == true || !ThreadRunner.shared.isRunning(threadID)
     }
 
-    static func toggleArchived(_ threadID: UUID) {
-        guard canArchive(threadID) else { return }
-        guard let thread = store.summary(threadID) else { return }
-        ThreadInbox.shared.archive([threadID], archived: !thread.isArchived)
+    /// Unarchives at once; archiving goes through `archive(_:in:)`, which asks first.
+    static func toggleArchived(_ threadID: UUID, in window: NSWindow?) {
+        guard canArchive(threadID), let thread = store.summary(threadID) else { return }
+        if thread.isArchived {
+            ThreadInbox.shared.archive([threadID], archived: false)
+        } else {
+            archive([threadID], in: window)
+        }
+    }
+
+    /// Archives threads, asking first unless the user turned that off. Running threads are left out, and archiving
+    /// is undoable (Edit › Undo, or Unarchive in Settings › Archive).
+    static func archive(_ threadIDs: [UUID], in window: NSWindow?) {
+        var seen = Set<UUID>()
+        let ids = threadIDs.filter { seen.insert($0).inserted && store.summary($0)?.isArchived == false && canArchive($0) }
+        guard !ids.isEmpty else { return }
+        let perform = { ThreadInbox.shared.archive(ids, archived: true) }
+        guard store.settings.confirmBeforeArchivingThreads else {
+            perform()
+            return
+        }
+        let alert = ThemedAlert()
+        if ids.count == 1, let thread = store.summary(ids[0]) {
+            alert.messageText = String(localized: "Archive “\(thread.title)”?")
+        } else {
+            alert.messageText = String(localized: "Archive Threads (\(ids.count))?")
+        }
+        alert.informativeText = String(localized: "Archived threads leave the sidebar. Bring them back or delete them in Settings › Archive.")
+        alert.addButton(withTitle: String(localized: "Archive"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = String(localized: "Don’t ask again")
+        present(alert, in: window) { confirmed in
+            guard confirmed else { return }
+            if alert.suppressionButton?.state == .on {
+                store.updateSettings { $0.confirmBeforeArchivingThreads = false }
+            }
+            perform()
+        }
     }
 
     static func markUnread(_ threadID: UUID) {

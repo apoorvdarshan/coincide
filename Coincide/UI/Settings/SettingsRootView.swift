@@ -255,6 +255,8 @@ struct SettingsSearchResults: View {
             SettingsSearchEntry(
                 title: String(localized: "Confirm before deleting threads"), pane: general, setting: .confirmDelete),
             SettingsSearchEntry(
+                title: String(localized: "Confirm before archiving threads"), pane: general, setting: .confirmArchive),
+            SettingsSearchEntry(
                 title: String(localized: "Hold ⌘Q to quit"), pane: general, setting: .holdToQuit,
                 keywords: [String(localized: "Quit"), String(localized: "Keyboard")]),
             SettingsSearchEntry(
@@ -300,7 +302,7 @@ struct SettingsSearchResults: View {
                 title: String(localized: "Instructions"), pane: .section(.instructions),
                 keywords: ["AGENTS.md", "CLAUDE.md", "GEMINI.md", String(localized: "Rules"), String(localized: "Memory")]),
             SettingsSearchEntry(
-                title: String(localized: "Archive"), pane: .section(.archive),
+                title: SettingsSection.archive.title, pane: .section(.archive),
                 keywords: [String(localized: "Archived threads"), String(localized: "Unarchive"), String(localized: "Delete All")]),
             SettingsSearchEntry(
                 title: String(localized: "Keyboard shortcuts"), pane: .section(.keyboard),
