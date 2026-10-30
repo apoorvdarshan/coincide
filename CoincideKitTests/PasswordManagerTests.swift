@@ -218,6 +218,28 @@ struct StaticProvider: PasswordProvider {
         await #expect(throws: LoginFillError.noPasswordManager) { _ = try await vault.secret(for: home) }
     }
 
+    /// Agents get Bitwarden's unlocked session only while Bitwarden is on and the user lets agents use it.
+    @Test func agentsGetTheUnlockedSessionOfEnabledManagers() async throws {
+        let folder = try FixtureFolder()
+        let settings = BrowserSettingsStore(directory: folder.url)
+        let sessions = MemorySecretStore()
+        let bitwarden = BitwardenProvider(runner: FakeRunner(installed: ["bw"]), sessions: sessions)
+        let vault = PasswordVault(settings: settings, providers: [bitwarden, StaticProvider(kind: .onePassword, items: [])])
+        #expect(BrowserSettings().agentsUsePasswordManagers)
+        try sessions.write("fixture-session-key", for: BitwardenProvider.sessionAccount)
+        #expect(vault.agentEnvironment().isEmpty)
+        settings.update { $0.passwordManagers = [.bitwarden, .onePassword] }
+        #expect(vault.agentEnvironment() == ["BW_SESSION": "fixture-session-key"])
+        settings.update { $0.agentsUsePasswordManagers = false }
+        #expect(vault.agentEnvironment().isEmpty)
+        settings.update { $0.agentsUsePasswordManagers = true }
+        sessions.delete(BitwardenProvider.sessionAccount)
+        #expect(vault.agentEnvironment().isEmpty)
+        // Settings saved before the switch existed let agents use the managers.
+        let old = try JSONDecoder().decode(BrowserSettings.self, from: Data(#"{"passwordManagers": ["bitwarden"]}"#.utf8))
+        #expect(old.agentsUsePasswordManagers)
+    }
+
     @Test func approvalGateDeniesOnTimeout() async {
         let gate = LoginApprovalGate()
         let item = LoginItem(source: .coincide, itemID: "1", title: "x", username: "u", urls: [])

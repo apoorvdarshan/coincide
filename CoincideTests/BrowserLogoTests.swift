@@ -27,8 +27,6 @@ struct BrowserLogoTests {
             #expect(!shown.isTemplate, "\(kind.displayName) fell back to a symbol")
             #expect(shown.size == NSSize(width: 20, height: 20))
         }
-        let apple = try #require(NSImage(named: PasswordManagerLogo.applePasswordsAsset))
-        #expect(!apple.isTemplate)
         // Coincide's own logins show Coincide's icon, which is always there.
         #expect(!PasswordManagerLogo.image(for: .coincide, size: 20).isTemplate)
     }
@@ -101,9 +99,6 @@ struct BrowserLogoTests {
                 managers.append((PasswordManagerLogo.image(for: kind, size: 20), kind.displayName, "Installed app’s icon"))
             }
         }
-        managers.append((PasswordManagerLogo.image(bundleIDs: [], asset: PasswordManagerLogo.applePasswordsAsset, size: 20,
-            appURL: Self.nothingInstalled), "Apple Passwords", "Bundled logo"))
-        managers.append((PasswordManagerLogo.applePasswords(size: 20), "Apple Passwords", "Installed app’s icon"))
         let rows = VStack(alignment: .leading, spacing: 10) {
             ForEach(Array(managers.enumerated()), id: \.offset) { _, row in
                 PasswordManagerLabel(logo: row.0, name: row.1, caption: row.2)

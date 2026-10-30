@@ -28958,6 +28958,118 @@
         }
       }
     },
+    "Agents Coincide starts get Bitwarden’s unlocked session, so they can read any item with the bw command, such as API keys and tokens, without asking. Agents that are already running get it when they start again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agenten, die Coincide startet, erhalten die entsperrte Bitwarden-Sitzung und können so ohne Nachfrage jeden Eintrag mit dem Befehl bw lesen, etwa API-Schlüssel und Tokens. Bereits laufende Agenten erhalten sie beim nächsten Start."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los agentes que inicia Coincide reciben la sesión desbloqueada de Bitwarden, así que pueden leer cualquier elemento con el comando bw, como claves de API y tokens, sin preguntar. Los agentes que ya están en marcha la reciben al volver a iniciarse."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los agentes que inicia Coincide reciben la sesión desbloqueada de Bitwarden, así que pueden leer cualquier elemento con el comando bw, como claves de API y tokens, sin preguntar. Los agentes que ya están en marcha la reciben al volver a iniciarse."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les agents lancés par Coincide reçoivent la session Bitwarden déverrouillée : ils peuvent lire n’importe quel élément avec la commande bw, comme des clés d’API et des jetons, sans demander. Les agents déjà en cours la reçoivent à leur prochain démarrage."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide जिन एजेंट को शुरू करता है, उन्हें Bitwarden का अनलॉक सेशन मिलता है, ताकि वे बिना पूछे bw कमांड से कोई भी आइटम पढ़ सकें, जैसे API कुंजियाँ और टोकन। पहले से चल रहे एजेंट को यह अगली बार शुरू होने पर मिलता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agen yang dijalankan Coincide mendapat sesi Bitwarden yang sudah terbuka, sehingga dapat membaca item apa pun dengan perintah bw, seperti kunci API dan token, tanpa bertanya. Agen yang sudah berjalan mendapatkannya saat dimulai lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gli agenti avviati da Coincide ricevono la sessione sbloccata di Bitwarden, quindi possono leggere qualsiasi elemento con il comando bw, come chiavi API e token, senza chiedere. Gli agenti già in esecuzione la ricevono al prossimo avvio."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide が起動するエージェントは Bitwarden のロック解除済みセッションを受け取り、API キーやトークンなどあらゆる項目を bw コマンドで確認なしに読み取れます。実行中のエージェントは次回起動時に受け取ります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide가 시작하는 에이전트는 Bitwarden의 잠금 해제된 세션을 받아 API 키와 토큰 등 모든 항목을 bw 명령으로 묻지 않고 읽을 수 있습니다. 이미 실행 중인 에이전트는 다시 시작할 때 받습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agents die Coincide start, krijgen de ontgrendelde Bitwarden-sessie, zodat ze elk item met de opdracht bw kunnen lezen, zoals API-sleutels en tokens, zonder te vragen. Agents die al draaien, krijgen hem bij hun volgende start."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agenci uruchamiani przez Coincide dostają odblokowaną sesję Bitwardena, więc bez pytania mogą odczytać dowolny element poleceniem bw, na przykład klucze API i tokeny. Agenci, którzy już działają, dostaną ją przy następnym uruchomieniu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os agentes que o Coincide inicia recebem a sessão desbloqueada do Bitwarden, então podem ler qualquer item com o comando bw, como chaves de API e tokens, sem perguntar. Agentes que já estão em execução a recebem quando iniciam de novo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Агенты, которых запускает Coincide, получают разблокированную сессию Bitwarden и могут без вопросов читать любые записи командой bw, например ключи API и токены. Уже запущенные агенты получат её при следующем запуске."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide’ın başlattığı ajanlar Bitwarden’ın kilidi açık oturumunu alır; böylece API anahtarları ve token’lar gibi her öğeyi bw komutuyla sormadan okuyabilir. Zaten çalışan ajanlar bunu yeniden başladıklarında alır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Агенти, яких запускає Coincide, отримують розблоковану сесію Bitwarden і можуть без запитань читати будь-які записи командою bw, наприклад ключі API й токени. Агенти, які вже працюють, отримають її під час наступного запуску."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Các agent do Coincide khởi chạy nhận phiên Bitwarden đã mở khóa, nên có thể đọc mọi mục bằng lệnh bw, như khóa API và token, mà không cần hỏi. Các agent đang chạy sẽ nhận được khi khởi động lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 启动的代理会获得 Bitwarden 已解锁的会话，因此无需询问即可用 bw 命令读取任何条目，例如 API 密钥和令牌。已在运行的代理会在下次启动时获得。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 啟動的代理會取得 Bitwarden 已解鎖的工作階段，因此無需詢問即可用 bw 指令讀取任何項目，例如 API 金鑰和權杖。已在執行的代理會在下次啟動時取得。"
+          }
+        }
+      }
+    },
     "Agents ask before running commands or editing files." : {
       "localizations" : {
         "de" : {
@@ -38496,118 +38608,6 @@
         }
       }
     },
-    "Apple Passwords" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apple Passwörter"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Contraseñas de Apple"
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Contraseñas de Apple"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mots de passe d’Apple"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apple पासवर्ड"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Kata Sandi Apple"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Password di Apple"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apple パスワード"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apple 암호"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apple Wachtwoorden"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Hasła Apple"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Senhas da Apple"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Пароли Apple"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apple Parolalar"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Паролі Apple"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mật khẩu của Apple"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apple 密码"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apple 密碼"
-          }
-        }
-      }
-    },
     "Application windows" : {
       "localizations" : {
         "de" : {
@@ -47168,114 +47168,114 @@
         }
       }
     },
-    "Browser extensions can’t run inside Coincide’s browser, so Coincide works with each password manager’s command-line tool. Agents never see passwords or one-time codes: Coincide types them into the page itself, after you allow it for the site." : {
+    "Browser extensions can’t run inside Coincide’s browser, so Coincide works with each password manager’s command-line tool. In the browser, Coincide types passwords and one-time codes into the page itself, after you allow it for the site." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Browsererweiterungen laufen nicht im Browser von Coincide, daher arbeitet Coincide mit dem Befehlszeilenwerkzeug des jeweiligen Passwortmanagers. Agenten sehen nie Passwörter oder Einmalcodes: Coincide tippt sie selbst in die Seite ein, nachdem du es für die Website erlaubt hast."
+            "value" : "Browsererweiterungen laufen nicht im Browser von Coincide, daher arbeitet Coincide mit dem Befehlszeilenwerkzeug des jeweiligen Passwortmanagers. Im Browser tippt Coincide Passwörter und Einmalcodes selbst in die Seite ein, nachdem du es für die Website erlaubt hast."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Las extensiones no pueden ejecutarse en el navegador de Coincide, así que Coincide usa la herramienta de línea de comandos de cada gestor de contraseñas. Los agentes nunca ven contraseñas ni códigos de un solo uso: Coincide los escribe en la página después de que lo permitas para el sitio."
+            "value" : "Las extensiones no pueden ejecutarse en el navegador de Coincide, así que Coincide usa la herramienta de línea de comandos de cada gestor de contraseñas. En el navegador, Coincide escribe las contraseñas y los códigos de un solo uso en la página después de que lo permitas para el sitio."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Las extensiones no pueden ejecutarse en el navegador de Coincide, así que Coincide usa la herramienta de línea de comandos de cada gestor de contraseñas. Los agentes nunca ven contraseñas ni códigos de un solo uso: Coincide los escribe en la página después de que lo permitas para el sitio."
+            "value" : "Las extensiones no pueden ejecutarse en el navegador de Coincide, así que Coincide usa la herramienta de línea de comandos de cada gestor de contraseñas. En el navegador, Coincide escribe las contraseñas y los códigos de un solo uso en la página después de que lo permitas para el sitio."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Les extensions ne peuvent pas s’exécuter dans le navigateur de Coincide : Coincide passe donc par l’outil en ligne de commande de chaque gestionnaire de mots de passe. Les agents ne voient jamais les mots de passe ni les codes à usage unique : Coincide les saisit lui-même dans la page, après votre autorisation pour le site."
+            "value" : "Les extensions ne peuvent pas s’exécuter dans le navigateur de Coincide : Coincide passe donc par l’outil en ligne de commande de chaque gestionnaire de mots de passe. Dans le navigateur, Coincide saisit lui-même les mots de passe et les codes à usage unique dans la page, après votre autorisation pour le site."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "ब्राउज़र एक्सटेंशन Coincide के ब्राउज़र में नहीं चल सकते, इसलिए Coincide हर पासवर्ड मैनेजर के कमांड-लाइन टूल के साथ काम करता है। एजेंट कभी पासवर्ड या वन-टाइम कोड नहीं देखते: साइट के लिए आपकी अनुमति के बाद Coincide उन्हें खुद पेज में टाइप करता है।"
+            "value" : "ब्राउज़र एक्सटेंशन Coincide के ब्राउज़र में नहीं चल सकते, इसलिए Coincide हर पासवर्ड मैनेजर के कमांड-लाइन टूल के साथ काम करता है। ब्राउज़र में, साइट के लिए आपकी अनुमति के बाद Coincide पासवर्ड और वन-टाइम कोड खुद पेज में टाइप करता है।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ekstensi browser tidak dapat berjalan di browser Coincide, jadi Coincide bekerja dengan alat baris perintah setiap pengelola kata sandi. Agen tidak pernah melihat kata sandi atau kode sekali pakai: Coincide sendiri yang mengetiknya ke halaman setelah Anda mengizinkannya untuk situs itu."
+            "value" : "Ekstensi browser tidak dapat berjalan di browser Coincide, jadi Coincide bekerja dengan alat baris perintah setiap pengelola kata sandi. Di browser, Coincide sendiri yang mengetik kata sandi dan kode sekali pakai ke halaman setelah Anda mengizinkannya untuk situs itu."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Le estensioni non possono funzionare nel browser di Coincide, quindi Coincide usa lo strumento da riga di comando di ogni gestore di password. Gli agenti non vedono mai password o codici monouso: è Coincide a digitarli nella pagina, dopo che l’hai consentito per il sito."
+            "value" : "Le estensioni non possono funzionare nel browser di Coincide, quindi Coincide usa lo strumento da riga di comando di ogni gestore di password. Nel browser è Coincide a digitare password e codici monouso nella pagina, dopo che l’hai consentito per il sito."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide のブラウザでは拡張機能を実行できないため、各パスワードマネージャのコマンドラインツールと連携します。エージェントがパスワードやワンタイムコードを見ることはありません。サイトごとに許可すると、Coincide 自身がページに入力します。"
+            "value" : "Coincide のブラウザでは拡張機能を実行できないため、各パスワードマネージャのコマンドラインツールと連携します。ブラウザでは、サイトごとに許可すると Coincide 自身がパスワードとワンタイムコードをページに入力します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide 브라우저에서는 확장 프로그램을 실행할 수 없으므로 Coincide는 각 암호 관리자의 명령줄 도구와 연동합니다. 에이전트는 암호나 일회용 코드를 보지 못하며, 사이트별로 허용하면 Coincide가 직접 페이지에 입력합니다."
+            "value" : "Coincide 브라우저에서는 확장 프로그램을 실행할 수 없으므로 Coincide는 각 암호 관리자의 명령줄 도구와 연동합니다. 브라우저에서는 사이트별로 허용하면 Coincide가 직접 암호와 일회용 코드를 페이지에 입력합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Browserextensies kunnen niet in de browser van Coincide draaien, dus Coincide werkt met de opdrachtregeltool van elke wachtwoordbeheerder. Agents zien nooit wachtwoorden of eenmalige codes: Coincide typt ze zelf in de pagina, nadat je het voor de site hebt toegestaan."
+            "value" : "Browserextensies kunnen niet in de browser van Coincide draaien, dus Coincide werkt met de opdrachtregeltool van elke wachtwoordbeheerder. In de browser typt Coincide wachtwoorden en eenmalige codes zelf in de pagina, nadat je het voor de site hebt toegestaan."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Rozszerzenia nie działają w przeglądarce Coincide, dlatego Coincide korzysta z narzędzia wiersza poleceń każdego menedżera haseł. Agenci nigdy nie widzą haseł ani kodów jednorazowych: Coincide sam wpisuje je na stronie, gdy pozwolisz na to dla witryny."
+            "value" : "Rozszerzenia nie działają w przeglądarce Coincide, dlatego Coincide korzysta z narzędzia wiersza poleceń każdego menedżera haseł. W przeglądarce Coincide sam wpisuje hasła i kody jednorazowe na stronie, gdy pozwolisz na to dla witryny."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Extensões não funcionam no navegador do Coincide, então o Coincide usa a ferramenta de linha de comando de cada gerenciador de senhas. Os agentes nunca veem senhas nem códigos únicos: o próprio Coincide os digita na página, depois que você permite para o site."
+            "value" : "Extensões não funcionam no navegador do Coincide, então o Coincide usa a ferramenta de linha de comando de cada gerenciador de senhas. No navegador, o próprio Coincide digita senhas e códigos únicos na página, depois que você permite para o site."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Расширения не работают в браузере Coincide, поэтому Coincide использует инструмент командной строки каждого менеджера паролей. Агенты никогда не видят пароли и одноразовые коды: Coincide сам вводит их на странице после вашего разрешения для сайта."
+            "value" : "Расширения не работают в браузере Coincide, поэтому Coincide использует инструмент командной строки каждого менеджера паролей. В браузере Coincide сам вводит пароли и одноразовые коды на странице после вашего разрешения для сайта."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tarayıcı uzantıları Coincide’ın tarayıcısında çalışamaz; bu yüzden Coincide her parola yöneticisinin komut satırı aracıyla çalışır. Ajanlar parolaları veya tek kullanımlık kodları asla görmez: siteye izin verdikten sonra Coincide bunları sayfaya kendisi yazar."
+            "value" : "Tarayıcı uzantıları Coincide’ın tarayıcısında çalışamaz; bu yüzden Coincide her parola yöneticisinin komut satırı aracıyla çalışır. Tarayıcıda, siteye izin verdikten sonra Coincide parolaları ve tek kullanımlık kodları sayfaya kendisi yazar."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Розширення не працюють у браузері Coincide, тому Coincide використовує інструмент командного рядка кожного менеджера паролів. Агенти ніколи не бачать паролів і одноразових кодів: Coincide сам вводить їх на сторінці після вашого дозволу для сайту."
+            "value" : "Розширення не працюють у браузері Coincide, тому Coincide використовує інструмент командного рядка кожного менеджера паролів. У браузері Coincide сам вводить паролі й одноразові коди на сторінці після вашого дозволу для сайту."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tiện ích mở rộng không chạy được trong trình duyệt của Coincide, nên Coincide làm việc với công cụ dòng lệnh của từng trình quản lý mật khẩu. Agent không bao giờ thấy mật khẩu hay mã dùng một lần: Coincide tự nhập chúng vào trang sau khi bạn cho phép với trang đó."
+            "value" : "Tiện ích mở rộng không chạy được trong trình duyệt của Coincide, nên Coincide làm việc với công cụ dòng lệnh của từng trình quản lý mật khẩu. Trong trình duyệt, Coincide tự nhập mật khẩu và mã dùng một lần vào trang sau khi bạn cho phép với trang đó."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide 的浏览器无法运行浏览器扩展，因此 Coincide 通过各密码管理器的命令行工具工作。代理永远看不到密码或一次性验证码：在你允许该网站后，由 Coincide 自己填入页面。"
+            "value" : "Coincide 的浏览器无法运行浏览器扩展，因此 Coincide 通过各密码管理器的命令行工具工作。在浏览器中，你允许该网站后，由 Coincide 自己把密码和一次性验证码填入页面。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide 的瀏覽器無法執行瀏覽器延伸功能，因此 Coincide 透過各密碼管理工具的命令列工具運作。代理永遠看不到密碼或一次性驗證碼：在你允許該網站後，由 Coincide 自己填入頁面。"
+            "value" : "Coincide 的瀏覽器無法執行瀏覽器延伸功能，因此 Coincide 透過各密碼管理工具的命令列工具運作。在瀏覽器中，你允許該網站後，由 Coincide 自己把密碼和一次性驗證碼填入頁面。"
           }
         }
       }
@@ -137530,6 +137530,118 @@
         }
       }
     },
+    "Let agents use your unlocked password managers" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agenten deine entsperrten Passwortmanager nutzen lassen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitir que los agentes usen tus gestores de contraseñas desbloqueados"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitir que los agentes usen tus gestores de contraseñas desbloqueados"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laisser les agents utiliser vos gestionnaires de mots de passe déverrouillés"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एजेंट को आपके अनलॉक पासवर्ड मैनेजर इस्तेमाल करने दें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Izinkan agen memakai pengelola kata sandi Anda yang terbuka"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consenti agli agenti di usare i gestori di password sbloccati"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ロック解除済みのパスワードマネージャをエージェントに使わせる"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 잠금 해제된 암호 관리자를 사용하도록 허용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laat agents je ontgrendelde wachtwoordbeheerders gebruiken"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozwól agentom używać odblokowanych menedżerów haseł"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deixar os agentes usarem seus gerenciadores de senhas desbloqueados"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешить агентам использовать разблокированные менеджеры паролей"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajanların kilidi açık parola yöneticilerinizi kullanmasına izin ver"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволити агентам використовувати розблоковані менеджери паролів"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép agent dùng các trình quản lý mật khẩu đã mở khóa"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许代理使用已解锁的密码管理器"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允許代理使用已解鎖的密碼管理工具"
+          }
+        }
+      }
+    },
     "License" : {
       "localizations" : {
         "de" : {
@@ -167916,118 +168028,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "不支援"
-          }
-        }
-      }
-    },
-    "Not supported: macOS doesn’t let other apps read website passwords from Passwords or iCloud Keychain. In the Passwords app, choose File › Export All Passwords…, then import the CSV below." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Nicht unterstützt: macOS erlaubt anderen Apps nicht, Website-Passwörter aus Passwörter oder dem iCloud-Schlüsselbund zu lesen. Wähle in der App „Passwörter“ Ablage › Alle Passwörter exportieren … und importiere dann die CSV-Datei unten."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "No compatible: macOS no permite que otras apps lean contraseñas de sitios web de Contraseñas ni del Llavero de iCloud. En la app Contraseñas, elige Archivo › Exportar todas las contraseñas… e importa el CSV abajo."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "No compatible: macOS no permite que otras apps lean contraseñas de sitios web de Contraseñas ni del Llavero de iCloud. En la app Contraseñas, elige Archivo › Exportar todas las contraseñas… e importa el CSV abajo."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Non pris en charge : macOS ne permet pas aux autres apps de lire les mots de passe de sites depuis Mots de passe ou le trousseau iCloud. Dans l’app Mots de passe, choisissez Fichier › Exporter tous les mots de passe…, puis importez le CSV ci-dessous."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "समर्थित नहीं: macOS दूसरे ऐप्स को पासवर्ड ऐप या iCloud कीचेन से वेबसाइट पासवर्ड पढ़ने नहीं देता। पासवर्ड ऐप में फ़ाइल › सभी पासवर्ड एक्सपोर्ट करें… चुनें, फिर नीचे CSV इम्पोर्ट करें।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Tidak didukung: macOS tidak mengizinkan app lain membaca kata sandi situs web dari Kata Sandi atau Rantai Kunci iCloud. Di app Kata Sandi, pilih File › Ekspor Semua Kata Sandi…, lalu impor CSV di bawah."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Non supportato: macOS non consente ad altre app di leggere le password dei siti da Password o dal portachiavi iCloud. Nell’app Password scegli File › Esporta tutte le password…, poi importa il CSV qui sotto."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "非対応：macOS では、他のアプリがパスワード App や iCloud キーチェーンの Web サイトのパスワードを読み取れません。パスワード App で「ファイル › すべてのパスワードを書き出す…」を選び、下で CSV を読み込んでください。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "지원되지 않음: macOS는 다른 앱이 암호 앱이나 iCloud 키체인의 웹사이트 암호를 읽도록 허용하지 않습니다. 암호 앱에서 파일 › 모든 암호 내보내기…를 선택한 다음 아래에서 CSV를 가져오세요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Niet ondersteund: macOS laat andere apps geen websitewachtwoorden lezen uit Wachtwoorden of de iCloud-sleutelhanger. Kies in de app Wachtwoorden Archief › Exporteer alle wachtwoorden… en importeer de CSV hieronder."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Nieobsługiwane: macOS nie pozwala innym aplikacjom odczytywać haseł witryn z aplikacji Hasła ani pęku kluczy iCloud. W aplikacji Hasła wybierz Plik › Eksportuj wszystkie hasła…, a następnie zaimportuj plik CSV poniżej."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Não compatível: o macOS não permite que outros apps leiam senhas de sites do app Senhas ou das Chaves do iCloud. No app Senhas, escolha Arquivo › Exportar Todas as Senhas… e importe o CSV abaixo."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Не поддерживается: macOS не позволяет другим приложениям читать пароли сайтов из «Паролей» или связки ключей iCloud. В приложении «Пароли» выберите «Файл › Экспортировать все пароли…», затем импортируйте CSV ниже."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Desteklenmiyor: macOS, diğer uygulamaların Parolalar’daki veya iCloud Anahtar Zinciri’ndeki web sitesi parolalarını okumasına izin vermez. Parolalar uygulamasında Dosya › Tüm Parolaları Dışa Aktar…’ı seçin, ardından CSV’yi aşağıdan içe aktarın."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Не підтримується: macOS не дозволяє іншим застосункам читати паролі сайтів із «Паролів» або в’язки ключів iCloud. У застосунку «Паролі» виберіть «Файл › Експортувати всі паролі…», а потім імпортуйте CSV нижче."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Không được hỗ trợ: macOS không cho ứng dụng khác đọc mật khẩu trang web từ Mật khẩu hay Chuỗi khóa iCloud. Trong ứng dụng Mật khẩu, chọn Tệp › Xuất tất cả mật khẩu…, rồi nhập tệp CSV bên dưới."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "不支持：macOS 不允许其他 App 读取“密码”App 或 iCloud 钥匙串中的网站密码。请在“密码”App 中选择“文件 › 导出所有密码…”，然后在下方导入 CSV。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "不支援：macOS 不允許其他 App 讀取「密碼」App 或 iCloud 鑰匙圈中的網站密碼。請在「密碼」App 中選擇「檔案 › 匯出所有密碼⋯」，然後在下方匯入 CSV。"
           }
         }
       }

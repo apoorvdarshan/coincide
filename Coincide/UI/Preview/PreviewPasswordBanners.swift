@@ -89,16 +89,9 @@ final class PreviewSaveLoginBanner: ComposerBanner {
 /// bundled in `Assets.xcassets`, since a manager can be used through its command-line tool alone. Coincide's own
 /// logins wear Coincide's icon.
 enum PasswordManagerLogo {
-    static let applePasswordsBundleID = "com.apple.Passwords"
-
     static func image(for kind: PasswordManagerKind, size: CGFloat) -> NSImage {
         if kind == .coincide { return sized(NSApp.applicationIconImage, size) }
         return image(bundleIDs: kind.appBundleIDs, asset: assetName(kind), size: size)
-    }
-
-    /// Apple Passwords, which has no `PasswordManagerKind` because other apps can't read it.
-    static func applePasswords(size: CGFloat) -> NSImage {
-        image(bundleIDs: [applePasswordsBundleID], asset: applePasswordsAsset, size: size)
     }
 
     /// `appURL` finds an installed app by bundle identifier; tests pass one that finds nothing.
@@ -122,8 +115,6 @@ enum PasswordManagerLogo {
         case .bitwarden: "PasswordManagerBitwarden"
         }
     }
-
-    static let applePasswordsAsset = "PasswordManagerApplePasswords"
 
     /// A resized copy: `NSImage(named:)` and the app icon are shared instances, so resizing them in place would
     /// change every other use.

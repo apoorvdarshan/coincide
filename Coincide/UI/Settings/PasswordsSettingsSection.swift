@@ -13,6 +13,9 @@ final class PasswordsSettingsModel {
     private(set) var grants: [LoginGrant] = []
     private(set) var enabled: Set<PasswordManagerKind> = []
     var offersToSave = true { didSet { if offersToSave != oldValue { settings.update { $0.offersToSaveLogins = offersToSave } } } }
+    var agentsUseManagers = true {
+        didSet { if agentsUseManagers != oldValue { settings.update { $0.agentsUsePasswordManagers = agentsUseManagers } } }
+    }
     var unlocking = false
     var unlockError: String?
     @ObservationIgnored let sessions: PreviewSessions
@@ -35,6 +38,7 @@ final class PasswordsSettingsModel {
         enabled = Set(settings.settings.passwordManagers)
         grants = settings.settings.loginGrants.sorted { $0.site < $1.site }
         offersToSave = settings.settings.offersToSaveLogins
+        agentsUseManagers = settings.settings.agentsUsePasswordManagers
         saved = sessions.profile.logins.saved.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
@@ -109,11 +113,14 @@ struct PasswordsSettingsSection: View {
     var body: some View {
         Group {
             Section {
-                Text("Browser extensions can’t run inside Coincide’s browser, so Coincide works with each password manager’s command-line tool. Agents never see passwords or one-time codes: Coincide types them into the page itself, after you allow it for the site.")
+                Text("Browser extensions can’t run inside Coincide’s browser, so Coincide works with each password manager’s command-line tool. In the browser, Coincide types passwords and one-time codes into the page itself, after you allow it for the site.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 ForEach(PasswordManagerKind.allCases) { kind in managerRow(kind) }
-                applePasswordsRow
+                Toggle(isOn: $model.agentsUseManagers) {
+                    Text("Let agents use your unlocked password managers")
+                    Text("Agents Coincide starts get Bitwarden’s unlocked session, so they can read any item with the bw command, such as API keys and tokens, without asking. Agents that are already running get it when they start again.")
+                }
             } header: {
                 Text("Passwords")
             }
@@ -231,13 +238,6 @@ struct PasswordsSettingsSection: View {
         let password = bitwardenPassword
         bitwardenPassword = ""
         Task { await model.unlockBitwarden(password: password) }
-    }
-
-    /// Apple Passwords has no interface for other apps; its CSV export is the way in.
-    private var applePasswordsRow: some View {
-        PasswordManagerLabel(logo: PasswordManagerLogo.applePasswords(size: 20), name: String(localized: "Apple Passwords"),
-            caption: String(localized: "Not supported: macOS doesn’t let other apps read website passwords from Passwords or iCloud Keychain. In the Passwords app, choose File › Export All Passwords…, then import the CSV below."))
-            .padding(.vertical, 2)
     }
 
     private func statusText(_ kind: PasswordManagerKind, _ status: PasswordProviderStatus?) -> String {

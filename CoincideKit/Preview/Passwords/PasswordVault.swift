@@ -69,6 +69,17 @@ public final class PasswordVault {
         PasswordManagerKind.allCases.filter { settings.settings.passwordManagers.contains($0) && providers[$0] != nil }
     }
 
+    /// The enabled managers' unlocked sessions for the agents Coincide starts, unless the user turned that off
+    /// (`BrowserSettings.agentsUsePasswordManagers`).
+    public func agentEnvironment() -> [String: String] {
+        guard settings.settings.agentsUsePasswordManagers else { return [:] }
+        var environment: [String: String] = [:]
+        for kind in enabledKinds {
+            for (key, value) in providers[kind]?.agentEnvironment() ?? [:] { environment[key] = value }
+        }
+        return environment
+    }
+
     /// Matching logins from every enabled manager, best first. Managers that fail (locked, missing) are skipped and
     /// reported.
     public func candidates(for page: URL) async -> (items: [LoginItem], failures: [PasswordManagerKind: String]) {

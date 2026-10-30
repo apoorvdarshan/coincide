@@ -79,4 +79,3 @@ was given macOS's rounded corners.
 - 1Password: [1password.com](https://1password.com/favicon/icon-v2.svg), with
   [icon-v2-light.svg](https://1password.com/favicon/icon-v2-light.svg) in Dark Mode.
 - Bitwarden: [bitwarden.com](https://bitwarden.com/icons/icon-512x512.png).
-- Apple Passwords: [Commons, Passwords iOS](https://commons.wikimedia.org/wiki/File:Passwords_iOS.svg).
