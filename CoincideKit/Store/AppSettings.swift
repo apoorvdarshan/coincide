@@ -102,6 +102,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var defaultAccessMode: AccessMode
     public var providers: [ProviderKind: ProviderSettings]
     public var appearance: AppearanceMode
+    /// System regional numbers by default; International uses three-digit comma grouping for numeric displays.
+    public var numberFormat: NumberFormatMode
     /// Return sends; Shift-Return inserts a newline. When false, Command-Return sends.
     public var sendOnReturn: Bool
     /// What a message sent while the agent works does in new threads: the last choice made in a thread's composer
@@ -191,6 +193,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         defaultAccessMode = .fullAccess
         providers = [:]
         appearance = .system
+        numberFormat = .system
         sendOnReturn = true
         followUpBehavior = .steer
         existingThreadsFollowUpBehavior = .steer
@@ -245,6 +248,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         // Settings of providers this version does not know are skipped, not the whole list.
         providers = container.lenientProviderMap(ProviderSettings.self, forKey: .providers)
         appearance = value(.appearance, defaults.appearance)
+        numberFormat = value(.numberFormat, defaults.numberFormat)
         sendOnReturn = value(.sendOnReturn, defaults.sendOnReturn)
         followUpBehavior = value(.followUpBehavior, defaults.followUpBehavior)
         // Settings from before threads kept their own: the app-wide setting carries on for the threads there were.

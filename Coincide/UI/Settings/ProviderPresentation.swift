@@ -49,9 +49,9 @@ nonisolated enum SettingsFormat {
     }
 
     /// "200K" / "1M" tokens.
-    static func contextWindow(_ tokens: Int?) -> String? {
+    @MainActor static func contextWindow(_ tokens: Int?) -> String? {
         guard let tokens, tokens > 0 else { return nil }
-        return tokens.formatted(.number.notation(.compactName))
+        return AppNumbers.current.compact(tokens)
     }
 
     /// Display name for a reasoning effort id such as "xhigh".

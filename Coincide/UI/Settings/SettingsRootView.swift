@@ -207,6 +207,12 @@ struct SettingsSearchResults: View {
                 title: String(localized: "Appearance"), pane: general, setting: .appearance,
                 keywords: [String(localized: "Dark mode"), String(localized: "Light mode"), String(localized: "Theme")]),
             SettingsSearchEntry(
+                title: String(localized: "Number format"), pane: general, setting: .numberFormat,
+                keywords: [
+                    NumberFormatMode.system.displayName, NumberFormatMode.international.displayName,
+                    "number format", "grouping", "locale", "commas", "international",
+                ]),
+            SettingsSearchEntry(
                 title: String(localized: "Font size"), pane: general, setting: .fontSize,
                 keywords: [String(localized: "Text size"), String(localized: "Zoom")]),
             SettingsSearchEntry(

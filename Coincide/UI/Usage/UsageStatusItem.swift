@@ -60,7 +60,8 @@ final class UsageStatusItem: NSObject {
         let choices = [settings.menuBarUsage] + [settings.menuBarSecondaryUsage].compactMap { $0 }
         var readings: [MenuBarUsageReading] = []
         for choice in choices {
-            guard let reading = MenuBarUsage.reading(for: choice, accounts: accounts, lastActive: lastActive, mode: settings.usageDisplayMode),
+            guard let reading = MenuBarUsage.reading(for: choice, accounts: accounts, lastActive: lastActive, mode: settings.usageDisplayMode,
+                numbers: NumberFormatting(settings.numberFormat)),
                 !readings.contains(where: { $0.provider == reading.provider && $0.account?.id == reading.account?.id && $0.text == reading.text })
             else { continue }
             readings.append(reading)
@@ -189,7 +190,7 @@ final class UsageStatusItem: NSObject {
 
 /// The menu bar item's list: usage across all agents, then what each account's plan allows.
 @Observable
-private final class UsageMenuModel {
+final class UsageMenuModel {
     private(set) var accounts: [UsageInsights.AccountLimits] = []
     private(set) var report = UsageReport()
     private(set) var closest: (account: UsageInsights.AccountLimits, window: UsageLimitWindow)?
@@ -198,23 +199,32 @@ private final class UsageMenuModel {
     private(set) var isRefreshing = false
     private(set) var lastScan: Date?
     private(set) var now = Date()
+    private(set) var settings: AppSettings
+    var numberFormat: NumberFormatMode { settings.numberFormat }
+    @ObservationIgnored private let store: AppStore
+    @ObservationIgnored private let insights: UsageInsights
     /// Used or what is left, kept in step with the setting (which Settings › Usage may change while the list shows).
-    var displayMode: UsageDisplayMode = AppStore.shared.settings.usageDisplayMode {
+    var displayMode: UsageDisplayMode {
         didSet {
-            guard AppStore.shared.settings.usageDisplayMode != displayMode else { return }
-            AppStore.shared.updateSettings { $0.usageDisplayMode = displayMode }
+            guard store.settings.usageDisplayMode != displayMode else { return }
+            store.updateSettings { $0.usageDisplayMode = displayMode }
         }
     }
     @ObservationIgnored private var observer: NSObjectProtocol?
     @ObservationIgnored private var storeObserver: ObservationToken?
 
-    init() {
-        observer = NotificationCenter.default.addObserver(forName: UsageInsights.didChange, object: UsageInsights.shared, queue: .main) {
+    init(store: AppStore = .shared, insights: UsageInsights = .shared) {
+        self.store = store
+        self.insights = insights
+        settings = store.settings
+        displayMode = store.settings.usageDisplayMode
+        observer = NotificationCenter.default.addObserver(forName: UsageInsights.didChange, object: insights, queue: .main) {
             [weak self] _ in MainActor.assumeIsolated { self?.reload() }
         }
-        storeObserver = AppStore.shared.observe { [weak self] change in
-            guard change == .settings, let self, self.displayMode != AppStore.shared.settings.usageDisplayMode else { return }
-            self.displayMode = AppStore.shared.settings.usageDisplayMode
+        storeObserver = store.observe { [weak self] change in
+            guard change == .settings, let self else { return }
+            self.settings = self.store.settings
+            if self.displayMode != self.settings.usageDisplayMode { self.displayMode = self.settings.usageDisplayMode }
         }
         reload()
     }
@@ -224,17 +234,16 @@ private final class UsageMenuModel {
     }
 
     var menuBarUsage: MenuBarUsageChoice? {
-        get { AppStore.shared.settings.menuBarUsage }
-        set { AppStore.shared.updateSettings { $0.menuBarUsage = newValue ?? .lastActive } }
+        get { store.settings.menuBarUsage }
+        set { store.updateSettings { $0.menuBarUsage = newValue ?? .lastActive } }
     }
 
     var menuBarSecondaryUsage: MenuBarUsageChoice? {
-        get { AppStore.shared.settings.menuBarSecondaryUsage }
-        set { AppStore.shared.updateSettings { $0.menuBarSecondaryUsage = newValue } }
+        get { store.settings.menuBarSecondaryUsage }
+        set { store.updateSettings { $0.menuBarSecondaryUsage = newValue } }
     }
 
     func reload() {
-        let insights = UsageInsights.shared
         now = Date()
         accounts = insights.accountLimits(now: now)
         closest = UsageInsights.mostConstrained(accounts)
@@ -250,6 +259,7 @@ private struct UsageMenuView: View {
     @State private var model = UsageMenuModel()
 
     var body: some View {
+        let numberFormat = model.numberFormat
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 1) {
@@ -278,7 +288,7 @@ private struct UsageMenuView: View {
                     }
                     ForEach(model.accounts) { account in
                         UsageMenuAccountRow(
-                            account: account, mode: model.displayMode, now: model.now,
+                            account: account, mode: model.displayMode, now: model.now, numberFormat: numberFormat,
                             tracked: model.tracked[UsageReport.accountKey(account.provider, account.account.id)]
                         ) {
                             close()
@@ -381,6 +391,7 @@ private struct UsageMenuAccountRow: View {
     let account: UsageInsights.AccountLimits
     let mode: UsageDisplayMode
     let now: Date
+    let numberFormat: NumberFormatMode
     /// Coincide's own turns with the account, for an API key with no balance to show.
     var tracked: UsageReport?
     let open: () -> Void
@@ -408,7 +419,7 @@ private struct UsageMenuAccountRow: View {
                     UsageRowView(row: row, provider: account.provider, compact: true)
                 }
                 if let tracked {
-                    UsageTrackedRows(report: tracked, compact: true)
+                    UsageTrackedRows(report: tracked, compact: true, numberFormat: numberFormat)
                 }
                 ForEach(account.limits?.notes ?? [], id: \.self) { note in
                     Text(note).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

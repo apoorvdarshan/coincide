@@ -19,6 +19,14 @@ struct GeneralSettingsView: View {
                             light: AppTheme.light(model.settings.lightTheme))
                     }
                     .settingsRevealable(.appearance, highlighted: highlighted)
+                    ThemedPicker(
+                        selection: model.binding(\.numberFormat),
+                        options: NumberFormatMode.allCases.map { .init($0, $0.displayName) }
+                    ) {
+                        Text("Number format")
+                        Text("System follows your region. International uses 1,234,567.89.")
+                    }
+                    .settingsRevealable(.numberFormat, highlighted: highlighted)
                     FontSizeRow(size: model.binding(\.fontSize))
                         .settingsRevealable(.fontSize, highlighted: highlighted)
                     ThemedPicker(
@@ -247,6 +255,7 @@ struct GeneralSettingsView: View {
     static func restoreDefaults(in settings: inout AppSettings) {
         let defaults = AppSettings()
         settings.appearance = defaults.appearance
+        settings.numberFormat = defaults.numberFormat
         settings.fontSize = defaults.fontSize
         settings.replyTypeface = defaults.replyTypeface
         settings.userMessageSide = defaults.userMessageSide

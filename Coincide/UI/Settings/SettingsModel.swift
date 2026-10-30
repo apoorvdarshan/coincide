@@ -12,6 +12,7 @@ nonisolated enum SettingsPane: Hashable, Sendable {
 /// Rows that search results can scroll to.
 nonisolated enum SettingsRowID: String, Hashable, Sendable {
     case appearance
+    case numberFormat
     case fontSize
     case replyTypeface
     case userMessageSide

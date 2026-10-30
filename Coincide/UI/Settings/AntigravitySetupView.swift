@@ -113,9 +113,9 @@ private struct AntigravityRuntimeSection: View {
     private func statusText(_ state: AntigravityInstallState) -> String {
         switch state.phase {
         case .downloading:
-            let downloaded = state.downloadedBytes.formatted(.byteCount(style: .file))
+            let downloaded = state.downloadedBytes.formatted(.byteCount(style: .file).locale(AppNumbers.current.locale))
             guard let total = state.totalBytes else { return String(localized: "Downloading \(downloaded)…") }
-            return String(localized: "Downloading \(downloaded) of \(total.formatted(.byteCount(style: .file)))…")
+            return String(localized: "Downloading \(downloaded) of \(total.formatted(.byteCount(style: .file).locale(AppNumbers.current.locale)))…")
         case .extracting: return String(localized: "Extracting Antigravity…")
         case .verifying: return String(localized: "Checking the downloaded runtime…")
         default: break
@@ -133,7 +133,7 @@ private struct AntigravityRuntimeSection: View {
             return String(localized: "Using Antigravity found on your PATH.")
         }
         if let total = state.totalBytes {
-            return String(localized: "Not installed. \(total.formatted(.byteCount(style: .file))) download.")
+            return String(localized: "Not installed. \(total.formatted(.byteCount(style: .file).locale(AppNumbers.current.locale))) download.")
         }
         return String(localized: "Not installed.")
     }
