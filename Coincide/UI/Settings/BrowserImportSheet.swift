@@ -302,7 +302,7 @@ struct BrowserImportSheet: View {
                             HStack {
                                 Text(entry.site)
                                 Spacer()
-                                Text(entry.cookies, format: .number).foregroundStyle(.secondary).monospacedDigit()
+                                Text(entry.cookies, format: .number.locale(AppNumbers.current.locale)).foregroundStyle(.secondary).monospacedDigit()
                             }
                         }
                         .toggleStyle(ThemedCheckboxToggleStyle())
@@ -338,7 +338,7 @@ struct BrowserImportSheet: View {
     private func summaryRow(_ title: String, _ count: Int) -> some View {
         GridRow {
             Text(title).foregroundStyle(.secondary)
-            Text(count, format: .number).monospacedDigit()
+            Text(count, format: .number.locale(AppNumbers.current.locale)).monospacedDigit()
         }
     }
 

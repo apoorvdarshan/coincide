@@ -937,7 +937,7 @@ final class SidebarViewController: NSViewController {
         limits.addItem(.separator())
         // A number chosen in an earlier version stays offered.
         for limit in Set([10, 20, 50] + [current ?? 10].filter { $0 > 0 }).sorted() + [0] {
-            let entry = item(limit == 0 ? String(localized: "All") : limit.formatted(), #selector(setThreadLimit(_:)))
+            let entry = item(limit == 0 ? String(localized: "All") : AppNumbers.current.integer(limit), #selector(setThreadLimit(_:)))
             entry.tag = limit
             entry.state = current == limit ? .on : .off
             limits.addItem(entry)

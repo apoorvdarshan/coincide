@@ -126,7 +126,7 @@ enum CodexUsageLimits {
 
     nonisolated static func credits(_ value: JSONValue?) -> UsageCredits? {
         guard let value, value.object != nil, let hasCredits = value["hasCredits"]?.bool else { return nil }
-        let balance = value["balance"]?.string?.trimmedNonEmpty ?? value["balance"]?.number.map { $0.formatted() }
+        let balance = value["balance"]?.string?.trimmedNonEmpty ?? value["balance"]?.number.map { String($0) }
         return UsageCredits(hasCredits: hasCredits, unlimited: value["unlimited"]?.bool ?? false, balance: balance)
     }
 

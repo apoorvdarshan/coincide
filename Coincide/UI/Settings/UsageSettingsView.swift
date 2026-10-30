@@ -17,6 +17,9 @@ final class UsageDashboardModel {
     private(set) var lastScan: Date?
     private(set) var historyError: String?
     private(set) var now = Date()
+    /// An observable snapshot keeps numeric views in step with General without changing date localization.
+    private(set) var settings: AppSettings
+    var numberFormat: NumberFormatMode { settings.numberFormat }
 
     var days = 30 { didSet { if days != oldValue { rebuild() } } }
     /// Nil for every provider.
@@ -49,6 +52,7 @@ final class UsageDashboardModel {
     init(insights: UsageInsights = .shared, store: AppStore = .shared) {
         self.insights = insights
         self.store = store
+        settings = store.settings
         displayMode = store.settings.usageDisplayMode
         provider = UsageNavigation.requestedProvider
         UsageNavigation.requestedProvider = nil
@@ -66,8 +70,9 @@ final class UsageDashboardModel {
                 }
             })
         storeObserver = store.observe { [weak self] change in
-            guard change == .settings, let self, self.displayMode != self.store.settings.usageDisplayMode else { return }
-            self.displayMode = self.store.settings.usageDisplayMode
+            guard change == .settings, let self else { return }
+            self.settings = self.store.settings
+            if self.displayMode != self.settings.usageDisplayMode { self.displayMode = self.settings.usageDisplayMode }
         }
         reload()
     }
@@ -75,8 +80,6 @@ final class UsageDashboardModel {
     isolated deinit {
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
     }
-
-    var settings: AppSettings { store.settings }
 
     var includesOtherSessions: Bool {
         get { store.settings.usageIncludesOtherSessions }
@@ -273,21 +276,21 @@ struct UsageSettingsView: View {
         return Section {
             HStack(alignment: .top, spacing: 0) {
                 UsageTotalsTile(
-                    title: String(localized: "Today"), totals: report.today,
+                    title: String(localized: "Today"), totals: report.today, numberFormat: model.numberFormat,
                     trend: UsageReport.trend(report.today, from: report.yesterday), comparedWith: String(localized: "yesterday"))
                 Divider().padding(.horizontal, 14)
                 UsageTotalsTile(
-                    title: String(localized: "Last 7 days"), totals: report.lastWeek,
+                    title: String(localized: "Last 7 days"), totals: report.lastWeek, numberFormat: model.numberFormat,
                     trend: UsageReport.trend(report.lastWeek, from: report.previousWeek),
                     comparedWith: String(localized: "the 7 days before"))
                 Divider().padding(.horizontal, 14)
                 UsageTotalsTile(
-                    title: String(localized: "Last 30 days"), totals: report.lastMonth,
+                    title: String(localized: "Last 30 days"), totals: report.lastMonth, numberFormat: model.numberFormat,
                     trend: UsageReport.trend(report.lastMonth, from: report.previousMonth),
                     comparedWith: String(localized: "the 30 days before"))
             }
             .padding(.vertical, 6)
-            UsageTokenMix(totals: report.period, title: periodName)
+            UsageTokenMix(totals: report.period, title: periodName, numberFormat: model.numberFormat)
             if let constrained = UsageInsights.mostConstrained(model.shownAccounts) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
@@ -327,7 +330,7 @@ struct UsageSettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 120)
             } else {
-                UsageDailyChart(days: model.report.days, metric: model.metric, period: model.days)
+                UsageDailyChart(days: model.report.days, metric: model.metric, period: model.days, numberFormat: model.numberFormat)
                     .frame(height: 180)
             }
         }
@@ -337,7 +340,7 @@ struct UsageSettingsView: View {
         if !model.report.models.isEmpty {
             Section {
                 ForEach(model.report.models.prefix(8)) { row in
-                    UsageTotalsRow(totals: row.totals, period: model.report.period) {
+                    UsageTotalsRow(totals: row.totals, period: model.report.period, numberFormat: model.numberFormat) {
                         HStack(spacing: 8) {
                             SettingsProviderIcon(kind: row.provider, size: 18)
                             Text(row.model.isEmpty ? String(localized: "Unknown model") : row.model)
@@ -356,7 +359,7 @@ struct UsageSettingsView: View {
         if !model.report.projects.isEmpty {
             Section {
                 ForEach(model.report.projects.prefix(8)) { row in
-                    UsageTotalsRow(totals: row.totals, period: model.report.period) {
+                    UsageTotalsRow(totals: row.totals, period: model.report.period, numberFormat: model.numberFormat) {
                         HStack(spacing: 8) {
                             Image(systemName: "folder").foregroundStyle(.secondary).frame(width: 18)
                             Text(model.projectName(row.projectID)).lineLimit(1)
@@ -389,7 +392,7 @@ struct UsageSettingsView: View {
                     adminReport: model.insights.adminReport(for: account.account))
                 UsageAccountTotalsRow(
                     account: account, totals: model.report.accounts[UsageReport.accountKey(account.provider, account.account.id)],
-                    periodName: periodName)
+                    periodName: periodName, numberFormat: model.numberFormat)
             } header: {
                 UsageAccountHeader(account: account)
             }
@@ -402,9 +405,9 @@ struct UsageSettingsView: View {
         let records = model.periodRecords
         return Section {
             HStack(spacing: 28) {
-                metric(String(localized: "Turns"), records.count.formatted())
+                metric(String(localized: "Turns"), AppNumbers.current.integer(records.count))
                 metric(String(localized: "Active time"), duration(records.reduce(0) { $0 + $1.duration }))
-                metric(String(localized: "Threads"), Set(records.map(\.threadID)).count.formatted())
+                metric(String(localized: "Threads"), AppNumbers.current.integer(Set(records.map(\.threadID)).count))
                 Spacer()
             }
             if let error = model.historyError {
@@ -562,10 +565,10 @@ private struct UsageAccountLimitsView: View {
                 .foregroundStyle(.secondary)
         }
         if let adminReport, !adminReport.models.isEmpty {
-            AnthropicAdminModelsView(report: adminReport)
+            AnthropicAdminModelsView(report: adminReport, numberFormat: settings.numberFormat)
         }
         if let tracked {
-            UsageTrackedRows(report: tracked)
+            UsageTrackedRows(report: tracked, numberFormat: settings.numberFormat)
         }
         ForEach(account.limits?.notes ?? [], id: \.self) { note in
             Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -614,6 +617,7 @@ private struct UsageAccountTotalsRow: View {
     let account: UsageInsights.AccountLimits
     let totals: UsageTotals?
     let periodName: String
+    let numberFormat: NumberFormatMode
 
     var body: some View {
         LabeledContent {
@@ -643,6 +647,7 @@ private struct UsageAccountTotalsRow: View {
 private struct UsageTotalsTile: View {
     let title: String
     let totals: UsageTotals
+    let numberFormat: NumberFormatMode
     let trend: Double?
     let comparedWith: String
 
@@ -674,6 +679,7 @@ private struct UsageTotalsTile: View {
 private struct UsageTokenMix: View {
     let totals: UsageTotals
     let title: String
+    let numberFormat: NumberFormatMode
 
     private var parts: [(name: String, count: Int, opacity: Double)] {
         let tokens = totals.tokens
@@ -743,6 +749,7 @@ private struct UsageTokenMix: View {
 private struct UsageTotalsRow<Label: View>: View {
     let totals: UsageTotals
     let period: UsageTotals
+    let numberFormat: NumberFormatMode
     @ViewBuilder let label: () -> Label
 
     var body: some View {
@@ -777,6 +784,7 @@ private struct UsageDailyChart: View {
     let days: [UsageReport.Day]
     let metric: UsageDashboardModel.Metric
     let period: Int
+    let numberFormat: NumberFormatMode
     @State private var hovered: Date?
 
     var body: some View {

@@ -5,33 +5,35 @@ import SwiftUI
 /// How usage figures read wherever Coincide shows them: Settings › Usage, the menu bar item and the composer's meter.
 enum UsageFormat {
     /// "1.2M", "845K", "312".
-    static func tokens(_ count: Int) -> String {
-        count.formatted(.number.notation(.compactName).precision(.significantDigits(1...3)))
+    static func tokens(_ count: Int, numbers: NumberFormatting? = nil) -> String {
+        (numbers ?? AppNumbers.current).compact(count, significantDigits: 1...3)
     }
 
     /// "1,234,567 tokens", for tooltips.
-    static func exactTokens(_ count: Int) -> String {
-        String(localized: "\(count.formatted()) tokens")
+    static func exactTokens(_ count: Int, numbers: NumberFormatting? = nil) -> String {
+        String(localized: "\((numbers ?? AppNumbers.current).integer(count)) tokens")
     }
 
     /// The cost to the cent's hundredth, for tooltips, or why there is none.
-    static func exactCost(_ totals: UsageTotals) -> String {
+    static func exactCost(_ totals: UsageTotals, numbers: NumberFormatting? = nil) -> String {
         guard totals.hasPricedTokens else { return String(localized: "No list price for these models") }
-        let cost = totals.cost.formatted(.currency(code: "USD").precision(.fractionLength(4)))
+        let numbers = numbers ?? AppNumbers.current
+        let cost = numbers.currency(totals.cost, fractionDigits: 4)
         return totals.isFullyPriced
             ? String(localized: "≈ \(cost) at API list prices")
-            : String(localized: "≈ \(cost) at API list prices, without \(UsageFormat.tokens(totals.unpricedTokens)) unpriced tokens")
+            : String(localized: "≈ \(cost) at API list prices, without \(UsageFormat.tokens(totals.unpricedTokens, numbers: numbers)) unpriced tokens")
     }
 
     /// "12%".
-    static func percent(_ share: Double) -> String {
-        share.formatted(.percent.precision(.fractionLength(share < 0.1 && share > 0 ? 1 : 0)))
+    static func percent(_ share: Double, numbers: NumberFormatting? = nil) -> String {
+        (numbers ?? AppNumbers.current).percent(share, fractionDigits: share < 0.1 && share > 0 ? 1 : 0)
     }
 
     /// "$12.34", "<$0.01" for a cost that rounds to nothing.
-    static func cost(_ dollars: Double) -> String {
-        if dollars > 0 && dollars < 0.01 { return String(localized: "<\(0.01.formatted(.currency(code: "USD")))") }
-        return dollars.formatted(.currency(code: "USD").precision(.fractionLength(dollars >= 1000 ? 0 : 2)))
+    static func cost(_ dollars: Double, numbers: NumberFormatting? = nil) -> String {
+        let numbers = numbers ?? AppNumbers.current
+        if dollars > 0 && dollars < 0.01 { return String(localized: "<\(numbers.currency(0.01))") }
+        return numbers.currency(dollars, fractionDigits: dollars >= 1000 ? 0 : 2)
     }
 
     /// The cost of `totals`, or "—" when none of its tokens has a known price.
@@ -91,22 +93,23 @@ enum UsageFormat {
     static func creditsBalance(_ credits: UsageCredits) -> String? { balance(credits) }
 
     private static func balance(_ credits: UsageCredits) -> String? {
-        credits.balance.map { balance in Double(balance).map { $0.formatted(.number.precision(.fractionLength(0...2))) } ?? balance }
+        credits.balance.map { balance in Double(balance).map { AppNumbers.current.decimal($0) } ?? balance }
     }
 
     /// An amount of a figure in its unit: "$12.40", "1,250 credits", "48 requests", "12K tokens".
-    static func amount(_ value: Double, _ unit: UsageFigure.Unit) -> String {
+    static func amount(_ value: Double, _ unit: UsageFigure.Unit, numbers: NumberFormatting? = nil) -> String {
+        let numbers = numbers ?? AppNumbers.current
         switch unit {
         case .currency(let code):
-            return value.formatted(.currency(code: code).precision(.fractionLength(value != 0 && abs(value) < 0.01 ? 4 : 2)))
+            return numbers.currency(value, code: code, fractionDigits: value != 0 && abs(value) < 0.01 ? 4 : 2)
         case .credits:
-            return String(localized: "\(value.formatted(.number.precision(.fractionLength(0...2)))) credits")
+            return String(localized: "\(numbers.decimal(value)) credits")
         case .requests:
-            return String(localized: "\(value.formatted(.number.precision(.fractionLength(0)))) requests")
+            return String(localized: "\(numbers.decimal(value, fractionDigits: 0...0)) requests")
         case .tokens:
-            return String(localized: "\(UsageFormat.tokens(Int(value.rounded()))) tokens")
+            return String(localized: "\(UsageFormat.tokens(Int(value.rounded()), numbers: numbers)) tokens")
         case .count:
-            return value.formatted(.number.precision(.fractionLength(0)))
+            return numbers.decimal(value, fractionDigits: 0...0)
         }
     }
 
@@ -115,8 +118,8 @@ enum UsageFormat {
         switch unit {
         case .currency: amount(value, unit)
         case .tokens: UsageFormat.tokens(Int(value.rounded()))
-        case .credits: value.formatted(.number.precision(.fractionLength(0...2)))
-        case .requests, .count: value.formatted(.number.precision(.fractionLength(0)))
+        case .credits: AppNumbers.current.decimal(value)
+        case .requests, .count: AppNumbers.current.decimal(value, fractionDigits: 0...0)
         }
     }
 
@@ -286,7 +289,7 @@ struct UsageRow: Equatable {
             return UsageRow(title: title, value: String(localized: "Unlimited", comment: "Credits that never run out"))
         }
         if let mark, let amount = credits.balance.flatMap({ Double($0.trimmingCharacters(in: .whitespaces)) }), amount.isFinite {
-            let format = { (value: Double) in value.formatted(.number.precision(.fractionLength(0...2))) }
+            let format = { (value: Double) in AppNumbers.current.decimal(value) }
             return balance(title: title, amount, mark: mark, mode: mode, amount: format, bare: format)
         }
         var row = UsageRow(title: title, value: UsageFormat.creditsValue(credits))
@@ -399,6 +402,7 @@ extension UsageRow {
 struct UsageTrackedRows: View {
     let report: UsageReport
     var compact = false
+    var numberFormat: NumberFormatMode = .system
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 6 : 8) {
@@ -421,6 +425,7 @@ struct UsageTrackedRows: View {
 /// This month by model from an Admin API report: each model's tokens and the organization's cost for it.
 struct AnthropicAdminModelsView: View {
     let report: AnthropicAdminUsage.Report
+    var numberFormat: NumberFormatMode = .system
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

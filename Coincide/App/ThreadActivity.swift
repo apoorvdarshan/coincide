@@ -98,6 +98,8 @@ final class ThreadActivity {
             }
         case .threadList, .projects:
             pruneDeletedThreads()
+        case .settings:
+            updateDockBadge()
         default:
             break
         }
@@ -152,9 +154,13 @@ final class ThreadActivity {
         }
     }
 
-    private func changed(_ threadID: UUID) {
+    private func updateDockBadge() {
         let total = totalPendingApprovals
-        NSApp.dockTile.badgeLabel = total > 0 ? total.formatted() : nil
+        NSApp.dockTile.badgeLabel = total > 0 ? NumberFormatting(store.settings.numberFormat).integer(total) : nil
+    }
+
+    private func changed(_ threadID: UUID) {
+        updateDockBadge()
         NotificationCenter.default.post(name: .coincideThreadActivityChanged, object: nil, userInfo: ["threadID": threadID])
     }
 }

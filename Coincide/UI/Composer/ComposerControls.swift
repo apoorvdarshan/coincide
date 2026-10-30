@@ -446,14 +446,14 @@ final class ComposerContextMeter: NSButton {
     }
 
     static func formatCost(_ value: Double) -> String {
-        value.formatted(.currency(code: "USD").precision(.fractionLength(value > 0 && value < 0.01 ? 4 : 2)))
+        AppNumbers.current.currency(value, fractionDigits: value > 0 && value < 0.01 ? 4 : 2)
     }
 
     private static func headline(usage: TokenUsage, contextWindow: Int?) -> String {
         let used = formatTokens(usage.inputTokens ?? 0)
         guard let contextWindow, contextWindow > 0 else { return used }
         let percent = Double(usage.inputTokens ?? 0) / Double(contextWindow)
-        return "\(percent.formatted(.percent.precision(.fractionLength(0)))) · \(used)/\(formatTokens(contextWindow))"
+        return "\(AppNumbers.current.percent(percent)) · \(used)/\(formatTokens(contextWindow))"
     }
 
     static func summary(usage: TokenUsage, contextWindow: Int?) -> String {
@@ -461,8 +461,7 @@ final class ComposerContextMeter: NSButton {
         guard let contextWindow, contextWindow > 0 else {
             return String(localized: "Context window: \(used) tokens used")
         }
-        let percent = min(1, Double(usage.inputTokens ?? 0) / Double(contextWindow))
-            .formatted(.percent.precision(.fractionLength(0)))
+        let percent = AppNumbers.current.percent(min(1, Double(usage.inputTokens ?? 0) / Double(contextWindow)))
         return String(localized: "Context window: \(percent) used (\(used) of \(formatTokens(contextWindow)) tokens)")
     }
 }
