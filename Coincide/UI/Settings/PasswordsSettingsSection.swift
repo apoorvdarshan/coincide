@@ -187,13 +187,8 @@ struct PasswordsSettingsSection: View {
         let status = model.statuses[kind]
         VStack(alignment: .leading, spacing: 8) {
             Toggle(isOn: Binding(get: { model.enabled.contains(kind) }, set: { model.setEnabled(kind, $0) })) {
-                HStack(spacing: 8) {
-                    Image(nsImage: PasswordManagerLogo.image(for: kind, size: 20))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(kind.displayName)
-                        Text(statusText(kind, status)).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
+                PasswordManagerLabel(logo: PasswordManagerLogo.image(for: kind, size: 20), name: kind.displayName,
+                    caption: statusText(kind, status))
             }
             if let note = model.capabilityNote(kind) {
                 Text(note).font(.caption).foregroundStyle(.secondary)
@@ -240,19 +235,9 @@ struct PasswordsSettingsSection: View {
 
     /// Apple Passwords has no interface for other apps; its CSV export is the way in.
     private var applePasswordsRow: some View {
-        HStack(spacing: 8) {
-            if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Passwords") {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: app.path)).resizable().frame(width: 20, height: 20)
-            } else {
-                Image(systemName: "key.fill").frame(width: 20, height: 20)
-            }
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Apple Passwords")
-                Text("Not supported: macOS doesn’t let other apps read website passwords from Passwords or iCloud Keychain. In the Passwords app, choose File › Export All Passwords…, then import the CSV below.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 2)
+        PasswordManagerLabel(logo: PasswordManagerLogo.applePasswords(size: 20), name: String(localized: "Apple Passwords"),
+            caption: String(localized: "Not supported: macOS doesn’t let other apps read website passwords from Passwords or iCloud Keychain. In the Passwords app, choose File › Export All Passwords…, then import the CSV below."))
+            .padding(.vertical, 2)
     }
 
     private func statusText(_ kind: PasswordManagerKind, _ status: PasswordProviderStatus?) -> String {
@@ -271,6 +256,23 @@ struct PasswordsSettingsSection: View {
             let base = String(localized: "1Password asks you to unlock when Coincide first uses it.")
             return account.map { "\($0) · \(base)" } ?? base
         case .unavailable(let message): return message.isEmpty ? String(localized: "Unavailable") : message
+        }
+    }
+}
+
+/// A password manager's logo, name and status line, as Settings lists them.
+struct PasswordManagerLabel: View {
+    let logo: NSImage
+    let name: String
+    let caption: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(nsImage: logo)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name)
+                Text(caption).font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 }

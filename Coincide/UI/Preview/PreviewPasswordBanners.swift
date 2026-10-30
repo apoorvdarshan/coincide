@@ -85,28 +85,51 @@ final class PreviewSaveLoginBanner: ComposerBanner {
     @objc private func saveLogin() { onAnswer?(true, false) }
 }
 
-/// Password managers' marks: the installed app's own icon when there is one, else the bundled official mark.
+/// Password managers' marks in full colour: the installed app's own icon when there is one, else the vendor's logo
+/// bundled in `Assets.xcassets`, since a manager can be used through its command-line tool alone. Coincide's own
+/// logins wear Coincide's icon.
 enum PasswordManagerLogo {
+    static let applePasswordsBundleID = "com.apple.Passwords"
+
     static func image(for kind: PasswordManagerKind, size: CGFloat) -> NSImage {
-        if let app = kind.appBundleIDs.lazy.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first {
-            let icon = NSWorkspace.shared.icon(forFile: app.path)
-            icon.size = NSSize(width: size, height: size)
-            return icon
-        }
-        if let name = assetName(kind), let image = NSImage(named: name) {
-            let copy = image.copy() as? NSImage ?? image
-            copy.size = NSSize(width: size, height: size)
-            return copy
-        }
-        return Theme.symbol(kind == .coincide ? "key.fill" : "lock.fill", size: size * 0.8) ?? NSImage()
+        if kind == .coincide { return sized(NSApp.applicationIconImage, size) }
+        return image(bundleIDs: kind.appBundleIDs, asset: assetName(kind), size: size)
     }
 
-    /// The bundled mark (`Assets.xcassets/PasswordManager*.imageset`); nil for Coincide's own logins.
+    /// Apple Passwords, which has no `PasswordManagerKind` because other apps can't read it.
+    static func applePasswords(size: CGFloat) -> NSImage {
+        image(bundleIDs: [applePasswordsBundleID], asset: applePasswordsAsset, size: size)
+    }
+
+    /// `appURL` finds an installed app by bundle identifier; tests pass one that finds nothing.
+    static func image(
+        bundleIDs: [String], asset: String?, size: CGFloat,
+        appURL: (String) -> URL? = { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+    ) -> NSImage {
+        if let app = bundleIDs.lazy.compactMap(appURL).first {
+            return sized(NSWorkspace.shared.icon(forFile: app.path), size)
+        }
+        if let asset, let image = NSImage(named: asset) { return sized(image, size) }
+        return Theme.symbol("lock.fill", size: size * 0.8) ?? NSImage()
+    }
+
+    /// The bundled logo (`Assets.xcassets/PasswordManager*.imageset`, PNGs from the vendor's site); nil for Coincide's
+    /// own logins.
     static func assetName(_ kind: PasswordManagerKind) -> String? {
         switch kind {
         case .coincide: nil
         case .onePassword: "PasswordManager1Password"
         case .bitwarden: "PasswordManagerBitwarden"
         }
+    }
+
+    static let applePasswordsAsset = "PasswordManagerApplePasswords"
+
+    /// A resized copy: `NSImage(named:)` and the app icon are shared instances, so resizing them in place would
+    /// change every other use.
+    private static func sized(_ image: NSImage, _ size: CGFloat) -> NSImage {
+        let copy = image.copy() as? NSImage ?? image
+        copy.size = NSSize(width: size, height: size)
+        return copy
     }
 }
