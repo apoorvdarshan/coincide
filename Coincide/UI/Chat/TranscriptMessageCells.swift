@@ -441,6 +441,7 @@ final class TranscriptAssistantCell: TranscriptCell {
     private static let metaHeight: CGFloat = 20
 
     private let textView = ChatTextView()
+    private var mediaViews: [TranscriptMediaView] = []
     private var codeButtons: [TranscriptIconButton] = []
     private var rendered = ChatRenderedText.empty
     private let modelLabel = NSTextField(labelWithString: "")
@@ -472,6 +473,19 @@ final class TranscriptAssistantCell: TranscriptCell {
         guard let id = row.itemID, let item = host.item(id) else { return }
         self.item = item
         if case .assistant(let meta) = row.kind { self.meta = meta } else { meta = nil }
+        let media = TranscriptMediaCache.media(item, directory: host.mediaDirectory)
+        if mediaViews.map(\.media) != media {
+            mediaViews.forEach { $0.removeFromSuperview() }
+            mediaViews = media.map { output in
+                let view = TranscriptMediaView(media: output)
+                view.onOpen = { [weak host] url in
+                    if url.isFileURL { host?.previewAttachments([url.path], selected: 0) }
+                    else { _ = host?.openLink(url) }
+                }
+                addSubview(view)
+                return view
+            }
+        }
         rendered = TranscriptText.markdown(item, .assistant, cache: host.textCache)
         textView.setText(rendered)
         textView.onOpenLink = { [weak host] link in host?.openLink(link) ?? false }
@@ -537,13 +551,13 @@ final class TranscriptAssistantCell: TranscriptCell {
         guard let id = row.itemID, let item = host.item(id) else { return 0 }
         let textWidth = TranscriptMetrics.column(width: width).width - textInset * 2
         let size = TranscriptText.markdownSize(item, .assistant, width: textWidth, cache: host.textCache)
-        return size.height + footerHeight(row) + bottomSpacing(row)
+        return size.height + TranscriptMediaCache.height(item, width: textWidth, directory: host.mediaDirectory) + footerHeight(row) + bottomSpacing(row)
     }
 
     override class func estimatedHeight(for row: TranscriptRow, width: CGFloat, host: TranscriptHost) -> CGFloat {
         guard let id = row.itemID, let item = host.item(id) else { return 0 }
         let textWidth = TranscriptMetrics.column(width: width).width - textInset * 2
-        return TranscriptEstimate.textHeight(item.text, width: textWidth) + footerHeight(row) + bottomSpacing(row)
+        return TranscriptEstimate.textHeight(item.text, width: textWidth) + TranscriptMediaCache.height(item, width: textWidth, directory: host.mediaDirectory) + footerHeight(row) + bottomSpacing(row)
     }
 
     private static func footerHeight(_ row: TranscriptRow) -> CGFloat {
@@ -570,8 +584,15 @@ final class TranscriptAssistantCell: TranscriptCell {
         let size = TranscriptText.markdownSize(item, .assistant, width: textWidth, cache: host.textCache)
         textView.frame = NSRect(x: column.x + Self.textInset, y: 0, width: textWidth, height: size.height)
         layoutCodeButtons()
+        var mediaY = textView.frame.maxY
+        for view in mediaViews {
+            mediaY += 12
+            let height = view.media.height(width: textWidth)
+            view.frame = NSRect(x: column.x + Self.textInset, y: mediaY, width: textWidth, height: height)
+            mediaY += height
+        }
         guard meta != nil else { return }
-        let y = textView.frame.maxY + 8
+        let y = mediaY + 8
         var x = column.x + Self.textInset
         modelLabel.sizeToFit()
         let labelWidth = min(modelLabel.frame.width, column.width * 0.6)

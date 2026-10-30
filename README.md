@@ -24,7 +24,7 @@ T3 Code is an Electron app with a Node server behind a web UI. Coincide is built
 - **Snooze threads** until later today, tomorrow or next week. They return automatically; running agents and requests for input stay visible. Find hidden conversations through search or Show Snoozed Threads.
 - **Full access or approvals.** Let agents run freely, or approve each command and file edit. Agents can also ask you questions, which you answer inline.
 - **Plan mode**, image and file attachments, `@` file mentions, `/` commands (including `/claude`, `/codex`, … to switch agents), queued follow-up messages and per-thread drafts. Quotes, terminal selections and diff comments stay attached through drafts, sending and provider handoffs.
-- **A native transcript** with Markdown, syntax-highlighted code, collapsible work logs per turn, and each reply labelled with the agent and model that wrote it.
+- **A native transcript** with Markdown, inline images, audio/video controls and self-contained interactive HTML/SVG previews, syntax-highlighted code, collapsible work logs per turn, and each reply labelled with the agent and model that wrote it.
 - **Git built in:** unified or side-by-side diffs for uncommitted changes, the branch and each turn; checkpoints to revert a turn; per-thread worktrees; commit, push and pull requests with agent-written messages.
 - **Steer or queue.** While an agent works, steer the running turn (Claude Code, Codex, OpenCode) or queue a follow-up; Settings picks which one sending does. The composer shows your plan's usage limits for Claude Code, Codex, Cursor, OpenCode Go, Grok Build and Antigravity.
 - **Fork and rewind.** Fork a thread from any turn, or edit an earlier message and continue from there.
@@ -113,6 +113,12 @@ After changing user-facing text, update the string catalog with `scripts/sync-st
 | `CoincideKitTests/` | Unit tests (Swift Testing) and opt-in live provider tests |
 
 Data lives in `~/Library/Application Support/Coincide` (set `COINCIDE_DATA_DIR` to use another folder).
+
+## Rich agent output
+
+Agents can embed actual images with `![description](/absolute/path/image.png)` and playable audio or video with `[description](/absolute/path/clip.mp4)` (also HTTP/HTTPS URLs). Local `.html` and `.svg` links open inline previews. Codex native image-generation results are copied into Coincide attachments and displayed even if the final reply omits an image link. Rendering does not give an agent a generation tool it does not have.
+
+For interactive charts or small tools, use a `coincide-html` or `coincide-svg` fenced block. Inline JavaScript and CSS work; external scripts, network requests, logins, forms, downloads and app access do not. Use self-contained SVG/canvas or embedded data. Ordinary `html` fences remain code. Previews wait until a streamed response finishes; media never autoplays. Up to eight previews are shown per response.
 
 ## Credits
 
