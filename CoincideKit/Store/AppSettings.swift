@@ -172,6 +172,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var menuBarSecondaryUsage: MenuBarUsageChoice?
     /// Whether usage figures read as what is used or what is left, in the menu bar, its popover and Settings › Usage.
     public var usageDisplayMode: UsageDisplayMode
+    /// Advisory warnings acknowledged by the user, shared across windows and saved across restarts.
+    public var dismissedWarnings: Set<String>
     /// How often usage is read again on its own (`UsageRefreshInterval`).
     public var usageRefresh: UsageRefreshInterval
     /// Sites whose usage pages Settings › Usage may read with the user's sign-in in Coincide's browser, for details
@@ -221,6 +223,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         menuBarUsage = .lastActive
         menuBarSecondaryUsage = nil
         usageDisplayMode = .used
+        dismissedWarnings = []
         usageRefresh = .automatic
         usageBrowserSignIn = []
         favoriteModels = []
@@ -277,6 +280,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         menuBarUsage = value(.menuBarUsage, defaults.menuBarUsage)
         menuBarSecondaryUsage = value(.menuBarSecondaryUsage, defaults.menuBarSecondaryUsage)
         usageDisplayMode = value(.usageDisplayMode, defaults.usageDisplayMode)
+        dismissedWarnings = value(.dismissedWarnings, defaults.dismissedWarnings)
         usageRefresh = value(.usageRefresh, defaults.usageRefresh)
         // A site this version doesn't know is dropped rather than failing the whole list.
         usageBrowserSignIn = value(.usageBrowserSignIn, [String]()).compactMap(BrowserUsageSource.init(rawValue:))

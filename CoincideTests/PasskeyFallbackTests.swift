@@ -105,7 +105,7 @@ import WebKit
 
     /// The page's request fails as before; the panel shows the notice once, × keeps it away for the site, and the
     /// agent's read says why.
-    @Test func thePanelExplainsMissingPasskeysOncePerSite() async throws {
+    @Test func thePanelExplainsMissingPasskeysAndRemembersItsDismissal() async throws {
         let html = """
             <!doctype html><meta charset=utf-8><title>Sign in</title>
             <script>
@@ -117,11 +117,15 @@ import WebKit
         defer { page.stop() }
         let harness = BrowserProfileTests.Harness()
         do {
-            harness.sessions.passkeys = PasskeySupport { _ in false }
+            let warnings = AppStore(directory: harness.folder.appendingPathComponent("warnings"))
+            let sessions = PreviewSessions(profile: harness.profile,
+                bridge: PreviewBridge(directory: harness.folder.appendingPathComponent("passkey-bridge")), warningStore: warnings)
+            defer { sessions.stop() }
+            sessions.passkeys = PasskeySupport { _ in false }
             let id = UUID()
-            try await harness.sessions.enableAccess(for: id)
+            try await sessions.enableAccess(for: id)
             let panel = PreviewViewController()
-            panel.sessions = harness.sessions
+            panel.sessions = sessions
             panel.threadID = id
             _ = panel.view
             let session = try #require(panel.session)
@@ -133,7 +137,7 @@ import WebKit
             #expect(panel.passkeyBanner.text.contains("Try another way"))
             #expect(session.activePasskeyNotice?.site == "127.0.0.1")
 
-            let client = BridgeClient(try #require(harness.sessions.bridge.access(for: id)))
+            let client = BridgeClient(try #require(sessions.bridge.access(for: id)))
             let read = try await client.send(["action": "read"])
             #expect(read["passkey"]?.string == PasskeySupport.agentNote)
 
@@ -146,6 +150,7 @@ import WebKit
 
             panel.passkeyBanner.dismissButton.performClick(nil)
             #expect(panel.passkeyBanner.isHidden && session.passkeyNotice.dismissedSites == ["127.0.0.1"])
+            #expect(warnings.isWarningDismissed(WarningDismissalKey.passkeysUnavailable))
             try session.navigate(page.url.absoluteString + "?again")
             try await waitFor {
                 session.webView.url?.query == "again" && session.webView.title?.hasPrefix("rejected") == true && !session.webView.isLoading
@@ -156,6 +161,50 @@ import WebKit
             #expect(try await client.send(["action": "read"])["passkey"]?.string == PasskeySupport.agentNote)
         }
         await harness.tearDown()
+    }
+
+    @Test func theCapabilityWarningStaysDismissedAcrossBrowsersAndAppRestarts() async throws {
+        let folder = TemporaryDirectory("persistent-passkey-warning")
+        let directory = folder.url.appendingPathComponent("app")
+        let warnings = AppStore(directory: directory)
+        let html = """
+            <!doctype html><meta charset=utf-8><title>Sign in</title>
+            <script>
+            navigator.credentials.get({publicKey: {}, signal: AbortSignal.abort()})
+                .catch(error => { document.title = 'rejected ' + error.name; });
+            </script>
+            """
+        let page = try await LoopbackPage.start(title: "Sign in", html: html)
+        defer { page.stop() }
+        let first = PreviewSession(dataStore: .nonPersistent(), isPrivate: true,
+            passkeys: PasskeySupport { _ in false }, warningStore: warnings)
+        let other = PreviewSession(dataStore: .nonPersistent(), isPrivate: true,
+            passkeys: PasskeySupport { _ in false }, warningStore: warnings)
+        defer { first.close(); other.close() }
+        try first.navigate(page.url.absoluteString)
+        try other.navigate(page.url.absoluteString)
+        try await waitFor { first.activePasskeyNotice != nil && other.activePasskeyNotice != nil }
+        var otherUpdates = 0
+        other.onChange = { otherUpdates += 1 }
+        first.dismissPasskeyNotice()
+        #expect(first.activePasskeyNotice == nil)
+        #expect(other.activePasskeyNotice == nil && other.passkeyNotice.notice == nil)
+        #expect(otherUpdates > 0) // visible sibling panels are told to refresh immediately
+        #expect(first.activeTab.passkeyRequested && other.activeTab.passkeyRequested)
+        #expect(warnings.settings.dismissedWarnings == [WarningDismissalKey.passkeysUnavailable])
+        first.close(); other.close()
+
+        // Construct a new store from disk: no controller/session memory is reused.
+        let reopened = AppStore(directory: directory)
+        #expect(reopened.isWarningDismissed(WarningDismissalKey.passkeysUnavailable))
+        let fresh = PreviewSession(dataStore: .nonPersistent(), isPrivate: true,
+            passkeys: PasskeySupport { _ in false }, warningStore: reopened)
+        defer { fresh.close() }
+        try fresh.navigate(page.url.absoluteString + "?restarted")
+        try await waitFor { fresh.activeTab.passkeyRequested && fresh.webView.title?.hasPrefix("rejected") == true }
+        #expect(fresh.activePasskeyNotice == nil && fresh.passkeyNotice.notice == nil)
+        let read = try await fresh.perform(.read(), directory: folder.url)
+        #expect(read["passkey"]?.string == PasskeySupport.agentNote)
     }
 
     /// A build signed with the entitlement installs nothing: pages see the untouched API and the panel stays quiet.

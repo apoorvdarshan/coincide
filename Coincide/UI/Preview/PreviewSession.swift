@@ -253,6 +253,8 @@ final class PreviewSession: NSObject {
     /// Whether the session uses temporary storage of its own rather than the shared profile.
     let isPrivate: Bool
     private let dataStore: WKWebsiteDataStore
+    private let warningStore: AppStore
+    private var warningObservation: ObservationToken?
     private(set) var tabs: [PreviewTab] = []
     private(set) var activeTab: PreviewTab!
     private var nextTabNumber = 1
@@ -287,12 +289,13 @@ final class PreviewSession: NSObject {
     }
 
     init(dataStore: WKWebsiteDataStore, isPrivate: Bool, restoring state: BrowserTabsState? = nil,
-        passkeys: PasskeySupport = .current,
+        passkeys: PasskeySupport = .current, warningStore: AppStore = .shared,
         downloadDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads/Coincide", isDirectory: true)) {
         self.downloadDirectory = downloadDirectory
         self.isPrivate = isPrivate
         self.dataStore = dataStore
         self.passkeys = passkeys
+        self.warningStore = warningStore
         super.init()
         let state = state ?? BrowserTabsState(urls: [""], selected: 0)
         for address in state.urls { tabs.append(makeTab(url: URL(string: address))) }
@@ -300,6 +303,14 @@ final class PreviewSession: NSObject {
         activeTab.load()
         userTurn.onChange = { [weak self] in self?.onChange?() }
         loginApproval.onChange = { [weak self] in self?.onChange?() }
+        warningObservation = warningStore.observe { [weak self] change in
+            guard change == .settings, let self,
+                self.warningStore.isWarningDismissed(WarningDismissalKey.passkeysUnavailable),
+                self.passkeyNotice.notice != nil else { return }
+            // Dismissing this browser limitation in one thread also updates banners already open elsewhere.
+            self.passkeyNotice.dismiss()
+            self.onChange?()
+        }
     }
 
     /// The active tab's web view.
@@ -404,23 +415,29 @@ final class PreviewSession: NSObject {
         if passkeyNotice.navigated(tabID: tab.id, host: host) { onChange?() }
     }
 
-    /// A page in `webView` asked for a passkey. Shows the notice unless the user dismissed it for this site.
+    /// A page in `webView` asked for a passkey. The agent's page state is always recorded; the capability
+    /// notice stays hidden in every browser after the user has dismissed it once.
     func passkeyRequested(in webView: WKWebView) {
         guard let tab = tabs.first(where: { $0.webView === webView }), let page = webView.url, let host = page.host,
             PreviewCommand.url(page.absoluteString) != nil
         else { return }
         tab.passkeyRequested = true
+        guard !warningStore.isWarningDismissed(WarningDismissalKey.passkeysUnavailable) else { return }
         if passkeyNotice.requested(tabID: tab.id, host: host) { onChange?() }
     }
 
     func dismissPasskeyNotice() {
+        guard passkeyNotice.notice != nil else { return }
         passkeyNotice.dismiss()
+        // This is the same app capability warning on every site. Persist no browsing-domain history.
+        warningStore.dismissWarning(WarningDismissalKey.passkeysUnavailable)
         onChange?()
     }
 
     /// The notice for the tab shown in the panel, if any.
     var activePasskeyNotice: PasskeyNoticeState.Notice? {
-        passkeyNotice.notice.flatMap { $0.tabID == activeTab.id ? $0 : nil }
+        guard !warningStore.isWarningDismissed(WarningDismissalKey.passkeysUnavailable) else { return nil }
+        return passkeyNotice.notice.flatMap { $0.tabID == activeTab.id ? $0 : nil }
     }
 
     fileprivate func tabNavigated(_ tab: PreviewTab, to url: URL, title: String?) {
@@ -435,6 +452,7 @@ final class PreviewSession: NSObject {
 
     /// Ends the session: stops loading and lets an agent waiting on the user go.
     func close() {
+        warningObservation = nil
         userTurn.finish(.cancelled)
         loginApproval.answer(.deny)
         savePrompt = nil
