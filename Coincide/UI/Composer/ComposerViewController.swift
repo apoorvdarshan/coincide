@@ -1422,22 +1422,13 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     }
 
     /// Picking a model from another provider switches the thread's agent; that agent's native session
-    /// continues and it gets a recap of the turns it missed (see `Handoff`). The effort and speed carry
-    /// over when the new model supports them.
+    /// continues and it gets a recap of the turns it missed (see `Handoff`). Each provider account restores its own
+    /// reasoning and speed choices when the new model supports them.
     func select(_ selection: ModelSelection) {
         guard let threadID, let thread else { return }
-        var selection = selection
-        let model = registry.model(for: selection)
-        if let effort = thread.selection.effort, model?.efforts.contains(effort) == true {
-            selection.effort = effort
-        } else {
-            selection.effort = model?.defaultEffort
-        }
-        selection.speed = ComposerSpeedControl.carried(thread.selection.speed, to: model)
         // Another account of the same agent is a switch too: it runs its own session and gets a recap.
         let switched = selection.provider != thread.selection.provider || selection.account != thread.selection.account
-        if selection != thread.selection {
-            store.updateThread(threadID) { $0.selection = selection }
+        if store.selectModel(threadID, selection: selection, option: registry.model(for: selection)) {
             store.rememberComposerChoice(of: threadID)
         }
         if switched {
@@ -1479,17 +1470,26 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     /// The user's picks in the composer (`select`, `setEffort`, `setSpeed`, `setAccessMode`) also become the default
     /// for new threads (`AppStore.rememberComposerChoice`); a pick that changes nothing leaves the default alone.
     func setEffort(_ effort: String) {
-        guard let threadID, thread?.selection.effort != effort else { return }
-        store.updateThread(threadID) { $0.selection.effort = effort }
-        store.rememberComposerChoice(of: threadID)
+        guard let threadID, let thread else { return }
+        let model = registry.model(for: thread.selection)
+        guard model?.efforts.contains(effort) == true else { return }
+        var selection = thread.selection
+        selection.effort = effort
+        if store.selectModel(threadID, selection: selection, option: model, rememberingEffort: true) {
+            store.rememberComposerChoice(of: threadID)
+        }
     }
 
     /// Runs the model at a faster speed it offers, or at standard speed for nil.
     func setSpeed(_ speed: String?) {
-        guard let threadID, let thread, thread.selection.speed != speed else { return }
-        guard speed == nil || registry.model(for: thread.selection)?.speed(speed) != nil else { return }
-        store.updateThread(threadID) { $0.selection.speed = speed }
-        store.rememberComposerChoice(of: threadID)
+        guard let threadID, let thread else { return }
+        let model = registry.model(for: thread.selection)
+        guard speed == nil || model?.speed(speed) != nil else { return }
+        var selection = thread.selection
+        selection.speed = speed
+        if store.selectModel(threadID, selection: selection, option: model, rememberingSpeed: true) {
+            store.rememberComposerChoice(of: threadID)
+        }
     }
 
     func setAccessMode(_ mode: AccessMode) {

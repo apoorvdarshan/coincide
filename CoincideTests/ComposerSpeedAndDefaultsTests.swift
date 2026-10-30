@@ -1,4 +1,5 @@
 import AppKit
+import CoincideRemoteKit
 import Testing
 
 @testable import Coincide
@@ -6,16 +7,17 @@ import Testing
 
 @MainActor
 private final class SpeedProvider: AgentProvider {
-    let kind = ProviderKind.claude
+    let kind: ProviderKind
+    init(kind: ProviderKind = .claude) { self.kind = kind }
     let executableNames = ["sh"]
     let setupHint = ""
     func detect(executable: URL?, environment: [String: String]) async -> ProviderStatus { ProviderStatus(state: .ready) }
     func models(status: ProviderStatus, environment: [String: String]) async -> [ModelOption] {
         [
             ModelOption(
-                provider: .claude, modelID: "opus", displayName: "Opus", efforts: ["low", "high"], defaultEffort: "high",
+                provider: kind, modelID: "opus", displayName: "Opus", efforts: ["low", "high"], defaultEffort: "high",
                 speeds: [.fast]),
-            ModelOption(provider: .claude, modelID: "haiku", displayName: "Haiku", efforts: ["low", "high"], defaultEffort: "low"),
+            ModelOption(provider: kind, modelID: "haiku", displayName: "Haiku", efforts: ["low", "high"], defaultEffort: "low"),
         ]
     }
     func makeSession(_ launch: AgentLaunch) -> AgentSession { fatalError("Composer tests never start a session") }
@@ -86,11 +88,57 @@ struct ComposerSpeedAndDefaultsTests {
         #expect(setup.store.thread(thread.id)?.selection.speed == nil)
         #expect(speedButton.isHidden)
 
-        // Back on a model with fast mode, the thread runs at standard until the user picks fast again.
+        // Back on a model with fast mode, the provider's desired speed returns.
+        composer.select(ModelSelection(provider: .claude, modelID: "opus"))
+        #expect(setup.store.thread(thread.id)?.selection.speed == "fast")
+        #expect(!speedButton.isHidden)
+        #expect(speedButton.accessibilityLabel() == "Speed: Fast")
+        composer.setSpeed(nil)
+        composer.select(ModelSelection(provider: .claude, modelID: "haiku"))
         composer.select(ModelSelection(provider: .claude, modelID: "opus"))
         #expect(setup.store.thread(thread.id)?.selection.speed == nil)
-        #expect(!speedButton.isHidden)
         #expect(speedButton.accessibilityLabel() == "Speed: Standard")
+    }
+
+    @Test func desktopAndRemoteControlsRestoreTheSameProviderAccountChoices() async throws {
+        let setup = try await Setup()
+        let store = setup.store
+        let thread = store.createThread(
+            in: setup.project.id, selection: ModelSelection(provider: .claude, modelID: "opus", effort: "low", speed: "fast"))
+        let composer = setup.composer(for: thread.id)
+        let remote = RemoteStoreAdapter(
+            store: store, runner: setup.runner, registry: setup.registry, services: RemoteSessionTests.services(store: store))
+        // The same native tokens on another provider do not make the outgoing provider's choices apply there.
+        try remote.updateSettings(RemoteThreadSettings(threadID: thread.id, provider: "codex", modelID: "opus"))
+        #expect(store.thread(thread.id)?.selection == ModelSelection(provider: .codex, modelID: "opus", effort: "high"))
+        composer.select(ModelSelection(provider: .claude, modelID: "opus"))
+        #expect(store.thread(thread.id)?.selection == ModelSelection(provider: .claude, modelID: "opus", effort: "low", speed: "fast"))
+        composer.select(ModelSelection(provider: .codex, modelID: "opus"))
+        composer.setEffort("low")
+        try remote.updateSettings(RemoteThreadSettings(threadID: thread.id, speed: "fast"))
+        composer.select(ModelSelection(provider: .codex, modelID: "haiku"))
+        #expect(store.thread(thread.id)?.selection.speed == nil)
+        // This changes only remembered speed: the fallback was already Standard.
+        try remote.updateSettings(RemoteThreadSettings(threadID: thread.id, speed: "standard"))
+        composer.select(ModelSelection(provider: .claude, modelID: "opus"))
+        try remote.updateSettings(RemoteThreadSettings(threadID: thread.id, provider: "codex", modelID: "opus"))
+        #expect(store.thread(thread.id)?.selection == ModelSelection(provider: .codex, modelID: "opus", effort: "low"))
+        let before = try #require(store.thread(thread.id))
+        #expect(throws: RemoteError.self) {
+            try remote.updateSettings(RemoteThreadSettings(threadID: thread.id, provider: "claude", modelID: "opus", effort: "high", speed: "missing"))
+        }
+        #expect(store.thread(thread.id)?.selection == before.selection)
+        #expect(store.thread(thread.id)?.modelPreferences == before.modelPreferences)
+    }
+
+    @Test func remoteExplicitEffortStillWorksForACustomModelWithoutACatalog() async throws {
+        let setup = try await Setup()
+        let thread = setup.store.createThread(in: setup.project.id)
+        let remote = RemoteStoreAdapter(
+            store: setup.store, runner: setup.runner, registry: setup.registry, services: RemoteSessionTests.services(store: setup.store))
+        try remote.updateSettings(RemoteThreadSettings(threadID: thread.id, provider: "codex", modelID: "custom", effort: "high"))
+        #expect(setup.store.thread(thread.id)?.selection.effort == "high")
+        #expect(setup.store.thread(thread.id)?.modelPreferences?["codex/default"]?.effort == "high")
     }
 
     // MARK: Defaults for new threads
@@ -230,7 +278,7 @@ struct ComposerSpeedAndDefaultsTests {
 
         init() async throws {
             store = AppStore(directory: directory.url)
-            registry = ProviderRegistry(store: store, providers: [SpeedProvider()])
+            registry = ProviderRegistry(store: store, providers: [SpeedProvider(), SpeedProvider(kind: .codex)])
             await registry.refresh()
             runner = ThreadRunner(store: store, registry: registry)
             project = store.addProject(at: directory.url.appendingPathComponent("project"))

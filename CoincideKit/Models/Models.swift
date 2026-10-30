@@ -176,6 +176,25 @@ public struct ModelSelection: Codable, Hashable, Sendable {
     }
 }
 
+/// A thread's desired reasoning and speed for one provider account. An existing entry with nil speed remembers
+/// Standard; an absent entry means the thread has not used that account yet. Unsupported choices stay here while
+/// `ChatThread.selectModel` gives the active model a supported selection.
+public struct ProviderModelPreferences: Codable, Hashable, Sendable {
+    public var effort: String?
+    public var speed: String?
+
+    public nonisolated init(effort: String? = nil, speed: String? = nil) {
+        self.effort = effort
+        self.speed = speed
+    }
+
+    public nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        effort = container.lenient(String.self, forKey: .effort)
+        speed = container.lenient(String.self, forKey: .speed)
+    }
+}
+
 /// A command the user runs often in a project, such as starting the dev server or the tests (T3 Code's project
 /// scripts). It runs in a terminal of the thread, in its worktree or the project folder.
 public struct ProjectScript: Codable, Hashable, Sendable, Identifiable {
@@ -597,6 +616,9 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     public var createdAt: Date
     public var updatedAt: Date
     public var selection: ModelSelection
+    /// Desired reasoning and speed by provider/account (`accountSessionKey`), independent of model capabilities.
+    /// Nil for threads that have not changed a composer choice yet; their current selection seeds the first entry.
+    public var modelPreferences: [String: ProviderModelPreferences]?
     public var accessMode: AccessMode
     public var interactionMode: InteractionMode
     public var items: [TranscriptItem]
@@ -645,6 +667,7 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.updatedAt = createdAt
         self.selection = selection
+        modelPreferences = nil
         self.accessMode = accessMode
         self.interactionMode = interactionMode
         self.items = items
@@ -668,6 +691,41 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     /// "claude/<account id>": where `accountSessions` keeps an account's session.
     public nonisolated static func accountSessionKey(_ provider: ProviderKind, _ account: String) -> String {
         "\(provider.rawValue)/\(account)"
+    }
+
+    /// Resolves a user model/account pick, or an explicit reasoning/speed change, using only that account's own
+    /// choices. A model that cannot use a desired value temporarily uses its default reasoning or Standard speed.
+    /// Explicit changes replace the desired value even when the active model was already using that fallback.
+    public nonisolated mutating func selectModel(
+        _ requested: ModelSelection, option: ModelOption?, rememberingEffort: Bool = false, rememberingSpeed: Bool = false
+    ) {
+        var preferences = modelPreferences ?? [:]
+        let currentKey = Self.accountSessionKey(selection.provider, selection.account)
+        if preferences[currentKey] == nil {
+            preferences[currentKey] = ProviderModelPreferences(effort: selection.effort, speed: selection.speed)
+        }
+        let nextKey = Self.accountSessionKey(requested.provider, requested.account)
+        var desired = preferences[nextKey] ?? ProviderModelPreferences(effort: option?.defaultEffort)
+        if rememberingEffort { desired.effort = requested.effort }
+        if rememberingSpeed { desired.speed = requested.speed }
+        preferences[nextKey] = desired
+
+        let changedModel = requested.provider != selection.provider || requested.account != selection.account
+            || requested.modelID != selection.modelID
+        let resolveBoth = changedModel || !(rememberingEffort || rememberingSpeed)
+        var resolved = requested
+        if rememberingEffort, option == nil {
+            // Remote/CLI allow an explicit effort for a custom model whose catalog is not available yet.
+            resolved.effort = requested.effort
+        } else {
+            resolved.effort =
+                resolveBoth || rememberingEffort
+                ? desired.effort.flatMap { option?.efforts.contains($0) == true ? $0 : nil } ?? option?.defaultEffort
+                : selection.effort
+        }
+        resolved.speed = resolveBoth || rememberingSpeed ? option?.speed(desired.speed)?.id : selection.speed
+        selection = resolved
+        modelPreferences = preferences
     }
 
     /// The native session `account` of `provider` has in the thread, whether it is the provider's current one or set
@@ -709,6 +767,11 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         updatedAt = container.lenient(Date.self, forKey: .updatedAt) ?? createdAt
         selection =
             container.lenient(ModelSelection.self, forKey: .selection) ?? ModelSelection(provider: .claude, modelID: "default")
+        let preferences = (container.lenient([String: ProviderModelPreferences].self, forKey: .modelPreferences) ?? [:]).filter { key, _ in
+            let parts = key.split(separator: "/", maxSplits: 1)
+            return parts.count == 2 && ProviderKind(rawValue: String(parts[0])) != nil
+        }
+        modelPreferences = preferences.isEmpty ? nil : preferences
         // An unreadable mode (for example one a newer build added) fails closed.
         accessMode = container.lenient(AccessMode.self, forKey: .accessMode) ?? .approval
         interactionMode = container.lenient(InteractionMode.self, forKey: .interactionMode) ?? .build

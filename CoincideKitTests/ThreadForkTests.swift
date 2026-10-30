@@ -106,7 +106,8 @@ struct ThreadForkTests {
     // MARK: The fork
 
     @Test func forkCopiesTheConversationWithNewIDsAndTheSameSettings() throws {
-        let original = source(twoTurns())
+        var original = source(twoTurns())
+        original.modelPreferences = ["claude/default": ProviderModelPreferences(effort: "max", speed: "fast")]
         let now = Date(timeIntervalSince1970: 1_900_000_000)
         let plan = try #require(ThreadFork.makeFork(of: original, through: original.items[2].id, now: now))
         let fork = plan.thread
@@ -115,6 +116,7 @@ struct ThreadForkTests {
         #expect(fork.projectID == original.projectID)
         #expect(fork.title == "Login bug fork")
         #expect(fork.selection == original.selection)
+        #expect(fork.modelPreferences == original.modelPreferences)
         #expect(fork.accessMode == .approval)
         #expect(fork.interactionMode == .plan)
         #expect(fork.worktreePath == "/tmp/worktree" && fork.branch == "fix/login")

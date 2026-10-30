@@ -184,6 +184,22 @@ struct ThreadFileTests {
         #expect(odd.thread.items.first?.isSteered == false && odd.hasUnreadContent)
     }
 
+    @Test func unreadableOrFutureModelPreferencesArePreservedBeforeSaving() throws {
+        let base = #""id":"\#(UUID().uuidString)","projectID":"\#(UUID().uuidString)""#
+        for bank in [
+            #"{"future/default":{"effort":"high"}}"#,
+            #"{"claude/default":{"effort":7}}"#,
+            #"{"claude/default":{"speed":true}}"#,
+            #"{"claude/default":{"speed":"fast","futureSetting":true}}"#,
+            #"{"claude/default":5}"#,
+        ] {
+            #expect(try decode("{\(base),\"modelPreferences\":\(bank)}").hasUnreadContent)
+        }
+        let standard = try decode("{\(base),\"modelPreferences\":{\"claude/default\":{}}}")
+        #expect(!standard.hasUnreadContent)
+        #expect(standard.thread.modelPreferences?["claude/default"] == ProviderModelPreferences())
+    }
+
     @Test func aThreadThisVersionWroteIsNeverCopied() throws {
         let store = AppStore(directory: directory)
         let project = store.addProject(at: URL(fileURLWithPath: "/tmp"))
@@ -212,6 +228,7 @@ struct ThreadFileTests {
             Bot(name: "Bot", avatar: BotAvatar(shape: .blob, tint: .sky), persona: "", selection: ModelSelection(provider: .claude, modelID: "m")))
         store.updateThread(thread.id) {
             $0.title = "Everything"
+            $0.modelPreferences = ["claude/default": ProviderModelPreferences(effort: "high", speed: "fast"), "codex/work": .init()]
             $0.accessMode = .approval
             $0.interactionMode = .plan
             $0.sessions = [.codex: ProviderSessionRef(sessionID: "x", seenItemCount: 2), .claude: ProviderSessionRef(sessionID: "c", seenItemCount: 0)]
