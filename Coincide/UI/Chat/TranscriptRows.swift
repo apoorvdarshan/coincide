@@ -299,7 +299,8 @@ struct TranscriptBuilder {
                 case .tool, .reasoning:
                     if beforeReply || item.status != .failed { hidden.insert(item.id) }
                 case .assistant:
-                    if beforeReply { hidden.insert(item.id) }
+                    // Rich results stay visible when the agent follows them with a text summary.
+                    if beforeReply, TranscriptMediaCache.media(item, directory: URL(fileURLWithPath: "/")).isEmpty { hidden.insert(item.id) }
                 case .approval:
                     if item.status != .waiting { hidden.insert(item.id) }
                 case .user, .plan, .question, .error, .notice:
@@ -418,7 +419,8 @@ struct TranscriptBuilder {
     private func isVisible(_ item: TranscriptItem) -> Bool {
         switch item.kind {
         case .reasoning: showReasoning && item.text.nonBlank != nil
-        case .assistant, .plan: item.text.nonBlank != nil
+        case .assistant: item.text.nonBlank != nil || !(item.attachments ?? []).isEmpty
+        case .plan: item.text.nonBlank != nil
         default: true
         }
     }

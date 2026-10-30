@@ -11,6 +11,8 @@ struct ChatMarkdownStyle: Hashable {
     var isSerif = false
     /// Added under a web link's address in its tooltip: what a click and a ⌘-click do (`LinkRouting.hint`).
     var webLinkHint: String?
+    /// Dedicated output fences are rendered by the assistant cell as interactive cards.
+    var rendersInteractiveOutput = false
 
     /// Code blocks keep the size they have in the system font's text, since the serif is set a point larger.
     var codeFontSize: CGFloat { isSerif ? fontSize - 2 : fontSize - 1 }
@@ -206,6 +208,8 @@ struct ChatMarkdownRenderer {
             heading.color = color
             paragraph(inlines, heading, font: ChatFonts.body(headingSize(level), weight: .semibold, serif: style.isSerif))
         case .code(let language, let text):
+            if style.rendersInteractiveOutput, ["coincide-html", "coincide-svg"].contains(language?.lowercased() ?? ""),
+                text.utf8.count <= 262_144 { break }
             code(text, language: language, context)
         case .quote(let children):
             let quote = ChatQuoteTextBlock()

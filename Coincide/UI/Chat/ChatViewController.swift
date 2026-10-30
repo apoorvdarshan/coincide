@@ -943,6 +943,7 @@ final class ChatViewController: NSViewController {
 // MARK: - TranscriptHost
 
 extension ChatViewController: TranscriptHost {
+    var mediaDirectory: URL? { displayedThreadID.flatMap { store.workingDirectory(for: $0) } }
     var isThreadRunning: Bool { displayedThreadID.map(runner.isRunning) ?? false }
 
     func item(_ id: UUID) -> TranscriptItem? {

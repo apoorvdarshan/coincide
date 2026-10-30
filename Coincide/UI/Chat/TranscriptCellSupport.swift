@@ -8,6 +8,7 @@ protocol TranscriptHost: AnyObject {
     var threadID: UUID? { get }
     var isThreadRunning: Bool { get }
     var textCache: TranscriptTextCache { get }
+    var mediaDirectory: URL? { get }
 
     func item(_ id: UUID) -> TranscriptItem?
     func isExpanded(_ id: TranscriptRowID) -> Bool
@@ -43,6 +44,7 @@ protocol TranscriptHost: AnyObject {
 }
 
 extension TranscriptHost {
+    var mediaDirectory: URL? { nil }
     func toolCallItem(_ toolCallID: String, provider: ProviderKind) -> UUID? { nil }
     func reveal(_ itemID: UUID) {}
 }
@@ -261,7 +263,7 @@ enum TranscriptText {
 
     private static func baseStyle(_ style: TranscriptTextCache.Style) -> ChatMarkdownStyle {
         switch style {
-        case .assistant: ChatMarkdownStyle(fontSize: Theme.replyFontSize, textColor: Theme.ink, isSerif: Theme.usesSerifReplies)
+        case .assistant: ChatMarkdownStyle(fontSize: Theme.replyFontSize, textColor: Theme.ink, isSerif: Theme.usesSerifReplies, rendersInteractiveOutput: true)
         case .approval, .error, .toolDetail: ChatMarkdownStyle(fontSize: Theme.fontSize)
         case .user: ChatMarkdownStyle(fontSize: Theme.fontSize, textColor: Theme.ink, preservesLineBreaks: true)
         case .reasoning: ChatMarkdownStyle(fontSize: Theme.fontSize - 1, textColor: .secondaryLabelColor)

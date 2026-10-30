@@ -143,9 +143,30 @@ public final class ThreadRunner {
     /// (`CommandLineControl`). A `PATH` goes in front of the process's own instead of replacing it.
     public var launchEnvironments: [String: (UUID) -> [String: String]] = [:]
 
+    private var generatedImageCopies: Set<UUID> = []
+
     private func runtimeMessage(_ message: String, threadID: UUID) -> String {
         guard let context = ephemeralRuntimeContext?(threadID), !context.isEmpty else { return message }
         return message + "\n\n" + context
+    }
+
+    private func preserveGeneratedImage(toolID: UUID, output: String?, threadID: UUID, provider: ProviderKind, modelID: String?) {
+        guard provider == .codex, let tool = store.item(toolID, in: threadID), tool.status == .completed,
+            tool.title == String(localized: "Generate an image"), let output,
+            generatedImageCopies.insert(toolID).inserted else { return }
+        let directory = store.directory.appendingPathComponent("attachments", isDirectory: true)
+        Task { [weak self] in
+            let path = await AgentOutputMedia.preserveImage(path: output, toolID: toolID, directory: directory)
+            guard let self else { return }
+            self.generatedImageCopies.remove(toolID)
+            guard let path, self.store.item(toolID, in: threadID) != nil else { return }
+            let externalID = "generated-media:" + toolID.uuidString
+            guard self.store.thread(threadID)?.items.contains(where: { $0.externalID == externalID }) == false else { return }
+            var image = TranscriptItem(kind: .assistant, status: .completed, provider: provider, modelID: modelID,
+                externalID: externalID, completedAt: Date())
+            image.attachments = [path]
+            self.store.append(image, to: threadID)
+        }
     }
 
     /// Called when an agent is slow to start, which usually means macOS is waiting on a permission prompt.
@@ -980,6 +1001,7 @@ public final class ThreadRunner {
                     item.text = TextClip.keepingTail(output, limit: Self.toolOutputLimit, clipTo: Self.toolOutputKept)
                 }
             }
+            preserveGeneratedImage(toolID: existing, output: output, threadID: threadID, provider: provider, modelID: modelID)
 
         case .approvalRequested(let request):
             let info = ApprovalInfo(requestID: request.id, options: request.options, textInput: request.textInput)

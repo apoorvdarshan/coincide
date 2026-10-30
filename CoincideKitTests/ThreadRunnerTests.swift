@@ -170,6 +170,25 @@ struct ThreadRunnerTests {
         #expect(session.steered.last?.message == "Access is now off")
     }
 
+    @Test func aNativeGeneratedImageBecomesOneDurableInlineAttachment() async throws {
+        select(.codex)
+        let source = store.directory.appendingPathComponent("generated-source.png")
+        try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
+        try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQmFDwHwAEFAIglHcfOQAAAABJRU5ErkJggg==")).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        await runner.send(threadID: threadID, text: "Make an image")
+        let session = try #require(codex.last)
+        session.emit(.toolStarted(.init(id: "generated", category: .other, title: String(localized: "Generate an image"))))
+        session.emit(.toolCompleted(id: "generated", status: .completed, output: source.path))
+        #expect(await eventually { items.contains { $0.kind == .assistant && !($0.attachments ?? []).isEmpty } })
+        session.emit(.toolCompleted(id: "generated", status: .completed, output: source.path))
+        try await Task.sleep(for: .milliseconds(100))
+        let images = items.filter { $0.kind == .assistant && !($0.attachments ?? []).isEmpty }
+        #expect(images.count == 1)
+        #expect(images.first?.attachments?.first?.contains("/attachments/generated-") == true)
+        session.emit(.turnCompleted(.completed))
+    }
+
     @Test func startingATurnRecordsTheLastActiveAgent() async throws {
         await runner.send(threadID: threadID, text: "Hello")
         let last = try #require(runner.lastActiveAgent.value)
