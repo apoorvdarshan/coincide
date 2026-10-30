@@ -76,7 +76,7 @@ struct BrowserViewportTests {
         let hidden = try await client.send(["action": "read"])
         #expect(hidden["text"]?.string?.contains("Still working in the background") == true)
         #expect(hidden["panelVisible"]?.bool == false)
-        #expect(hidden["viewport"]?["width"]?.number == size.width)
+        #expect(hidden["viewport"]?["width"]?.number == Double(size.width))
         let screenshot = try await client.send(["action": "screenshot"])
         let path = try #require(screenshot["path"]?.string)
         let bitmap = try #require(NSBitmapImageRep(data: Data(contentsOf: URL(fileURLWithPath: path))))
@@ -154,12 +154,21 @@ struct BrowserViewportTests {
             window.alphaValue = 0
             panel.sessions = sessions
             panel.threadID = id
-            window.contentViewController = panel
+            // Match the inspector: a controller embedded in an already sized host. Making the panel the window's
+            // content controller instead lets its chrome-only fitting size resize this artificial window.
+            let host = NSView(frame: NSRect(origin: .zero, size: NSSize(width: width, height: 640)))
+            window.contentView = host
+            panel.view.frame = host.bounds
+            panel.view.autoresizingMask = [.width, .height]
+            host.addSubview(panel.view)
+            window.setContentSize(NSSize(width: width, height: 640))
             window.orderBack(nil)
             panel.view.layoutSubtreeIfNeeded()
+            #expect(panel.view.bounds.size == NSSize(width: width, height: 640))
             sessions.reveal = { [weak self] target in
-                guard let self, target == self.id else { return false }
-                self.panel.view.setFrameSize(self.window.contentLayoutRect.size)
+                guard let self, target == self.id, let host = self.window.contentView else { return false }
+                self.panel.view.frame = host.bounds
+                if self.panel.view.superview !== host { host.addSubview(self.panel.view) }
                 self.panel.view.isHidden = false
                 self.panel.isPresented = true
                 self.panel.view.layoutSubtreeIfNeeded()
@@ -169,7 +178,8 @@ struct BrowserViewportTests {
                 guard let self, target == self.id else { return true }
                 self.panel.isPresented = false
                 self.panel.view.isHidden = true
-                // A collapsed inspector can reach zero size after the page has been parked.
+                // A collapsed inspector leaves the window. Even a zero-size detached host must not shrink its page.
+                self.panel.view.removeFromSuperview()
                 self.panel.view.setFrameSize(.zero)
                 return true
             }
@@ -198,7 +208,7 @@ struct BrowserViewportTests {
             for _ in 0..<300 {
                 let result = try await read()
                 if result["viewport"]?["width"]?.number == width {
-                    #expect(session.webView.bounds.width == width)
+                    #expect(Double(session.webView.bounds.width) == width)
                     return
                 }
                 try await Task.sleep(for: .milliseconds(10))
@@ -209,7 +219,8 @@ struct BrowserViewportTests {
 
         func stop() {
             panel.isPresented = false
-            window.contentViewController = nil
+            panel.view.removeFromSuperview()
+            window.contentView = nil
             window.orderOut(nil)
             sessions.stop()
             UIState.shared.update {
