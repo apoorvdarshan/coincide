@@ -14,6 +14,9 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
     fileprivate(set) var passkeyRequested = false
     /// Files an agent's `upload` is attaching: the page's next file chooser gets them instead of a dialog.
     fileprivate var pendingUpload: [URL]?
+    /// The page's alert, confirmation or prompt, which blocks the page until the agent or the user answers it.
+    private(set) var dialog: PreviewDialog?
+    fileprivate var dialogWaiters: [UUID: (JSONValue) -> Void] = [:]
     /// The folder a local file the user opened may read from; navigations stay inside it.
     private var fileRoot: URL?
     var lastUse = Date()
@@ -73,8 +76,29 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func close() {
+        _ = answerDialog(accept: false, text: nil)
         unload()
         owner = nil
+    }
+
+    /// Answers the open dialog. False when there is none.
+    @discardableResult
+    func answerDialog(accept: Bool, text: String?) -> Bool {
+        guard let dialog else { return false }
+        self.dialog = nil
+        dialog.respond(accept, text)
+        owner?.tabChanged(self)
+        return true
+    }
+
+    private func show(_ dialog: PreviewDialog) {
+        // A page can't open a second dialog while one blocks it; answer a stray one as cancelled.
+        if self.dialog != nil { dialog.respond(false, nil); return }
+        self.dialog = dialog
+        // WebKit may hold the JavaScript reply until this dialog is answered. Release commands already in
+        // flight with the dialog, so the agent can issue its separate answer command.
+        for reply in Array(dialogWaiters.values) { reply(["dialog": dialog.json]) }
+        owner?.tabChanged(self)
     }
 
     func navigate(_ url: URL) {
@@ -157,6 +181,23 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webViewDidClose(_ webView: WKWebView) {
         owner?.closeTab(id)
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor @Sendable () -> Void) {
+        show(PreviewDialog(kind: .alert, message: message, defaultText: nil) { _, _ in completionHandler() })
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor @Sendable (Bool) -> Void) {
+        show(PreviewDialog(kind: .confirm, message: message, defaultText: nil) { accept, _ in completionHandler(accept) })
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
+        initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor @Sendable (String?) -> Void) {
+        show(PreviewDialog(kind: .prompt, message: prompt, defaultText: defaultText) { accept, text in
+            completionHandler(accept ? (text ?? defaultText ?? "") : nil)
+        })
     }
 
     /// A file chooser: an agent's pending `upload` answers it with no dialog; the user's own click on a file input gets
@@ -423,7 +464,58 @@ final class PreviewSession: NSObject {
         tab.lastUse = Date()
         let webView = tab.load()
         onTabLoaded?()
+        // A dialog blocks the page's scripts, so only reading it and answering it work until it's answered.
+        if let dialog = tab.dialog {
+            switch command {
+            case .dialog(let accept, let text):
+                tab.answerDialog(accept: accept, text: text)
+                return ["answered": .string(dialog.kind.rawValue), "tab": .string(tab.id)]
+            case .read:
+                return ["dialog": dialog.json, "url": .string(webView.url?.absoluteString ?? ""), "title": .string(webView.title ?? ""),
+                        "loading": .bool(webView.isLoading), "tab": .string(tab.id)]
+            default:
+                throw PreviewError.dialogOpen
+            }
+        }
         switch command {
+        case .dialog:
+            throw PreviewError.noDialog
+        case .back, .forward:
+            let back = command == .back
+            guard back ? webView.canGoBack : webView.canGoForward else { return ["moved": false, "tab": .string(tab.id)] }
+            if back { webView.goBack() } else { webView.goForward() }
+            return ["moved": true, "loading": true, "tab": .string(tab.id)]
+        case .reload:
+            webView.reload()
+            return ["loading": true, "tab": .string(tab.id)]
+        case .type(let selector, let text, let clear):
+            return try await script(Self.typeScript, arguments: ["selector": selector, "text": text, "clear": clear], in: webView)
+        case .press(let key, let selector):
+            if let selector { _ = try await script(Self.focusScript, arguments: ["selector": selector], in: webView) }
+            Self.press(key, in: webView)
+            // Let the page handle the key (and any navigation it starts) before the agent reads again.
+            try await Task.sleep(for: .milliseconds(100))
+            return ["pressed": true, "loading": .bool(webView.isLoading), "tab": .string(tab.id)]
+        case .scroll(let target):
+            var arguments: [String: Any] = ["target": "by", "selector": "", "by": 0, "hasBy": false]
+            switch target {
+            case .element(let selector): arguments["target"] = "element"; arguments["selector"] = selector
+            case .top: arguments["target"] = "top"
+            case .bottom: arguments["target"] = "bottom"
+            case .by(let pixels): arguments["by"] = pixels ?? 0; arguments["hasBy"] = pixels != nil
+            }
+            return try await script(Self.scrollScript, arguments: arguments, in: webView)
+        case .waitFor(let selector, let text, let timeout):
+            let start = Date()
+            while true {
+                if tab.dialog != nil { throw PreviewError.dialogOpen }
+                let found = try await script(Self.findScript, arguments: ["selector": selector ?? "", "text": text ?? ""], in: webView)
+                if found["found"]?.bool == true {
+                    return ["found": true, "waited": .number((Date().timeIntervalSince(start) * 10).rounded() / 10), "tab": .string(tab.id)]
+                }
+                guard Date().timeIntervalSince(start) < timeout else { throw PreviewError.timedOut }
+                try await Task.sleep(for: .milliseconds(250))
+            }
         case .navigate(let url):
             tab.navigate(url)
             return ["loading": true, "url": .string(url.absoluteString), "tab": .string(tab.id)]
@@ -431,8 +523,8 @@ final class PreviewSession: NSObject {
             guard let url = searchEngine().url(for: query) else { throw PreviewError.invalidCommand }
             tab.navigate(url)
             return ["loading": true, "url": .string(url.absoluteString), "tab": .string(tab.id)]
-        case .read:
-            let result = try await script(Self.readScript, in: webView)
+        case .read(let page, let scope):
+            let result = try await script(Self.readScript, arguments: ["page": page, "scope": scope ?? ""], in: webView)
             var object = result.object ?? [:]
             object["loading"] = .bool(webView.isLoading)
             object["tab"] = .string(tab.id)
@@ -440,7 +532,12 @@ final class PreviewSession: NSObject {
             if tab.passkeyRequested { object["passkey"] = .string(PasskeySupport.agentNote) }
             return .object(object)
         case .click(let selector):
-            return try await script(Self.clickScript, arguments: ["selector": selector], in: webView)
+            _ = try await script(Self.clickScript, arguments: ["selector": selector], in: webView)
+            // A dialog can release the script reply before the click handler finishes.
+            try await Task.sleep(for: .milliseconds(80))
+            var reply: [String: JSONValue] = ["clicked": true, "tab": .string(tab.id)]
+            if let dialog = tab.dialog { reply["dialog"] = dialog.json }
+            return .object(reply)
         case .input(let selector, let text):
             return try await script(Self.inputScript, arguments: ["selector": selector, "text": text], in: webView)
         case .upload(let selector, let files):
@@ -479,11 +576,46 @@ final class PreviewSession: NSObject {
     }
 
     private func script(_ body: String, arguments: [String: Any] = [:], in webView: WKWebView) async throws -> JSONValue {
-        let value = try await webView.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: .defaultClient)
-        guard let value, JSONSerialization.isValidJSONObject(value),
-            let result = JSONValue.parse(try JSONSerialization.data(withJSONObject: value))
-        else { throw PreviewError.invalidCommand }
-        return result
+        guard let tab = tabs.first(where: { $0.webView === webView }) else { throw PreviewError.noSuchTab }
+        return try await withCheckedThrowingContinuation { continuation in
+            let id = UUID()
+            var pending: CheckedContinuation<JSONValue, Error>? = continuation
+            func finish(_ result: Result<JSONValue, Error>) {
+                guard let reply = pending else { return }
+                pending = nil
+                tab.dialogWaiters[id] = nil
+                reply.resume(with: result)
+            }
+            tab.dialogWaiters[id] = { finish(.success($0)) }
+            Task { @MainActor in
+                do {
+                    let value = try await webView.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: .defaultClient)
+                    guard let value, JSONSerialization.isValidJSONObject(value),
+                        let result = JSONValue.parse(try JSONSerialization.data(withJSONObject: value))
+                    else { throw PreviewError.invalidCommand }
+                    finish(.success(result))
+                } catch { finish(.failure(error)) }
+            }
+        }
+    }
+
+    /// Sends `key` to the page as real key events, so it sees trusted keystrokes and their default actions happen.
+    private static func press(_ key: KeyPress, in webView: WKWebView) {
+        var flags: NSEvent.ModifierFlags = []
+        if key.command { flags.insert(.command) }
+        if key.control { flags.insert(.control) }
+        if key.option { flags.insert(.option) }
+        if key.shift { flags.insert(.shift) }
+        func event(_ type: NSEvent.EventType) -> NSEvent? {
+            NSEvent.keyEvent(
+                with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: webView.window?.windowNumber ?? 0, context: nil, characters: key.characters,
+                charactersIgnoringModifiers: key.charactersIgnoringModifiers, isARepeat: false, keyCode: key.keyCode)
+        }
+        guard let down = event(.keyDown), let up = event(.keyUp) else { return }
+        if flags.contains(.command), webView.performKeyEquivalent(with: down) { return }
+        webView.keyDown(with: down)
+        webView.keyUp(with: up)
     }
 
     // Static code, with selector/text passed as WebKit arguments instead of interpolated into JavaScript.
@@ -498,15 +630,21 @@ final class PreviewSession: NSObject {
             }
             return parts.join(' > ');
         }
-        const elements = [...document.querySelectorAll('a,button,input,textarea,select,[role="button"],[contenteditable="true"]')]
-            .filter(el => el.getClientRects().length).slice(0, 200).map(el => ({
+        const root = scope ? document.querySelector(scope) : document.body;
+        if (scope && !root) throw new Error('No element matches the selector.');
+        const all = [...(scope ? root : document).querySelectorAll('a,button,input,textarea,select,[role="button"],[contenteditable="true"]')]
+            .filter(el => el.getClientRects().length);
+        const fullText = root?.innerText || '';
+        const pages = Math.max(1, Math.ceil(fullText.length / 30000), Math.ceil(all.length / 200));
+        const elements = all.slice((page - 1) * 200, page * 200).map(el => ({
                 selector: selectorFor(el).slice(0, 4096), tag: el.tagName.toLowerCase(), type: el.type || '',
                 label: (el.getAttribute('aria-label') || el.innerText || el.getAttribute('placeholder') || '').slice(0, 300),
                 value: el.type === 'password' || el.type === 'file' || el.autocomplete === 'one-time-code'
                     || (window.__coincideSecretFields && window.__coincideSecretFields.has(el)) ? '' : String(el.value || '').slice(0, 1000),
                 disabled: !!el.disabled
             }));
-        return {url: location.href.slice(0, 8192), title: document.title.slice(0, 1000), text: (document.body?.innerText || '').slice(0, 30000), elements};
+        return {url: location.href.slice(0, 8192), title: document.title.slice(0, 1000),
+            text: fullText.slice((page - 1) * 30000, page * 30000), elements, page, pages};
         """#
     private static let clickScript = #"""
         const el = document.querySelector(selector);
@@ -533,6 +671,76 @@ final class PreviewSession: NSObject {
             target.click();
         }
         return {clicked: true};
+        """#
+    private static let focusScript = #"""
+        const el = document.querySelector(selector);
+        if (!el || !el.getClientRects().length) throw new Error('No visible element matches the selector.');
+        el.scrollIntoView({block: 'center'});
+        el.focus();
+        return {focused: document.activeElement === el};
+        """#
+    /// Types like a keyboard: inserts at the end (or over everything with `clear`) through the editing commands, so
+    /// rich editors see the same input events as from typing. Falls back to setting the value for a plain field.
+    private static let typeScript = #"""
+        const el = document.querySelector(selector);
+        if (!el || !el.getClientRects().length || el.disabled || el.readOnly || el.type === 'file') throw new Error('No editable element matches the selector.');
+        const editable = el.isContentEditable;
+        if (!editable && !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) throw new Error('The element is not a text field or editor.');
+        el.scrollIntoView({block: 'center'});
+        el.focus();
+        const selection = getSelection();
+        if (editable) {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            if (!clear) range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        } else if (clear) {
+            el.select();
+        } else {
+            try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) {}
+        }
+        if (clear) document.execCommand('delete');
+        const before = editable ? el.textContent : el.value;
+        let worked = true;
+        text.split('\n').forEach((line, index) => {
+            if (index > 0) {
+                if (editable) worked = document.execCommand('insertParagraph') && worked;
+                else if (el instanceof HTMLTextAreaElement) worked = document.execCommand('insertText', false, '\n') && worked;
+            }
+            if (line) worked = document.execCommand('insertText', false, line) && worked;
+        });
+        if (!worked && !editable) {
+            const prototype = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+            Object.getOwnPropertyDescriptor(prototype, 'value').set.call(el, (clear ? '' : before) + text);
+            el.dispatchEvent(new Event('input', {bubbles: true}));
+            el.dispatchEvent(new Event('change', {bubbles: true}));
+        }
+        return {typed: true};
+        """#
+    private static let scrollScript = #"""
+        const root = document.scrollingElement || document.documentElement;
+        if (target === 'element') {
+            const el = document.querySelector(selector);
+            if (!el) throw new Error('No element matches the selector.');
+            el.scrollIntoView({block: 'center'});
+        } else if (target === 'top') {
+            window.scrollTo(0, 0);
+        } else if (target === 'bottom') {
+            window.scrollTo(0, root.scrollHeight);
+        } else {
+            window.scrollBy(0, hasBy ? by : Math.round(innerHeight * 0.9));
+        }
+        return {scrollY: Math.round(scrollY), scrollHeight: root.scrollHeight, viewportHeight: innerHeight,
+            atBottom: scrollY + innerHeight >= root.scrollHeight - 2};
+        """#
+    private static let findScript = #"""
+        if (selector) {
+            const el = document.querySelector(selector);
+            if (!el || !el.getClientRects().length) return {found: false};
+        }
+        if (text && !(document.body?.innerText || '').includes(text)) return {found: false};
+        return {found: true};
         """#
     private static let inputScript = #"""
         const el = document.querySelector(selector);

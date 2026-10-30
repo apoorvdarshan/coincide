@@ -18,6 +18,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     let approvalBanner = PreviewLoginApprovalBanner()
     let saveBanner = PreviewSaveLoginBanner()
     let passkeyBanner = PreviewPasskeyBanner()
+    let dialogBanner = PreviewDialogBanner()
     /// The banners between the status line and the page; hidden ones take no room.
     private let banners = NSStackView()
     /// The web view shown, the active tab's.
@@ -76,12 +77,13 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
             session.answerSavePrompt(save: save, never: never, provider: self.sessions.profile.logins, settings: self.sessions.profile.settings)
         }
         passkeyBanner.onDismiss = { [weak self] in self?.session?.dismissPasskeyNotice() }
-        for banner in [approvalBanner, saveBanner, passkeyBanner] as [NSView] { banner.isHidden = true }
+        dialogBanner.onAnswer = { [weak self] accept, text in self?.session?.activeTab.answerDialog(accept: accept, text: text) }
+        for banner in [approvalBanner, saveBanner, passkeyBanner, dialogBanner] as [NSView] { banner.isHidden = true }
         banners.orientation = .vertical
         banners.alignment = .leading
         banners.spacing = 6
         banners.detachesHiddenViews = true
-        for banner in [approvalBanner, userTurnBanner, saveBanner, passkeyBanner] as [NSView] {
+        for banner in [dialogBanner, approvalBanner, userTurnBanner, saveBanner, passkeyBanner] as [NSView] {
             banners.addArrangedSubview(banner)
             banner.widthAnchor.constraint(equalTo: banners.widthAnchor).isActive = true
         }
@@ -238,7 +240,10 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         saveBanner.isHidden = save == nil
         let passkeyNotice = session?.activePasskeyNotice
         passkeyBanner.isHidden = passkeyNotice == nil
-        let showsBanner = request != nil || approval != nil || save != nil || passkeyNotice != nil
+        let dialog = session?.activeTab.dialog
+        if let dialog { dialogBanner.show(dialog) }
+        dialogBanner.isHidden = dialog == nil
+        let showsBanner = request != nil || approval != nil || save != nil || passkeyNotice != nil || dialog != nil
         contentBelowStatus.isActive = false
         contentBelowBanner.isActive = showsBanner
         contentBelowStatus.isActive = !showsBanner

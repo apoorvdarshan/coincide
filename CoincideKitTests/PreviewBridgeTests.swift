@@ -25,6 +25,29 @@ import Testing
             #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "upload", "selector": "#cv", "files": files]) }
         }
         #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "upload", "files": ["/tmp/cv.pdf"]]) }
+
+        // Keyboard, dialogs, history, scrolling, waiting and paged reads.
+        #expect(try PreviewCommand(json: ["action": "read"]) == .read())
+        #expect(try PreviewCommand(json: ["action": "read", "page": 3, "selector": "main"]) == .read(page: 3, scope: "main"))
+        #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "read", "page": 0]) }
+        #expect(try PreviewCommand(json: ["action": "type", "selector": "#q", "text": "hi", "clear": true]) == .type(selector: "#q", text: "hi", clear: true))
+        #expect(try PreviewCommand(json: ["action": "press", "key": "Enter"]) == .press(key: try #require(KeyPress("Enter")), selector: nil))
+        #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "press", "key": "Hyper+x"]) }
+        #expect(try PreviewCommand(json: ["action": "dialog", "accept": false]) == .dialog(accept: false, text: nil))
+        #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "dialog"]) }
+        #expect(try PreviewCommand(json: ["action": "back"]) == .back)
+        #expect(try PreviewCommand(json: ["action": "forward"]) == .forward)
+        #expect(try PreviewCommand(json: ["action": "reload"]) == .reload)
+        #expect(try PreviewCommand(json: ["action": "scroll", "to": "bottom"]) == .scroll(.bottom))
+        #expect(try PreviewCommand(json: ["action": "scroll", "by": -400]) == .scroll(.by(-400)))
+        #expect(try PreviewCommand(json: ["action": "scroll"]) == .scroll(.by(nil)))
+        #expect(try PreviewCommand(json: ["action": "scroll", "selector": "#end"]) == .scroll(.element("#end")))
+        #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "scroll", "to": "middle"]) }
+        #expect(try PreviewCommand(json: ["action": "wait-for", "text": "Done"]) == .waitFor(selector: nil, text: "Done", timeout: 10))
+        #expect(try PreviewCommand(json: ["action": "wait-for", "selector": "#x", "timeout": 60]).timeout == 65)
+        #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "wait-for", "timeout": 5]) }
+        #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "wait-for", "text": "x", "timeout": 61]) }
+        #expect(try PreviewCommand(json: ["action": "press", "key": "Enter", "tab": "t2"]) == .inTab("t2", .press(key: try #require(KeyPress("Enter")), selector: nil)))
         #expect(throws: PreviewError.self) { try PreviewCommand(json: ["action": "input", "selector": "input", "text": .string(String(repeating: "a", count: 65_537))]) }
     }
 
@@ -72,7 +95,7 @@ import Testing
         defer { session.invalidateAndCancel() }
         func status(_ request: URLRequest) async throws -> Int { try await (session.data(for: request).1 as? HTTPURLResponse)?.statusCode ?? 0 }
         #expect(try await status(request) == 200)
-        #expect(commands == [.read, .read])
+        #expect(commands == [.read(), .read()])
         var altered = request
         altered.setValue("Bearer invalid", forHTTPHeaderField: "Authorization")
         #expect(try await status(altered) == 403)
@@ -85,7 +108,7 @@ import Testing
         altered = request
         altered.url = request.url?.appendingPathComponent("../preview.curl")
         #expect(try await status(altered) == 403)
-        #expect(commands == [.read, .read])
+        #expect(commands == [.read(), .read()])
         bridge.disable(threadID: id)
         #expect(!FileManager.default.fileExists(atPath: access.configuration.path))
         #expect(try await status(request) == 403)
@@ -140,5 +163,24 @@ import Testing
         // A folder or a missing file doesn't open; a missing path searches like other words.
         #expect(resolve(folder.path)?.url.host == "www.google.com")
         #expect(resolve("file:///nonexistent/page.html") == nil)
+    }
+}
+
+/// Keys agents press: named keys and single characters, with Meta, Control, Alt and Shift.
+@Suite struct KeyPressTests {
+    @Test func namedKeysAndModifiers() throws {
+        let enter = try #require(KeyPress("Enter"))
+        #expect(enter.keyCode == 36 && enter.characters == "\r" && !enter.command)
+        let back = try #require(KeyPress("shift+tab"))
+        #expect(back.keyCode == 48 && back.shift)
+        let all = try #require(KeyPress("Meta+a"))
+        #expect(all.command && all.keyCode == 0 && all.characters == "a")
+        #expect(try #require(KeyPress("Cmd+Shift+ArrowUp")).command)
+        #expect(try #require(KeyPress("A")).shift)
+        #expect(KeyPress("Esc")?.keyCode == 53)
+        #expect(KeyPress("Meta++")?.characters == "+")
+        for invalid in ["", "Hyper+x", "F13", "ab", "Meta+", "Control+Alt+Shift+Meta+Fn+a", "é"] {
+            #expect(KeyPress(invalid) == nil, "\(invalid)")
+        }
     }
 }

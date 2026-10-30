@@ -3,12 +3,27 @@ import Foundation
 /// The preview exposes a small command vocabulary, never arbitrary JavaScript. The only filesystem paths it takes are
 /// the files `upload` attaches to a page, which the agent could read anyway.
 public indirect enum PreviewCommand: Sendable, Equatable {
-    case read
+    /// The page's text and elements, a page of 30,000 characters and 200 elements at a time, optionally only inside
+    /// the element `scope` names.
+    case read(page: Int = 1, scope: String? = nil)
     case navigate(URL)
     /// Searches with the user's search engine.
     case search(String)
     case click(String)
     case input(selector: String, text: String)
+    /// Types text as if from the keyboard into the element (rich editors included), after clearing it with `clear`.
+    case type(selector: String, text: String, clear: Bool)
+    /// A real key press, into the element `selector` names (focused first) or whatever has focus.
+    case press(key: KeyPress, selector: String?)
+    /// Answers the page's open alert, confirmation or prompt: OK with `accept`, and `text` for a prompt.
+    case dialog(accept: Bool, text: String?)
+    case back
+    case forward
+    case reload
+    /// Scrolls the page: to an element, to the top or bottom, or by a number of pixels (negative goes up).
+    case scroll(ScrollTarget)
+    /// Waits until an element matching `selector`, or `text`, shows on the page, up to `timeout` seconds.
+    case waitFor(selector: String?, text: String?, timeout: TimeInterval)
     /// Attaches local files to the page's file input (the selector names it, or the button or label that opens it),
     /// answering the page's file chooser with them so no dialog appears.
     case upload(selector: String, files: [URL])
@@ -39,6 +54,7 @@ public indirect enum PreviewCommand: Sendable, Equatable {
         switch self {
         case .inTab(_, let command): return command.timeout
         case .askUser(_, let timeout): return timeout + 5
+        case .waitFor(_, _, let timeout): return timeout + 5
         // The user's approval, then the password manager (which may ask for Touch ID).
         case .fillLogin: return LoginApprovalGate.timeout + 90
         default: return 30
@@ -54,7 +70,9 @@ public indirect enum PreviewCommand: Sendable, Equatable {
         // Page commands can name a tab; the tab commands name theirs themselves.
         guard let id = tab.string, Self.isTabID(id) else { throw PreviewError.invalidCommand }
         switch command {
-        case .read, .navigate, .search, .click, .input, .upload, .screenshot, .fillLogin: self = .inTab(id, command)
+        case .read, .navigate, .search, .click, .input, .type, .press, .dialog, .back, .forward, .reload, .scroll, .waitFor, .upload,
+            .screenshot, .fillLogin:
+            self = .inTab(id, command)
         case .selectTab, .closeTab: self = command
         default: throw PreviewError.invalidCommand
         }
@@ -71,7 +89,44 @@ public indirect enum PreviewCommand: Sendable, Equatable {
 
     private static func command(_ json: JSONValue) throws -> PreviewCommand {
         switch json["action"]?.string {
-        case "read": return .read
+        case "read":
+            let page = json["page"]?.number.map(Int.init) ?? 1
+            let scope = json["selector"]?.string
+            guard (1...1000).contains(page), (scope?.utf8.count ?? 0) <= 4096, scope?.isEmpty != true else { throw PreviewError.invalidCommand }
+            return .read(page: page, scope: scope)
+        case "type":
+            guard let text = json["text"]?.string, text.utf8.count <= 65_536 else { throw PreviewError.invalidCommand }
+            return .type(selector: try Self.selector(json), text: text, clear: json["clear"]?.bool ?? false)
+        case "press":
+            guard let name = json["key"]?.string, name.utf8.count <= 64, let key = KeyPress(name) else { throw PreviewError.invalidCommand }
+            let selector = json["selector"] == nil ? nil : try Self.selector(json)
+            return .press(key: key, selector: selector)
+        case "dialog":
+            guard let accept = json["accept"]?.bool else { throw PreviewError.invalidCommand }
+            let text = json["text"]?.string
+            guard (text?.utf8.count ?? 0) <= 65_536 else { throw PreviewError.invalidCommand }
+            return .dialog(accept: accept, text: text)
+        case "back": return .back
+        case "forward": return .forward
+        case "reload": return .reload
+        case "scroll":
+            if json["selector"] != nil { return .scroll(.element(try Self.selector(json))) }
+            switch json["to"]?.string {
+            case "top": return .scroll(.top)
+            case "bottom": return .scroll(.bottom)
+            case nil:
+                let by = json["by"]?.number
+                guard by.map({ $0.isFinite && abs($0) <= 1_000_000 }) ?? true else { throw PreviewError.invalidCommand }
+                return .scroll(.by(by))
+            default: throw PreviewError.invalidCommand
+            }
+        case "wait-for":
+            let selector = json["selector"] == nil ? nil : try Self.selector(json)
+            let text = json["text"]?.string
+            guard selector != nil || text != nil, (text?.utf8.count ?? 0) <= 4096, text?.isEmpty != true else { throw PreviewError.invalidCommand }
+            let timeout = json["timeout"]?.number ?? 10
+            guard timeout.isFinite, timeout >= 0.5, timeout <= 60 else { throw PreviewError.invalidCommand }
+            return .waitFor(selector: selector, text: text, timeout: timeout)
         case "navigate":
             guard let address = json["url"]?.string, let url = Self.url(address) else {
                 throw PreviewError.invalidAddress
@@ -150,8 +205,20 @@ public indirect enum PreviewCommand: Sendable, Equatable {
     }
 }
 
+/// Where `scroll` goes.
+public enum ScrollTarget: Sendable, Equatable {
+    case element(String)
+    case top
+    case bottom
+    /// Pixels down (negative: up); nil for most of a screen.
+    case by(Double?)
+}
+
 public enum PreviewError: LocalizedError {
     case invalidAddress, invalidCommand, unavailable, connection, timedOut, tooManyTabs, noSuchTab
+    /// The page shows an alert, confirmation or prompt, which blocks it until answered.
+    case dialogOpen
+    case noDialog
     /// A file to upload is missing, a folder, or unreadable.
     case uploadFileMissing(String)
     /// The page didn't ask for files after its file input was activated.
@@ -166,6 +233,8 @@ public enum PreviewError: LocalizedError {
         case .timedOut: String(localized: "The browser didn't finish the command in time.")
         case .tooManyTabs: String(localized: "This thread has 20 tabs. Close one first.")
         case .noSuchTab: String(localized: "There's no tab with that id in this thread.")
+        case .dialogOpen: String(localized: "The page is showing a dialog. Answer it with dialog first.")
+        case .noDialog: String(localized: "The page isn't showing a dialog.")
         case .uploadFileMissing(let path): String(localized: "\(path) isn't a readable file.")
         case .uploadNotAccepted:
             String(localized: "The page didn't open its file chooser. Name the file input, or the button that opens it, with selector.")

@@ -9,7 +9,7 @@ import Testing
         #expect(try PreviewCommand(json: ["action": "new-tab", "url": "example.test"]) == .newTab(URL(string: "https://example.test")))
         #expect(try PreviewCommand(json: ["action": "select-tab", "tab": "tab-2"]) == .selectTab("tab-2"))
         #expect(try PreviewCommand(json: ["action": "close-tab", "tab": "tab-2"]) == .closeTab("tab-2"))
-        #expect(try PreviewCommand(json: ["action": "read", "tab": "tab-3"]) == .inTab("tab-3", .read))
+        #expect(try PreviewCommand(json: ["action": "read", "tab": "tab-3"]) == .inTab("tab-3", .read()))
         #expect(try PreviewCommand(json: ["action": "fill-login", "tab": "tab-3"]) == .inTab("tab-3", .fillLogin(item: nil)))
         for json: JSONValue in [
             ["action": "select-tab"], ["action": "close-tab", "tab": "../x"], ["action": "read", "tab": 3],
@@ -18,7 +18,7 @@ import Testing
         ] {
             #expect(throws: PreviewError.self) { try PreviewCommand(json: json) }
         }
-        #expect(PreviewCommand.inTab("tab-1", .read).timeout == PreviewCommand.read.timeout)
+        #expect(PreviewCommand.inTab("tab-1", .read()).timeout == PreviewCommand.read().timeout)
     }
 
     @Test func rememberedTabsAreCleanAndBounded() throws {

@@ -79,6 +79,83 @@ import WebKit
         #expect(session.webView.url?.scheme == "http")
     }
 
+    /// What agents need beyond clicking: typing like a keyboard (rich editors too), real key presses, answering the
+    /// page's dialogs, scrolling, waiting, scoped reads and history.
+    @Test func agentsUseKeysTypingDialogsAndScrolling() async throws {
+        let fixture = try await PreviewFixture.start()
+        defer { fixture.stop() }
+        let session = PreviewSession()
+        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.alphaValue = 0
+        window.contentView = session.webView
+        window.orderBack(nil)
+        defer { window.orderOut(nil) }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-keys-test-" + UUID().uuidString)
+        try session.navigate(fixture.url.absoluteString)
+        for _ in 0..<500 {
+            if session.webView.title == "Preview fixture", !session.webView.isLoading { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        func perform(_ command: PreviewCommand) async throws -> JSONValue {
+            try await PreviewBridge.run(command, within: 10) { try await session.perform(command, directory: folder) }
+        }
+        func waitForText(_ expected: String) async throws -> Bool {
+            for _ in 0..<150 {
+                if try await perform(.read())["text"]?.string?.contains(expected) == true { return true }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            return false
+        }
+
+        // Typing, then Enter in the field, submits the form as a person would.
+        _ = try await perform(.type(selector: "#q", text: "hello world", clear: false))
+        _ = try await perform(.press(key: try #require(KeyPress("Enter")), selector: "#q"))
+        #expect(try await waitForText("Submitted hello world"))
+        _ = try await perform(.type(selector: "#q", text: "again", clear: true))
+        let field = try await session.webView.callAsyncJavaScript("return document.getElementById('q').value", arguments: [:], in: nil, contentWorld: .page)
+        #expect(field as? String == "again")
+
+        // A rich editor gets the text as typed, lines included.
+        _ = try await perform(.type(selector: "#editor", text: "Line one\nLine two", clear: false))
+        let edited = try await session.webView.callAsyncJavaScript("return document.getElementById('editor').innerText", arguments: [:], in: nil, contentWorld: .page) as? String
+        #expect(edited?.contains("Line one") == true && edited?.contains("Line two") == true)
+
+        // Keys arrive as trusted key events.
+        _ = try await perform(.press(key: try #require(KeyPress("Escape")), selector: nil))
+        #expect(try await waitForText("Escape true"))
+
+        // A confirmation blocks the page until answered; the click still returns and reports it.
+        let click = try await perform(.click("#confirm"))
+        #expect(click["dialog"]?["type"]?.string == "confirm")
+        #expect(try await perform(.read())["dialog"]?["message"]?.string == "Delete it?")
+        await #expect(throws: PreviewError.self) { _ = try await perform(.scroll(.top)) }
+        _ = try await perform(.dialog(accept: true, text: nil))
+        #expect(try await waitForText("Confirmed"))
+        _ = try await perform(.click("#ask"))
+        #expect(try await perform(.read())["dialog"]?["default"]?.string == "x")
+        _ = try await perform(.dialog(accept: true, text: "Apoorv"))
+        #expect(try await waitForText("Name: Apoorv"))
+        await #expect(throws: PreviewError.self) { _ = try await perform(.dialog(accept: true, text: nil)) }
+
+        // Scrolling, waiting and scoped reads.
+        #expect(try await perform(.scroll(.bottom))["atBottom"]?.bool == true)
+        #expect(try await perform(.scroll(.top))["scrollY"]?.number == 0)
+        #expect(try await perform(.waitFor(selector: nil, text: "Ready later", timeout: 5))["found"]?.bool == true)
+        await #expect(throws: PreviewError.self) { _ = try await perform(.waitFor(selector: "#never", text: nil, timeout: 0.5)) }
+        let scoped = try await perform(.read(page: 1, scope: "#answer"))
+        #expect(scoped["text"]?.string == "Name: Apoorv")
+        #expect(scoped["pages"]?.number == 1)
+        await #expect(throws: (any Error).self) { _ = try await perform(.read(page: 1, scope: "#missing")) }
+
+        // History.
+        try session.navigate(fixture.url.absoluteString + "?second")
+        for _ in 0..<300 where session.webView.url?.query != "second" || session.webView.isLoading { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(try await perform(.back)["moved"]?.bool == true)
+        for _ in 0..<300 where session.webView.url?.query == "second" || session.webView.isLoading { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(session.webView.url?.query == nil)
+        #expect(try await perform(.forward)["moved"]?.bool == true)
+    }
+
     /// A path typed in the address bar opens the local file; words search with the chosen engine.
     @Test func typedPathsOpenLocalFiles() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-local-page-" + UUID().uuidString)
@@ -123,7 +200,7 @@ import WebKit
             try await Task.sleep(for: .milliseconds(10))
         }
         func text() async throws -> String {
-            try await session.perform(.read, directory: folder)["text"]?.string ?? ""
+            try await session.perform(.read(), directory: folder)["text"]?.string ?? ""
         }
 
         let direct = try await session.perform(.upload(selector: "#file", files: [resume, cover]), directory: folder)
@@ -181,6 +258,18 @@ import WebKit
                     <input id="hidden" type="file" style="display:none" onchange="document.getElementById('files').textContent='Hidden: '+this.files[0].name">
                     <button id="pick" onclick="document.getElementById('hidden').click()">Attach</button>
                     <p id="files">No files</p>
+                    <form id="search" onsubmit="event.preventDefault(); document.getElementById('submitted').textContent='Submitted '+document.getElementById('q').value"><input id="q"></form>
+                    <p id="submitted">Not submitted</p>
+                    <div id="editor" contenteditable="true" style="min-height:20px;border:1px solid #ccc"></div>
+                    <p id="keys">No keys</p>
+                    <button id="confirm" onclick="document.getElementById('answer').textContent = confirm('Delete it?') ? 'Confirmed' : 'Kept'">Delete</button>
+                    <button id="ask" onclick="document.getElementById('answer').textContent = 'Name: ' + prompt('Your name?', 'x')">Ask</button>
+                    <p id="answer">No answer</p>
+                    <div style="height:3000px"></div><p id="end">The end</p>
+                    <script>
+                    document.addEventListener('keydown', e => { if (e.key === 'Escape') document.getElementById('keys').textContent = 'Escape ' + e.isTrusted; });
+                    setTimeout(() => document.body.insertAdjacentHTML('beforeend', '<p>Ready later</p>'), 600);
+                    </script>
                     """#
                 let body = Data(html.utf8)
                 var response = Data("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)

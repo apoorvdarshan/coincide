@@ -17,10 +17,17 @@ public final class PreviewBridge {
                 curl --config '\(path)' --data-binary '{"action":"read"}'
                 Actions (JSON body):
                 - read: title, URL, visible text and interactive elements with CSS selectors, and passkey when the \
-                page asked for a passkey this browser can't provide.
+                page asked for a passkey this browser can't provide. Long pages come in parts: pass page (2, 3…) up to \
+                the pages it reports, or selector to read only inside one element.
                 - navigate with url (http/https only). It returns at once; poll read until loading is false.
                 - search with query: searches with the user's search engine, like navigate.
-                - click with selector; input with selector and text.
+                - click with selector; input with selector and text. type with selector and text (optional clear) \
+                types as if from the keyboard, rich editors included. press with key (Enter, Tab, Escape, ArrowDown, \
+                Shift+Tab, Meta+a…) and optional selector to focus first.
+                - back, forward, reload. scroll with selector, to (top or bottom) or by (pixels). wait-for with \
+                selector or text, and optional timeout in seconds (default 10, at most 60).
+                - When read reports a dialog (alert, confirm or prompt), the page waits for an answer: dialog with \
+                accept (true or false) and text for a prompt.
                 - upload with selector and files (absolute paths): attaches local files to the page's file input \
                 without any dialog. The selector can name the input or the button or drop area that opens it.
                 - screenshot: returns a local PNG path for your image viewer.
