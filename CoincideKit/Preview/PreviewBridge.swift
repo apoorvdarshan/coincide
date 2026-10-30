@@ -16,7 +16,8 @@ public final class PreviewBridge {
                 shares Coincide's browser profile, so the user may already be signed in to sites. Drive it with your shell tool:
                 curl --config '\(path)' --data-binary '{"action":"read"}'
                 Actions (JSON body):
-                - read: title, URL, visible text and interactive elements with CSS selectors.
+                - read: title, URL, visible text and interactive elements with CSS selectors, and passkey when the \
+                page asked for a passkey this browser can't provide.
                 - navigate with url (http/https only). It returns at once; poll read until loading is false.
                 - click with selector; input with selector and text.
                 - screenshot: returns a local PNG path for your image viewer.

@@ -14,4 +14,24 @@
 //   COINCIDE_MAC_PROFILE = <name of a Developer ID provisioning profile with that container>
 //
 // Without them Coincide never touches CloudKit, and alerts stay on the local network.
+//
+// Passkeys and security keys in the browser panel need Apple's managed entitlement
+// com.apple.developer.web-browser.public-key-credential. Without it, a page's passkey request fails and the panel
+// suggests signing in another way. Once Apple has granted it to the team:
+//
+//   1. Certificates, Identifiers & Profiles › Identifiers › com.apoorvdarshan.coincide: turn on the Web Browser
+//      Public Key Credential capability (it appears there only after approval) and save.
+//   2. Profiles: create a Developer ID provisioning profile for that App ID (or edit and regenerate the existing one,
+//      since a profile made before the capability doesn't carry it), download it and open it to install it.
+//   3. Here in Local.xcconfig, sign with that profile and an entitlements file that has the key:
+//
+//        COINCIDE_MAC_ENTITLEMENTS = Coincide/Passkeys.entitlements
+//        COINCIDE_MAC_PROFILE = <name of that Developer ID provisioning profile>
+//
+//      With lock-screen alerts too, use Coincide/CoincideCloudKitPasskeys.entitlements and a profile with both.
+//   4. Run xcodegen generate and build. `codesign -d --entitlements - Coincide.app` should list the key, and the panel
+//      no longer shows "Passkeys aren't available" (it checks the running app's signature).
+//
+// Don't add the key without such a profile: macOS refuses to launch an app claiming a managed entitlement its
+// profile doesn't grant.
 #include? "Local.xcconfig"

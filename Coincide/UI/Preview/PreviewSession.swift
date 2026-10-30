@@ -10,6 +10,8 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var savedURL: URL?
     private var savedTitle = ""
     private(set) var error: String?
+    /// Whether the page shown asked for a passkey this browser can't provide, for the agent's `read`.
+    fileprivate(set) var passkeyRequested = false
     var lastUse = Date()
     weak var owner: PreviewSession?
     private var observations: [NSKeyValueObservation] = []
@@ -82,6 +84,11 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
         owner?.tabChanged(self)
     }
 
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        passkeyRequested = false
+        owner?.tabCommitted(self, host: webView.url?.host ?? "")
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if let url = webView.url { owner?.tabNavigated(self, to: url, title: webView.title) }
         owner?.tabChanged(self)
@@ -144,6 +151,10 @@ final class PreviewSession: NSObject {
     private(set) var tabs: [PreviewTab] = []
     private(set) var activeTab: PreviewTab!
     private var nextTabNumber = 1
+    /// Whether pages can use passkeys; when they can't, passkey requests show `passkeyNotice` instead.
+    let passkeys: PasskeySupport
+    /// "Passkeys aren't available" for the tab whose page asked for one.
+    private(set) var passkeyNotice = PasskeyNoticeState()
     /// The agent's open "your turn" request, shown as a banner in the panel.
     let userTurn = UserTurnGate()
     /// An agent's request to sign in with a saved login, waiting on the user.
@@ -167,9 +178,11 @@ final class PreviewSession: NSObject {
         self.init(dataStore: .nonPersistent(), isPrivate: true)
     }
 
-    init(dataStore: WKWebsiteDataStore, isPrivate: Bool, restoring state: BrowserTabsState? = nil) {
+    init(dataStore: WKWebsiteDataStore, isPrivate: Bool, restoring state: BrowserTabsState? = nil,
+        passkeys: PasskeySupport = .current) {
         self.isPrivate = isPrivate
         self.dataStore = dataStore
+        self.passkeys = passkeys
         super.init()
         let state = state ?? BrowserTabsState(urls: [""], selected: 0)
         for address in state.urls { tabs.append(makeTab(url: URL(string: address))) }
@@ -200,6 +213,15 @@ final class PreviewSession: NSObject {
         configuration.userContentController.addUserScript(
             WKUserScript(source: Self.loginWatcherScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         configuration.userContentController.add(loginWatcher, contentWorld: .defaultClient, name: LoginSubmitHandler.name)
+        if !passkeys.isAvailable {
+            // Notices pages asking for a passkey, which fails without the entitlement, to suggest another way to sign
+            // in. It must run in the page's world to see the page's calls, and passes every call through unchanged.
+            let passkeyWatcher = PasskeyRequestHandler()
+            passkeyWatcher.session = self
+            configuration.userContentController.addUserScript(
+                WKUserScript(source: PasskeySupport.detectionScript, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
+            configuration.userContentController.add(passkeyWatcher, contentWorld: .page, name: PasskeySupport.messageHandler)
+        }
         return configuration
     }
 
@@ -253,6 +275,7 @@ final class PreviewSession: NSObject {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let closing = tabs.remove(at: index)
         closing.close()
+        passkeyNotice.closed(tabID: id)
         if tabs.isEmpty { tabs.append(makeTab(url: nil)) }
         if closing === activeTab { select(tabs[min(index, tabs.count - 1)]) } else { tabsChanged() }
     }
@@ -264,6 +287,29 @@ final class PreviewSession: NSObject {
 
     fileprivate func tabChanged(_ tab: PreviewTab?) {
         if tab === activeTab { onChange?() } else { onTabsChanged?(); onChange?() }
+    }
+
+    fileprivate func tabCommitted(_ tab: PreviewTab, host: String) {
+        if passkeyNotice.navigated(tabID: tab.id, host: host) { onChange?() }
+    }
+
+    /// A page in `webView` asked for a passkey. Shows the notice unless the user dismissed it for this site.
+    func passkeyRequested(in webView: WKWebView) {
+        guard let tab = tabs.first(where: { $0.webView === webView }), let page = webView.url, let host = page.host,
+            PreviewCommand.url(page.absoluteString) != nil
+        else { return }
+        tab.passkeyRequested = true
+        if passkeyNotice.requested(tabID: tab.id, host: host) { onChange?() }
+    }
+
+    func dismissPasskeyNotice() {
+        passkeyNotice.dismiss()
+        onChange?()
+    }
+
+    /// The notice for the tab shown in the panel, if any.
+    var activePasskeyNotice: PasskeyNoticeState.Notice? {
+        passkeyNotice.notice.flatMap { $0.tabID == activeTab.id ? $0 : nil }
     }
 
     fileprivate func tabNavigated(_ tab: PreviewTab, to url: URL, title: String?) {
@@ -336,6 +382,7 @@ final class PreviewSession: NSObject {
             object["loading"] = .bool(webView.isLoading)
             object["tab"] = .string(tab.id)
             if let error = tab.error { object["error"] = .string(error) }
+            if tab.passkeyRequested { object["passkey"] = .string(PasskeySupport.agentNote) }
             return .object(object)
         case .click(let selector):
             return try await script(Self.clickScript, arguments: ["selector": selector], in: webView)
