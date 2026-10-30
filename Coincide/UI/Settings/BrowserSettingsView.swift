@@ -59,6 +59,8 @@ struct BrowserSettingsView: View {
     @State private var confirmingClear = false
     @State private var clearing = false
     @State private var importing = false
+    /// Set at launch when macOS reopened Coincide for Full Disk Access, so the import picks up where it was.
+    static var opensImportOnAppear = false
     @State private var showsAllBookmarks = false
 
     var body: some View {
@@ -148,6 +150,12 @@ struct BrowserSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            if Self.opensImportOnAppear {
+                Self.opensImportOnAppear = false
+                importing = true
+            }
+        }
         .sheet(isPresented: $importing) {
             BrowserImportSheet(profile: model.profile) { importing = false }
         }

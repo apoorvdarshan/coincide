@@ -47,6 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ThemeController.shared.start()
         AppearanceController.shared.start()
         SettingsWindowController.shared.startHandlingRequests()
+        if FullDiskAccess.takeResumeRequest() {
+            BrowserSettingsView.opensImportOnAppear = true
+            SettingsWindowController.shared.show(section: .browser)
+        }
         UsageStatusItem.shared.start()
         ThreadActivity.shared.start()
         AgentTurns.shared.start()
