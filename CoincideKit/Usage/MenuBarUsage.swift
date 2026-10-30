@@ -2,7 +2,7 @@ import Foundation
 
 /// What the menu bar item shows, as the user picked it in its popover or in Settings › Usage.
 public enum MenuBarUsageChoice: Codable, Hashable, Sendable {
-    /// The agent account the user ran last (`LastActiveAgent`), with its most used limit. The default.
+    /// The agent account the user ran last (`LastActiveAgent`), with its active credit balance or most used limit. The default.
     case lastActive
     /// The limit closest to running out across every account, with a gauge rather than a logo.
     case closest
@@ -52,8 +52,13 @@ public enum MenuBarUsage {
     /// no longer exists. A balance reads the same either way: it is what is left.
     public nonisolated static func reading(
         for choice: MenuBarUsageChoice, accounts: [UsageInsights.AccountLimits], lastActive: LastActiveAgent?,
-        mode: UsageDisplayMode = .used
+        mode: UsageDisplayMode = .used, now: Date = Date()
     ) -> MenuBarUsageReading? {
+        let accounts = accounts.map { account in
+            var current = account
+            current.limits = account.limits?.current(at: now)
+            return current
+        }
         func text(_ window: UsageLimitWindow) -> String { percentText(window, mode: mode) }
         switch choice {
         case .closest:
@@ -62,6 +67,7 @@ public enum MenuBarUsage {
             guard let lastActive, let account = account(lastActive.provider, lastActive.accountID, in: accounts) else {
                 return closest(accounts, mode: mode)
             }
+            if let reading = activeCreditReading(account) { return reading }
             if let window = mostUsedWindow(account) {
                 return MenuBarUsageReading(provider: account.provider, account: account, window: window, text: text(window))
             }
@@ -111,12 +117,51 @@ public enum MenuBarUsage {
         UsageInsights.mostConstrained([account])?.window
     }
 
-    /// The figure `.balance` shows: credits with a balance, else the money left of the first figure with a limit.
+    /// The first monetary or credit figure with a reported or derivable balance. Request/token quotas are not money.
     public nonisolated static func balanceFigure(_ account: UsageInsights.AccountLimits) -> UsageFigure? {
         account.limits?.figures.first { figure in
-            if case .currency = figure.unit { return figure.limit != nil && figure.left != nil }
-            return false
+            guard figure.left != nil else { return false }
+            switch figure.unit {
+            case .currency, .credits: return true
+            default: return false
+            }
         }
+    }
+
+    /// Credit availability alone does not mean credits are being spent. Follow the provider's exhausted-plan
+    /// fallback state, and keep a blocking plan limit visible when work cannot continue past it.
+    private nonisolated static func activeCreditReading(_ account: UsageInsights.AccountLimits) -> MenuBarUsageReading? {
+        guard let windows = account.limits?.windows, !allWindows(account).contains(where: \.blocksWork),
+            windows.contains(where: { $0.isExhausted && $0.continuesOnCredits }) else { return nil }
+        func monetary(_ figure: UsageFigure) -> Bool {
+            switch figure.unit {
+            case .currency, .credits: return true
+            default: return false
+            }
+        }
+        // A reported detail names the active mode without pretending there is a balance. Keep its text as
+        // reported: a provider session may have supplied it in another app language.
+        if account.limits?.credits.map({ $0.unlimited || numericBalance($0) != nil }) != true,
+            let figure = account.limits?.figures.first(where: monetary), figure.left == nil,
+            let detail = figure.detail?.trimmedNonEmpty, figure.used != nil {
+            return MenuBarUsageReading(provider: account.provider, account: account, figure: figure,
+                text: "\(figure.label) · \(detail)")
+        }
+        var reading = balanceReading(account)
+        if let value = reading.text {
+            if let credits = reading.credits {
+                reading.text = credits.unlimited ? String(localized: "Unlimited credits") : String(localized: "Credits: \(value)")
+            } else if let figure = reading.figure {
+                reading.text = "\(figure.label): \(value)"
+            }
+        } else if let figure = account.limits?.figures.first(where: monetary) {
+            // The mode is known even when the provider does not report a numeric amount.
+            reading.text = figure.label
+            if figure.used != nil || figure.limit != nil || figure.remaining != nil { reading.figure = figure }
+        } else {
+            reading.text = String(localized: "Credits")
+        }
+        return reading
     }
 
     /// Whether the account has a balance to show.
@@ -129,15 +174,19 @@ public enum MenuBarUsage {
         if let credits = account.limits?.credits, credits.unlimited || numericBalance(credits) != nil {
             reading.credits = credits
             reading.text = credits.unlimited ? "∞" : numericBalance(credits).map { $0.formatted(.number.precision(.fractionLength(0...2))) }
-        } else if let figure = balanceFigure(account), let left = figure.left, case .currency(let code) = figure.unit {
+        } else if let figure = balanceFigure(account), let left = figure.left {
             reading.figure = figure
-            reading.text = left.formatted(.currency(code: code).precision(.fractionLength(2)))
+            switch figure.unit {
+            case .currency(let code): reading.text = left.formatted(.currency(code: code).precision(.fractionLength(2)))
+            case .credits: reading.text = left.formatted(.number.precision(.fractionLength(0...2)))
+            default: break
+            }
         }
         return reading
     }
 
     private nonisolated static func numericBalance(_ credits: UsageCredits) -> Double? {
-        credits.balance.flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        credits.balance.flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }.flatMap { $0.isFinite ? $0 : nil }
     }
 
     /// "52%", the share of the window used, or "48% left" when showing what is left. The menu bar has room for little,

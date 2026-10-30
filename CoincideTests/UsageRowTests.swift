@@ -329,6 +329,45 @@ struct UsageRowTests {
         #expect(UsageStatusItem.image(for: readings, mode: .remaining).size.width > usedImage.size.width)
     }
 
+    @MainActor
+    @Test func autoMenuBarUsesCreditsAndTheSummaryNamesTheirBalance() throws {
+        let window = UsageLimitWindow(id: "session", kind: .session, label: "Session", usedPercent: 100, continuesOnCredits: true)
+        let credits = UsageCredits(hasCredits: true, unlimited: false, balance: "1250.5")
+        let account = UsageInsights.AccountLimits(
+            provider: .codex, account: .defaultAccount(for: .codex), showsAccountName: false, status: ProviderStatus(state: .ready),
+            limits: UsageLimits(windows: [window], checkedAt: now, credits: credits))
+        var settings = AppSettings()
+        settings.menuBarUsage = .lastActive
+        let readings = UsageStatusItem.readings(settings: settings, accounts: [account],
+            lastActive: LastActiveAgent(provider: .codex, accountID: nil, date: now))
+        let reading = try #require(readings.first)
+        #expect(reading.window == nil && reading.credits == credits)
+        #expect(reading.text?.hasPrefix("Credits:") == true)
+        #expect(UsageStatusItem.summary(readings, now: now) == "Coincide usage: Codex: Credits: \(1250.5.formatted(.number.precision(.fractionLength(0...2))))")
+        #expect(UsageStatusItem.image(for: readings).size.width > 15)
+
+        let extra = UsageFigure(id: "extra_usage", label: "Extra usage", unit: .currency("USD"), used: 7.6, limit: 20)
+        let monetaryAccount = UsageInsights.AccountLimits(
+            provider: .claude, account: .defaultAccount(for: .claude), showsAccountName: false, status: ProviderStatus(state: .ready),
+            limits: UsageLimits(windows: [window], checkedAt: now, figures: [extra]))
+        let monetary = UsageStatusItem.readings(settings: settings, accounts: [monetaryAccount],
+            lastActive: LastActiveAgent(provider: .claude, accountID: nil, date: now))
+        #expect(monetary.first?.window == nil && monetary.first?.figure == extra)
+        #expect(monetary.first?.text == "Extra usage: \(dollars(12.4))")
+        #expect(UsageStatusItem.summary(monetary, mode: .used, now: now)
+            == UsageStatusItem.summary(monetary, mode: .remaining, now: now))
+        #expect(UsageStatusItem.summary(monetary, now: now).contains("Extra usage: "))
+        let uncapped = UsageInsights.AccountLimits(
+            provider: .claude, account: .defaultAccount(for: .claude), showsAccountName: false, status: ProviderStatus(state: .ready),
+            limits: UsageLimits(windows: [window], checkedAt: now, figures: [
+                UsageFigure(id: "extra_usage", label: "Extra usage", unit: .currency("USD"), used: 7.6, detail: "No cap"),
+            ]))
+        let noCap = UsageStatusItem.readings(settings: settings, accounts: [uncapped],
+            lastActive: LastActiveAgent(provider: .claude, accountID: nil, date: now))
+        #expect(noCap.first?.text == "Extra usage · No cap")
+        #expect(UsageStatusItem.summary(noCap, now: now) == "Coincide usage: Claude Code: Extra usage · No cap")
+    }
+
     // MARK: Anthropic API keys
 
     @Test func anAPIKeyCardShowsItsOwnTurnsByPeriodOrSaysThereAreNone() throws {
