@@ -1,0 +1,1 @@
+../../../CoincideKit/Models/FollowUpBehavior.swift

@@ -23,6 +23,7 @@ on:
       - "CoincideKit/Models/LenientDecoding.swift"
       - "CoincideKit/Models/MessageContext.swift"
       - "CoincideKit/Models/Models.swift"
+      - "CoincideKit/Models/FollowUpBehavior.swift"
       - "CoincideKit/Providers/ACP/UnifiedDiff.swift"
       - "CoincideKit/Providers/Cursor/CursorDiff.swift"
       - "CoincideKit/Providers/Handoff.swift"
