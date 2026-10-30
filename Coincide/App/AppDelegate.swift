@@ -56,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentTurns.shared.start()
         NotificationController.shared.start()
         ProjectScripts.shared.start()
+        // Keeps the instruction masters' iCloud Drive and Git copies in step.
+        InstructionCopySyncer.shared.start()
         ThreadSnooze.shared.start()
         PreviewSessions.shared.connectToApp { [weak self] in self?.mainWindow }
         PreviewSessions.shared.start()

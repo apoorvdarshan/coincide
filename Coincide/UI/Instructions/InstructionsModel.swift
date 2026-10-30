@@ -67,12 +67,14 @@ final class InstructionsModel {
     private(set) var isSyncing = false
 
     @ObservationIgnored private let store: InstructionSettingsStore
+    @ObservationIgnored let syncer: InstructionCopySyncer
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
 
-    init(scope: InstructionScope, projectName: String? = nil, store: InstructionSettingsStore = .shared) {
+    init(scope: InstructionScope, projectName: String? = nil, store: InstructionSettingsStore = .shared, syncer: InstructionCopySyncer = .shared) {
         self.scope = scope
         self.projectName = projectName
         self.store = store
+        self.syncer = syncer
         config = store.config(for: scope, locations: InstructionLocations(home: FileManager.default.homeDirectoryForCurrentUser))
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
@@ -121,11 +123,7 @@ final class InstructionsModel {
         defer { isLoading = false }
         let settings = AppStore.shared.settings
         let enabled = Set(ProviderKind.allCases.filter { settings.settings(for: $0).isEnabled })
-        let environments = Dictionary(uniqueKeysWithValues: ProviderKind.allCases.map { ($0, settings.settings(for: $0).environment) })
-        let accounts = ProviderKind.allCases.flatMap { settings.settings(for: $0).allAccounts(of: $0) }
-        let environment = await ShellEnvironment.shared.environment()
-        let locations = InstructionLocations.standard(
-            environment: environment, providerEnvironments: environments, accounts: accounts, dataDirectory: AppStore.shared.directory)
+        let locations = await Self.currentLocations()
         self.locations = locations
         config = store.config(for: scope, locations: locations)
         let scope = self.scope
@@ -160,6 +158,16 @@ final class InstructionsModel {
         } else if let selected, snapshot == nil {
             load(selected)
         }
+    }
+
+    /// Where the agents keep their files on this Mac, with the user's shell and provider settings.
+    static func currentLocations() async -> InstructionLocations {
+        let settings = AppStore.shared.settings
+        let environments = Dictionary(uniqueKeysWithValues: ProviderKind.allCases.map { ($0, settings.settings(for: $0).environment) })
+        let accounts = ProviderKind.allCases.flatMap { settings.settings(for: $0).allAccounts(of: $0) }
+        let environment = await ShellEnvironment.shared.environment()
+        return InstructionLocations.standard(
+            environment: environment, providerEnvironments: environments, accounts: accounts, dataDirectory: AppStore.shared.directory)
     }
 
     /// Opens a file in the editor. Unsaved edits to the open one are kept only if the user saves first; the view asks.
@@ -216,21 +224,12 @@ final class InstructionsModel {
         }
     }
 
-    /// Commits the master to its Git repository, and pushes when asked to on save.
+    /// Sends a saved master to its copies right away.
     private func afterSave(_ file: InstructionFile) {
-        guard isMasterMode, case .git(let path, let pushOnSave) = config.sync,
+        guard isMasterMode, config.iCloud != nil || config.git != nil,
             file.resolvedURL == InstructionPaths.resolve(masterURL).url
         else { return }
-        let master = InstructionPaths.resolve(masterURL).url
-        Task {
-            do {
-                let repository = InstructionGitRepository(url: URL(fileURLWithPath: path))
-                try await repository.commit(master)
-                if pushOnSave { try await syncGit() }
-            } catch {
-                notice = InstructionsNotice(kind: .error, text: error.localizedDescription)
-            }
-        }
+        syncer.sync()
     }
 
     func revert() {
@@ -313,7 +312,7 @@ final class InstructionsModel {
     }
 
     func setMasterPath(_ url: URL) {
-        var updated = config
+        var updated = store.config(for: scope, locations: locations)
         updated.masterPath = url.path
         save(updated)
         Task { await reload() }
@@ -325,7 +324,7 @@ final class InstructionsModel {
         self.plan = nil
         do {
             let results = try InstructionMaster.apply(plan, choices: choices)
-            var updated = config
+            var updated = store.config(for: scope, locations: locations)
             updated.isEnabled = true
             save(updated)
             notice = summary(of: results)
@@ -360,7 +359,7 @@ final class InstructionsModel {
     func disableMasterMode(replaceWithCopies: Bool) {
         do {
             let replaced = try InstructionMaster.disable(master: masterURL, targets: targets, replaceWithCopies: replaceWithCopies)
-            var updated = config
+            var updated = store.config(for: scope, locations: locations)
             updated.isEnabled = false
             // Sync belongs to master mode; the synced file stays where it is.
             if !updated.sync.isOff {
@@ -389,43 +388,57 @@ final class InstructionsModel {
 
     // MARK: Sync
 
-    /// The name of this master in iCloud Drive and in a repository.
+    /// The name of this master's copies in iCloud Drive and in a repository.
     var syncName: String { projectName ?? "Global" }
 
-    var defaultLocalMaster: URL {
-        projectRoot.map { $0.appendingPathComponent("AGENTS.md") } ?? locations.defaultGlobalMaster
+    var iCloudStatus: InstructionCopySyncer.Status? { syncer.status(scope, .iCloud) }
+    var gitStatus: InstructionCopySyncer.Status? { syncer.status(scope, .git) }
+
+    /// Changes this master's settings as they are saved now, so a sync that finished meanwhile isn't undone.
+    private func modify(_ change: (inout InstructionMasterConfig) -> Void) {
+        var updated = store.config(for: scope, locations: locations)
+        change(&updated)
+        save(updated)
     }
 
-    func startICloudSync(cloud: InstructionCloud = .standard) {
-        guard config.sync.isOff else { return }
+    /// Keeps a copy of the master in iCloud Drive › Coincide › Instructions. A copy already there from another Mac
+    /// that differs is left for the user to choose between.
+    func turnOnICloud(cloud: InstructionCloud = .standard) {
         guard cloud.isAvailable else {
             notice = InstructionsNotice(kind: .error, text: InstructionSyncError.iCloudUnavailable.localizedDescription)
             return
         }
-        moveMaster(to: cloud.file(named: syncName), sync: .iCloud)
+        let copy = cloud.file(named: syncName)
+        modify { $0.iCloud = InstructionICloudCopy(path: copy.path) }
+        syncer.sync()
     }
 
-    /// Moves the master into the repository at `folder` and commits it there.
-    func startGitSync(repository folder: URL) {
-        guard config.sync.isOff else { return }
+    /// Stops updating the iCloud Drive copy. The copy stays there.
+    func turnOffICloud() {
+        modify { $0.iCloud = nil }
+        syncer.clear(scope, .iCloud)
+    }
+
+    /// Keeps a copy of the master in the repository at `folder`, committed when it changes and pushed right away.
+    func linkRepository(_ folder: URL) {
         isSyncing = true
+        let name = syncName
         Task {
             defer { isSyncing = false }
             do {
                 let repository = try await InstructionGitRepository.open(folder)
-                let file = repository.file(named: syncName)
-                moveMaster(to: file, sync: .git(repository: folder.path, pushOnSave: false))
-                guard config.sync != .off else { return }
-                try await repository.commit(file)
+                let gitHubName = await repository.gitHubName()
+                modify { $0.git = InstructionGitCopy(repository: folder.path, path: repository.file(named: name).path, gitHubName: gitHubName) }
+                syncer.sync(pull: true)
             } catch {
                 notice = InstructionsNotice(kind: .error, text: error.localizedDescription)
             }
         }
     }
 
-    /// Creates a private GitHub repository holding the master, then syncs with it. Only runs when the user clicks it.
+    /// Creates a private GitHub repository holding a copy of the master, then keeps it in step. Only runs when the
+    /// user clicks it.
     func createGitHubRepository(named name: String) {
-        guard config.sync.isOff else { return }
         isSyncing = true
         let folder = AppStore.shared.directory.appendingPathComponent("instructions", isDirectory: true)
             .appendingPathComponent(InstructionCloud.safeName(name), isDirectory: true)
@@ -435,102 +448,79 @@ final class InstructionsModel {
             defer { isSyncing = false }
             do {
                 let repository = try await InstructionGitRepository.createOnGitHub(name: name, folder: folder, fileName: fileName, text: text)
-                moveMaster(to: repository.file(named: syncName), sync: .git(repository: folder.path, pushOnSave: false))
+                let gitHubName = await repository.gitHubName()
+                modify {
+                    $0.git = InstructionGitCopy(
+                        repository: folder.path, path: repository.file(named: syncName).path, gitHubName: gitHubName,
+                        agreed: InstructionCopySync.digest(text))
+                }
+                syncer.sync(pull: true)
             } catch {
                 notice = InstructionsNotice(kind: .error, text: error.localizedDescription)
             }
         }
     }
 
-    private func moveMaster(to destination: URL, sync: InstructionSyncMethod) {
-        do {
-            let report = try InstructionMasterMove.move(master: masterURL, to: destination, targets: targets)
-            var updated = config
-            updated.localMasterPath = masterURL.path
-            updated.masterPath = destination.path
-            updated.sync = sync
-            save(updated)
-            var lines = [String(localized: "The master is now \(InstructionPaths.abbreviated(destination)).")]
-            if report.adoptedExisting { lines.append(String(localized: "A copy from another Mac was already there and is now the master.")) }
-            if let backup = report.backup {
-                lines.append(String(localized: "Your local version was backed up to \(InstructionPaths.abbreviated(backup))."))
-            }
-            notice = InstructionsNotice(kind: .info, text: lines.joined(separator: "\n"))
-        } catch {
-            notice = InstructionsNotice(kind: .error, text: error.localizedDescription)
-        }
-        snapshot = nil
-        selectedID = nil
-        Task { await reload() }
+    /// Stops updating the repository's copy. The repository stays as it is.
+    func unlinkRepository() {
+        modify { $0.git = nil }
+        syncer.clear(scope, .git)
     }
 
-    /// Copies the master back to a local file and links the agents to it. The synced copy stays where it is.
-    func stopSync() {
-        guard !config.sync.isOff else { return }
-        let local = config.localMasterPath.map(URL.init(fileURLWithPath:)) ?? defaultLocalMaster
-        do {
-            try InstructionMasterMove.restore(from: InstructionPaths.resolve(masterURL).url, to: local, targets: targets)
-            var updated = config
-            updated.masterPath = local.path
-            updated.localMasterPath = nil
-            updated.sync = .off
-            save(updated)
-            notice = InstructionsNotice(kind: .info, text: String(localized: "Sync is off. The master is \(InstructionPaths.abbreviated(local)) again."))
-        } catch {
-            notice = InstructionsNotice(kind: .error, text: error.localizedDescription)
-        }
-        snapshot = nil
-        selectedID = nil
-        Task { await reload() }
+    func setPushesAutomatically(_ on: Bool) {
+        modify { $0.git?.pushesAutomatically = on }
+        if on { syncer.sync(pull: true) }
     }
 
-    func setPushOnSave(_ on: Bool) {
-        guard case .git(let path, _) = config.sync else { return }
-        var updated = config
-        updated.sync = .git(repository: path, pushOnSave: on)
-        save(updated)
-    }
-
-    /// Pulls and pushes the master's repository.
+    /// Pulls and pushes every copy now.
     func syncNow() {
-        isSyncing = true
-        Task {
-            defer { isSyncing = false }
-            do {
-                let outcome = try await syncGit()
-                notice = InstructionsNotice(kind: .info, text: Self.describe(outcome))
-                load(selected ?? InstructionFile(url: masterURL, displayName: masterURL.lastPathComponent, readers: []))
-            } catch {
-                notice = InstructionsNotice(kind: .error, text: error.localizedDescription)
+        syncer.sync(pull: true, push: true)
+    }
+
+    /// Ends a conflict between the master and a copy by giving both one side's text. The losing text is backed up.
+    func resolve(_ copy: InstructionCopySyncer.Key.Copy, keeping side: InstructionCopySide) {
+        let current = store.config(for: scope, locations: locations)
+        let master = current.masterURL
+        let copyURL: URL? = switch copy {
+        case .iCloud: current.iCloud?.url
+        case .git: current.git?.url
+        }
+        guard let copyURL else { return }
+        do {
+            let agreed = try InstructionCopySync.resolve(master: master, copy: copyURL, keeping: side, backUpCopy: copy == .iCloud)
+            modify {
+                switch copy {
+                case .iCloud: $0.iCloud?.agreed = agreed
+                case .git: $0.git?.agreed = agreed
+                }
             }
+            snapshot = nil
+            Task { await reload() }
+            syncer.sync(pull: true)
+        } catch {
+            notice = InstructionsNotice(kind: .error, text: error.localizedDescription)
         }
     }
 
-    @discardableResult
-    private func syncGit() async throws -> InstructionGitRepository.SyncOutcome {
-        guard case .git(let path, _) = config.sync else { return .upToDate }
-        let repository = InstructionGitRepository(url: URL(fileURLWithPath: path))
-        let allowed = Set(([store.settings.global] + store.settings.projects.values.map { Optional($0) }).compactMap { config -> String? in
-            guard let config, case .git(let other, _) = config.sync, other == path else { return nil }
-            return InstructionDiscovery.relative(InstructionPaths.canonical(config.masterURL), to: InstructionPaths.canonical(repository.url))
-        })
-        return try await repository.sync(allowedFiles: Array(allowed))
+    /// The text of the master and of a copy, for comparing them in a conflict.
+    func conflictTexts(_ copy: InstructionCopySyncer.Key.Copy) -> (master: String, copy: String) {
+        let url = switch copy {
+        case .iCloud: config.iCloud?.url
+        case .git: config.git?.url
+        }
+        let master = (try? InstructionFileStore.read(masterURL).text) ?? ""
+        return (master, url.flatMap { try? InstructionFileStore.read($0).text } ?? "")
     }
 
-    static func describe(_ outcome: InstructionGitRepository.SyncOutcome) -> String {
-        switch outcome {
-        case .upToDate: String(localized: "Already up to date.")
-        case .pulled: String(localized: "Pulled the latest instructions.")
-        case .pushed: String(localized: "Pushed your instructions.")
-        case .pulledAndPushed: String(localized: "Pulled the latest instructions and pushed yours.")
-        }
+    /// The repository's name: "owner/name" on GitHub, otherwise its folder.
+    var repositoryDescription: String? {
+        guard let git = config.git else { return nil }
+        return git.gitHubName ?? InstructionPaths.abbreviated(git.repositoryURL)
     }
 
-    var syncDescription: String {
-        switch config.sync {
-        case .off: String(localized: "Off")
-        case .iCloud: String(localized: "iCloud Drive")
-        case .git(let path, _): String(localized: "Git: \(InstructionPaths.abbreviated(URL(fileURLWithPath: path)))")
-        }
+    /// The repository as a sync place: "GitHub owner/name", or "Git" and its folder.
+    var repositoryTitle: String? {
+        guard let git = config.git, let name = repositoryDescription else { return nil }
+        return git.gitHubName == nil ? String(localized: "Git \(name)") : String(localized: "GitHub \(name)")
     }
 }

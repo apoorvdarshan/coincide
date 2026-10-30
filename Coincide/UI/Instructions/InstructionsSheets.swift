@@ -198,7 +198,8 @@ struct ComparisonSheet: View {
     }
 }
 
-/// Chooses how the master syncs between Macs: off, iCloud Drive, or a Git repository.
+/// Turns on and off the master's copies in iCloud Drive and in a Git repository. The master itself never moves; each
+/// copy is kept in step with it.
 struct SyncSheet: View {
     @Bindable var model: InstructionsModel
     @Environment(\.dismiss) private var dismiss
@@ -214,37 +215,61 @@ struct SyncSheet: View {
             } icon: {
                 Image(systemName: "lock.shield").foregroundStyle(Color(nsColor: Theme.warning))
             }
-            Text("Sync: \(model.syncDescription)").font(.callout.weight(.medium))
-            switch model.config.sync {
-            case .off: options
-            case .iCloud: iCloudOn
-            case .git(_, let pushOnSave): gitOn(pushOnSave: pushOnSave)
-            }
-            if model.isSyncing { ProgressView().controlSize(.small) }
+            Text("The master stays at \(model.masterDisplayName). Each place you turn on below keeps a copy in step with it: changes made here go there, and changes made there, on your other Macs, come back here.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            section { iCloud }
+            section { git }
             HStack {
+                if model.isSyncing || model.syncer.isRunning { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
-        .frame(width: 520)
+        .frame(width: 540)
         .background(Color(nsColor: Theme.contentBackground))
     }
 
-    @ViewBuilder private var options: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button("Use iCloud Drive") { model.startICloudSync() }
-            Text("Moves the master to iCloud Drive › Coincide › Instructions › \(InstructionCloud.safeName(model.syncName)).md and links every agent to it, so Coincide on your other Macs can use the same file. A backup of the current file stays here.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    private func section(@ViewBuilder _ content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) { content() }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: Theme.raisedFill), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color(nsColor: Theme.surfaceBorder)))
+    }
+
+    @ViewBuilder private var iCloud: some View {
+        Toggle(isOn: Binding(get: { model.config.iCloud != nil }, set: { $0 ? model.turnOnICloud() : model.turnOffICloud() })) {
+            Label("iCloud Drive", systemImage: "icloud").font(.callout.weight(.medium))
         }
-        VStack(alignment: .leading, spacing: 6) {
+        Text("Keeps a copy at iCloud Drive › Coincide › Instructions › \(InstructionCloud.safeName(model.syncName)).md, so Coincide on your other Macs uses the same instructions. Turning it off leaves the copy there.")
+            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        if model.config.iCloud != nil {
+            CopyStatusView(model: model, copy: .iCloud, place: String(localized: "iCloud Drive"))
+        }
+    }
+
+    @ViewBuilder private var git: some View {
+        if let gitCopy = model.config.git {
+            HStack {
+                Label(model.repositoryTitle ?? "", systemImage: "arrow.triangle.branch").font(.callout.weight(.medium))
+                Spacer()
+                Button("Unlink") { model.unlinkRepository() }
+            }
+            Text("Keeps a copy as \(gitCopy.url.lastPathComponent) in \(InstructionPaths.abbreviated(gitCopy.repositoryURL)) and commits it when the instructions change. Coincide never force-pushes and never pushes other files. Unlinking leaves the repository as it is.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Toggle("Push changes right away", isOn: Binding(get: { gitCopy.pushesAutomatically }, set: { model.setPushesAutomatically($0) }))
+                .font(.caption)
+            CopyStatusView(model: model, copy: .git, place: model.repositoryTitle ?? "")
+        } else {
+            Label("GitHub or Git Repository", systemImage: "arrow.triangle.branch").font(.callout.weight(.medium))
+            Text("Keeps a copy as \(InstructionCloud.safeName(model.syncName)).md in a repository, commits it when the instructions change and pushes it. Coincide never force-pushes and never pushes other files.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Choose Git Repository…") { chooseRepository() }
                 Button("Create Private GitHub Repository…") { creatingRepository = true }
             }
             .disabled(model.isSyncing)
-            Text("The master moves into the repository's folder. Coincide commits it when you save, pulls and pushes when you ask, never force-pushes, and never pushes other files.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if creatingRepository {
                 HStack {
                     TextField("Repository name", text: $repositoryName).frame(width: 220)
@@ -257,23 +282,6 @@ struct SyncSheet: View {
         }
     }
 
-    @ViewBuilder private var iCloudOn: some View {
-        Text("The master is \(InstructionPaths.abbreviated(model.masterURL)).").font(.caption).foregroundStyle(.secondary)
-        Button("Turn Off Sync") { model.stopSync() }
-        Text("Copies the master back to this Mac and links the agents to the copy. The file in iCloud Drive stays.")
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-    }
-
-    @ViewBuilder private func gitOn(pushOnSave: Bool) -> some View {
-        Toggle("Push when you save", isOn: Binding(get: { pushOnSave }, set: { model.setPushOnSave($0) }))
-        HStack {
-            Button("Sync Now") { model.syncNow() }.disabled(model.isSyncing)
-            Button("Turn Off Sync") { model.stopSync() }
-        }
-        Text("Turning sync off copies the master back to this Mac and links the agents to the copy. The repository stays as it is.")
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-    }
-
     private func chooseRepository() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -281,6 +289,51 @@ struct SyncSheet: View {
         panel.allowsMultipleSelection = false
         panel.message = String(localized: "Choose the folder of a Git repository for your instructions.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        model.startGitSync(repository: url)
+        model.linkRepository(url)
+    }
+}
+
+/// How a copy stands, and when it and the master both changed, the choice of which to keep.
+private struct CopyStatusView: View {
+    let model: InstructionsModel
+    let copy: InstructionCopySyncer.Key.Copy
+    /// The copy's place, as the user knows it: "iCloud Drive" or the repository.
+    let place: String
+    @State private var comparing = false
+
+    var body: some View {
+        let status = model.syncer.status(model.scope, copy)
+        switch status {
+        case .inStep:
+            Label("In step with the master", systemImage: "checkmark.circle").font(.caption).foregroundStyle(.secondary)
+        case .conflict:
+            VStack(alignment: .leading, spacing: 6) {
+                Label {
+                    Text("The master and the copy in \(place) both changed. Choose which to keep; the other is backed up.")
+                        .font(.caption).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(Color(nsColor: Theme.warning))
+                }
+                HStack {
+                    Button("Keep This Mac's") { model.resolve(copy, keeping: .master) }
+                    Button("Keep the Copy") { model.resolve(copy, keeping: .copy) }
+                    Button(comparing ? "Hide Differences" : "Show Differences") { comparing.toggle() }
+                }
+                if comparing {
+                    let texts = model.conflictTexts(copy)
+                    Text("Lines marked − are only in the copy; lines marked + are only in the master.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    DiffView(lines: InstructionDiff.lines(from: texts.copy, to: texts.master)).frame(minHeight: 160, maxHeight: 260)
+                }
+            }
+        case nil:
+            Label("Syncing…", systemImage: "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary)
+        case .some(let other):
+            Label {
+                Text(verbatim: other.problem ?? "").font(.caption).fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(Color(nsColor: Theme.warning))
+            }
+        }
     }
 }

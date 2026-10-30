@@ -352,64 +352,123 @@ struct InstructionsTests {
 
     // MARK: Sync
 
-    @Test func movingToICloudRelinksAndKeepsABackup() throws {
+    @Test func olderSettingsBringTheMasterBackAndKeepICloudAsACopy() throws {
         let root = try folder()
         let cloud = InstructionCloud(root: try folder("iCloud"))
         #expect(cloud.isAvailable)
         #expect(!InstructionCloud(root: root.appendingPathComponent("no-icloud")).isAvailable)
-        try write("master", "AGENTS.md", in: root)
-        let master = root.appendingPathComponent("AGENTS.md")
-        let targets = InstructionMaster.targets(for: .project(root), master: master, locations: InstructionLocations(home: root))
-        _ = try InstructionMaster.apply(InstructionMaster.plan(master: master, targets: targets))
-
         let synced = cloud.file(named: "My: Project")
         #expect(synced.lastPathComponent == "My- Project.md")
-        let report = try InstructionMasterMove.move(master: master, to: synced, targets: targets)
-        #expect(!report.adoptedExisting)
-        let backup = try #require(report.backup)
-        #expect(try String(contentsOf: backup, encoding: .utf8) == "master")
-        #expect(try String(contentsOf: synced, encoding: .utf8) == "master")
-        #expect(destination("AGENTS.md", in: root) == synced.path)
-        for name in ["CLAUDE.md", "GEMINI.md"] {
-            #expect(InstructionPaths.resolve(root.appendingPathComponent(name)).url == InstructionPaths.canonical(synced))
-        }
-        // Edits through any agent's file land in iCloud Drive.
-        try InstructionFileStore.write("edited", to: root.appendingPathComponent("CLAUDE.md"))
-        #expect(try String(contentsOf: synced, encoding: .utf8) == "edited")
+        // How an older Coincide left it: the master moved into iCloud Drive and every file linked there.
+        try write("master", "Coincide/Instructions/My- Project.md", in: cloud.root)
+        for name in ["AGENTS.md", "CLAUDE.md", "GEMINI.md"] { try link(name, to: synced.path, in: root) }
+        let local = root.appendingPathComponent("AGENTS.md")
+        let old = InstructionMasterConfig(isEnabled: true, masterPath: synced.path, sync: .iCloud, localMasterPath: local.path)
+        #expect(InstructionCopyMigration.needsMigration(old))
+        let targets = InstructionMaster.targets(for: .project(root), master: old.masterURL, locations: InstructionLocations(home: root))
 
-        // Turning sync off brings a regular file back and relinks the agents to it.
-        try InstructionMasterMove.restore(from: synced, to: master, targets: targets)
-        #expect(!InstructionPaths.isSymbolicLink(master))
-        #expect(read("AGENTS.md", in: root) == "edited")
+        let migrated = try InstructionCopyMigration.migrate(old, local: local, targets: targets)
+        #expect(!InstructionCopyMigration.needsMigration(migrated))
+        #expect(migrated.masterPath == local.path)
+        #expect(migrated.sync == .off && migrated.localMasterPath == nil && migrated.git == nil)
+        #expect(migrated.iCloud == InstructionICloudCopy(path: synced.path, agreed: InstructionCopySync.digest("master")))
+        #expect(!InstructionPaths.isSymbolicLink(local))
+        #expect(read("AGENTS.md", in: root) == "master")
         #expect(destination("CLAUDE.md", in: root) == "AGENTS.md")
-        #expect(InstructionPaths.isRegularFile(synced))
+        #expect(destination("GEMINI.md", in: root) == "AGENTS.md")
+        #expect(try String(contentsOf: synced, encoding: .utf8) == "master")
+        #expect(try InstructionCopySync.sync(master: local, iCloudCopy: synced, agreed: migrated.iCloud?.agreed).outcome == .inStep)
     }
 
-    @Test func movingAdoptsTheCopyAnotherMacPutInICloud() throws {
+    @Test func olderGitSettingsKeepTheRepositoryAsACopy() throws {
         let root = try folder()
-        let cloud = InstructionCloud(root: try folder("iCloud"))
-        try write("this Mac", "AGENTS.md", in: root)
-        let synced = cloud.file(named: "Global")
-        try write("other Mac", "Coincide/Instructions/Global.md", in: cloud.root)
-        let master = root.appendingPathComponent("AGENTS.md")
-        let report = try InstructionMasterMove.move(master: master, to: synced, targets: [])
-        #expect(report.adoptedExisting)
-        #expect(read("AGENTS.md", in: root) == "other Mac")
-        #expect(try String(contentsOf: try #require(report.backup), encoding: .utf8) == "this Mac")
+        let repository = try folder("repository")
+        try write("rules", "Global.md", in: repository)
+        let copy = repository.appendingPathComponent("Global.md")
+        let local = root.appendingPathComponent("AGENTS.md")
+        try link("AGENTS.md", to: copy.path, in: root)
+        let old = InstructionMasterConfig(isEnabled: true, masterPath: copy.path, sync: .git(repository: repository.path, pushOnSave: true))
+        let migrated = try InstructionCopyMigration.migrate(old, local: local, targets: [])
+        #expect(migrated.git == InstructionGitCopy(
+            repository: repository.path, path: copy.path, pushesAutomatically: true, agreed: InstructionCopySync.digest("rules")))
+        #expect(migrated.iCloud == nil)
+        #expect(read("AGENTS.md", in: root) == "rules")
+        #expect(!InstructionPaths.isSymbolicLink(local))
     }
 
-    @Test func evictedICloudFilesAreReportedNotOverwritten() throws {
+    @Test func settingsFromBeforeCopiesStillLoad() throws {
+        let json = #"{"global":{"isEnabled":true,"localMasterPath":"/a/AGENTS.md","masterPath":"/c/Global.md","sync":{"iCloud":{}}},"projects":{}}"#
+        let settings = try JSONDecoder().decode(InstructionSettings.self, from: Data(json.utf8))
+        let global = try #require(settings.global)
+        #expect(global.sync == .iCloud && global.iCloud == nil && global.git == nil)
+        #expect(InstructionCopyMigration.needsMigration(global))
+
+        var current = InstructionMasterConfig(isEnabled: true, masterPath: "/a/AGENTS.md")
+        current.iCloud = InstructionICloudCopy(path: "/c/Global.md", agreed: "abc")
+        current.git = InstructionGitCopy(repository: "/r", path: "/r/Global.md", pushesAutomatically: false, gitHubName: "me/rules")
+        let decoded = try JSONDecoder().decode(InstructionMasterConfig.self, from: JSONEncoder().encode(current))
+        #expect(decoded == current)
+    }
+
+    @Test func copiesCarryChangesBothWaysAndLeaveConflictsToTheUser() throws {
+        let root = try folder()
+        let cloud = try folder("iCloud")
+        let master = root.appendingPathComponent("AGENTS.md")
+        let copy = cloud.appendingPathComponent("Coincide/Instructions/Global.md")
+        try write("one", "AGENTS.md", in: root)
+
+        var result = try InstructionCopySync.sync(master: master, iCloudCopy: copy, agreed: nil)
+        #expect(result.outcome == .updatedCopy)
+        #expect(read("Coincide/Instructions/Global.md", in: cloud) == "one")
+
+        try write("two", "AGENTS.md", in: root)
+        result = try InstructionCopySync.sync(master: master, iCloudCopy: copy, agreed: result.agreed)
+        #expect(result.outcome == .updatedCopy)
+        #expect(read("Coincide/Instructions/Global.md", in: cloud) == "two")
+
+        // Another Mac changed the copy.
+        try write("three", "Coincide/Instructions/Global.md", in: cloud)
+        result = try InstructionCopySync.sync(master: master, iCloudCopy: copy, agreed: result.agreed)
+        #expect(result.outcome == .updatedMaster)
+        #expect(read("AGENTS.md", in: root) == "three")
+        #expect(try InstructionCopySync.sync(master: master, iCloudCopy: copy, agreed: result.agreed).outcome == .inStep)
+
+        // Both changed: nothing is overwritten until the user picks one.
+        try write("here", "AGENTS.md", in: root)
+        try write("there", "Coincide/Instructions/Global.md", in: cloud)
+        let conflict = try InstructionCopySync.sync(master: master, iCloudCopy: copy, agreed: result.agreed)
+        #expect(conflict == InstructionCopyResult(outcome: .conflict, agreed: result.agreed))
+        #expect(read("AGENTS.md", in: root) == "here")
+        #expect(read("Coincide/Instructions/Global.md", in: cloud) == "there")
+
+        let agreed = try InstructionCopySync.resolve(master: master, copy: copy, keeping: .copy, backUpCopy: true)
+        #expect(read("AGENTS.md", in: root) == "there")
+        let backups = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.contains("coincide-backup") }
+        #expect(backups.count == 1)
+        #expect(read(try #require(backups.first), in: root) == "here")
+        #expect(try InstructionCopySync.sync(master: master, iCloudCopy: copy, agreed: agreed).outcome == .inStep)
+    }
+
+    @Test func aCopyNeverAgreedWithIsAConflictUnlessTheTextsMatch() {
+        #expect(InstructionCopySync.step(master: "a", copy: "a", agreed: nil) == .none)
+        #expect(InstructionCopySync.step(master: "a", copy: "b", agreed: nil) == .conflict)
+        #expect(InstructionCopySync.step(master: "a", copy: nil, agreed: nil) == .updateCopy)
+        // A missing master is brought back from its copy, never emptied into it.
+        #expect(InstructionCopySync.step(master: nil, copy: "b", agreed: InstructionCopySync.digest("b")) == .updateMaster)
+        #expect(InstructionCopySync.step(master: nil, copy: nil, agreed: nil) == .none)
+    }
+
+    @Test func evictedICloudCopiesAreDownloadedNotOverwritten() throws {
         let root = try folder()
         let cloud = InstructionCloud(root: try folder("iCloud"))
         try write("local", "AGENTS.md", in: root)
         try write("", "Coincide/Instructions/.Global.md.icloud", in: cloud.root)
         let synced = cloud.file(named: "Global")
         #expect(InstructionCloud.state(of: synced) == .notDownloaded)
-        #expect(throws: InstructionSyncError.notDownloaded("Global.md")) {
-            try InstructionMasterMove.move(master: root.appendingPathComponent("AGENTS.md"), to: synced, targets: [])
-        }
+        let result = try InstructionCopySync.sync(master: root.appendingPathComponent("AGENTS.md"), iCloudCopy: synced, agreed: "x")
+        #expect(result == InstructionCopyResult(outcome: .downloading, agreed: "x"))
         #expect(read("AGENTS.md", in: root) == "local")
-        #expect(!InstructionPaths.isSymbolicLink(root.appendingPathComponent("AGENTS.md")))
+        #expect(!InstructionPaths.itemExists(synced))
     }
 
     /// A repository cloned from a new bare remote, with test identity settings.
@@ -489,6 +548,55 @@ struct InstructionsTests {
         #expect(status.isEmpty)
         let third = try await clone(remote, as: "third")
         #expect(third.read("Global.md") == "from the first Mac\n")
+    }
+
+    @Test func gitCopiesAreCommittedPushedAndPulledBack() async throws {
+        let (_, remote) = try await bareRemote()
+        let local = try await clone(remote, as: "local")
+        let root = try folder()
+        try write("rules\n", "AGENTS.md", in: root)
+        let master = root.appendingPathComponent("AGENTS.md")
+        try local.write("notes.txt", "not instructions\n")
+        var copy = InstructionGitCopy(repository: local.url.path, path: local.url.appendingPathComponent("Global.md").path)
+
+        var result = try await InstructionCopySync.sync(master: master, gitCopy: copy, allowedFiles: ["Global.md"], push: true)
+        #expect(result.outcome == .updatedCopy)
+        copy.agreed = result.agreed
+        let other = try await clone(remote, as: "other")
+        #expect(other.read("Global.md") == "rules\n")
+        #expect(other.read("notes.txt") == nil)
+
+        // A change pushed from another Mac comes back into the master.
+        try other.write("Global.md", "from the other Mac\n")
+        try await other.git("commit", "-q", "-am", "edit")
+        try await other.git("push", "-q")
+        result = try await InstructionCopySync.sync(master: master, gitCopy: copy, allowedFiles: ["Global.md"], push: true)
+        #expect(result.outcome == .updatedMaster)
+        #expect(read("AGENTS.md", in: root) == "from the other Mac\n")
+        copy.agreed = result.agreed
+
+        // Without pushing, the commit waits on this Mac.
+        try write("later\n", "AGENTS.md", in: root)
+        result = try await InstructionCopySync.sync(master: master, gitCopy: copy, allowedFiles: ["Global.md"], push: false)
+        #expect(result.outcome == .updatedCopy)
+        try await other.git("pull", "-q")
+        #expect(other.read("Global.md") == "from the other Mac\n")
+        copy.agreed = result.agreed
+        #expect(try await InstructionCopySync.sync(master: master, gitCopy: copy, allowedFiles: ["Global.md"], push: true).outcome == .inStep)
+        try await other.git("pull", "-q")
+        #expect(other.read("Global.md") == "later\n")
+    }
+
+    @Test func gitHubNamesComeOnlyFromGitHubRemotes() {
+        for address in [
+            "https://github.com/apoorvdarshan/agent-instructions.git", "https://github.com/apoorvdarshan/agent-instructions",
+            "git@github.com:apoorvdarshan/agent-instructions.git", "ssh://git@github.com/apoorvdarshan/agent-instructions.git",
+        ] {
+            #expect(InstructionGitRepository.gitHubName(fromRemote: address) == "apoorvdarshan/agent-instructions")
+        }
+        #expect(InstructionGitRepository.gitHubName(fromRemote: "https://gitlab.com/me/rules.git") == nil)
+        #expect(InstructionGitRepository.gitHubName(fromRemote: "/tmp/remote/instructions.git") == nil)
+        #expect(InstructionGitRepository.gitHubName(fromRemote: "https://github.com/me") == nil)
     }
 
     @Test func gitHubRepositoriesAreAlwaysPrivate() {
