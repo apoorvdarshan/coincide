@@ -179,9 +179,9 @@ public final class AntigravitySignIn {
             let setup = try await process.client.newSession(cwd: workspace, timeout: 60)
             sessionID = setup.sessionID
             guard self.flow === flow else { return cleanUp(flow, workspace: workspace, sessionID: sessionID) }
-            let models = AntigravityFlavor().models(initialize: initialized, setup: setup)
+            let models = AntigravityFlavor(profile: profile).models(initialize: initialized, setup: setup)
             self.models = models
-            AntigravityFlavor.knownModels[profile.geminiHome.path] = models
+            AntigravityModelCatalog.save(models, profile: profile)
             finish(flow, .succeeded, String(localized: "Signed in with Google."))
         } catch {
             if self.flow === flow { finish(flow, .failed, Self.failureMessage(error, stage: flow.stage)) }
@@ -292,7 +292,7 @@ public final class AntigravitySignIn {
             throw AntigravitySignInError(text)
         }
         models = []
-        AntigravityFlavor.knownModels[profile.geminiHome.path] = nil
+        AntigravityModelCatalog.clear(profile)
         // The quota checks' access token belongs to the account that just signed out.
         AntigravityUsageProbe.shared.clear()
         phase = .idle

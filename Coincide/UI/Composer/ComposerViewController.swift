@@ -54,7 +54,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     /// Internal so tests can read the controls.
     let footer = ComposerFooterView()
     private let branchToolbar = BranchToolbarView(frame: .zero)
-    private let suggestions = ComposerSuggestionPanel()
+    let suggestions = ComposerSuggestionPanel()
     private var textHeight: NSLayoutConstraint?
 
     private var storeToken: ObservationToken?
@@ -521,6 +521,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             refreshThread()
         case .providers:
             refreshThread()
+            if trigger?.kind == .command || trigger?.kind == .skill { loadSuggestions() }
         default:
             break
         }
@@ -1201,20 +1202,17 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             return
         }
         switch trigger.kind {
-        case .command:
-            let commands = ComposerCommand.matching(trigger.query, in: availableCommands).map { ComposerSuggestion.command($0) }
-            let items = commands + agentCommands(matching: trigger.query, token: "/")
-            if items.isEmpty {
-                suggestions.hide()
-            } else {
-                suggestions.show(items, emptyText: nil, listLabel: String(localized: "Commands"), above: surface)
-            }
-        case .skill:
-            let items = agentCommands(matching: trigger.query, token: "$", skillsOnly: true)
-            if items.isEmpty {
-                suggestions.hide()
-            } else {
-                suggestions.show(items, emptyText: nil, listLabel: String(localized: "Skills"), above: surface)
+        case .command, .skill:
+            showAgentSuggestions(for: trigger, loading: true)
+            guard let threadID, let thread, let directory = store.workingDirectory(for: threadID) else { return }
+            let provider = thread.selection.provider
+            let account = thread.selection.accountID
+            suggestionSearch = Task { [weak self] in
+                guard let self else { return }
+                await self.registry.refreshCommands(for: provider, account: account, in: directory)
+                guard !Task.isCancelled, self.threadID == threadID, self.trigger == trigger, self.thread?.selection.provider == provider,
+                    self.thread?.selection.accountID == account else { return }
+                self.showAgentSuggestions(for: trigger, loading: false)
             }
         case .path:
             guard let root = threadID.flatMap({ store.workingDirectory(for: $0) }) else {
@@ -1294,6 +1292,19 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         case .pullRequest(let pullRequest):
             guard let mention = PullRequestMention.markdown(pullRequest) else { return }
             replace(trigger.range, with: mention + " ")
+        }
+    }
+
+    private func showAgentSuggestions(for trigger: ComposerTrigger, loading: Bool) {
+        let skills = trigger.kind == .skill
+        let items = skills
+            ? agentCommands(matching: trigger.query, token: "$", skillsOnly: true)
+            : ComposerCommand.matching(trigger.query, in: availableCommands).map { ComposerSuggestion.command($0) }
+                + agentCommands(matching: trigger.query, token: "/")
+        if items.isEmpty, !loading { suggestions.hide() }
+        else {
+            suggestions.show(items, emptyText: loading ? String(localized: "Loading…") : nil,
+                listLabel: skills ? String(localized: "Skills") : String(localized: "Commands"), above: surface)
         }
     }
 

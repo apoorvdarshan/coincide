@@ -46,6 +46,10 @@ public final class CodexProvider: AgentProvider {
         return CodexProtocol.builtInModels
     }
 
+    public func commands(executable: URL, environment: [String: String], directory: URL) async -> [ProviderCommand]? {
+        try? await CodexProbe.skills(executable: executable, environment: environment, directory: directory)
+    }
+
     public func makeSession(_ launch: AgentLaunch) -> AgentSession {
         CodexSession(launch: launch)
     }
@@ -88,6 +92,18 @@ enum CodexProbe {
             usageLimits = CodexUsageLimits.limits(fromRead: result, at: Date())
         }
         return Snapshot(version: version, account: account, models: models, usageLimits: usageLimits)
+    }
+
+    /// Reads skills before a thread has sent its first message, without creating a Codex conversation.
+    static func skills(executable: URL, environment: [String: String], directory: URL) async throws -> [ProviderCommand] {
+        let transport = CodexProcessTransport(executable: executable, workingDirectory: directory, environment: environment)
+        let connection = CodexConnection(transport: transport)
+        try connection.start()
+        defer { connection.close() }
+        _ = try await connection.request("initialize", CodexProtocol.initializeParams(), timeout: .seconds(30))
+        connection.notify("initialized")
+        let result = try await connection.request("skills/list", ["cwds": [.string(directory.path)]], timeout: .seconds(20))
+        return CodexProtocol.skills(fromList: result, cwd: directory.path)
     }
 
     /// Every page of `model/list`, in picker order.

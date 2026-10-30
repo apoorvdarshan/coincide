@@ -9,6 +9,17 @@ public final class ProviderRegistry {
     public private(set) var statuses: [ProviderKind: ProviderStatus] = [:]
     public private(set) var discoveredModels: [ProviderKind: [ModelOption]] = [:]
     private var discoveredCommands: [ProviderKind: [ProviderCommand]] = [:]
+    private struct CommandScope: Hashable {
+        let provider: ProviderKind
+        let account: String
+        let directory: String
+    }
+    private struct CommandCatalog {
+        let commands: [ProviderCommand]?
+        let checkedAt: Date
+    }
+    private var workspaceCommands: [CommandScope: CommandCatalog] = [:]
+    private var commandReads: [CommandScope: Task<Void, Never>] = [:]
     /// True while any provider or account is being checked.
     public var isRefreshing: Bool { !running.isEmpty || !accountChecks.isEmpty }
 
@@ -181,6 +192,35 @@ public final class ProviderRegistry {
         let account = self.account(id, of: kind)
         guard !account.isDefault else { return commands(for: kind) }
         return accountCommands[account.id] ?? status(kind, account: account.id).commands
+    }
+
+    /// Workspace catalogs never reuse skills discovered in a different project or account.
+    public func commands(for kind: ProviderKind, account id: String?, in directory: URL) -> [ProviderCommand] {
+        let key = CommandScope(provider: kind, account: account(id, of: kind).id, directory: directory.standardizedFileURL.path)
+        if let commands = workspaceCommands[key]?.commands { return commands }
+        // Codex's live session reports project-specific skills into the global fallback; never show those elsewhere.
+        if kind == .codex { return status(kind, account: id).commands }
+        return commands(for: kind, account: id)
+    }
+
+    /// Coalesces picker reads and keeps successful catalogs for a minute. Failure preserves the last good catalog.
+    public func refreshCommands(for kind: ProviderKind, account id: String?, in directory: URL) async {
+        let account = account(id, of: kind)
+        let key = CommandScope(provider: kind, account: account.id, directory: directory.standardizedFileURL.path)
+        if let pending = commandReads[key] { await pending.value; return }
+        if let checked = workspaceCommands[key]?.checkedAt, Date().timeIntervalSince(checked) < 60 { return }
+        guard status(kind, account: account.id).state == .ready, let provider = provider(kind, account: account.id) else { return }
+        let read = Task { [weak self] in
+            guard let self, let executable = await self.executable(for: kind) else { return }
+            let environment = await self.environment(for: kind, account: account.id)
+            let found = await provider.commands(executable: executable, environment: environment, directory: directory)
+            let previous = self.workspaceCommands[key]?.commands
+            self.workspaceCommands[key] = CommandCatalog(commands: found ?? previous, checkedAt: Date())
+            if found != nil, found != previous { self.store.notify(.providers) }
+        }
+        commandReads[key] = read
+        await read.value
+        commandReads[key] = nil
     }
 
     public func updateCommands(_ commands: [ProviderCommand], for kind: ProviderKind, account id: String?) {

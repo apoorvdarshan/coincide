@@ -657,7 +657,14 @@ public protocol AgentProvider: AnyObject {
     func detect(executable: URL?, environment: [String: String]) async -> ProviderStatus
     /// Models to offer in the picker. May run the CLI to discover them; fall back to a built-in list.
     func models(status: ProviderStatus, environment: [String: String]) async -> [ModelOption]
+    /// Optional pre-turn command discovery for a specific workspace. Nil means unavailable; an empty list is
+    /// authoritative. This must not send a user prompt or start a billable turn.
+    func commands(executable: URL, environment: [String: String], directory: URL) async -> [ProviderCommand]?
     func makeSession(_ launch: AgentLaunch) -> AgentSession
+}
+
+extension AgentProvider {
+    public func commands(executable: URL, environment: [String: String], directory: URL) async -> [ProviderCommand]? { nil }
 }
 
 public enum AgentError: LocalizedError, Sendable {
