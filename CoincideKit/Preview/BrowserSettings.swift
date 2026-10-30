@@ -21,6 +21,9 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
     public var offersToSaveLogins: Bool
     /// Sites the user said never to offer saving for.
     public var neverSaveSites: [String]
+    /// Agents Coincide starts get the enabled password managers' unlocked sessions (Bitwarden's `BW_SESSION`), so
+    /// they can use the managers' command-line tools, for API keys and tokens, without asking. On by default.
+    public var agentsUsePasswordManagers: Bool
 
     public init(profileID: UUID = UUID()) {
         self.profileID = profileID
@@ -31,6 +34,7 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
         loginGrants = []
         offersToSaveLogins = true
         neverSaveSites = []
+        agentsUsePasswordManagers = true
     }
 
     public init(from decoder: Decoder) throws {
@@ -48,6 +52,7 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
         loginGrants = value(.loginGrants, [FailableGrant]()).compactMap(\.grant)
         offersToSaveLogins = value(.offersToSaveLogins, defaults.offersToSaveLogins)
         neverSaveSites = value(.neverSaveSites, defaults.neverSaveSites)
+        agentsUsePasswordManagers = value(.agentsUsePasswordManagers, defaults.agentsUsePasswordManagers)
     }
 
     private struct FailableGrant: Decodable {

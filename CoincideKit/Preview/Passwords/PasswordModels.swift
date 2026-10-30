@@ -150,6 +150,13 @@ public protocol PasswordProvider: Sendable {
     /// Logins that may belong to `page`. Coincide filters them again with `LoginMatcher`, so an adapter may return more.
     func logins(for page: URL) async throws -> [LoginItem]
     func secret(for item: LoginItem) async throws -> LoginSecret
+    /// What agents' processes need to use the manager's own command-line tool while it is unlocked here; none by
+    /// default (1Password's tool unlocks through its app).
+    func agentEnvironment() -> [String: String]
+}
+
+extension PasswordProvider {
+    public func agentEnvironment() -> [String: String] { [:] }
 }
 
 /// Runs a password manager's tool. Secrets go through `environment` or `input`, never `arguments`.

@@ -93,6 +93,9 @@ public nonisolated struct BitwardenProvider: PasswordProvider {
         }
     }
 
+    /// The unlocked session, so an agent's `bw` reads the vault without unlocking it again.
+    public func agentEnvironment() -> [String: String] { environment }
+
     /// Unlocks with the master password the user typed, and keeps the session in the Keychain.
     public func unlock(password: String) async throws {
         guard let bw = await runner.locate("bw") else { throw PasswordProviderError.notInstalled("Bitwarden CLI") }
