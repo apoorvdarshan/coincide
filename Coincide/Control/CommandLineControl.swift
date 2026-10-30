@@ -2,19 +2,29 @@ import AppKit
 import CoincideKit
 import CoincideRemoteKit
 import Foundation
+import Observation
 
 /// The `coincide` command-line tool's side in the app: the control socket while Settings › General › Command-line
 /// control is on, the tool on the PATH of every agent Coincide starts, and installing it for Terminal.
 @MainActor
+@Observable
 final class CommandLineControl {
     static let shared = CommandLineControl()
 
-    private var server: LocalControlServer?
-    private var observation: ObservationToken?
+    @ObservationIgnored private var server: LocalControlServer?
+    @ObservationIgnored private var observation: ObservationToken?
     private let store: AppStore
+    private(set) var terminalInstallation: TerminalToolInstallation.Location?
+    private(set) var terminalError: String?
+    @ObservationIgnored private var installationTask: Task<Void, Never>?
+    @ObservationIgnored private var activationObserver: NSObjectProtocol?
 
     init(store: AppStore = .shared) {
         self.store = store
+    }
+
+    isolated deinit {
+        if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
     }
 
     /// The folder holding the tool inside Coincide.app; it holds nothing else that runs.
@@ -39,6 +49,28 @@ final class CommandLineControl {
             MainActor.assumeIsolated { self?.agentEnvironment(for: threadID) ?? [:] }
         }
         apply()
+        refreshTerminalInstallation()
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.refreshTerminalInstallation() } }
+    }
+
+    /// Installs once at startup and checks again when Settings opens or the app becomes active. Off the UI thread;
+    /// disabling command-line control leaves the Terminal command installed, but the socket refuses requests.
+    func refreshTerminalInstallation() {
+        guard !AppDelegate.isHostingTests, installationTask == nil else { return }
+        installationTask = Task {
+            let path = await ShellEnvironment.shared.terminalSearchPath() ?? ProcessInfo.processInfo.environment["PATH"] ?? ""
+            let tool = Self.toolURL
+            do {
+                terminalInstallation = try await Task.detached { try TerminalToolInstallation.ensure(tool: tool, searchPath: path) }.value
+                terminalError = nil
+            } catch {
+                terminalInstallation = nil
+                terminalError = error.localizedDescription
+            }
+            installationTask = nil
+        }
     }
 
     func stop() {
@@ -94,30 +126,4 @@ final class CommandLineControl {
         }
     }
 
-    /// Links `coincide` into /usr/local/bin when this user may write there, else ~/.local/bin, replacing only an earlier
-    /// link to Coincide's tool. Returns the link.
-    nonisolated static func installTool(tool: URL = toolURL, home: URL = FileManager.default.homeDirectoryForCurrentUser) throws -> URL {
-        let files = FileManager.default
-        guard files.isExecutableFile(atPath: tool.path) else { throw InstallError.missingTool }
-        let system = URL(fileURLWithPath: "/usr/local/bin", isDirectory: true)
-        let folder = files.isWritableFile(atPath: system.path) ? system : home.appendingPathComponent(".local/bin", isDirectory: true)
-        do {
-            try files.createDirectory(at: folder, withIntermediateDirectories: true)
-        } catch {
-            throw InstallError.failed(error.localizedDescription)
-        }
-        let link = folder.appendingPathComponent("coincide")
-        if let existing = try? files.destinationOfSymbolicLink(atPath: link.path) {
-            guard existing.hasSuffix("/Contents/Helpers/coincide") else { throw InstallError.occupied(link.path) }
-            try? files.removeItem(at: link)
-        } else if files.fileExists(atPath: link.path) {
-            throw InstallError.occupied(link.path)
-        }
-        do {
-            try files.createSymbolicLink(at: link, withDestinationURL: tool)
-        } catch {
-            throw InstallError.failed(error.localizedDescription)
-        }
-        return link
-    }
 }

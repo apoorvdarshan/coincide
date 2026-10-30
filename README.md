@@ -41,7 +41,7 @@ T3 Code is an Electron app with a Node server behind a web UI. Coincide is built
 
 ### Drive Coincide from an agent or Terminal
 
-The bundled `coincide` tool can list projects, agents and threads; create project threads or projectless chats; send messages; wait for replies; read, stop, approve, answer questions, archive, or open a thread in the window. Every agent Coincide starts gets it on its PATH and can use `this` for its own thread. Run `coincide help` for commands and `--json` for structured output. To use it from Terminal, choose **Settings → General → Install Command Line Tool…**. Command-line control is on by default and can be disabled there. It uses an owner-only local Unix socket, without network access or pairing; processes running as your Mac user can control threads while it is enabled.
+The bundled `coincide` tool can list projects, agents and threads; create project threads or projectless chats; send messages; wait for replies; read, stop, approve, answer questions, archive, or open a thread in the window. Every agent Coincide starts gets it on its PATH and can use `this` for its own thread. Run `coincide help` for commands and `--json` for structured output. Coincide automatically sets up the Terminal command at launch. **Settings → General → Command Line** shows its detected location and any setup issue. Command-line control is on by default and can be disabled there. It uses an owner-only local Unix socket, without network access or pairing; processes running as your Mac user can control threads while it is enabled.
 
 ```sh
 coincide agents

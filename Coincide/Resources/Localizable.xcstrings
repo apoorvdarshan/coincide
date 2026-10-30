@@ -23790,6 +23790,118 @@
         }
       }
     },
+    "Add %@ to your shell’s PATH to use coincide in Terminal." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Füge %@ zum PATH deiner Shell hinzu, um coincide im Terminal zu verwenden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Añade %@ al PATH de tu shell para usar coincide en Terminal."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agrega %@ al PATH de tu shell para usar coincide en Terminal."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajoutez %@ au PATH de votre shell pour utiliser coincide dans le Terminal."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "टर्मिनल में coincide का उपयोग करने के लिए अपने शेल के PATH में %@ जोड़ें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tambahkan %@ ke PATH shell Anda untuk menggunakan coincide di Terminal."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aggiungi %@ al PATH della shell per usare coincide nel Terminale."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ターミナルで coincide を使うには、シェルの PATH に %@ を追加してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "터미널에서 coincide를 사용하려면 셸의 PATH에 %@을(를) 추가하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voeg %@ toe aan de PATH van je shell om coincide in Terminal te gebruiken."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dodaj %@ do PATH swojej powłoki, aby używać coincide w Terminalu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Adicione %@ ao PATH do seu shell para usar coincide no Terminal."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Добавьте %@ в PATH вашей оболочки, чтобы использовать coincide в Терминале."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Додайте %@ до PATH вашої оболонки, щоб використовувати coincide у Терміналі."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Terminal’de coincide kullanmak için kabuğunuzun PATH değişkenine %@ ekleyin."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Thêm %@ vào PATH của shell để dùng coincide trong Terminal."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "将 %@ 添加到 shell 的 PATH 中，即可在终端使用 coincide。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "將 %@ 加入 shell 的 PATH，即可在終端機使用 coincide。"
+          }
+        }
+      }
+    },
     "Add API Key Account" : {
       "localizations" : {
         "de" : {
@@ -70188,6 +70300,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Coincide 會在你 Mac 上的檔案夾中執行程式碼代理程式。請加入一個檔案夾，然後開始對話。"
+          }
+        }
+      }
+    },
+    "Coincide sets up the Terminal command automatically. Agents already have it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide richtet den Terminalbefehl automatisch ein. Agenten haben ihn bereits."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide configura automáticamente el comando de Terminal. Los agentes ya lo tienen."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide configura automáticamente el comando de Terminal. Los agentes ya lo tienen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide configure automatiquement la commande du Terminal. Les agents y ont déjà accès."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide टर्मिनल कमांड को अपने आप सेट करता है। एजेंटों के पास यह पहले से है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide menyiapkan perintah Terminal secara otomatis. Agen sudah memilikinya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide configura automaticamente il comando del Terminale. Gli agenti lo hanno già."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide がターミナルコマンドを自動設定します。エージェントはすでに利用できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide가 터미널 명령을 자동으로 설정합니다. 에이전트는 이미 사용할 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide stelt het Terminal-commando automatisch in. Agenten hebben het al."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide automatycznie konfiguruje polecenie Terminala. Agenci już je mają."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide configura automaticamente o comando do Terminal. Os agentes já têm acesso."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide автоматически настраивает команду Терминала. Агентам она уже доступна."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide автоматично налаштовує команду Термінала. Агенти вже мають до неї доступ."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide, Terminal komutunu otomatik olarak ayarlar. Ajanlar zaten kullanabilir."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide tự động thiết lập lệnh Terminal. Các tác nhân đã có sẵn lệnh này."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 会自动设置终端命令。代理已可使用该命令。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 會自動設定終端機指令。代理程式已可使用該指令。"
           }
         }
       }
@@ -130851,6 +131075,7 @@
       }
     },
     "Install Command Line Tool…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -140557,6 +140782,7 @@
       }
     },
     "Links coincide into /usr/local/bin, or ~/.local/bin when that isn’t writable. Agents Coincide starts already have it." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -255314,16 +255540,16 @@
             "value" : "Страница спрашивает"
           }
         },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Сторінка запитує"
-          }
-        },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Sayfa soruyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сторінка запитує"
           }
         },
         "vi" : {
@@ -255650,16 +255876,16 @@
             "value" : "На странице открыто диалоговое окно. Сначала ответьте командой dialog."
           }
         },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "На сторінці відкрито діалогове вікно. Спочатку дайте відповідь командою dialog."
-          }
-        },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Sayfa bir iletişim kutusu gösteriyor. Önce dialog ile yanıtlayın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "На сторінці відкрито діалогове вікно. Спочатку дайте відповідь командою dialog."
           }
         },
         "vi" : {
@@ -255762,16 +255988,16 @@
             "value" : "На странице нет открытого диалогового окна."
           }
         },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "На сторінці немає відкритого діалогового вікна."
-          }
-        },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Sayfa bir iletişim kutusu göstermiyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "На сторінці немає відкритого діалогового вікна."
           }
         },
         "vi" : {

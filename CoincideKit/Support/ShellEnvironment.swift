@@ -12,6 +12,7 @@ public final class ShellEnvironment: @unchecked Sendable {
 
     private struct Resolved {
         var environment: [String: String]
+        var terminalPath: String?
         var fromShell: Bool
         var at: Date
     }
@@ -36,6 +37,13 @@ public final class ShellEnvironment: @unchecked Sendable {
     /// when it arrives. Only a call before the first read finishes waits for the login shell.
     public nonisolated func environment() async -> [String: String] {
         await environment(waitingForRefresh: false)
+    }
+
+    /// The login shell's actual PATH, without the extra directories Coincide adds for its agents.
+    /// Terminal installation uses this to avoid reporting a command as available only on Coincide's augmented PATH.
+    public nonisolated func terminalSearchPath() async -> String? {
+        _ = await environment()
+        return lock.withLock { cached?.terminalPath }
     }
 
     /// Like `environment()`, but when the environment is due to be read again, waits for the new one.
@@ -67,7 +75,7 @@ public final class ShellEnvironment: @unchecked Sendable {
         let resolve = resolve
         let task = Task.detached { [self] () -> Resolved in
             let shell = await resolve()
-            let resolved = Resolved(environment: Self.merged(shell: shell), fromShell: shell != nil, at: Date())
+            let resolved = Resolved(environment: Self.merged(shell: shell), terminalPath: shell?["PATH"], fromShell: shell != nil, at: Date())
             lock.withLock {
                 cached = resolved
                 cachedIsStale = false
