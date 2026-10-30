@@ -44,6 +44,9 @@ while [ -z "$slot" ]; do
 done
 cleanup() {
     rmdir "${TMPDIR:-/tmp}/coincide-local-ci-slot-$slot" 2>/dev/null || true
+    # The test build registers with Launch Services, which could then pick it to open a notification click.
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u \
+        "${derived:-}/Build/Products/Debug/Coincide.app" 2>/dev/null || true
     if [ -n "$pr" ]; then git -C "$root" worktree remove --force "$work"; fi
 }
 trap cleanup EXIT

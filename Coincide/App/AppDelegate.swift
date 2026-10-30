@@ -4,6 +4,8 @@ import CoincideKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var mainWindow: MainWindowController?
     private var mainMenu: MainMenu?
+    /// Another Coincide was already running at launch, so this copy hands over to it and quits (`SecondInstance`).
+    private var isHandingOff = false
 
     /// Whether the app hosts the unit tests (CoincideTests). It then stays in the background: no windows,
     /// no menu bar, no Dock icon, never active, and nothing started, so a test run never takes over the screen.
@@ -22,6 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.setActivationPolicy(.prohibited)
             return
         }
+        if SecondInstance.handOffIfAnotherIsRunning() {
+            isHandingOff = true
+            return
+        }
         // Keep window state across quits even with "Close windows when quitting an app" on, so the window reopens on
         // the desktop it was on (a restart for an update included).
         UserDefaults.standard.set(true, forKey: "NSQuitAlwaysKeepsWindows")
@@ -37,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        guard !Self.isHostingTests else { return }
+        guard !Self.isHostingTests, !isHandingOff else { return }
         ThemeController.shared.start()
         AppearanceController.shared.start()
         SettingsWindowController.shared.startHandlingRequests()
@@ -74,7 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Asks first while agents work or terminal commands run, as Terminal does for running processes.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !Self.isHostingTests else { return .terminateNow }
+        guard !Self.isHostingTests, !isHandingOff else { return .terminateNow }
         // Agents in the background agent host keep working after Coincide quits.
         let agents = ThreadRunner.shared.runningInAppThreadIDs.count
         let jobs = TerminalSessionManager.shared.busySessionCount
@@ -100,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        guard !Self.isHostingTests else { return }
+        guard !Self.isHostingTests, !isHandingOff else { return }
         ScheduledTasks.shared.stop()
         RemoteServer.shared.stop()
         PreviewSessions.shared.stop()
@@ -116,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard !Self.isHostingTests else { return false }
+        guard !Self.isHostingTests, !isHandingOff else { return false }
         if !flag { mainWindow?.showWindow(nil) }
         return true
     }

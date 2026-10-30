@@ -132,12 +132,23 @@ public nonisolated enum BrowserCatalog {
             switch definition.engine {
             case .chromium:
                 let root = support.appendingPathComponent(definition.supportPath, isDirectory: true)
+                // Chrome turns on macOS's protection of its data folder, which only Full Disk Access gets past.
+                if isDenied(root) {
+                    result.append(Detected(definition: definition, appURL: app, profiles: [],
+                        status: .needsFullDiskAccess, kinds: [.cookies, .history, .bookmarks]))
+                    continue
+                }
                 let profiles = chromiumProfiles(in: root)
                 guard app != nil || !profiles.isEmpty else { continue }
                 result.append(Detected(definition: definition, appURL: app, profiles: profiles,
                     status: .available, kinds: [.cookies, .history, .bookmarks]))
             case .firefox:
                 let root = support.appendingPathComponent(definition.supportPath, isDirectory: true)
+                if isDenied(root) {
+                    result.append(Detected(definition: definition, appURL: app, profiles: [],
+                        status: .needsFullDiskAccess, kinds: [.cookies, .history, .bookmarks]))
+                    continue
+                }
                 let profiles = FirefoxProfileReader.profiles(in: root).filter { manager.fileExists(atPath: $0.folder.path) }
                     .map { Profile(name: $0.name, folder: $0.folder) }
                 guard app != nil || !profiles.isEmpty else { continue }
