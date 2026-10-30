@@ -126,6 +126,10 @@ import WebKit
             window.contentViewController = panel
             defer { window.contentViewController = nil }
             let session = try #require(panel.session)
+            // Visibility refresh is deferred until AppKit finishes attaching the hierarchy. Keyboard input arrives
+            // after that attachment in the app; wait for the same state in this offscreen host.
+            try await waitFor { session.webView.window === window }
+            #expect(session.webView.window === window)
             #expect(panel.tabStrip.buttons.count == 1)
             func key(_ characters: String, _ flags: NSEvent.ModifierFlags, code: UInt16) -> NSEvent {
                 NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: window.windowNumber,

@@ -3,6 +3,19 @@ import Testing
 @testable import CoincideKit
 
 @Suite struct PreviewProtocolTests {
+    @Test func panelVisibilityCommandsDoNotTargetPagesOrFrames() throws {
+        #expect(try PreviewCommand(json: ["action": "show"]) == .show)
+        #expect(try PreviewCommand(json: ["action": "hide"]) == .hide)
+        #expect(PreviewCommand.hide.timeout == PreviewCommand.show.timeout)
+        for action in ["show", "hide"] {
+            for target: JSONValue in [["tab": "tab-1"], ["frame": "frame-1"], ["tab": "tab-1", "frame": "frame-1"]] {
+                var json = target.object ?? [:]
+                json["action"] = .string(action)
+                #expect(throws: PreviewError.self) { try PreviewCommand(json: .object(json)) }
+            }
+        }
+    }
+
     @Test func onlyWebAddressesAndBoundedCommandsAreAccepted() throws {
         #expect(PreviewCommand.url("localhost:3000/path")?.absoluteString == "http://localhost:3000/path")
         #expect(PreviewCommand.url("https://example.test/page")?.scheme == "https")
@@ -64,6 +77,20 @@ import Testing
 }
 
 @MainActor @Suite(.serialized) struct PreviewBridgeTests {
+    @Test func runtimeGuidanceExplainsBackgroundControlAndResponsiveSizing() {
+        let access = PreviewBridge.Access(
+            configuration: URL(fileURLWithPath: "/tmp/coincide-guidance/preview.curl"),
+            directory: URL(fileURLWithPath: "/tmp/coincide-guidance"))
+        let instructions = access.instructions
+        #expect(instructions.contains("Reads, screenshots and page interactions work with the panel closed."))
+        #expect(instructions.contains("Normally pages resize to the panel's width and height; closing it keeps the last size."))
+        #expect(instructions.contains("reset true restores normal responsive panel sizing."))
+        #expect(instructions.contains("- show:") && instructions.contains("- hide:") && instructions.contains("- ask-user"))
+        #expect(instructions.contains("then read the page again after done."))
+        #expect(instructions.contains("reports viewport dimensions and panel visibility."))
+        #expect(instructions.contains("use hide only if you opened it for this handoff; leave a panel the user already had open visible."))
+    }
+
     @Test func capabilityIsPrivateThreadScopedAndRevocable() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-preview-test-" + UUID().uuidString)
         let bridge = PreviewBridge(directory: directory)

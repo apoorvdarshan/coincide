@@ -37,6 +37,8 @@ public indirect enum PreviewCommand: Sendable, Equatable {
     case inFrame(String, PreviewCommand)
     /// Opens the browser panel on this thread so the user can see the page.
     case show
+    /// Closes this thread's browser panel; its pages and agent connection keep working.
+    case hide
     /// Shows the user a short "your turn" message with a Done button and waits for them, up to `timeout` seconds.
     case askUser(message: String, timeout: TimeInterval)
     /// Has Coincide sign in on the current page with a saved login (optionally named by `item`), after the user allows
@@ -185,6 +187,7 @@ public indirect enum PreviewCommand: Sendable, Equatable {
                 (320...2560).contains(width), (240...2560).contains(height) else { throw PreviewError.invalidCommand }
             return .viewport(width: Int(width), height: Int(height))
         case "show": return .show
+        case "hide": return .hide
         case "fill-login":
             let item = json["item"]?.string
             guard (item?.utf8.count ?? 0) <= 200 else { throw PreviewError.invalidCommand }

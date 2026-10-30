@@ -170,6 +170,28 @@ struct ThreadRunnerTests {
         #expect(session.steered.last?.message == "Access is now off")
     }
 
+    @Test(arguments: ProviderKind.allCases)
+    func browserGuidanceReachesEveryProviderWithoutBeingSaved(_ provider: ProviderKind) async throws {
+        let agent = ScriptedProvider(kind: provider)
+        let registry = ProviderRegistry(store: store, providers: [agent])
+        let browserRunner = ThreadRunner(store: store, registry: registry)
+        store.updateSettings { $0.generatesThreadTitles = false }
+        select(provider)
+        let access = PreviewBridge.Access(
+            configuration: store.directory.appendingPathComponent("preview.curl"), directory: store.directory)
+        let guidance = access.instructions
+        browserRunner.ephemeralRuntimeContext = { id in id == threadID ? guidance : nil }
+        agent.configure = { session in
+            session.onSend = { session, _ in session.emit(.turnCompleted(.completed)) }
+        }
+        await browserRunner.send(threadID: threadID, text: "Inspect the page in the background")
+        let input = try #require(agent.last?.sent.last)
+        #expect(input.message.contains(guidance))
+        #expect(input.text.contains(guidance))
+        #expect(items.last(where: { $0.kind == .user })?.text == "Inspect the page in the background")
+        #expect(!items.contains { $0.text.contains("<coincide_browser>") })
+    }
+
     @Test func aNativeGeneratedImageBecomesOneDurableInlineAttachment() async throws {
         select(.codex)
         let source = store.directory.appendingPathComponent("generated-source.png")
