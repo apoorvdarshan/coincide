@@ -64,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Settings › Usage may read sites the user turned on with their sign-in in the shared browser profile.
         BrowserUsageBridge.connect()
         AppUpdates.shared.start()
-        // ⌘W deletes the open thread in the main window; elsewhere it still closes the window.
+        // ⌘W archives the open thread in the main window; elsewhere it still closes the window.
         CloseShortcut.start { [weak self] in self?.mainWindow?.window }
         // Hold ⌘Q to quit (Settings › General). Quitting any other way is never held up.
         QuitShortcut.shared.start { [weak self] in self?.mainWindow?.window }

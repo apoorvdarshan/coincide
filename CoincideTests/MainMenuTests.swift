@@ -113,8 +113,9 @@ struct MainMenuTests {
             "Thread › Access…": "⇧⌘A", "Thread › Previous Thread": "⇧⌘[", "Thread › Next Thread": "⇧⌘]",
             "Coincide › Settings…": "⌘,", "Edit › Find › Search Threads": "⌥⌘F", "Edit › Find › Find…": "⌘F",
             "Edit › Add Selection to Composer": "⌘L",
-            // ⌘W deletes the open thread, after asking; the window closes with ⌘⇧W.
-            "Thread › Delete Thread…": "⌘W", "File › Close Window": "⇧⌘W", "Coincide › Quit Coincide": "⌘Q",
+            // ⌘W archives the open thread; the window closes with ⌘⇧W, and deleting has no shortcut.
+            "Thread › Archive Thread": "⌘W", "Thread › Delete Thread…": "", "File › Close Window": "⇧⌘W",
+            "View › Archived Threads…": "⌥⌘A", "Coincide › Quit Coincide": "⌘Q",
         ]
         for (title, keys) in expected {
             #expect(byTitle[title] == keys, "\(title)")

@@ -312,6 +312,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func showScheduledTasks(_ sender: Any?) { ScheduledTasksWindowController.shared.show() }
 
+    /// View › Archived Threads…: Settings › Archive.
+    @objc func showArchive(_ sender: Any?) { SettingsWindowController.shared.show(section: .archive) }
+
     @objc func togglePreviewPanel(_ sender: Any?) {
         showWindow(nil)
         splitController.togglePreviewPanel()
@@ -454,10 +457,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         ThreadActions.toggleArchived(id)
     }
 
-    /// Always asks first, even with confirmation turned off: its shortcut is ⌘W.
     @objc func deleteThread(_ sender: Any?) {
         guard let id = selectedThreadID else { return }
-        ThreadActions.delete(id, in: window, alwaysConfirm: true)
+        ThreadActions.delete(id, in: window)
     }
 
     @objc func copyThreadPath(_ sender: Any?) {

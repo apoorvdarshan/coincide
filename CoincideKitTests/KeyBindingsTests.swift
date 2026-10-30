@@ -149,7 +149,7 @@ struct KeyShortcutMenuTests {
 struct KeyCommandTests {
     @Test func defaultsAreUsableDistinctAndFreeOfMacOSShortcuts() {
         let defaults = KeyCommand.allCases.compactMap(\.defaultShortcut)
-        #expect(defaults.count == 30)
+        #expect(defaults.count == 31)
         #expect(Set(defaults).count == defaults.count)
         #expect(defaults.allSatisfy { $0.isUsableInMenus })
         let reserved = Set(ReservedShortcut.macOS.map(\.shortcut))
@@ -163,17 +163,21 @@ struct KeyCommandTests {
         #expect(KeyCommand.newChat.menu == .file)
     }
 
-    /// ⌘W deletes the open thread (always asking first) instead of closing the main window. A focused terminal keeps
-    /// it for closing its tab, which is not worth a warning.
-    @Test func commandWDeletesTheThread() {
+    /// ⌘W archives the open thread instead of closing the main window; deleting has no shortcut. A focused terminal
+    /// keeps ⌘W for closing its tab, which is not worth a warning. ⌥⌘A opens the archive in Settings.
+    @Test func commandWArchivesTheThread() {
         let commandW = KeyShortcut.builtIn("mod+w")
-        #expect(KeyCommand.deleteThread.defaultShortcut == commandW)
-        #expect(KeyBindings().commands(using: commandW) == [.deleteThread])
+        #expect(KeyCommand.archiveThread.defaultShortcut == commandW)
+        #expect(KeyCommand.deleteThread.defaultShortcut == nil)
+        #expect(KeyBindings().commands(using: commandW) == [.archiveThread])
         let terminal = ReservedShortcut(shortcut: commandW, title: "Close terminal", owner: .focusedView("terminal"))
-        #expect(KeyBindings().conflicts(for: .deleteThread, reserved: ReservedShortcut.macOS + [terminal]) == [.reserved(terminal)])
+        #expect(KeyBindings().conflicts(for: .archiveThread, reserved: ReservedShortcut.macOS + [terminal]) == [.reserved(terminal)])
         #expect(KeyBindings().commandsWithConflicts(reserved: ReservedShortcut.macOS + [terminal]).isEmpty)
         // Removing the shortcut leaves ⌘W to nothing in the main window.
-        #expect(KeyBindings(overrides: ["thread.delete": ""]).commands(using: commandW).isEmpty)
+        #expect(KeyBindings(overrides: ["thread.archive": ""]).commands(using: commandW).isEmpty)
+        #expect(KeyCommand.showArchive.defaultShortcut == .builtIn("mod+alt+a"))
+        #expect(KeyCommand.showArchive.menu == .view)
+        #expect(KeyBindings().commands(using: .builtIn("mod+alt+a")) == [.showArchive])
     }
 
     @Test func defaultsMatchT3WhereT3HasTheCommand() {

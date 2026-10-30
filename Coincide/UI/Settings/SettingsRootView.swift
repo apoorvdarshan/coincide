@@ -38,6 +38,7 @@ struct SettingsRootView: View {
         case .section(.models): ModelsSettingsView(model: model)
         case .section(.usage): UsageSettingsView()
         case .section(.instructions): InstructionsSettingsView()
+        case .section(.archive): ArchiveSettingsView()
         case .section(.keyboard): KeyboardSettingsView(model: model)
         case .section(.browser): BrowserSettingsView()
         case .section(.about): AboutSettingsView()
@@ -66,6 +67,7 @@ private struct SettingsSidebar: View {
                     row(.models)
                     row(.usage)
                     row(.instructions)
+                    row(.archive)
                     row(.keyboard)
                     row(.browser)
                 }
@@ -137,6 +139,7 @@ extension SettingsSection {
         case .models: .purple
         case .usage: .green
         case .instructions: .teal
+        case .archive: .brown
         case .keyboard: Color(nsColor: .darkGray)
         case .browser: .cyan
         case .about: .blue
@@ -296,6 +299,9 @@ struct SettingsSearchResults: View {
             SettingsSearchEntry(
                 title: String(localized: "Instructions"), pane: .section(.instructions),
                 keywords: ["AGENTS.md", "CLAUDE.md", "GEMINI.md", String(localized: "Rules"), String(localized: "Memory")]),
+            SettingsSearchEntry(
+                title: String(localized: "Archive"), pane: .section(.archive),
+                keywords: [String(localized: "Archived threads"), String(localized: "Unarchive"), String(localized: "Delete All")]),
             SettingsSearchEntry(
                 title: String(localized: "Keyboard shortcuts"), pane: .section(.keyboard),
                 keywords: [String(localized: "Keybindings"), String(localized: "Hotkeys")]),
