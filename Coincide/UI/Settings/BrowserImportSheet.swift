@@ -18,7 +18,12 @@ final class BrowserImportModel {
     let sources: [BrowserCatalog.Detected]
     var sourceID: String? { didSet { if sourceID != oldValue { profileID = source?.profiles.first?.id } } }
     var profileID: String?
-    var kinds: Set<BrowserImportKind> = [.cookies, .history, .bookmarks]
+    /// Cookies alone until the user picks otherwise; their last choice is kept for next time.
+    var kinds: Set<BrowserImportKind> = BrowserImportModel.savedKinds {
+        didSet { UserDefaults.standard.set(kinds.map(\.rawValue).sorted(), forKey: Self.kindsKey) }
+    }
+    /// Bundle identifiers of the browsers running now, kept current while the sheet is open.
+    var runningBundleIDs: Set<String> = BrowserImportModel.currentlyRunning()
     var phase = Phase.choose
     var selectedSites: Set<String> = []
     var siteFilter = ""
@@ -33,6 +38,28 @@ final class BrowserImportModel {
         sources = BrowserCatalog.detect(home: home, appURL: appURL)
         sourceID = sources.first { $0.status == .available }?.id
         profileID = source?.profiles.first?.id
+    }
+
+    func refreshRunning() { runningBundleIDs = Self.currentlyRunning() }
+
+    private static let kindsKey = "browserImport.kinds"
+
+    private static var savedKinds: Set<BrowserImportKind> {
+        let saved = Set((UserDefaults.standard.stringArray(forKey: kindsKey) ?? []).compactMap(BrowserImportKind.init(rawValue:)))
+        return saved.isEmpty ? [.cookies] : saved
+    }
+
+    static func currentlyRunning() -> Set<String> {
+        Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+    }
+
+    /// Chromium browsers hold new cookies in memory and save them about every 30 seconds, so while one is open the
+    /// newest sign-ins may not be on disk yet. Other browsers' data reads fine while they run.
+    var openBrowserNeedingQuit: BrowserCatalog.Detected? {
+        guard let source, kinds.contains(.cookies), case .chromium = source.definition.engine,
+            source.definition.bundleIDs.contains(where: runningBundleIDs.contains)
+        else { return nil }
+        return source
     }
 
     var source: BrowserCatalog.Detected? { sources.first { $0.id == sourceID } }
@@ -106,6 +133,12 @@ struct BrowserImportSheet: View {
         .toggleStyle(ThemedSwitchToggleStyle())
         .buttonStyle(ThemedButtonStyle())
         .tint(Color(nsColor: Theme.ink))
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didLaunchApplicationNotification)) { _ in
+            model.refreshRunning()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didTerminateApplicationNotification)) { _ in
+            model.refreshRunning()
+        }
     }
 
     // MARK: Choose
@@ -139,6 +172,14 @@ struct BrowserImportSheet: View {
                     kindToggle(.bookmarks, String(localized: "Bookmarks"), source)
                 }
                 explanation(for: source)
+                if let open = model.openBrowserNeedingQuit {
+                    Text(
+                        "\(open.definition.name) is open, and it saves new sign-ins only every half minute. Quit it first so the import includes your latest ones."
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 0)
             HStack {

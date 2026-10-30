@@ -247,6 +247,18 @@ import Testing
         #expect(Set(BrowserCatalog.all.map(\.id)).count == BrowserCatalog.all.count)
     }
 
+    @Test func protectedBrowserFolderAsksForFullDiskAccess() throws {
+        let home = try FixtureFolder()
+        let chrome = home.url.appendingPathComponent("Library/Application Support/Google/Chrome", isDirectory: true)
+        try FileManager.default.createDirectory(at: chrome.appendingPathComponent("Default"), withIntermediateDirectories: true)
+        // A folder macOS won't list stands in for one under its app-data protection.
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: chrome.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: chrome.path) }
+        let detected = try #require(BrowserCatalog.detect(home: home.url, appURL: { _ in nil }).first { $0.id == "chrome" })
+        #expect(detected.status == .needsFullDiskAccess)
+        #expect(detected.profiles.isEmpty)
+    }
+
     @Test func firefoxProfilesStayInsideTheBrowsersFolder() {
         let root = URL(fileURLWithPath: "/tmp/ff-root", isDirectory: true)
         let profiles = FirefoxProfileReader.parseProfiles(

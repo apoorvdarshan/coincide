@@ -31,6 +31,9 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
 
     func start() {
         center.delegate = self
+        // A notification click another copy of Coincide received and passed on (`SecondInstance`).
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(openFromAnotherCopy(_:)), name: SecondInstance.openThread, object: nil)
         let runner = ThreadRunner.shared
         // Keep any handler installed before ours.
         let previousFinished = runner.onTurnFinished
@@ -259,10 +262,19 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
             let threadID = UUID(uuidString: value)
         else { return }
         let opensBrowser = response.notification.request.content.userInfo["opensBrowser"] as? Bool == true
-        await MainActor.run {
-            NSApp.activate()
-            AppEvents.openThread(threadID)
-            if opensBrowser { _ = PreviewSessions.shared.reveal(threadID) }
-        }
+        await MainActor.run { open(threadID, opensBrowser: opensBrowser) }
+    }
+
+    @objc private func openFromAnotherCopy(_ note: Notification) {
+        guard let value = note.userInfo?["threadID"] as? String, let threadID = UUID(uuidString: value),
+            AppStore.shared.summary(threadID) != nil
+        else { return }
+        open(threadID, opensBrowser: note.userInfo?["opensBrowser"] as? Bool == true)
+    }
+
+    private func open(_ threadID: UUID, opensBrowser: Bool) {
+        NSApp.activate()
+        AppEvents.openThread(threadID)
+        if opensBrowser { _ = PreviewSessions.shared.reveal(threadID) }
     }
 }

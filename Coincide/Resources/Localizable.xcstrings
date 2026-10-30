@@ -4557,6 +4557,118 @@
         }
       }
     },
+    "%@ is open, and it saves new sign-ins only every half minute. Quit it first so the import includes your latest ones." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ ist geöffnet und speichert neue Anmeldungen nur alle 30 Sekunden. Beende es zuerst, damit der Import deine neuesten enthält."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ está abierto y solo guarda los inicios de sesión nuevos cada medio minuto. Ciérralo antes para que la importación incluya los más recientes."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ está abierto y solo guarda los inicios de sesión nuevos cada medio minuto. Ciérralo antes para que la importación incluya los más recientes."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ est ouvert et n’enregistre les nouvelles connexions que toutes les 30 secondes. Quittez-le d’abord pour que l’importation inclue les plus récentes."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ खुला है, और यह नए साइन-इन हर आधे मिनट में ही सहेजता है। पहले इसे बंद करें ताकि इम्पोर्ट में आपके सबसे नए साइन-इन शामिल हों।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ sedang terbuka, dan hanya menyimpan login baru setiap setengah menit. Tutup dulu agar impor menyertakan login terbaru Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ è aperto e salva i nuovi accessi solo ogni mezzo minuto. Chiudilo prima, così l’importazione includerà quelli più recenti."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ が開いています。新しいサインインは30秒ごとにしか保存されません。最新のサインインも読み込むには、先に終了してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@이(가) 열려 있으며 새 로그인을 30초마다만 저장합니다. 최신 로그인까지 가져오려면 먼저 종료하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ is geopend en bewaart nieuwe aanmeldingen maar elke halve minuut. Stop het eerst, zodat de import je nieuwste bevat."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ jest otwarta i zapisuje nowe logowania tylko co pół minuty. Najpierw ją zamknij, aby import objął najnowsze."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ está aberto e só salva novos logins a cada meio minuto. Feche-o antes para que a importação inclua os mais recentes."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ открыт и сохраняет новые входы только раз в полминуты. Сначала закройте его, чтобы импорт включил последние."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ açık ve yeni oturum açmaları yalnızca yarım dakikada bir kaydediyor. İçe aktarmanın en yenilerini de alması için önce kapatın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ відкрито, і він зберігає нові входи лише раз на пів хвилини. Спершу закрийте його, щоб імпорт охопив найновіші."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ đang mở và chỉ lưu các lần đăng nhập mới mỗi nửa phút. Hãy thoát nó trước để bản nhập có các lần đăng nhập mới nhất."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 正在运行，它每半分钟才保存一次新的登录。请先退出它，以便导入包含最新的登录。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 正在執行，它每半分鐘才儲存一次新的登入。請先結束它，讓匯入包含最新的登入。"
+          }
+        }
+      }
+    },
     "%@ is running %lld tasks in the background" : {
       "localizations" : {
         "de" : {
