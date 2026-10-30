@@ -60,6 +60,11 @@ enum ClaudeUsageLimits {
         {
             windows.append(window)
         }
+        // Unlike a balance alone, this is Claude explicitly reporting that the turn is using extra usage.
+        if info["isUsingOverage"]?.bool == true, info["overageStatus"]?.string != "rejected",
+            info["overageDisabledReason"]?.string?.trimmedNonEmpty == nil {
+            for index in windows.indices { windows[index].continuesOnCredits = true }
+        }
         return windows
     }
 
@@ -69,10 +74,12 @@ enum ClaudeUsageLimits {
         guard response["rate_limits_available"]?.bool == true, let limits = response["rate_limits"], limits.object != nil
         else { return nil }
         var windows: [UsageLimitWindow] = []
+        let canUseExtraUsage = extraUsageAvailable(limits)
         for bucket in ["five_hour", "seven_day"] {
             guard let value = limits[bucket], let utilization = value["utilization"]?.number, utilization.isFinite,
-                let window = window(bucket, usedPercent: utilization, resetsAt: date(fromISO: value["resets_at"]?.string))
+                var window = window(bucket, usedPercent: utilization, resetsAt: date(fromISO: value["resets_at"]?.string))
             else { continue }
+            window.continuesOnCredits = canUseExtraUsage
             windows.append(window)
         }
         // Per-model weekly limits, as T3 Code reads them: `model_scoped` lists the ones Claude Code shows (its
@@ -167,6 +174,27 @@ enum ClaudeUsageLimits {
             else { return nil }
             return (name, utilization, entry["resets_at"]?.string)
         }
+    }
+
+    /// Explicitly enabled extra usage with budget left (or the provider's uncapped setting). A balance or
+    /// promotional credit bucket alone never enables overage, and an exhausted spend cap cannot be bypassed.
+    private nonisolated static func extraUsageAvailable(_ limits: JSONValue) -> Bool {
+        if let extra = limits["extra_usage"], let enabled = extra["is_enabled"]?.bool {
+            guard enabled, extra["user_disabled"]?.bool != true else { return false }
+            guard let cap = extra["monthly_limit"], !cap.isNull else { return true }
+            guard let limit = cap.number, limit.isFinite, limit > 0 else { return false }
+            if let used = extra["used_credits"]?.number { return used.isFinite && used >= 0 && used < limit }
+            if let percent = extra["utilization"]?.number { return percent.isFinite && percent >= 0 && percent < 100 }
+            return false
+        }
+        guard let spend = limits["spend"], spend["enabled"]?.bool == true else { return false }
+        guard let cap = spend["limit"], !cap.isNull else { return true }
+        guard let used = spend["used"], let usedAmount = used["amount_minor"]?.number,
+            let limitAmount = cap["amount_minor"]?.number, usedAmount.isFinite, limitAmount.isFinite,
+            usedAmount >= 0, limitAmount > usedAmount,
+            let currency = used["currency"]?.string, !currency.isEmpty, currency == cap["currency"]?.string,
+            used["exponent"]?.number == cap["exponent"]?.number else { return false }
+        return true
     }
 
     /// How much of the monthly spend budget is used, when one is on: from the amounts when they are in the same

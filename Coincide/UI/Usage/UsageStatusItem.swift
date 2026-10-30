@@ -3,9 +3,9 @@ import CoincideKit
 import Observation
 import SwiftUI
 
-/// Coincide's menu bar item. By default it shows the logo of the agent used last with the share used of that account's
-/// most used limit; its list and Settings › Usage can pin an account's figure instead, show the closest limit across
-/// all (with a gauge), or add a second figure beside the first (`AppSettings.menuBarUsage`). Clicking it shows the
+/// Coincide's menu bar item. By default it shows the last active agent's credit balance while work continues on
+/// credits, otherwise the share used of that account's most used limit. Its list and Settings › Usage can pin an
+/// account's figure instead, show the closest limit across all (with a gauge), or add a second figure beside the first (`AppSettings.menuBarUsage`). Clicking it shows the
 /// overall usage and each account's windows, credits and figures. It shows the figures Settings › Usage shows
 /// (`UsageInsights`), so opening it reads nothing the page has not, and it lives only while Coincide runs. Settings ›
 /// Usage turns it off.
@@ -155,9 +155,11 @@ final class UsageStatusItem: NSObject {
                 return text
             }
             if let figure = reading.figure {
-                return "\(UsageFormat.title(account)): \(UsageRow.figure(figure, mode: mode, now: now).value)"
+                if figure.left == nil, let text = reading.text { return "\(UsageFormat.title(account)): \(text)" }
+                return "\(UsageFormat.title(account)): \(figure.label): \(UsageRow.figure(figure, mode: .remaining, now: now).value)"
             }
             if let credits = reading.credits { return "\(UsageFormat.title(account)): \(UsageFormat.credits(credits))" }
+            if let text = reading.text { return "\(UsageFormat.title(account)): \(text)" }
             return String(localized: "\(UsageFormat.title(account)): no limits reported")
         }
         guard !parts.isEmpty else { return String(localized: "Coincide usage: no plan limits reported") }

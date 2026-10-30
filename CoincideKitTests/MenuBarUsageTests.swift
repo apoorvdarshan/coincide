@@ -55,6 +55,94 @@ struct MenuBarUsageTests {
         #expect(codex.provider == .codex && codex.window?.id == "primary")
     }
 
+    @Test(arguments: ProviderKind.allCases)
+    func autoShowsTheReportedCreditBalanceWhenThePlanContinuesOnCredits(provider: ProviderKind) throws {
+        var session = window("session", .session, 100)
+        session.continuesOnCredits = true
+        let creditAccount = account(provider, windows: [session, window("weekly", .weekly, 50)],
+            credits: UsageCredits(hasCredits: true, unlimited: false, balance: "1250.5"))
+        let last = LastActiveAgent(provider: provider, accountID: nil, date: now)
+        for mode in [UsageDisplayMode.used, .remaining] {
+            let reading = try #require(MenuBarUsage.reading(for: .lastActive, accounts: [creditAccount], lastActive: last, mode: mode))
+            #expect(reading.provider == provider)
+            #expect(reading.window == nil)
+            #expect(reading.credits?.balance == "1250.5")
+            #expect(reading.text == "Credits: \(1250.5.formatted(.number.precision(.fractionLength(0...2))))")
+        }
+        // Fixed window/most-used choices remain exactly what the user pinned.
+        for metric in [MenuBarUsageMetric.window("session"), .mostUsed] {
+            let pinned = try #require(MenuBarUsage.reading(
+                for: .account(provider: provider, accountID: ProviderAccount.defaultID, metric: metric),
+                accounts: [creditAccount], lastActive: last))
+            #expect(pinned.window?.id == "session")
+            #expect(pinned.credits == nil)
+        }
+    }
+
+    @Test func autoReturnsToThePlanWhenItResetsAndDoesNotGuessThatAvailableCreditsAreInUse() throws {
+        var session = window("session", .session, 100)
+        session.continuesOnCredits = true
+        let codex = account(.codex, windows: [session, window("weekly", .weekly, 50)],
+            credits: UsageCredits(hasCredits: true, unlimited: false, balance: "1250.5"))
+        let last = LastActiveAgent(provider: .codex, accountID: nil, date: now)
+        #expect(MenuBarUsage.reading(for: .lastActive, accounts: [codex], lastActive: last, now: now.addingTimeInterval(3_601))?.credits == nil)
+        #expect(MenuBarUsage.reading(for: .lastActive, accounts: [codex], lastActive: last, now: now.addingTimeInterval(3_601))?.window != nil)
+        let available = account(.codex, windows: [window("session", .session, 95)],
+            credits: UsageCredits(hasCredits: true, unlimited: false, balance: "1250.5"))
+        #expect(MenuBarUsage.reading(for: .lastActive, accounts: [available], lastActive: last)?.window?.usedPercent == 95)
+        let blocked = account(.codex, windows: [session, window("weekly", .weekly, 100)],
+            credits: UsageCredits(hasCredits: true, unlimited: false, balance: "1250.5"))
+        #expect(MenuBarUsage.reading(for: .lastActive, accounts: [blocked], lastActive: last)?.credits == nil)
+        let modelOnly = account(.codex, windows: [window("session", .session, 50)], modelWindows: [session],
+            credits: UsageCredits(hasCredits: true, unlimited: false, balance: "1250.5"))
+        #expect(MenuBarUsage.reading(for: .lastActive, accounts: [modelOnly], lastActive: last)?.credits == nil)
+        let modelBlocked = account(.codex, windows: [session], modelWindows: [window("model", .weekly, 100)],
+            credits: UsageCredits(hasCredits: true, unlimited: false, balance: "1250.5"))
+        #expect(MenuBarUsage.reading(for: .lastActive, accounts: [modelBlocked], lastActive: last)?.credits == nil)
+    }
+
+    @Test func activeCreditModeDoesNotInventUnknownBalancesAndRecognizesReportedFigures() throws {
+        var session = window("session", .session, 100)
+        session.continuesOnCredits = true
+        let last = LastActiveAgent(provider: .codex, accountID: nil, date: now)
+        for balance in [nil, "unknown", "NaN", "infinity"] {
+            let missing = account(.codex, windows: [session], credits: UsageCredits(hasCredits: true, unlimited: false, balance: balance))
+            let reading = try #require(MenuBarUsage.reading(for: .lastActive, accounts: [missing], lastActive: last))
+            #expect(reading.window == nil && reading.credits == nil && reading.figure == nil)
+            #expect(reading.text == "Credits")
+        }
+        let unlimited = account(.codex, windows: [session], credits: UsageCredits(hasCredits: true, unlimited: true))
+        #expect(MenuBarUsage.reading(for: .lastActive, accounts: [unlimited], lastActive: last)?.text == "Unlimited credits")
+        let namedCredits = UsageFigure(id: "balance", label: "Cloud credits", unit: .credits, remaining: 1250.5)
+        let creditFigure = account(.codex, windows: [session], figures: [namedCredits])
+        let creditReading = try #require(MenuBarUsage.reading(for: .lastActive, accounts: [creditFigure], lastActive: last))
+        #expect(creditReading.figure == namedCredits)
+        #expect(creditReading.text == "Cloud credits: \(1250.5.formatted(.number.precision(.fractionLength(0...2))))")
+        let monetary = UsageFigure(id: "extra_usage", label: "Extra usage", unit: .currency("USD"), remaining: 12.4)
+        let moneyFigure = account(.codex, windows: [session], figures: [monetary])
+        let moneyReading = try #require(MenuBarUsage.reading(for: .lastActive, accounts: [moneyFigure], lastActive: last))
+        #expect(moneyReading.figure == monetary)
+        #expect(moneyReading.text == "Extra usage: \(12.4.formatted(.currency(code: "USD").precision(.fractionLength(2))))")
+        let requestQuota = account(.codex, windows: [session], figures: [
+            UsageFigure(id: "requests", label: "Requests", unit: .requests, remaining: 20),
+        ])
+        let unknownBalance = try #require(MenuBarUsage.reading(for: .lastActive, accounts: [requestQuota], lastActive: last))
+        #expect(unknownBalance.window == nil && unknownBalance.credits == nil && unknownBalance.figure == nil)
+        #expect(unknownBalance.text == "Credits")
+    }
+
+    @Test func anActiveUsageDetailDoesNotDependOnTheProviderSessionLanguage() throws {
+        var session = window("session", .session, 100)
+        session.continuesOnCredits = true
+        let extra = UsageFigure(id: "extra_usage", label: "Usage supplémentaire", unit: .currency("EUR"), used: 3, detail: "Sans plafond")
+        let promo = UsageFigure(id: "promo", label: "Cloud credits", unit: .currency("EUR"), limit: 100, remaining: 99)
+        let source = account(.claude, windows: [session], figures: [extra, promo])
+        let reading = try #require(MenuBarUsage.reading(for: .lastActive, accounts: [source],
+            lastActive: LastActiveAgent(provider: .claude, accountID: nil, date: now)))
+        #expect(reading.figure == extra)
+        #expect(reading.text == "Usage supplémentaire · Sans plafond")
+    }
+
     @Test func autoWithAnAccountWithoutWindowsShowsItsBalance() throws {
         let router = try #require(
             MenuBarUsage.reading(for: .lastActive, accounts: accounts, lastActive: LastActiveAgent(provider: .opencode, accountID: "router", date: now)))
