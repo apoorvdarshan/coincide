@@ -1,8 +1,8 @@
 import AppKit
 import CoincideKit
 
-/// ⌘W in Coincide's other windows. In the main window ⌘W is Thread › Delete Thread… (`KeyCommand.deleteThread`) and
-/// File › Close Window is ⌘⇧W, so without this ⌘W in Settings, Instructions or a sheet would reach Delete Thread. When
+/// ⌘W in Coincide's other windows. In the main window ⌘W is Thread › Archive Thread (`KeyCommand.archiveThread`) and
+/// File › Close Window is ⌘⇧W, so without this ⌘W in Settings, Instructions or a sheet would reach Archive Thread. When
 /// the key window is not the main window, ⌘W closes it: a window with a close button closes, and a sheet, alert or
 /// panel without one is dismissed as Escape dismisses it. In the main window ⌘W goes on to the menu bar, where it does
 /// nothing when no thread is open.
@@ -23,7 +23,7 @@ enum CloseShortcut {
     static func handle(_ event: NSEvent, keyWindow: NSWindow?, mainWindow: NSWindow?) -> Bool {
         guard let window = window(toCloseFor: event, keyWindow: keyWindow, mainWindow: mainWindow) else { return false }
         close(window, timestamp: event.timestamp)
-        // Taken even when nothing closed, so the press never falls through to Delete Thread.
+        // Taken even when nothing closed, so the press never falls through to Archive Thread.
         return true
     }
 

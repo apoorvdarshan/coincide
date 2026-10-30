@@ -183,7 +183,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         guard let session else { parkShownWebView(); return }
         let web = session.webView
         guard web !== shownWebView else { return }
-        // Switching tabs keeps focus in the panel, so its shortcuts go on working (⌘W must not fall to Delete Thread).
+        // Switching tabs keeps focus in the panel, so its shortcuts go on working (⌘W must not fall to Archive Thread).
         let hadFocus = shownWebView.map { shown in
             (view.window?.firstResponder as? NSView)?.isDescendant(of: shown) ?? false
         } ?? false
@@ -272,7 +272,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         session.select(tab)
     }
 
-    /// ⌘T, ⌘W and ⌘⇧[ / ⌘⇧] while focus is in the panel. Elsewhere they keep their usual meaning (⌘W deletes the
+    /// ⌘T, ⌘W and ⌘⇧[ / ⌘⇧] while focus is in the panel. Elsewhere they keep their usual meaning (⌘W archives the
     /// thread, as the menu says).
     func handleKey(_ event: NSEvent) -> Bool {
         guard let session, (view as? PreviewPanelView)?.containsFocus == true,

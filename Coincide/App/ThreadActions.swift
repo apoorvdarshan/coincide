@@ -113,8 +113,8 @@ enum ThreadActions {
     }
 
     /// Deletion is undoable for the current app session. Running work still needs confirmation, and `alwaysConfirm`
-    /// asks even when the user turned confirmation off: Thread › Delete Thread… does, as its shortcut is ⌘W, which is
-    /// easily pressed meaning to close a window.
+    /// asks even when the user turned confirmation off: Settings › Archive's Delete All does, as it deletes many
+    /// threads at once.
     static func delete(_ threadID: UUID, in window: NSWindow?, alwaysConfirm: Bool = false) {
         delete([threadID], in: window, alwaysConfirm: alwaysConfirm)
     }

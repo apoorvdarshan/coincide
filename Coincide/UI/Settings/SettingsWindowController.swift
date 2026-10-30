@@ -9,6 +9,7 @@ nonisolated enum SettingsSection: String, CaseIterable, Sendable {
     case models
     case usage
     case instructions
+    case archive
     case keyboard
     case browser
     case about
@@ -20,6 +21,7 @@ nonisolated enum SettingsSection: String, CaseIterable, Sendable {
         case .models: String(localized: "Models")
         case .usage: String(localized: "Usage")
         case .instructions: String(localized: "Instructions")
+        case .archive: String(localized: "Archive")
         case .keyboard: String(localized: "Keyboard")
         case .browser: String(localized: "Browser")
         case .about: String(localized: "About")
@@ -33,6 +35,7 @@ nonisolated enum SettingsSection: String, CaseIterable, Sendable {
         case .models: "cube.fill"
         case .usage: "chart.bar.fill"
         case .instructions: "text.book.closed.fill"
+        case .archive: "archivebox.fill"
         case .keyboard: "keyboard.fill"
         case .browser: "globe"
         case .about: "info"

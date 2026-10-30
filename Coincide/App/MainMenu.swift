@@ -81,7 +81,7 @@ final class MainMenu: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Edit Instructions…"), #selector(MainWindowController.editInstructions(_:))))
         menu.addItem(.separator())
-        // ⌘W is Thread › Delete Thread… in the main window (`KeyCommand.deleteThread`); other windows still close with
+        // ⌘W is Thread › Archive Thread in the main window (`KeyCommand.archiveThread`); other windows still close with
         // it (`CloseShortcut`).
         menu.addItem(standard(String(localized: "Close Window"), #selector(NSWindow.performClose(_:)), "w", [.command, .shift]))
         return menu
@@ -174,6 +174,7 @@ final class MainMenu: NSObject, NSMenuDelegate {
         menu.addItem(item(String(localized: "Scheduled Tasks…"), #selector(MainWindowController.showScheduledTasks(_:))))
         menu.addItem(item(String(localized: "Show Browser Preview"), #selector(MainWindowController.togglePreviewPanel(_:))))
         menu.addItem(item(String(localized: "Show Pull Requests"), #selector(MainWindowController.togglePullRequestsPanel(_:))))
+        menu.addItem(item(String(localized: "Archived Threads…"), #selector(AppDelegate.showArchive(_:)), .showArchive))
         menu.addItem(.separator())
         menu.addItem(
             item(String(localized: "Command Palette…"), #selector(MainWindowController.showCommandPalette(_:)), .commandPalette))

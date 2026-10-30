@@ -655,6 +655,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
     case archiveThread = "thread.archive"
     case copyThreadPath = "thread.copyPath"
     case deleteThread = "thread.delete"
+    case showArchive = "archive.show"
 
     /// The menu bar menu a command is in.
     public enum Menu: Sendable, CaseIterable {
@@ -691,7 +692,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
         case .newThread, .newChat, .addProject, .openInEditor, .revealInFinder: .file
         case .addToComposer, .searchThreads: .edit
         case .toggleSidebar, .toggleTerminal, .toggleDiff, .commandPalette, .increaseFontSize, .decreaseFontSize,
-            .resetFontSize:
+            .resetFontSize, .showArchive:
             .view
         default: .thread
         }
@@ -728,6 +729,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
         case .archiveThread: return String(localized: "Archive or Unarchive Thread")
         case .copyThreadPath: return String(localized: "Copy Path")
         case .deleteThread: return String(localized: "Delete Thread…")
+        case .showArchive: return String(localized: "Archived Threads…")
         default: return rawValue
         }
     }
@@ -744,8 +746,9 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
             .increaseFontSize: "mod++", .decreaseFontSize: "mod+-", .resetFontSize: "mod+0", .stopTurn: "mod+.",
             .previousThread: "mod+shift+[", .nextThread: "mod+shift+]", .chooseModel: "mod+shift+m",
             .reasoningEffort: "mod+shift+e", .accessMode: "mod+shift+a", .pinThread: "mod+shift+p",
-            // Always asks first. File › Close Window moves to ⌘⇧W, and other windows still close with ⌘W.
-            .deleteThread: "mod+w",
+            // ⌘W puts the open thread away in the archive, where it can be brought back. File › Close Window moves to ⌘⇧W,
+            // and other windows still close with ⌘W.
+            .archiveThread: "mod+w", .showArchive: "mod+alt+a",
         ]
         for index in 1...9 {
             if let command = jumpToThread(index) { defaults[command] = "mod+\(index)" }

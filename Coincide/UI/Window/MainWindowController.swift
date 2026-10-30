@@ -454,10 +454,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         ThreadActions.toggleArchived(id)
     }
 
-    /// Always asks first, even with confirmation turned off: its shortcut is ⌘W.
     @objc func deleteThread(_ sender: Any?) {
         guard let id = selectedThreadID else { return }
-        ThreadActions.delete(id, in: window, alwaysConfirm: true)
+        ThreadActions.delete(id, in: window)
     }
 
     @objc func copyThreadPath(_ sender: Any?) {
