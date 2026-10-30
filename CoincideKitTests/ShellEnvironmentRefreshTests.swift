@@ -38,6 +38,14 @@ struct ShellEnvironmentRefreshTests {
         #expect(reads.count == 2)
     }
 
+    @Test func terminalPathDoesNotIncludeAgentOnlyDirectories() async {
+        let shell = ShellEnvironment { ["PATH": "/terminal/bin:/usr/bin"] }
+        #expect(await shell.terminalSearchPath() == "/terminal/bin:/usr/bin")
+        #expect(await shell.environment()["PATH"]?.contains(".local/bin") == true)
+        let unavailable = ShellEnvironment { nil }
+        #expect(await unavailable.terminalSearchPath() == nil)
+    }
+
     @Test func onlyAnOldEnvironmentIsReadAgain() async throws {
         let reads = Reads()
         let shell = ShellEnvironment {
