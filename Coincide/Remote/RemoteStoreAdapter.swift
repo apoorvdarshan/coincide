@@ -499,16 +499,7 @@ final class RemoteStoreAdapter {
                 }
                 modelID = first.modelID
             }
-            var next = ModelSelection(provider: provider, modelID: modelID, accountID: accountID)
-            // As the composer's `select`: effort and speed carry over when the new model has them.
-            let model = registry.model(for: next)
-            if let effort = selection.effort, model?.efforts.contains(effort) == true {
-                next.effort = effort
-            } else {
-                next.effort = model?.defaultEffort
-            }
-            next.speed = model?.speed(selection.speed)?.id
-            selection = next
+            selection = ModelSelection(provider: provider, modelID: modelID, accountID: accountID)
         }
         let model = registry.model(for: selection)
         if let effort = request.effort {
@@ -535,14 +526,22 @@ final class RemoteStoreAdapter {
             guard let mode = InteractionMode(rawValue: raw) else { throw RemoteError(.badRequest, "Unknown mode.") }
             return mode
         }
-        let finalSelection = selection
-        guard finalSelection != summary.selection || (access != nil && access != summary.accessMode)
-            || (interaction != nil && interaction != summary.interactionMode)
+        // Resolve on a copy after validating the whole request, so a rejected request cannot alter its history.
+        guard var next = store.thread(request.threadID) else { return }
+        if request.provider != nil || request.modelID != nil || request.accountID != nil || request.effort != nil || request.speed != nil {
+            next.selectModel(
+                selection, option: model, rememberingEffort: request.effort != nil, rememberingSpeed: request.speed != nil)
+        }
+        if let access { next.accessMode = access }
+        if let interaction { next.interactionMode = interaction }
+        guard next.selection != summary.selection || next.modelPreferences != store.thread(request.threadID)?.modelPreferences
+            || next.accessMode != summary.accessMode || next.interactionMode != summary.interactionMode
         else { return }
         store.updateThread(request.threadID) { thread in
-            thread.selection = finalSelection
-            if let access { thread.accessMode = access }
-            if let interaction { thread.interactionMode = interaction }
+            thread.selection = next.selection
+            thread.modelPreferences = next.modelPreferences
+            thread.accessMode = next.accessMode
+            thread.interactionMode = next.interactionMode
         }
     }
 

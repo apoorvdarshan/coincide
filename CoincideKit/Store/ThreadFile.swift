@@ -79,11 +79,24 @@ struct ThreadFile: Decodable {
         case "draftContext": readsContext(in: container, key, decoded: try? container.decode([MessageContext].self, forKey: key))
         case "selection": readsSelection(container, key)
         case "accountSessions": readsAccountSessions(container, key)
+        case "modelPreferences": readsModelPreferences(container, key)
         case "importedSession":
             container.reads(ImportedSession.self, key)
                 && (try? container.nestedContainer(keyedBy: FileKey.self, forKey: key))?
                     .hasOnly(["provider", "sessionID", "sourcePath", "importedAt"]) == true
         default: false
+        }
+    }
+
+    /// Optional preference fields decode leniently, so check every field before replacing the source file.
+    private nonisolated static func readsModelPreferences(_ container: Container, _ key: FileKey) -> Bool {
+        guard let keyed = try? container.nestedContainer(keyedBy: FileKey.self, forKey: key) else { return false }
+        return keyed.allKeys.allSatisfy { entry in
+            let parts = entry.stringValue.split(separator: "/", maxSplits: 1)
+            guard parts.count == 2, ProviderKind(rawValue: String(parts[0])) != nil,
+                let value = try? keyed.nestedContainer(keyedBy: FileKey.self, forKey: entry), value.hasOnly(["effort", "speed"])
+            else { return false }
+            return value.allKeys.allSatisfy { value.isNull($0) || value.reads(String.self, $0) }
         }
     }
 

@@ -112,12 +112,13 @@ public enum ThreadFork {
             }
             return copy
         }
-        let thread = ChatThread(
+        var thread = ChatThread(
             id: id, projectID: source.projectID, title: title(forkOf: source.title), selection: source.selection,
             accessMode: source.accessMode, interactionMode: source.interactionMode, items: items, sessions: [:],
             isPinned: false, isArchived: false, worktreePath: source.worktreePath, branch: source.branch, draft: nil,
             // A bot's fork is another conversation with the same bot.
             botID: source.botID, followUpBehavior: source.followUpBehavior, createdAt: now)
+        thread.modelPreferences = source.modelPreferences
         let lineage = ThreadLineage(
             parentThreadID: source.id, parentTitle: source.title, parentItemID: slice.last?.id, forkItemID: items.last?.id,
             forkedAt: now)

@@ -1,6 +1,24 @@
 import Foundation
 
 extension AppStore {
+    /// Applies the same per-account reasoning/speed resolution for composer, CLI and Remote controls. Returns
+    /// whether the active selection changed; a memory-only change is still saved without moving new-thread defaults.
+    @discardableResult
+    public func selectModel(
+        _ threadID: UUID, selection: ModelSelection, option: ModelOption?, rememberingEffort: Bool = false,
+        rememberingSpeed: Bool = false
+    ) -> Bool {
+        guard let current = thread(threadID) else { return false }
+        var next = current
+        next.selectModel(selection, option: option, rememberingEffort: rememberingEffort, rememberingSpeed: rememberingSpeed)
+        guard next.selection != current.selection || next.modelPreferences != current.modelPreferences else { return false }
+        updateThread(threadID) {
+            $0.selection = next.selection
+            $0.modelPreferences = next.modelPreferences
+        }
+        return next.selection != current.selection
+    }
+
     /// Makes the thread's agent, account, model, effort, speed and access the default for new threads, once the user
     /// picks one of them in its composer. It is the same default Settings › General shows, so the last choice made in
     /// either place wins.
