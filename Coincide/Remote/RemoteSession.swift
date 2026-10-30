@@ -60,15 +60,34 @@ final class RemoteSession {
     private var lastWorkspace: RemoteWorkspace?
     private var authenticationTimer: Task<Void, Never>?
 
+    /// Opens a thread in the Mac's window, for `showThread` on a local session.
+    var onShowThread: ((UUID) -> Void)?
+    /// A session over the Mac's own command-line socket (`LocalControlServer`): trusted from the start, since only the
+    /// same user can connect, and allowed `showThread`.
+    let isLocal: Bool
+
     init(transport: RemoteTransport, adapter: RemoteStoreAdapter, pairing: RemotePairing, serverInfo: @escaping () -> RemoteServerInfo) {
         self.transport = transport
         self.adapter = adapter
         self.pairing = pairing
         self.serverInfo = serverInfo
+        isLocal = false
+    }
+
+    /// A local session, authenticated as `deviceID` without pairing.
+    init(localTransport: RemoteTransport, adapter: RemoteStoreAdapter, deviceID: String, serverInfo: @escaping () -> RemoteServerInfo) {
+        transport = localTransport
+        self.adapter = adapter
+        pairing = RemotePairing(storage: MemoryRemoteDeviceStorage())
+        self.serverInfo = serverInfo
+        isLocal = true
+        state = .authenticated(deviceID: deviceID)
+        observation = adapter.observe { [weak self] change in self?.note(change) }
     }
 
     /// Starts the clock for authentication.
     func start() {
+        guard state == .awaitingAuthentication else { return }
         authenticationTimer = Task { [weak self] in
             try? await Task.sleep(for: Self.authenticationTimeout)
             guard let self, !Task.isCancelled, self.state == .awaitingAuthentication else { return }
@@ -241,6 +260,11 @@ final class RemoteSession {
                 respond(id, .usage(adapter.usageLimits()))
             case .presence(let reported):
                 updatePresence(reported)
+                respond(id, .ok)
+            case .showThread(let threadID):
+                guard isLocal else { throw RemoteError(.unsupported, "Unsupported request “showThread”.") }
+                guard adapter.hasThread(threadID) else { throw notFound }
+                onShowThread?(threadID)
                 respond(id, .ok)
             }
         } catch {

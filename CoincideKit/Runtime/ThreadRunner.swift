@@ -138,9 +138,10 @@ public final class ThreadRunner {
     public var onUserInputRequested: ((UUID, UserInputRequest) -> Void)?
     /// Per-thread capabilities valid only for this running app. Never saved as user text or queue metadata.
     public var ephemeralRuntimeContext: ((UUID) -> String?)?
-    /// Variables added to every agent process Coincide starts, read at each launch: the unlocked password managers'
-    /// sessions (`PasswordVault.agentEnvironment`).
-    public var launchEnvironment: (() -> [String: String])?
+    /// Variables added to every agent process Coincide starts, by who adds them, read at each launch: the unlocked
+    /// password managers' sessions (`PasswordVault.agentEnvironment`) and the command-line tool's folder and socket
+    /// (`CommandLineControl`). A `PATH` goes in front of the process's own instead of replacing it.
+    public var launchEnvironments: [String: (UUID) -> [String: String]] = [:]
 
     private func runtimeMessage(_ message: String, threadID: UUID) -> String {
         guard let context = ephemeralRuntimeContext?(threadID), !context.isEmpty else { return message }
@@ -762,7 +763,15 @@ public final class ThreadRunner {
         guard let factory = registry.provider(provider, account: account) else { throw AgentError.notInstalled(provider) }
         guard let executable = await registry.executable(for: provider) else { throw AgentError.notInstalled(provider) }
         var environment = await registry.environment(for: provider, account: account)
-        for (key, value) in launchEnvironment?() ?? [:] { environment[key] = value }
+        for key in launchEnvironments.keys.sorted() {
+            for (name, value) in launchEnvironments[key]?(threadID) ?? [:] {
+                if name == "PATH", let path = environment["PATH"], !path.isEmpty {
+                    environment[name] = value + ":" + path
+                } else {
+                    environment[name] = value
+                }
+            }
+        }
         // Another send may have started (or finished starting) the session while this one waited.
         if let existing = sessions[threadID]?[provider] { return existing }
         if let launch = launches[threadID]?[provider] { return try await join(launch, threadID, provider) }

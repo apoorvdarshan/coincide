@@ -141,6 +141,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var confirmBeforeDeletingThreads: Bool
     /// Archiving a thread (⌘W, its archive button, the menus) asks first.
     public var confirmBeforeArchivingThreads: Bool
+    /// The `coincide` command-line tool may drive Coincide over its local socket (`CommandLineControl`).
+    public var commandLineControl: Bool
     /// ⌘Q quits only when held or pressed twice (`QuitShortcutGuard`); a single press shows a hint. Quitting from the
     /// menu, the Dock, logging out or AppleScript is never held up.
     public var holdToQuit: Bool
@@ -220,6 +222,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showReasoning = true
         confirmBeforeDeletingThreads = true
         confirmBeforeArchivingThreads = true
+        commandLineControl = true
         holdToQuit = true
         opensLinksInDefaultBrowser = false
         generatesThreadTitles = true
@@ -273,6 +276,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showReasoning = value(.showReasoning, defaults.showReasoning)
         confirmBeforeDeletingThreads = value(.confirmBeforeDeletingThreads, defaults.confirmBeforeDeletingThreads)
         confirmBeforeArchivingThreads = value(.confirmBeforeArchivingThreads, defaults.confirmBeforeArchivingThreads)
+        commandLineControl = value(.commandLineControl, defaults.commandLineControl)
         holdToQuit = value(.holdToQuit, defaults.holdToQuit)
         opensLinksInDefaultBrowser = value(.opensLinksInDefaultBrowser, defaults.opensLinksInDefaultBrowser)
         generatesThreadTitles = value(.generatesThreadTitles, defaults.generatesThreadTitles)
