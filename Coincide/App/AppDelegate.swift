@@ -56,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentTurns.shared.start()
         NotificationController.shared.start()
         ProjectScripts.shared.start()
+        // The coincide command-line tool's socket, and the tool on agents' PATH (Settings › General › Command Line).
+        CommandLineControl.shared.start()
         // Keeps the instruction masters' iCloud Drive and Git copies in step.
         InstructionCopySyncer.shared.start()
         ThreadSnooze.shared.start()
@@ -117,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !Self.isHostingTests, !isHandingOff else { return }
         ScheduledTasks.shared.stop()
         RemoteServer.shared.stop()
+        CommandLineControl.shared.stop()
         PreviewSessions.shared.stop()
         ThreadRunner.shared.shutdownAll()
         AgentHostController.shared.prepareToQuit()

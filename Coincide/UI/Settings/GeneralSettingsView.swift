@@ -180,6 +180,13 @@ struct GeneralSettingsView: View {
                 }
 
                 Section {
+                    CommandLineSettingsRows(model: model)
+                        .settingsRevealable(.commandLine, highlighted: highlighted)
+                } header: {
+                    Text("Command Line")
+                }
+
+                Section {
                     HStack {
                         Spacer()
                         Button("Restore Defaults…") { confirmingReset = true }
@@ -256,6 +263,7 @@ struct GeneralSettingsView: View {
         settings.opensLinksInDefaultBrowser = defaults.opensLinksInDefaultBrowser
         settings.confirmBeforeDeletingThreads = defaults.confirmBeforeDeletingThreads
         settings.confirmBeforeArchivingThreads = defaults.confirmBeforeArchivingThreads
+        settings.commandLineControl = defaults.commandLineControl
         settings.holdToQuit = defaults.holdToQuit
         settings.defaultAccessMode = defaults.defaultAccessMode
         settings.notifyWhenInBackground = defaults.notifyWhenInBackground

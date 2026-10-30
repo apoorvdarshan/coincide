@@ -287,6 +287,9 @@ struct SettingsSearchResults: View {
                     String(localized: "Quit"),
                 ]),
             SettingsSearchEntry(
+                title: String(localized: "Command-line control"), pane: general, setting: .commandLine,
+                keywords: ["coincide", String(localized: "Terminal"), String(localized: "Command line"), "CLI", String(localized: "Automation")]),
+            SettingsSearchEntry(
                 title: String(localized: "Coincide Remote"), pane: general, setting: .remote,
                 keywords: [
                     String(localized: "iPhone"), String(localized: "iPad"), String(localized: "Pair"), String(localized: "Tailscale"),
