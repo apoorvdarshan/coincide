@@ -190,6 +190,10 @@ import WebKit
         let embedded = try await perform(.inFrame(frame, .read()))
         #expect(embedded["text"]?.string?.contains("Across origins") == true)
         #expect(!embedded.compactJSON.contains("frame-password"))
+        _ = try await perform(.inFrame(frame, .click("#frameConfirm")))
+        #expect(try await perform(.inFrame(frame, .read()))["dialog"]?["type"]?.string == "confirm")
+        _ = try await perform(.dialog(accept: false, text: nil))
+        #expect(try await perform(.inFrame(frame, .read()))["text"]?.string?.contains("Frame cancelled") == true)
         await #expect(throws: PreviewError.self) { _ = try await perform(.inFrame("frame-missing", .read())) }
 
         _ = try await session.webView.callAsyncJavaScript("console.warn('fixture warning'); setTimeout(() => { throw new Error('fixture script error'); }, 0); Promise.reject('fixture rejection'); return true;",
@@ -346,7 +350,7 @@ import WebKit
                 let route = String(data: request ?? Data(), encoding: .utf8)?.split(separator: " ").dropFirst().first ?? "/"
                 if route == "/download" || route == "/frame" {
                     let download = route == "/download"
-                    let text = download ? "invoice fixture" : #"<title>Embedded fixture</title><input id="inside"><input type="password" value="frame-password"><button id="frameApply" onclick="document.getElementById('out').textContent=document.getElementById('inside').value">Apply</button><p id="out">Frame ready</p>"#
+                    let text = download ? "invoice fixture" : #"<title>Embedded fixture</title><input id="inside"><input type="password" value="frame-password"><button id="frameApply" onclick="document.getElementById('out').textContent=document.getElementById('inside').value">Apply</button><button id="frameConfirm" onclick="document.getElementById('out').textContent=confirm('Inside frame?')?'Frame accepted':'Frame cancelled'">Confirm</button><p id="out">Frame ready</p>"#
                     let body = Data(text.utf8)
                     let type = download ? "application/octet-stream" : "text/html; charset=utf-8"
                     let disposition = download ? "Content-Disposition: attachment; filename=invoice.txt\r\n" : ""
