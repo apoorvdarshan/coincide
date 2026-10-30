@@ -138,12 +138,12 @@ final class PreviewTabButton: NSView {
         NSLayoutConstraint.activate([
             widthConstraint,
             heightAnchor.constraint(equalToConstant: 26),
-            close.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             close.centerYAnchor.constraint(equalTo: centerYAnchor),
             close.widthAnchor.constraint(equalToConstant: 16),
             close.heightAnchor.constraint(equalToConstant: 16),
-            title.leadingAnchor.constraint(equalTo: close.trailingAnchor, constant: 4),
-            title.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            title.trailingAnchor.constraint(equalTo: close.leadingAnchor, constant: -4),
             title.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         setAccessibilityElement(true)
