@@ -39,6 +39,19 @@ T3 Code is an Electron app with a Node server behind a web UI. Coincide is built
 - Notifications when a turn finishes or needs you while Coincide is in the background. With Coincide Remote in use and the Mac idle, they go to the iPhone or iPad instead, never to both, and seeing a thread anywhere clears them everywhere. Optional lock-screen alerts reach a locked phone through your own iCloud account, in Mac builds signed for iCloud (see `Signing.xcconfig`).
 - **19 languages:** English, Chinese (Simplified and Traditional), Dutch, French, German, Hindi, Indonesian, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Spanish (Spain and Latin America), Turkish, Ukrainian and Vietnamese. The translations are machine-made and marked for review; corrections are welcome.
 
+### Drive Coincide from an agent or Terminal
+
+The bundled `coincide` tool can list projects, agents and threads; create project threads or projectless chats; send messages; wait for replies; read, stop, approve, answer questions, archive, or open a thread in the window. Every agent Coincide starts gets it on its PATH and can use `this` for its own thread. Run `coincide help` for commands and `--json` for structured output. To use it from Terminal, choose **Settings → General → Install Command Line Tool…**. Command-line control is on by default and can be disabled there. It uses an owner-only local Unix socket, without network access or pairing; processes running as your Mac user can control threads while it is enabled.
+
+```sh
+coincide agents
+coincide new --chat --agent claude --title "Research" "Summarize this topic"
+coincide threads --chats --json
+coincide read THREAD_ID
+```
+
+The browser also supports real key presses, typing into rich editors, page dialogs, history, scrolling, waiting for elements and paged reads. Agents can list embedded frames and operate inside them, including cross-origin frames. Downloads stay in unique folders under `~/Downloads/Coincide`; polling reports completion and the file path, without opening files. Console messages and JavaScript errors stay in a bounded in-memory buffer. Mobile/tablet viewport presets change layout dimensions, and full-page screenshots capture up to 20,000 CSS pixels in height, reporting truncation. These controls are described in the thread's runtime browser instructions; they do not expose an arbitrary JavaScript command.
+
 ### Import earlier CLI conversations
 
 Choose **File → Import CLI Session…** to browse local Claude Code and Codex histories, search by title or folder, and preview a conversation before importing it. **Choose File…** also accepts a specific session JSONL file. Importing never starts an agent; imported threads begin in approval mode. Their provider session IDs allow normal native resume, and switching agents uses Coincide's conversation handoff. Existing sessions open their existing Coincide thread instead of creating duplicates.

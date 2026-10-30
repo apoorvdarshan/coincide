@@ -207,6 +207,22 @@ struct CommandLineControlTests {
         await #expect(throws: ControlError.self) { _ = try await run(["read", "this"], at: fixture.path) }
     }
 
+    @Test func projectlessChatsCanBeCreatedAndRead() async throws {
+        let fixture = try fixture("control-chats")
+        defer { fixture.server.stop() }
+        let started = try await run(["new", "--chat", "--title", "Projectless work", "--json"], at: fixture.path)
+        let raw = try #require(try json(started.output)["threadID"] as? String)
+        let id = try #require(UUID(uuidString: raw))
+        let summary = try #require(fixture.store.summary(id))
+        #expect(fixture.store.project(summary.projectID)?.isChats == true)
+        #expect(summary.title == "Projectless work")
+        let listed = try await run(["threads", "--chats"], at: fixture.path)
+        #expect(listed.output.contains(raw))
+        #expect(try await run(["read", raw], at: fixture.path).output == "No replies yet.")
+        _ = try await run(["archive", raw], at: fixture.path)
+        #expect(fixture.store.summary(id)?.isArchived == true)
+    }
+
     @Test func waitingApprovalsAreReportedAndAnswered() async throws {
         let fixture = try fixture("control-approvals")
         defer { fixture.server.stop() }

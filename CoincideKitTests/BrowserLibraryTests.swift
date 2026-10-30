@@ -136,19 +136,19 @@ import Testing
         ] {
             #expect(throws: PreviewError.self) { try PreviewCommand(json: json) }
         }
-        #expect(PreviewCommand.read.timeout == 30)
+        #expect(PreviewCommand.read().timeout == 30)
     }
 }
 
 @MainActor @Suite(.serialized) struct PreviewBridgeTimingTests {
     @Test func slowCommandsTimeOutAndLateResultsAreDropped() async throws {
         await #expect(throws: PreviewError.self) {
-            _ = try await PreviewBridge.run(.read, within: 0.1) {
+            _ = try await PreviewBridge.run(.read(), within: 0.1) {
                 try await Task.sleep(for: .seconds(5))
                 return ["late": true]
             }
         }
-        let fast = try await PreviewBridge.run(.read, within: 5) { ["ok": true] }
+        let fast = try await PreviewBridge.run(.read(), within: 5) { ["ok": true] }
         #expect(fast["ok"]?.bool == true)
     }
 

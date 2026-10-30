@@ -7,7 +7,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     /// Replaced by tests before the view loads.
     var sessions = PreviewSessions.shared
     private(set) var session: PreviewSession?
-    private let content = NSView()
+    private let content = PreviewPageContainer()
     private let address = ThemedTextField(placeholder: String(localized: "Search or enter address"))
     private let status = NSTextField(labelWithString: "")
     private let agentStatus = NSTextField(labelWithString: "")
@@ -18,6 +18,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     let approvalBanner = PreviewLoginApprovalBanner()
     let saveBanner = PreviewSaveLoginBanner()
     let passkeyBanner = PreviewPasskeyBanner()
+    let dialogBanner = PreviewDialogBanner()
     /// The banners between the status line and the page; hidden ones take no room.
     private let banners = NSStackView()
     /// The web view shown, the active tab's.
@@ -76,12 +77,13 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
             session.answerSavePrompt(save: save, never: never, provider: self.sessions.profile.logins, settings: self.sessions.profile.settings)
         }
         passkeyBanner.onDismiss = { [weak self] in self?.session?.dismissPasskeyNotice() }
-        for banner in [approvalBanner, saveBanner, passkeyBanner] as [NSView] { banner.isHidden = true }
+        dialogBanner.onAnswer = { [weak self] accept, text in self?.session?.activeTab.answerDialog(accept: accept, text: text) }
+        for banner in [approvalBanner, saveBanner, passkeyBanner, dialogBanner] as [NSView] { banner.isHidden = true }
         banners.orientation = .vertical
         banners.alignment = .leading
         banners.spacing = 6
         banners.detachesHiddenViews = true
-        for banner in [approvalBanner, userTurnBanner, saveBanner, passkeyBanner] as [NSView] {
+        for banner in [dialogBanner, approvalBanner, userTurnBanner, saveBanner, passkeyBanner] as [NSView] {
             banners.addArrangedSubview(banner)
             banner.widthAnchor.constraint(equalTo: banners.widthAnchor).isActive = true
         }
@@ -189,12 +191,11 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         } ?? false
         parkShownWebView()
         web.removeFromSuperview()
-        web.translatesAutoresizingMaskIntoConstraints = false
+        web.translatesAutoresizingMaskIntoConstraints = true
         content.addSubview(web, positioned: .below, relativeTo: empty)
-        NSLayoutConstraint.activate([
-            web.leadingAnchor.constraint(equalTo: content.leadingAnchor), web.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            web.topAnchor.constraint(equalTo: content.topAnchor), web.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-        ])
+        content.viewportSize = session.activeTab.viewportSize
+        content.needsLayout = true
+        content.layoutSubtreeIfNeeded()
         shownWebView = web
         if hadFocus { view.window?.makeFirstResponder(web) }
         if address.currentEditor() == nil { address.stringValue = web.url?.absoluteString ?? "" }
@@ -202,6 +203,9 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
 
     private func update() {
         showActiveTab()
+        content.viewportSize = session?.activeTab.viewportSize
+        content.needsLayout = true
+        content.layoutSubtreeIfNeeded()
         tabStrip.update((session?.tabs ?? []).map { tab in
             PreviewTabStrip.Tab(id: tab.id, title: tab.title.isEmpty ? (tab.url?.host ?? "") : tab.title,
                 isActive: tab === session?.activeTab, isLoading: tab.isLoading)
@@ -238,7 +242,10 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         saveBanner.isHidden = save == nil
         let passkeyNotice = session?.activePasskeyNotice
         passkeyBanner.isHidden = passkeyNotice == nil
-        let showsBanner = request != nil || approval != nil || save != nil || passkeyNotice != nil
+        let dialog = session?.activeTab.dialog
+        if let dialog { dialogBanner.show(dialog) }
+        dialogBanner.isHidden = dialog == nil
+        let showsBanner = request != nil || approval != nil || save != nil || passkeyNotice != nil || dialog != nil
         contentBelowStatus.isActive = false
         contentBelowBanner.isActive = showsBanner
         contentBelowStatus.isActive = !showsBanner
@@ -442,6 +449,18 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
                 self?.status.stringValue = error.localizedDescription
                 self?.status.textColor = Theme.failure
             }
+        }
+    }
+}
+
+/// A requested CSS viewport keeps its dimensions when the panel resizes. Resetting returns to normal panel sizing.
+private final class PreviewPageContainer: NSView {
+    var viewportSize: NSSize?
+    override var isFlipped: Bool { true }
+    override func layout() {
+        super.layout()
+        for case let page as WKWebView in subviews {
+            page.frame = NSRect(origin: .zero, size: viewportSize ?? bounds.size)
         }
     }
 }

@@ -54,15 +54,17 @@ derived="$HOME/Library/Developer/Xcode/DerivedData/coincide-local-ci"
 [ "$slot" = 1 ] || derived="$derived-$slot"
 
 status=0
-{
+run_checks() {
     echo "== Fuzz sources"
-    Fuzz/fuzz.sh check
-    for fuzzer in $(Fuzz/fuzz.sh list); do (cd Fuzz && swift build -q --target "$fuzzer"); done
+    Fuzz/fuzz.sh check || return $?
+    fuzzers="$(Fuzz/fuzz.sh list)" || return $?
+    for fuzzer in $fuzzers; do (cd Fuzz && swift build -q --target "$fuzzer") || return $?; done
     echo "== Unit tests"
-    xcodegen generate -q
+    xcodegen generate -q || return $?
     xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' \
         -derivedDataPath "$derived" test -collect-test-diagnostics never -quiet
-} >"$log" 2>&1 || status=$?
+}
+run_checks >"$log" 2>&1 || status=$?
 
 if [ "$status" -eq 0 ]; then
     report success "Local CI passed"

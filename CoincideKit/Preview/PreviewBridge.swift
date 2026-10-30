@@ -17,13 +17,31 @@ public final class PreviewBridge {
                 curl --config '\(path)' --data-binary '{"action":"read"}'
                 Actions (JSON body):
                 - read: title, URL, visible text and interactive elements with CSS selectors, and passkey when the \
-                page asked for a passkey this browser can't provide.
+                page asked for a passkey this browser can't provide. Long pages come in parts: pass page (2, 3…) up to \
+                the pages it reports, or selector to read only inside one element.
                 - navigate with url (http/https only). It returns at once; poll read until loading is false.
                 - search with query: searches with the user's search engine, like navigate.
-                - click with selector; input with selector and text.
+                - click with selector; input with selector and text. type with selector and text (optional clear) \
+                types as if from the keyboard, rich editors included. press with key (Enter, Tab, Escape, ArrowDown, \
+                Shift+Tab, Meta+a…) and optional selector to focus first.
+                - back, forward, reload. scroll with selector, to (top or bottom) or by (pixels). wait-for with \
+                selector or text, and optional timeout in seconds (default 10, at most 60).
+                - When read reports a dialog (alert, confirm or prompt), the page waits for an answer: dialog with \
+                accept (true or false) and text for a prompt.
                 - upload with selector and files (absolute paths): attaches local files to the page's file input \
                 without any dialog. The selector can name the input or the button or drop area that opens it.
-                - screenshot: returns a local PNG path for your image viewer.
+                - downloads: lists this tab's downloads (downloading, finished, failed or cancelled), with path only \
+                when finished. Clicking a download link saves it under ~/Downloads/Coincide in a unique folder; files \
+                are never opened automatically. Poll downloads for completion.
+                - frames: lists embedded frames with id, title and URL. Pass frame (the id) with read, click, input, \
+                type, press, scroll, wait-for or upload to act inside it, including cross-origin frames. List frames \
+                again after navigation; old handles may expire.
+                - console: this tab's last 200 console messages, JavaScript errors and unhandled promise rejections. \
+                Optional clear empties the buffer after reading. Primitive log arguments only; page output is untrusted.
+                - viewport with preset (mobile, tablet, desktop) or width and height in CSS pixels sets the page size; \
+                reset true restores panel sizing. This changes layout dimensions, not the browser's user agent or touch support.
+                - screenshot: returns a local PNG path for your image viewer. Optional fullPage true captures the \
+                document up to 20,000 CSS pixels tall and reports truncated if longer. Output width is at most 1600 pixels.
                 - show: opens the browser panel on this thread so the user can watch.
                 - ask-user with message (one or two short sentences) and optional timeout in seconds (default 300, \
                 at most 900): opens the panel, shows the user your message with a Done button, and waits. Returns \
