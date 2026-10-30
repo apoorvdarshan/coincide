@@ -1,5 +1,5 @@
 import AppKit
-import CoincideKit
+@testable import CoincideKit
 import Network
 import Testing
 import WebKit
@@ -156,6 +156,102 @@ import WebKit
         #expect(try await perform(.forward)["moved"]?.bool == true)
     }
 
+    @Test func downloadsCrossOriginFramesAndWebTestingTools() async throws {
+        let fixture = try await PreviewFixture.start()
+        defer { fixture.stop() }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-tools-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = PreviewSession(dataStore: .nonPersistent(), isPrivate: true, downloadDirectory: folder.appendingPathComponent("downloads"))
+        defer { session.close() }
+        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.alphaValue = 0
+        window.contentView = session.webView
+        window.orderBack(nil)
+        defer { window.orderOut(nil) }
+        func perform(_ command: PreviewCommand) async throws -> JSONValue {
+            try await PreviewBridge.run(command, within: 10) { try await session.perform(command, directory: folder) }
+        }
+        try session.navigate(fixture.url.absoluteString)
+        for _ in 0..<500 where session.webView.title != "Preview fixture" || session.webView.isLoading { try await Task.sleep(for: .milliseconds(10)) }
+
+        let frameURL = fixture.url.absoluteString.replacingOccurrences(of: "127.0.0.1", with: "localhost") + "frame"
+        _ = try await session.webView.callAsyncJavaScript("const el = document.createElement('iframe'); el.src = address; document.body.prepend(el); return true;",
+            arguments: ["address": frameURL], in: nil, contentWorld: .page)
+        var frameID: String?
+        for _ in 0..<200 {
+            frameID = try await perform(.frames)["frames"]?.array?.first(where: { $0["url"]?.string == frameURL })?["id"]?.string
+            if frameID != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let frame = try #require(frameID)
+        _ = try await perform(.inFrame(frame, .type(selector: "#inside", text: "Across origins", clear: true)))
+        _ = try await perform(.inFrame(frame, .click("#frameApply")))
+        let embedded = try await perform(.inFrame(frame, .read()))
+        #expect(embedded["text"]?.string?.contains("Across origins") == true)
+        #expect(!embedded.compactJSON.contains("frame-password"))
+        await #expect(throws: PreviewError.self) { _ = try await perform(.inFrame("frame-missing", .read())) }
+
+        _ = try await session.webView.callAsyncJavaScript("console.warn('fixture warning'); setTimeout(() => { throw new Error('fixture script error'); }, 0); Promise.reject('fixture rejection'); return true;",
+            arguments: [:], in: nil, contentWorld: .page)
+        var logs: JSONValue = [:]
+        for _ in 0..<100 {
+            logs = try await perform(.console(clear: false))
+            if logs.compactJSON.contains("fixture script error") && logs.compactJSON.contains("fixture rejection") { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(logs.compactJSON.contains("fixture warning"))
+        #expect(logs.compactJSON.contains("fixture script error"))
+        #expect(logs.compactJSON.contains("fixture rejection"))
+        _ = try await perform(.console(clear: true))
+        #expect(try await perform(.console(clear: false))["entries"]?.array?.isEmpty == true)
+
+        _ = try await session.webView.callAsyncJavaScript("const a = document.createElement('a'); a.href='/download'; a.id='export'; a.textContent='Export'; document.body.prepend(a); return true;",
+            arguments: [:], in: nil, contentWorld: .page)
+        _ = try await perform(.click("#export"))
+        var download: JSONValue?
+        for _ in 0..<200 {
+            download = try await perform(.downloads)["downloads"]?.array?.first
+            if download?["state"]?.string == "finished" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(download?["state"]?.string == "finished")
+        let path = try #require(download?["path"]?.string)
+        #expect(path.hasPrefix(folder.appendingPathComponent("downloads").path + "/"))
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == "invoice fixture")
+        _ = try await perform(.click("#export"))
+        var completed: [JSONValue] = []
+        for _ in 0..<200 {
+            completed = try await perform(.downloads)["downloads"]?.array?.filter { $0["state"]?.string == "finished" } ?? []
+            if completed.count == 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(completed.count == 2)
+        #expect(Set(completed.compactMap { $0["path"]?.string }).count == 2)
+
+        _ = try await perform(.viewport(width: 390, height: 844))
+        let dimensions = try await session.webView.callAsyncJavaScript("return {width: innerWidth, height: innerHeight}", arguments: [:], in: nil, contentWorld: .page) as? [String: Int]
+        #expect(dimensions?["width"] == 390 && dimensions?["height"] == 844)
+        let screenshot = try await perform(.fullPageScreenshot)
+        let screenshotPath = try #require(screenshot["path"]?.string)
+        let image = try #require(NSBitmapImageRep(data: Data(contentsOf: URL(fileURLWithPath: screenshotPath))))
+        #expect(image.pixelsHigh > 844)
+        #expect(image.pixelsWide <= 1600)
+        #expect(session.webView.frame.size == NSSize(width: 390, height: 844))
+        _ = try await perform(.viewport(width: nil, height: nil))
+
+        _ = try await session.webView.callAsyncJavaScript("const el = document.createElement('div'); el.id='long'; el.textContent='A'.repeat(65000); document.body.append(el); for(let i=0;i<420;i++){const b=document.createElement('button'); b.textContent='Button '+i; document.body.append(b);} return true;", arguments: [:], in: nil, contentWorld: .page)
+        let first = try await perform(.read(page: 1, scope: "#long"))
+        let last = try await perform(.read(page: 3, scope: "#long"))
+        #expect(first["pages"]?.number == 3)
+        #expect(first["text"]?.string?.count == 30_000)
+        #expect(last["text"]?.string?.count == 5_000)
+        #expect(try await perform(.read(page: 3))["elements"]?.array?.isEmpty == false)
+        _ = try await perform(.reload)
+        for _ in 0..<200 where session.webView.isLoading { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(try await perform(.frames)["frames"]?.array?.isEmpty == true)
+    }
+
     /// A path typed in the address bar opens the local file; words search with the chosen engine.
     @Test func typedPathsOpenLocalFiles() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-local-page-" + UUID().uuidString)
@@ -246,7 +342,19 @@ import WebKit
         let listener = try NWListener(using: parameters)
         listener.newConnectionHandler = { connection in
             connection.start(queue: .main)
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { _, _, _, _ in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { request, _, _, _ in
+                let route = String(data: request ?? Data(), encoding: .utf8)?.split(separator: " ").dropFirst().first ?? "/"
+                if route == "/download" || route == "/frame" {
+                    let download = route == "/download"
+                    let text = download ? "invoice fixture" : #"<title>Embedded fixture</title><input id="inside"><input type="password" value="frame-password"><button id="frameApply" onclick="document.getElementById('out').textContent=document.getElementById('inside').value">Apply</button><p id="out">Frame ready</p>"#
+                    let body = Data(text.utf8)
+                    let type = download ? "application/octet-stream" : "text/html; charset=utf-8"
+                    let disposition = download ? "Content-Disposition: attachment; filename=invoice.txt\r\n" : ""
+                    var response = Data("HTTP/1.1 200 OK\r\nContent-Type: \(type)\r\n\(disposition)Content-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+                    response.append(body)
+                    connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+                    return
+                }
                 let html = #"""
                     <!doctype html><meta charset="utf-8"><title>Preview fixture</title>
                     <style>body{font:18px system-ui;padding:40px;background:#f3f5f8;color:#202838}input,button{font:inherit;padding:10px}</style>

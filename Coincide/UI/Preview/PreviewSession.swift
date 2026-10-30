@@ -19,12 +19,15 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
     fileprivate var dialogWaiters: [UUID: (JSONValue) -> Void] = [:]
     /// The folder a local file the user opened may read from; navigations stay inside it.
     private var fileRoot: URL?
+    var viewportSize: NSSize?
+    let downloads: PreviewDownloads
     var lastUse = Date()
     weak var owner: PreviewSession?
     private var observations: [NSKeyValueObservation] = []
 
     init(id: String, owner: PreviewSession, url: URL?) {
         self.id = id
+        downloads = PreviewDownloads(directory: owner.downloadDirectory)
         self.owner = owner
         savedURL = url
         super.init()
@@ -66,9 +69,11 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     /// Frees the web view, keeping the address and title. Its back/forward history is lost.
     func unload() {
+        _ = answerDialog(accept: false, text: nil)
         guard let webView else { return }
         savedURL = webView.url ?? savedURL
         savedTitle = title
+        owner?.pageTools.reset(webView)
         observations.removeAll()
         webView.stopLoading()
         webView.removeFromSuperview()
@@ -77,6 +82,7 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func close() {
         _ = answerDialog(accept: false, text: nil)
+        downloads.stop()
         unload()
         owner = nil
     }
@@ -128,6 +134,7 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         error = nil
+        owner?.pageTools.reset(webView)
         owner?.tabChanged(self)
     }
 
@@ -156,15 +163,27 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        let scheme = navigationAction.request.url?.scheme
+        let download = navigationAction.shouldPerformDownload
         let allowed = allows(navigationAction.request.url)
-        decisionHandler(allowed ? .allow : .cancel)
+            || (!navigationAction.sourceFrame.isMainFrame && scheme == "about")
+            || (download && scheme == "blob")
+        decisionHandler(allowed ? (download ? .download : .allow) : .cancel)
         if !allowed { error = PreviewError.invalidAddress.localizedDescription; owner?.tabChanged(self) }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
-        let addressAllowed = allows(navigationResponse.response.url)
-        decisionHandler(navigationResponse.canShowMIMEType && addressAllowed ? .allow : .cancel)
+        let addressAllowed = allows(navigationResponse.response.url) || navigationResponse.response.url?.scheme == "blob"
+        decisionHandler(addressAllowed ? (navigationResponse.canShowMIMEType ? .allow : .download) : .cancel)
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        downloads.receive(download)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        downloads.receive(download)
     }
 
     // MARK: WKUIDelegate
@@ -260,12 +279,17 @@ final class PreviewSession: NSObject {
     /// Called after a tab loads its web view, so the owner can unload others to save memory.
     var onTabLoaded: (() -> Void)?
 
+    let pageTools = PreviewPageTools()
+    let downloadDirectory: URL
+
     convenience override init() {
         self.init(dataStore: .nonPersistent(), isPrivate: true)
     }
 
     init(dataStore: WKWebsiteDataStore, isPrivate: Bool, restoring state: BrowserTabsState? = nil,
-        passkeys: PasskeySupport = .current) {
+        passkeys: PasskeySupport = .current,
+        downloadDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads/Coincide", isDirectory: true)) {
+        self.downloadDirectory = downloadDirectory
         self.isPrivate = isPrivate
         self.dataStore = dataStore
         self.passkeys = passkeys
@@ -292,6 +316,7 @@ final class PreviewSession: NSObject {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
         configuration.mediaTypesRequiringUserActionForPlayback = .all
+        pageTools.install(in: configuration)
         // Notices sign-ins the user submits, to offer saving them. It runs in Coincide's own script world, which the
         // page can't see or call.
         let loginWatcher = LoginSubmitHandler()
@@ -460,7 +485,7 @@ final class PreviewSession: NSObject {
         }
     }
 
-    private func perform(_ command: PreviewCommand, in tab: PreviewTab, directory: URL) async throws -> JSONValue {
+    private func perform(_ command: PreviewCommand, in tab: PreviewTab, directory: URL, frame: WKFrameInfo? = nil) async throws -> JSONValue {
         tab.lastUse = Date()
         let webView = tab.load()
         onTabLoaded?()
@@ -478,6 +503,23 @@ final class PreviewSession: NSObject {
             }
         }
         switch command {
+        case .inFrame(let id, let inner):
+            guard let target = pageTools.frames(in: webView).first(where: { $0.id == id }) else { throw PreviewError.invalidCommand }
+            return try await perform(inner, in: tab, directory: directory, frame: target.info)
+        case .frames:
+            return ["frames": .array(pageTools.frames(in: webView).map { frame in
+                ["id": .string(frame.id), "title": .string(frame.title), "url": .string(frame.info.request.url?.absoluteString ?? "")]
+            })]
+        case .console(let clear):
+            return pageTools.console(in: webView, clear: clear)
+        case .downloads:
+            return ["downloads": tab.downloads.json]
+        case .viewport(let width, let height):
+            tab.viewportSize = width.flatMap { w in height.map { NSSize(width: w, height: $0) } }
+            if let size = tab.viewportSize { webView.setFrameSize(size) }
+            else if PreviewParking.shared.isParked(webView) { webView.setFrameSize(PreviewParking.defaultSize) }
+            onChange?()
+            return ["width": .number(webView.bounds.width), "height": .number(webView.bounds.height)]
         case .dialog:
             throw PreviewError.noDialog
         case .back, .forward:
@@ -489,9 +531,9 @@ final class PreviewSession: NSObject {
             webView.reload()
             return ["loading": true, "tab": .string(tab.id)]
         case .type(let selector, let text, let clear):
-            return try await script(Self.typeScript, arguments: ["selector": selector, "text": text, "clear": clear], in: webView)
+            return try await script(Self.typeScript, arguments: ["selector": selector, "text": text, "clear": clear], in: webView, frame: frame)
         case .press(let key, let selector):
-            if let selector { _ = try await script(Self.focusScript, arguments: ["selector": selector], in: webView) }
+            if let selector { _ = try await script(Self.focusScript, arguments: ["selector": selector], in: webView, frame: frame) }
             Self.press(key, in: webView)
             // Let the page handle the key (and any navigation it starts) before the agent reads again.
             try await Task.sleep(for: .milliseconds(100))
@@ -504,12 +546,12 @@ final class PreviewSession: NSObject {
             case .bottom: arguments["target"] = "bottom"
             case .by(let pixels): arguments["by"] = pixels ?? 0; arguments["hasBy"] = pixels != nil
             }
-            return try await script(Self.scrollScript, arguments: arguments, in: webView)
+            return try await script(Self.scrollScript, arguments: arguments, in: webView, frame: frame)
         case .waitFor(let selector, let text, let timeout):
             let start = Date()
             while true {
                 if tab.dialog != nil { throw PreviewError.dialogOpen }
-                let found = try await script(Self.findScript, arguments: ["selector": selector ?? "", "text": text ?? ""], in: webView)
+                let found = try await script(Self.findScript, arguments: ["selector": selector ?? "", "text": text ?? ""], in: webView, frame: frame)
                 if found["found"]?.bool == true {
                     return ["found": true, "waited": .number((Date().timeIntervalSince(start) * 10).rounded() / 10), "tab": .string(tab.id)]
                 }
@@ -524,7 +566,7 @@ final class PreviewSession: NSObject {
             tab.navigate(url)
             return ["loading": true, "url": .string(url.absoluteString), "tab": .string(tab.id)]
         case .read(let page, let scope):
-            let result = try await script(Self.readScript, arguments: ["page": page, "scope": scope ?? ""], in: webView)
+            let result = try await script(Self.readScript, arguments: ["page": page, "scope": scope ?? ""], in: webView, frame: frame)
             var object = result.object ?? [:]
             object["loading"] = .bool(webView.isLoading)
             object["tab"] = .string(tab.id)
@@ -532,14 +574,14 @@ final class PreviewSession: NSObject {
             if tab.passkeyRequested { object["passkey"] = .string(PasskeySupport.agentNote) }
             return .object(object)
         case .click(let selector):
-            _ = try await script(Self.clickScript, arguments: ["selector": selector], in: webView)
+            _ = try await script(Self.clickScript, arguments: ["selector": selector], in: webView, frame: frame)
             // A dialog can release the script reply before the click handler finishes.
             try await Task.sleep(for: .milliseconds(80))
             var reply: [String: JSONValue] = ["clicked": true, "tab": .string(tab.id)]
             if let dialog = tab.dialog { reply["dialog"] = dialog.json }
             return .object(reply)
         case .input(let selector, let text):
-            return try await script(Self.inputScript, arguments: ["selector": selector, "text": text], in: webView)
+            return try await script(Self.inputScript, arguments: ["selector": selector, "text": text], in: webView, frame: frame)
         case .upload(let selector, let files):
             for file in files {
                 var isDirectory: ObjCBool = false
@@ -549,38 +591,24 @@ final class PreviewSession: NSObject {
             }
             tab.pendingUpload = files
             defer { tab.pendingUpload = nil }
-            _ = try await script(Self.uploadScript, arguments: ["selector": selector, "count": files.count], in: webView)
+            _ = try await script(Self.uploadScript, arguments: ["selector": selector, "count": files.count], in: webView, frame: frame)
             // The page asks for files right after the click; a chooser it opens itself may take a moment.
             for _ in 0..<50 where tab.pendingUpload != nil { try await Task.sleep(for: .milliseconds(100)) }
             guard tab.pendingUpload == nil else { throw PreviewError.uploadNotAccepted }
             return ["uploaded": .array(files.map { .string($0.lastPathComponent) }), "tab": .string(tab.id)]
-        case .screenshot:
-            let configuration = WKSnapshotConfiguration()
-            if webView.superview == nil { PreviewParking.shared.park(webView) }
-            // Codes Coincide typed into ordinary fields are drawn as dots in the picture, like passwords.
-            _ = try? await webView.callAsyncJavaScript(Self.maskScript, arguments: ["mask": true], in: nil, contentWorld: .defaultClient)
-            defer { Task { _ = try? await webView.callAsyncJavaScript(Self.maskScript, arguments: ["mask": false], in: nil, contentWorld: .defaultClient) } }
-            let scale = webView.window?.backingScaleFactor ?? 2
-            configuration.snapshotWidth = min(1600 / scale, webView.bounds.width) as NSNumber
-            let image = try await PreviewParking.shared.rendering(webView) { try await webView.takeSnapshot(configuration: configuration) }
-            guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
-                let png = bitmap.representation(using: .png, properties: [:]) else { throw PreviewError.unavailable }
-            // A fixed path bounds disk usage; no path supplied by the caller is accepted.
-            let url = directory.appendingPathComponent("preview.png")
-            guard FileManager.default.createFile(atPath: url.path, contents: png, attributes: [.posixPermissions: 0o600])
-            else { throw PreviewError.unavailable }
-            return ["path": .string(url.path), "mimeType": "image/png", "tab": .string(tab.id)]
+        case .screenshot, .fullPageScreenshot:
+            return try await snapshot(webView, directory: directory, tab: tab, fullPage: command == .fullPageScreenshot)
         default:
             throw PreviewError.invalidCommand
         }
     }
 
-    private func script(_ body: String, arguments: [String: Any] = [:], in webView: WKWebView) async throws -> JSONValue {
+    private func script(_ body: String, arguments: [String: Any] = [:], in webView: WKWebView, frame: WKFrameInfo? = nil) async throws -> JSONValue {
         guard let tab = tabs.first(where: { $0.webView === webView }) else { throw PreviewError.noSuchTab }
         return try await withCheckedThrowingContinuation { continuation in
             let id = UUID()
             var pending: CheckedContinuation<JSONValue, Error>? = continuation
-            func finish(_ result: Result<JSONValue, Error>) {
+            @MainActor func finish(_ result: Result<JSONValue, Error>) {
                 guard let reply = pending else { return }
                 pending = nil
                 tab.dialogWaiters[id] = nil
@@ -589,7 +617,7 @@ final class PreviewSession: NSObject {
             tab.dialogWaiters[id] = { finish(.success($0)) }
             Task { @MainActor in
                 do {
-                    let value = try await webView.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: .defaultClient)
+                    let value = try await webView.callAsyncJavaScript(body, arguments: arguments, in: frame, contentWorld: .defaultClient)
                     guard let value, JSONSerialization.isValidJSONObject(value),
                         let result = JSONValue.parse(try JSONSerialization.data(withJSONObject: value))
                     else { throw PreviewError.invalidCommand }
@@ -597,6 +625,34 @@ final class PreviewSession: NSObject {
                 } catch { finish(.failure(error)) }
             }
         }
+    }
+
+    private func snapshot(_ webView: WKWebView, directory: URL, tab: PreviewTab, fullPage: Bool) async throws -> JSONValue {
+        if webView.superview == nil { PreviewParking.shared.park(webView) }
+        let original = webView.frame
+        var truncated = false
+        if fullPage {
+            let size = try await script("return {height: Math.max(document.body?.scrollHeight || 0, document.documentElement.scrollHeight)}", in: webView)
+            let height = size["height"]?.number ?? original.height
+            let bounded = min(20_000, max(original.height, height))
+            truncated = height > bounded
+            webView.setFrameSize(NSSize(width: original.width, height: bounded))
+        }
+        defer { webView.frame = original }
+        _ = try? await webView.callAsyncJavaScript(Self.maskScript, arguments: ["mask": true], in: nil, contentWorld: .defaultClient)
+        defer { Task { _ = try? await webView.callAsyncJavaScript(Self.maskScript, arguments: ["mask": false], in: nil, contentWorld: .defaultClient) } }
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = webView.bounds
+        let scale = webView.window?.backingScaleFactor ?? 2
+        configuration.snapshotWidth = min(1600 / scale, webView.bounds.width) as NSNumber
+        let image = try await PreviewParking.shared.rendering(webView) { try await webView.takeSnapshot(configuration: configuration) }
+        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+            let png = bitmap.representation(using: .png, properties: [:]) else { throw PreviewError.unavailable }
+        let url = directory.appendingPathComponent(fullPage ? "preview-full.png" : "preview.png")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard FileManager.default.createFile(atPath: url.path, contents: png, attributes: [.posixPermissions: 0o600]) else { throw PreviewError.unavailable }
+        return ["path": .string(url.path), "mimeType": "image/png", "tab": .string(tab.id),
+            "width": .number(Double(bitmap.pixelsWide)), "height": .number(Double(bitmap.pixelsHigh)), "truncated": .bool(truncated)]
     }
 
     /// Sends `key` to the page as real key events, so it sees trusted keystrokes and their default actions happen.

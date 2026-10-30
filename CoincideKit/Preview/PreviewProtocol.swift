@@ -28,6 +28,13 @@ public indirect enum PreviewCommand: Sendable, Equatable {
     /// answering the page's file chooser with them so no dialog appears.
     case upload(selector: String, files: [URL])
     case screenshot
+    case fullPageScreenshot
+    case downloads
+    case frames
+    case console(clear: Bool)
+    /// Changes the CSS viewport dimensions; nil restores the panel's size.
+    case viewport(width: Int?, height: Int?)
+    case inFrame(String, PreviewCommand)
     /// Opens the browser panel on this thread so the user can see the page.
     case show
     /// Shows the user a short "your turn" message with a Done button and waits for them, up to `timeout` seconds.
@@ -52,7 +59,7 @@ public indirect enum PreviewCommand: Sendable, Equatable {
     /// How long the app lets the command run before answering with an error.
     public var timeout: TimeInterval {
         switch self {
-        case .inTab(_, let command): return command.timeout
+        case .inTab(_, let command), .inFrame(_, let command): return command.timeout
         case .askUser(_, let timeout): return timeout + 5
         case .waitFor(_, _, let timeout): return timeout + 5
         // The user's approval, then the password manager (which may ask for Touch ID).
@@ -62,7 +69,15 @@ public indirect enum PreviewCommand: Sendable, Equatable {
     }
 
     public init(json: JSONValue) throws {
-        let command = try Self.command(json)
+        var command = try Self.command(json)
+        if let frame = json["frame"] {
+            guard let id = frame.string, Self.isTabID(id) else { throw PreviewError.invalidCommand }
+            switch command {
+            case .read, .click, .input, .type, .press, .scroll, .waitFor, .upload:
+                command = .inFrame(id, command)
+            default: throw PreviewError.invalidCommand
+            }
+        }
         guard let tab = json["tab"] else {
             self = command
             return
@@ -71,7 +86,7 @@ public indirect enum PreviewCommand: Sendable, Equatable {
         guard let id = tab.string, Self.isTabID(id) else { throw PreviewError.invalidCommand }
         switch command {
         case .read, .navigate, .search, .click, .input, .type, .press, .dialog, .back, .forward, .reload, .scroll, .waitFor, .upload,
-            .screenshot, .fillLogin:
+            .screenshot, .fullPageScreenshot, .downloads, .frames, .console, .viewport, .inFrame, .fillLogin:
             self = .inTab(id, command)
         case .selectTab, .closeTab: self = command
         default: throw PreviewError.invalidCommand
@@ -90,7 +105,9 @@ public indirect enum PreviewCommand: Sendable, Equatable {
     private static func command(_ json: JSONValue) throws -> PreviewCommand {
         switch json["action"]?.string {
         case "read":
-            let page = json["page"]?.number.map(Int.init) ?? 1
+            let pageNumber = json["page"]?.number ?? 1
+            guard pageNumber.isFinite, pageNumber.rounded() == pageNumber, (1...1000).contains(pageNumber) else { throw PreviewError.invalidCommand }
+            let page = Int(pageNumber)
             let scope = json["selector"]?.string
             guard (1...1000).contains(page), (scope?.utf8.count ?? 0) <= 4096, scope?.isEmpty != true else { throw PreviewError.invalidCommand }
             return .read(page: page, scope: scope)
@@ -147,7 +164,26 @@ public indirect enum PreviewCommand: Sendable, Equatable {
                 paths.allSatisfy({ $0.hasPrefix("/") && $0.utf8.count <= 4096 })
             else { throw PreviewError.invalidCommand }
             return .upload(selector: try Self.selector(json), files: paths.map { URL(fileURLWithPath: $0).standardizedFileURL })
-        case "screenshot": return .screenshot
+        case "screenshot": return json["fullPage"]?.bool == true ? .fullPageScreenshot : .screenshot
+        case "downloads": return .downloads
+        case "frames": return .frames
+        case "console": return .console(clear: json["clear"]?.bool ?? false)
+        case "viewport":
+            if json["reset"]?.bool == true { return .viewport(width: nil, height: nil) }
+            let width: Double
+            let height: Double
+            switch json["preset"]?.string {
+            case "mobile": (width, height) = (390, 844)
+            case "tablet": (width, height) = (820, 1180)
+            case "desktop": (width, height) = (1280, 860)
+            case nil:
+                guard let w = json["width"]?.number, let h = json["height"]?.number else { throw PreviewError.invalidCommand }
+                (width, height) = (w, h)
+            default: throw PreviewError.invalidCommand
+            }
+            guard width.isFinite, height.isFinite, width.rounded() == width, height.rounded() == height,
+                (320...2560).contains(width), (240...2560).contains(height) else { throw PreviewError.invalidCommand }
+            return .viewport(width: Int(width), height: Int(height))
         case "show": return .show
         case "fill-login":
             let item = json["item"]?.string

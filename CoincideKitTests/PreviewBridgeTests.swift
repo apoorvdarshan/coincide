@@ -184,3 +184,20 @@ import Testing
         }
     }
 }
+
+struct BrowserTestingCommandTests {
+    @Test func toolsAndBounds() throws {
+        #expect(try PreviewCommand(json: ["action": "viewport", "preset": "mobile"]) == .viewport(width: 390, height: 844))
+        #expect(try PreviewCommand(json: ["action": "viewport", "reset": true]) == .viewport(width: nil, height: nil))
+        #expect(try PreviewCommand(json: ["action": "screenshot", "fullPage": true]) == .fullPageScreenshot)
+        #expect(try PreviewCommand(json: ["action": "read", "frame": "frame-1", "tab": "tab-2"]) == .inTab("tab-2", .inFrame("frame-1", .read())))
+        #expect(try PreviewCommand(json: ["action": "downloads"]) == .downloads)
+        #expect(try PreviewCommand(json: ["action": "frames"]) == .frames)
+        #expect(try PreviewCommand(json: ["action": "console", "clear": true]) == .console(clear: true))
+        for json: JSONValue in [
+            ["action": "viewport", "width": 1e100, "height": 600], ["action": "viewport", "width": 390.5, "height": 844],
+            ["action": "read", "page": 1e100], ["action": "read", "page": 1.5],
+            ["action": "navigate", "url": "https://example.com", "frame": "frame-1"],
+        ] { #expect(throws: PreviewError.self) { try PreviewCommand(json: json) } }
+    }
+}

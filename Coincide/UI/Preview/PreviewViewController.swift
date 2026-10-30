@@ -7,7 +7,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     /// Replaced by tests before the view loads.
     var sessions = PreviewSessions.shared
     private(set) var session: PreviewSession?
-    private let content = NSView()
+    private let content = PreviewPageContainer()
     private let address = ThemedTextField(placeholder: String(localized: "Search or enter address"))
     private let status = NSTextField(labelWithString: "")
     private let agentStatus = NSTextField(labelWithString: "")
@@ -191,12 +191,11 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         } ?? false
         parkShownWebView()
         web.removeFromSuperview()
-        web.translatesAutoresizingMaskIntoConstraints = false
+        web.translatesAutoresizingMaskIntoConstraints = true
         content.addSubview(web, positioned: .below, relativeTo: empty)
-        NSLayoutConstraint.activate([
-            web.leadingAnchor.constraint(equalTo: content.leadingAnchor), web.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            web.topAnchor.constraint(equalTo: content.topAnchor), web.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-        ])
+        content.viewportSize = session.activeTab.viewportSize
+        content.needsLayout = true
+        content.layoutSubtreeIfNeeded()
         shownWebView = web
         if hadFocus { view.window?.makeFirstResponder(web) }
         if address.currentEditor() == nil { address.stringValue = web.url?.absoluteString ?? "" }
@@ -204,6 +203,9 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
 
     private func update() {
         showActiveTab()
+        content.viewportSize = session?.activeTab.viewportSize
+        content.needsLayout = true
+        content.layoutSubtreeIfNeeded()
         tabStrip.update((session?.tabs ?? []).map { tab in
             PreviewTabStrip.Tab(id: tab.id, title: tab.title.isEmpty ? (tab.url?.host ?? "") : tab.title,
                 isActive: tab === session?.activeTab, isLoading: tab.isLoading)
@@ -447,6 +449,18 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
                 self?.status.stringValue = error.localizedDescription
                 self?.status.textColor = Theme.failure
             }
+        }
+    }
+}
+
+/// A requested CSS viewport keeps its dimensions when the panel resizes. Resetting returns to normal panel sizing.
+private final class PreviewPageContainer: NSView {
+    var viewportSize: NSSize?
+    override var isFlipped: Bool { true }
+    override func layout() {
+        super.layout()
+        for case let page as WKWebView in subviews {
+            page.frame = NSRect(origin: .zero, size: viewportSize ?? bounds.size)
         }
     }
 }

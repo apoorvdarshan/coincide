@@ -10,6 +10,7 @@ struct PreviewDialog {
         case prompt
     }
 
+    let id = UUID()
     let kind: Kind
     let message: String
     let defaultText: String?
@@ -27,6 +28,7 @@ struct PreviewDialog {
 /// The page's dialog in the browser panel, for the user to answer.
 final class PreviewDialogBanner: ComposerBanner {
     var onAnswer: ((Bool, String?) -> Void)?
+    private var dialogID: UUID?
     private let heading = ComposerBanner.label(String(localized: "The page asks"), size: 11, weight: .semibold, color: Theme.ink)
     private let message = NSTextField(wrappingLabelWithString: "")
     private let field = ThemedTextField(placeholder: "")
@@ -58,7 +60,10 @@ final class PreviewDialogBanner: ComposerBanner {
         message.stringValue = dialog.message
         setAccessibilityValue(dialog.message)
         field.isHidden = dialog.kind != .prompt
-        if dialog.kind == .prompt, field.stringValue.isEmpty { field.stringValue = dialog.defaultText ?? "" }
+        if dialogID != dialog.id {
+            field.stringValue = dialog.kind == .prompt ? (dialog.defaultText ?? "") : ""
+            dialogID = dialog.id
+        }
         cancel.isHidden = dialog.kind == .alert
     }
 
