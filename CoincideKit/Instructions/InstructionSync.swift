@@ -93,49 +93,8 @@ public struct InstructionCloud: Sendable, Hashable {
     }
 }
 
-/// What moving the master to a synced place did.
-public struct InstructionMoveReport: Equatable, Sendable {
-    /// A copy of the local master as it was before the move.
-    public var backup: URL?
-    /// The synced place already had a file (from another Mac), which is now the master.
-    public var adoptedExisting: Bool
-}
-
-/// Moves a master to a synced place and back, keeping every agent's link working.
+/// Brings back a master that an older Coincide moved into iCloud Drive or a repository to sync it.
 public enum InstructionMasterMove {
-    /// Makes `destination` the master. The local master's text is copied there unless a file is already there, in
-    /// which case that file wins (it came from another Mac). Either way a backup of the local master is kept beside
-    /// it; the local master becomes a link to `destination` and the targets are pointed straight at it.
-    public nonisolated static func move(master: URL, to destination: URL, targets: [MasterTarget]) throws -> InstructionMoveReport {
-        switch InstructionCloud.state(of: destination) {
-        case .notDownloaded:
-            InstructionCloud.startDownloading(destination)
-            throw InstructionSyncError.notDownloaded(destination.lastPathComponent)
-        case .current, .missing:
-            break
-        }
-        let local = try InstructionFileStore.read(master)
-        var adopted = false
-        if InstructionPaths.isRegularFile(destination) {
-            adopted = (try InstructionFileStore.read(destination).text) != local.text
-        } else {
-            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try InstructionFileStore.writeAtomically(Data(local.text.utf8), to: destination, name: destination.lastPathComponent)
-        }
-        var backup: URL?
-        if local.fingerprint != nil {
-            let url = InstructionPaths.backupURL(for: master)
-            try InstructionFileStore.writeAtomically(Data(local.text.utf8), to: url, name: url.lastPathComponent)
-            backup = url
-        }
-        if InstructionPaths.itemExists(master) {
-            guard unlink(master.path) == 0 else { throw InstructionSyncError.failed(String(cString: strerror(errno))) }
-        }
-        try FileManager.default.createSymbolicLink(atPath: master.path, withDestinationPath: destination.path)
-        InstructionMaster.relink(targets, from: master, to: destination)
-        return InstructionMoveReport(backup: backup, adoptedExisting: adopted)
-    }
-
     /// Brings the master back from `synced` to the regular file `local`, holding the synced text, and points the
     /// targets at it. The synced file stays where it is.
     public nonisolated static func restore(from synced: URL, to local: URL, targets: [MasterTarget]) throws {
@@ -220,9 +179,9 @@ public struct InstructionGitRepository: Sendable, Hashable {
     }
 
     /// Pulls and pushes: fast-forwards to the remote, rebases local instruction commits onto it when both moved
-    /// (stopping with `.conflict` and leaving everything as it was when they clash), and pushes local commits that
-    /// only touch `allowedFiles` (paths in the repository). Never force-pushes.
-    public nonisolated func sync(allowedFiles: [String]) async throws -> SyncOutcome {
+    /// (stopping with `.conflict` and leaving everything as it was when they clash), and with `push`, pushes local
+    /// commits that only touch `allowedFiles` (paths in the repository). Never force-pushes.
+    public nonisolated func sync(allowedFiles: [String], push: Bool = true) async throws -> SyncOutcome {
         let remotes = try await run(String(localized: "Couldn't read the repository's remotes."), ["remote"])
         guard let remote = remotes.split(whereSeparator: \.isNewline).first.map(String.init) else { throw InstructionSyncError.noRemote }
         try await run(String(localized: "Couldn't fetch from the remote."), ["fetch", "--quiet", remote], timeout: 120)
@@ -248,12 +207,13 @@ public struct InstructionGitRepository: Sendable, Hashable {
                 pulled = true
             }
         }
+        guard push else { return pulled ? .pulled : .upToDate }
         let unpushed = try await unpushedFiles(upstream: upstream)
         guard !unpushed.isEmpty else { return pulled ? .pulled : .upToDate }
         let others = unpushed.filter { !allowedFiles.contains($0) }
         guard others.isEmpty else { throw InstructionSyncError.otherChanges(others) }
-        let push = upstream == nil ? ["push", "--set-upstream", remote, "HEAD"] : ["push", remote, "HEAD"]
-        let result = await GitCLI.git(push, in: url, timeout: 120)
+        let arguments = upstream == nil ? ["push", "--set-upstream", remote, "HEAD"] : ["push", remote, "HEAD"]
+        let result = await GitCLI.git(arguments, in: url, timeout: 120)
         guard result.succeeded else {
             if result.stderr.contains("[rejected]") || result.stderr.contains("non-fast-forward") {
                 throw InstructionSyncError.conflict(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -263,7 +223,40 @@ public struct InstructionGitRepository: Sendable, Hashable {
         return pulled ? .pulledAndPushed : .pushed
     }
 
+    /// Whether the work tree has `file` changed from what is committed, or not committed at all.
+    nonisolated func hasUncommittedChanges(_ file: URL) async -> Bool {
+        let result = await GitCLI.git(["status", "--porcelain", "--", relative(file)], in: url)
+        return result.succeeded && !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     // MARK: GitHub
+
+    /// The first remote's "owner/name" when it is on GitHub, to show instead of the folder.
+    public nonisolated func gitHubName() async -> String? {
+        let remotes = await GitCLI.git(["remote"], in: url)
+        guard let remote = remotes.stdout.split(whereSeparator: \.isNewline).first.map(String.init) else { return nil }
+        let address = await GitCLI.git(["remote", "get-url", remote], in: url)
+        guard address.succeeded else { return nil }
+        return Self.gitHubName(fromRemote: address.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// "owner/name" from a GitHub remote address (HTTPS, SSH or scp-like), or nil for other hosts.
+    public nonisolated static func gitHubName(fromRemote address: String) -> String? {
+        var path: Substring
+        if let range = address.range(of: "github.com:"), !address.contains("://") {
+            path = address[range.upperBound...]
+        } else if let url = URL(string: address), url.host?.lowercased() == "github.com" {
+            path = Substring(url.path)
+        } else {
+            return nil
+        }
+        path = path.drop { $0 == "/" }
+        if path.hasSuffix(".git") { path = path.dropLast(4) }
+        if path.hasSuffix("/") { path = path.dropLast() }
+        let parts = path.split(separator: "/")
+        guard parts.count == 2 else { return nil }
+        return parts.joined(separator: "/")
+    }
 
     /// The default name for a new instructions repository.
     public nonisolated static let defaultGitHubName = "coincide-instructions"

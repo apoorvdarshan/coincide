@@ -1,6 +1,8 @@
 import Foundation
 
-/// How a master instructions file is kept in sync between Macs. Off by default.
+/// Where an older Coincide moved the master to sync it. Settings saved since then always say `off`: the master stays in
+/// its place and `InstructionMasterConfig.iCloud` and `.git` keep copies of it in step instead.
+/// `InstructionCopyMigration` brings settings that still say otherwise forward.
 public enum InstructionSyncMethod: Codable, Hashable, Sendable {
     case off
     /// The master lives in iCloud Drive (`InstructionCloud`).
@@ -16,15 +18,25 @@ public enum InstructionSyncMethod: Codable, Hashable, Sendable {
 public struct InstructionMasterConfig: Codable, Hashable, Sendable {
     public var isEnabled: Bool
     public var masterPath: String
+    /// Only in settings from an older Coincide, which moved the master to sync it (`InstructionCopyMigration`).
     public var sync: InstructionSyncMethod
-    /// Where the master was before a sync method moved it, so turning sync off can bring it back there.
+    /// Where the master was before an older Coincide moved it.
     public var localMasterPath: String?
+    /// A copy in iCloud Drive kept in step with the master, or nil when that sync is off.
+    public var iCloud: InstructionICloudCopy?
+    /// A copy in a Git repository kept in step with the master, or nil when that sync is off.
+    public var git: InstructionGitCopy?
 
-    public nonisolated init(isEnabled: Bool = false, masterPath: String, sync: InstructionSyncMethod = .off, localMasterPath: String? = nil) {
+    public nonisolated init(
+        isEnabled: Bool = false, masterPath: String, sync: InstructionSyncMethod = .off, localMasterPath: String? = nil,
+        iCloud: InstructionICloudCopy? = nil, git: InstructionGitCopy? = nil
+    ) {
         self.isEnabled = isEnabled
         self.masterPath = masterPath
         self.sync = sync
         self.localMasterPath = localMasterPath
+        self.iCloud = iCloud
+        self.git = git
     }
 
     public nonisolated var masterURL: URL { URL(fileURLWithPath: masterPath) }

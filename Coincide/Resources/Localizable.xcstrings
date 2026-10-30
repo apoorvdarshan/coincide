@@ -20266,118 +20266,6 @@
         }
       }
     },
-    "A copy from another Mac was already there and is now the master." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Eine Kopie von einem anderen Mac war bereits vorhanden und ist jetzt die Hauptdatei."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ya había una copia de otro Mac, que ahora es el archivo principal."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ya había una copia de otra Mac, que ahora es el archivo principal."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Une copie provenant d’un autre Mac était déjà présente et est désormais le fichier principal."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "किसी दूसरे Mac की एक कॉपी पहले से वहाँ थी और अब वही मास्टर फ़ाइल है।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Salinan dari Mac lain sudah ada di sana dan kini menjadi berkas utama."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Era già presente una copia proveniente da un altro Mac, che ora è il file principale."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "別の Mac のコピーがすでにあったため、それがマスターファイルになりました。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "다른 Mac의 사본이 이미 있었으며, 이제 그 사본이 마스터 파일입니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Er stond al een kopie van een andere Mac en die is nu het hoofdbestand."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Kopia z innego Maca już tam była i teraz jest plikiem głównym."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Já havia uma cópia de outro Mac, que agora é o arquivo principal."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Копия с другого Mac уже была на месте и теперь стала основным файлом."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Başka bir Mac'ten bir kopya zaten oradaydı ve artık ana dosya o."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Копія з іншого Mac уже була там і тепер є основним файлом."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Một bản sao từ máy Mac khác đã có sẵn và hiện là tệp chính."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "另一台 Mac 的副本已存在，现已成为主文件。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "另一部 Mac 的副本已存在，現在已成為主檔案。"
-          }
-        }
-      }
-    },
     "A downloaded Antigravity file no longer matches its SHA-256. Remove the runtime and install it again." : {
       "localizations" : {
         "de" : {
@@ -33558,118 +33446,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "已是最新狀態"
-          }
-        }
-      }
-    },
-    "Already up to date." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bereits auf dem neuesten Stand."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ya está actualizado."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ya está actualizado."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Déjà à jour."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "पहले से अप-टू-डेट है।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sudah yang terbaru."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Già aggiornato."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "すでに最新です。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "이미 최신 상태입니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Al up-to-date."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Wszystko jest aktualne."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Já está atualizado."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Уже актуально."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Zaten güncel."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Усе вже актуально."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Đã là bản mới nhất."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已是最新。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已是最新。"
           }
         }
       }
@@ -77936,118 +77712,6 @@
         }
       }
     },
-    "Copies the master back to this Mac and links the agents to the copy. The file in iCloud Drive stays." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Kopiert die Hauptdatei zurück auf diesen Mac und verknüpft die Agenten mit der Kopie. Die Datei in iCloud Drive bleibt erhalten."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Copia el archivo principal de nuevo en este Mac y enlaza los agentes con la copia. El archivo de iCloud Drive se conserva."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Copia el archivo principal de vuelta en esta Mac y enlaza los agentes con la copia. El archivo de iCloud Drive se conserva."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Recopie le fichier principal sur ce Mac et lie les agents à la copie. Le fichier dans iCloud Drive est conservé."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "मास्टर फ़ाइल को वापस इस Mac पर कॉपी करता है और एजेंट को उस कॉपी से लिंक करता है। iCloud Drive में मौजूद फ़ाइल बनी रहती है।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Menyalin berkas utama kembali ke Mac ini dan menautkan agen ke salinan tersebut. Berkas di iCloud Drive tetap ada."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Copia di nuovo il file principale su questo Mac e collega gli agenti alla copia. Il file in iCloud Drive rimane."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "マスターファイルをこの Mac にコピーし直し、エージェントをそのコピーにリンクします。iCloud Drive 上のファイルは残ります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "마스터 파일을 이 Mac으로 다시 복사하고 에이전트를 그 사본에 링크합니다. iCloud Drive의 파일은 그대로 유지됩니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Kopieert het hoofdbestand terug naar deze Mac en koppelt de agents aan de kopie. Het bestand in iCloud Drive blijft staan."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Kopiuje plik główny z powrotem na ten Mac i dowiązuje agentów do kopii. Plik w iCloud Drive pozostaje."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Copia o arquivo principal de volta para este Mac e vincula os agentes à cópia. O arquivo no iCloud Drive permanece."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Копирует основной файл обратно на этот Mac и связывает агентов с копией. Файл в iCloud Drive остаётся."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ana dosyayı bu Mac'e geri kopyalar ve ajanları kopyaya bağlar. iCloud Drive'daki dosya kalır."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Копіює основний файл назад на цей Mac і пов’язує агентів із копією. Файл в iCloud Drive залишається."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sao chép tệp chính trở lại máy Mac này và liên kết các tác nhân tới bản sao đó. Tệp trong iCloud Drive vẫn được giữ lại."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "将主文件复制回这台 Mac，并将各智能体链接到该副本。iCloud Drive 中的文件会保留。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "將主檔案拷貝回這部 Mac，並將代理程式連結到該副本。iCloud Drive 中的檔案會保留。"
-          }
-        }
-      }
-    },
     "Copy" : {
       "localizations" : {
         "de" : {
@@ -117028,6 +116692,118 @@
         }
       }
     },
+    "Git %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Git %@"
+          }
+        }
+      }
+    },
     "Git actions" : {
       "localizations" : {
         "de" : {
@@ -117588,114 +117364,114 @@
         }
       }
     },
-    "Git: %@" : {
+    "GitHub %@" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git : %@"
+            "value" : "GitHub %@"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git: %@"
+            "value" : "GitHub %@"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git：%@"
+            "value" : "GitHub %@"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Git：%@"
+            "value" : "GitHub %@"
           }
         }
       }
@@ -117808,6 +117584,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "需要 GitHub CLI"
+          }
+        }
+      }
+    },
+    "GitHub or Git Repository" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub- oder Git-Repository"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Repositorio de GitHub o Git"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Repositorio de GitHub o Git"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dépôt GitHub ou Git"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub या Git रिपॉज़िटरी"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Repositori GitHub atau Git"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Repository GitHub o Git"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub または Git リポジトリ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub 또는 Git 저장소"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub- of Git-repository"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Repozytorium GitHub lub Git"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Repositório GitHub ou Git"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Репозиторий GitHub или Git"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub veya Git Deposu"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Репозиторій GitHub або Git"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kho lưu trữ GitHub hoặc Git"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub 或 Git 仓库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub 或 Git 儲存庫"
           }
         }
       }
@@ -126256,6 +126144,118 @@
         }
       }
     },
+    "In step with the master" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit der Hauptdatei abgeglichen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizado con el archivo principal"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizado con el archivo principal"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchronisé avec le fichier principal"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "मास्टर फ़ाइल के साथ सिंक में"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Selaras dengan berkas utama"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Allineato al file principale"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "マスターと同期済み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "마스터와 동기화됨"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gelijk met het hoofdbestand"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zgodny z plikiem głównym"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Em sincronia com o arquivo principal"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Совпадает с основным файлом"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ana dosyayla eşitlendi"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Збігається з основним файлом"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã đồng bộ với tệp chính"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "与主文件保持一致"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "與主檔案保持一致"
+          }
+        }
+      }
+    },
     "Include %@" : {
       "localizations" : {
         "de" : {
@@ -131588,6 +131588,118 @@
         }
       }
     },
+    "Keep This Mac's" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Version dieses Macs behalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conservar la de este Mac"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conservar la de esta Mac"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conserver celle de ce Mac"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस Mac वाला रखें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pertahankan Milik Mac Ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantieni quella di questo Mac"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "この Mac の方を残す"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 Mac의 버전 유지"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Behoud versie van deze Mac"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zachowaj wersję z tego Maca"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter a deste Mac"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Оставить версию с этого Mac"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu Mac'tekini Tut"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Залишити версію з цього Mac"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ bản của máy Mac này"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保留这台 Mac 上的版本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保留這部 Mac 上的版本"
+          }
+        }
+      }
+    },
     "Keep agents running when Coincide quits" : {
       "localizations" : {
         "de" : {
@@ -132032,6 +132144,460 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "繼續規劃"
+          }
+        }
+      }
+    },
+    "Keep the Copy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopie behalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conservar la copia"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conservar la copia"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conserver la copie"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कॉपी रखें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pertahankan Salinan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantieni la copia"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コピーの方を残す"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사본 유지"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Behoud de kopie"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zachowaj kopię"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter a cópia"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Оставить копию"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopyayı Tut"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Залишити копію"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ bản sao"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保留副本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保留副本"
+          }
+        }
+      }
+    },
+    "Keeps a copy as %@ in %@ and commits it when the instructions change. Coincide never force-pushes and never pushes other files. Unlinking leaves the repository as it is." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Speichert eine Kopie als %1$@ in %2$@ und committet sie, wenn sich die Anweisungen ändern. Coincide führt nie einen Force-Push aus und pusht nie andere Dateien. Beim Trennen bleibt das Repository unverändert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Keeps a copy as %1$@ in %2$@ and commits it when the instructions change. Coincide never force-pushes and never pushes other files. Unlinking leaves the repository as it is."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Guarda una copia como %1$@ en %2$@ y hace commit de ella cuando cambian las instrucciones. Coincide nunca fuerza el envío ni envía otros archivos. Al desvincularlo, el repositorio queda como está."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Guarda una copia como %1$@ en %2$@ y hace commit de ella cuando cambian las instrucciones. Coincide nunca fuerza el envío ni envía otros archivos. Al desvincularlo, el repositorio queda como está."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conserve une copie sous le nom %1$@ dans %2$@ et en fait un commit quand les instructions changent. Coincide ne force jamais l’envoi et n’envoie jamais d’autres fichiers. La dissociation laisse le dépôt tel quel."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ में %1$@ नाम से एक कॉपी रखता है और निर्देश बदलने पर उसे कमिट करता है। Coincide कभी फ़ोर्स-पुश नहीं करता और कभी दूसरी फ़ाइलें पुश नहीं करता। अनलिंक करने पर रिपॉज़िटरी जैसी है वैसी ही रहती है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menyimpan salinan sebagai %1$@ di %2$@ dan meng-commit-nya saat instruksi berubah. Coincide tidak pernah melakukan force-push dan tidak pernah mem-push berkas lain. Memutus tautan membiarkan repositori apa adanya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conserva una copia come %1$@ in %2$@ e ne esegue il commit quando le istruzioni cambiano. Coincide non forza mai l’invio e non invia mai altri file. Scollegandolo, il repository resta com’è."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ にコピーを %1$@ として保存し、指示が変更されるたびにコミットします。Coincide は強制プッシュをせず、ほかのファイルもプッシュしません。リンクを解除してもリポジトリはそのまま残ります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@에 사본을 %1$@(으)로 보관하고 지침이 변경되면 커밋합니다. Coincide는 강제 푸시하지 않으며 다른 파일은 푸시하지 않습니다. 연결을 해제해도 저장소는 그대로 유지됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bewaart een kopie als %1$@ in %2$@ en commit die als de instructies veranderen. Coincide force-pusht nooit en pusht nooit andere bestanden. Ontkoppelen laat de repository zoals hij is."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przechowuje kopię jako %1$@ w %2$@ i zatwierdza ją, gdy instrukcje się zmienią. Coincide nigdy nie wymusza wypchnięcia i nie wypycha innych plików. Odłączenie pozostawia repozytorium bez zmian."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantém uma cópia como %1$@ em %2$@ e faz commit dela quando as instruções mudam. O Coincide nunca força o envio e nunca envia outros arquivos. Desvincular deixa o repositório como está."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Хранит копию как %1$@ в %2$@ и коммитит её при изменении инструкций. Coincide никогда не выполняет принудительную отправку и не отправляет другие файлы. После отвязки репозиторий остаётся как есть."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ içinde %1$@ adıyla bir kopya tutar ve talimatlar değiştiğinde commit eder. Coincide asla force push yapmaz ve başka dosyaları asla push etmez. Bağlantıyı kesmek depoyu olduğu gibi bırakır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зберігає копію як %1$@ у %2$@ і комітить її, коли інструкції змінюються. Coincide ніколи не виконує примусове надсилання й не надсилає інші файли. Після від’єднання репозиторій залишається як є."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ một bản sao dưới tên %1$@ trong %2$@ và commit khi hướng dẫn thay đổi. Coincide không bao giờ force-push và không bao giờ push tệp khác. Hủy liên kết sẽ giữ nguyên kho lưu trữ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 %2$@ 中保留一份名为 %1$@ 的副本，并在指令更改时提交。Coincide 从不强制推送，也从不推送其他文件。取消关联后，仓库保持原样。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 %2$@ 中保留一份名為 %1$@ 的副本，並在指示變更時提交。Coincide 絕不強制推送，也絕不推送其他檔案。解除連結後，儲存庫會保持原樣。"
+          }
+        }
+      }
+    },
+    "Keeps a copy as %@.md in a repository, commits it when the instructions change and pushes it. Coincide never force-pushes and never pushes other files." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Speichert eine Kopie als %@.md in einem Repository, committet sie, wenn sich die Anweisungen ändern, und pusht sie. Coincide führt nie einen Force-Push aus und pusht nie andere Dateien."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Guarda una copia como %@.md en un repositorio, hace commit de ella cuando cambian las instrucciones y la envía. Coincide nunca fuerza el envío ni envía otros archivos."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Guarda una copia como %@.md en un repositorio, hace commit de ella cuando cambian las instrucciones y la envía. Coincide nunca fuerza el envío ni envía otros archivos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conserve une copie sous le nom %@.md dans un dépôt, en fait un commit quand les instructions changent, puis l’envoie. Coincide ne force jamais l’envoi et n’envoie jamais d’autres fichiers."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "किसी रिपॉज़िटरी में %@.md नाम से एक कॉपी रखता है, निर्देश बदलने पर उसे कमिट करता है और पुश करता है। Coincide कभी फ़ोर्स-पुश नहीं करता और कभी दूसरी फ़ाइलें पुश नहीं करता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menyimpan salinan sebagai %@.md di repositori, meng-commit-nya saat instruksi berubah, lalu mem-push-nya. Coincide tidak pernah melakukan force-push dan tidak pernah mem-push berkas lain."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conserva una copia come %@.md in un repository, ne esegue il commit quando le istruzioni cambiano e la invia. Coincide non forza mai l’invio e non invia mai altri file."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "リポジトリにコピーを %@.md として保存し、指示が変更されるたびにコミットしてプッシュします。Coincide は強制プッシュをせず、ほかのファイルもプッシュしません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "저장소에 사본을 %@.md로 보관하고 지침이 변경되면 커밋하고 푸시합니다. Coincide는 강제 푸시하지 않으며 다른 파일은 푸시하지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bewaart een kopie als %@.md in een repository, commit die als de instructies veranderen en pusht die. Coincide force-pusht nooit en pusht nooit andere bestanden."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przechowuje kopię jako %@.md w repozytorium, zatwierdza ją, gdy instrukcje się zmienią, i ją wypycha. Coincide nigdy nie wymusza wypchnięcia i nie wypycha innych plików."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantém uma cópia como %@.md em um repositório, faz commit dela quando as instruções mudam e a envia. O Coincide nunca força o envio e nunca envia outros arquivos."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Хранит копию как %@.md в репозитории, коммитит её при изменении инструкций и отправляет. Coincide никогда не выполняет принудительную отправку и не отправляет другие файлы."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir depoda %@.md adıyla bir kopya tutar, talimatlar değiştiğinde commit eder ve push eder. Coincide asla force push yapmaz ve başka dosyaları asla push etmez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зберігає копію як %@.md у репозиторії, комітить її, коли інструкції змінюються, і надсилає. Coincide ніколи не виконує примусове надсилання й не надсилає інші файли."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ một bản sao dưới tên %@.md trong một kho lưu trữ, commit và push khi hướng dẫn thay đổi. Coincide không bao giờ force-push và không bao giờ push tệp khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在仓库中保留一份名为 %@.md 的副本，在指令更改时提交并推送。Coincide 从不强制推送，也从不推送其他文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在儲存庫中保留一份名為 %@.md 的副本，在指示變更時提交並推送。Coincide 絕不強制推送，也絕不推送其他檔案。"
+          }
+        }
+      }
+    },
+    "Keeps a copy at iCloud Drive › Coincide › Instructions › %@.md, so Coincide on your other Macs uses the same instructions. Turning it off leaves the copy there." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Speichert eine Kopie unter iCloud Drive › Coincide › Instructions › %@.md, damit Coincide auf Ihren anderen Macs dieselben Anweisungen verwendet. Beim Ausschalten bleibt die Kopie dort erhalten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Guarda una copia en iCloud Drive › Coincide › Instructions › %@.md para que Coincide use las mismas instrucciones en tus otros Mac. Al desactivarlo, la copia se queda allí."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Guarda una copia en iCloud Drive › Coincide › Instructions › %@.md para que Coincide use las mismas instrucciones en tus otras Mac. Al desactivarlo, la copia se queda ahí."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conserve une copie dans iCloud Drive › Coincide › Instructions › %@.md, afin que Coincide utilise les mêmes instructions sur vos autres Mac. Si vous le désactivez, la copie reste en place."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iCloud Drive › Coincide › Instructions › %@.md पर एक कॉपी रखता है, ताकि आपके दूसरे Mac पर Coincide वही निर्देश इस्तेमाल करे। इसे बंद करने पर कॉपी वहीं रहती है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menyimpan salinan di iCloud Drive › Coincide › Instructions › %@.md, sehingga Coincide di Mac Anda yang lain menggunakan instruksi yang sama. Jika dimatikan, salinan tetap ada di sana."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conserva una copia in iCloud Drive › Coincide › Instructions › %@.md, così Coincide usa le stesse istruzioni sugli altri tuoi Mac. Disattivandolo, la copia resta lì."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iCloud Drive › Coincide › Instructions › %@.md にコピーを保存し、ほかの Mac の Coincide でも同じ指示が使われるようにします。オフにしてもコピーはそのまま残ります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iCloud Drive › Coincide › Instructions › %@.md에 사본을 보관하여 다른 Mac의 Coincide에서도 같은 지침을 사용하게 합니다. 끄더라도 사본은 그대로 남습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bewaart een kopie in iCloud Drive › Coincide › Instructions › %@.md, zodat Coincide op je andere Macs dezelfde instructies gebruikt. Als je dit uitzet, blijft de kopie daar staan."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przechowuje kopię w iCloud Drive › Coincide › Instructions › %@.md, aby Coincide na pozostałych Macach używał tych samych instrukcji. Po wyłączeniu kopia pozostaje na miejscu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantém uma cópia em iCloud Drive › Coincide › Instructions › %@.md, para que o Coincide nos seus outros Macs use as mesmas instruções. Ao desativar, a cópia continua lá."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Хранит копию в iCloud Drive › Coincide › Instructions › %@.md, чтобы Coincide на других ваших Mac использовал те же инструкции. Если выключить, копия останется там."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iCloud Drive › Coincide › Instructions › %@.md konumunda bir kopya tutar; böylece diğer Mac'lerinizdeki Coincide aynı talimatları kullanır. Kapatmak kopyayı orada bırakır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зберігає копію в iCloud Drive › Coincide › Instructions › %@.md, щоб Coincide на інших ваших Mac використовував ті самі інструкції. Якщо вимкнути, копія залишиться там."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ một bản sao tại iCloud Drive › Coincide › Instructions › %@.md để Coincide trên các máy Mac khác của bạn dùng cùng hướng dẫn. Khi tắt, bản sao vẫn được giữ ở đó."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 iCloud Drive › Coincide › Instructions › %@.md 保留一份副本，让你其他 Mac 上的 Coincide 使用相同的指令。关闭后，副本仍会留在那里。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 iCloud Drive › Coincide › Instructions › %@.md 保留一份副本，讓你其他 Mac 上的 Coincide 使用相同的指示。關閉後，副本仍會留在那裡。"
           }
         }
       }
@@ -135846,6 +136412,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "標有 − 的行僅存在於 %1$@；標有 + 的行僅存在於 %2$@。Coincide 不會為您合併：請將需要的內容拷貝到其中一個檔案，或開啟「所有代理程式使用同一個檔案」，在備份的同時合併。"
+          }
+        }
+      }
+    },
+    "Lines marked − are only in the copy; lines marked + are only in the master." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit − markierte Zeilen gibt es nur in der Kopie, mit + markierte nur in der Hauptdatei."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las líneas marcadas con − solo están en la copia; las marcadas con + solo están en el archivo principal."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las líneas marcadas con − solo están en la copia; las marcadas con + solo están en el archivo principal."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les lignes marquées − ne figurent que dans la copie ; les lignes marquées + ne figurent que dans le fichier principal."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "− से चिह्नित पंक्तियाँ केवल कॉपी में हैं; + से चिह्नित पंक्तियाँ केवल मास्टर फ़ाइल में हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baris bertanda − hanya ada di salinan; baris bertanda + hanya ada di berkas utama."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le righe contrassegnate con − sono solo nella copia; quelle contrassegnate con + sono solo nel file principale."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "− の付いた行はコピーにのみ、+ の付いた行はマスターにのみあります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "−로 표시된 줄은 사본에만 있고, +로 표시된 줄은 마스터에만 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Regels met − staan alleen in de kopie; regels met + staan alleen in het hoofdbestand."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wiersze oznaczone − są tylko w kopii; wiersze oznaczone + są tylko w pliku głównym."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As linhas marcadas com − estão só na cópia; as marcadas com + estão só no arquivo principal."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Строки, отмеченные −, есть только в копии; строки, отмеченные +, есть только в основном файле."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "− ile işaretli satırlar yalnızca kopyada, + ile işaretli satırlar yalnızca ana dosyada var."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Рядки, позначені −, є лише в копії; рядки, позначені +, є лише в основному файлі."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Các dòng đánh dấu − chỉ có trong bản sao; các dòng đánh dấu + chỉ có trong tệp chính."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "标有 − 的行仅在副本中；标有 + 的行仅在主文件中。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "標示 − 的行只在副本中；標示 + 的行只在主檔案中。"
           }
         }
       }
@@ -149983,118 +150661,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "移到行首或行尾"
-          }
-        }
-      }
-    },
-    "Moves the master to iCloud Drive › Coincide › Instructions › %@.md and links every agent to it, so Coincide on your other Macs can use the same file. A backup of the current file stays here." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Verschiebt die Hauptdatei nach iCloud Drive › Coincide › Instructions › %@.md und verknüpft jeden Agenten damit, sodass Coincide auf Ihren anderen Macs dieselbe Datei verwenden kann. Eine Sicherung der aktuellen Datei bleibt hier."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mueve el archivo principal a iCloud Drive › Coincide › Instructions › %@.md y enlaza todos los agentes con él, para que Coincide en tus otros Mac pueda usar el mismo archivo. Aquí se conserva una copia de seguridad del archivo actual."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mueve el archivo principal a iCloud Drive › Coincide › Instructions › %@.md y enlaza todos los agentes con él, para que Coincide en tus otras Mac pueda usar el mismo archivo. Aquí se conserva un respaldo del archivo actual."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Déplace le fichier principal vers iCloud Drive › Coincide › Instructions › %@.md et y lie chaque agent, afin que Coincide sur vos autres Mac puisse utiliser le même fichier. Une sauvegarde du fichier actuel reste ici."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "मास्टर फ़ाइल को iCloud Drive › Coincide › Instructions › %@.md में ले जाता है और हर एजेंट को उससे लिंक करता है, ताकि आपके दूसरे Mac पर Coincide वही फ़ाइल इस्तेमाल कर सके। मौजूदा फ़ाइल का बैकअप यहीं रहता है।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Memindahkan berkas utama ke iCloud Drive › Coincide › Instructions › %@.md dan menautkan setiap agen ke sana, sehingga Coincide di Mac Anda yang lain dapat memakai berkas yang sama. Cadangan berkas saat ini tetap di sini."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sposta il file principale in iCloud Drive › Coincide › Instructions › %@.md e vi collega ogni agente, così Coincide sugli altri tuoi Mac può usare lo stesso file. Un backup del file attuale resta qui."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "マスターファイルを iCloud Drive › Coincide › Instructions › %@.md に移動し、すべてのエージェントをそこにリンクします。ほかの Mac の Coincide でも同じファイルを使用できます。現在のファイルのバックアップはこの Mac に残ります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "마스터 파일을 iCloud Drive › Coincide › Instructions › %@.md로 이동하고 모든 에이전트를 해당 파일에 링크하여, 다른 Mac의 Coincide에서도 같은 파일을 사용할 수 있습니다. 현재 파일의 백업은 이 Mac에 남아 있습니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Verplaatst het hoofdbestand naar iCloud Drive › Coincide › Instructions › %@.md en koppelt elke agent eraan, zodat Coincide op je andere Macs hetzelfde bestand kan gebruiken. Een reservekopie van het huidige bestand blijft hier staan."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Przenosi plik główny do iCloud Drive › Coincide › Instructions › %@.md i dowiązuje do niego każdego agenta, dzięki czemu Coincide na innych Macach może używać tego samego pliku. Kopia zapasowa bieżącego pliku zostaje tutaj."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Move o arquivo principal para iCloud Drive › Coincide › Instructions › %@.md e vincula todos os agentes a ele, para que o Coincide nos seus outros Macs possa usar o mesmo arquivo. Um backup do arquivo atual permanece aqui."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Переносит основной файл в iCloud Drive › Coincide › Instructions › %@.md и связывает с ним каждого агента, чтобы Coincide на других ваших Mac мог использовать тот же файл. Резервная копия текущего файла остаётся здесь."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ana dosyayı iCloud Drive › Coincide › Instructions › %@.md konumuna taşır ve her ajanı ona bağlar; böylece diğer Mac'lerinizdeki Coincide aynı dosyayı kullanabilir. Mevcut dosyanın yedeği burada kalır."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Переміщує основний файл до iCloud Drive › Coincide › Instructions › %@.md і пов’язує з ним кожного агента, щоб Coincide на ваших інших Mac міг використовувати той самий файл. Резервна копія поточного файлу залишається тут."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Chuyển tệp chính tới iCloud Drive › Coincide › Instructions › %@.md và liên kết mọi tác nhân với tệp đó, để Coincide trên các máy Mac khác của bạn có thể dùng cùng một tệp. Bản sao lưu của tệp hiện tại vẫn ở lại máy này."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "将主文件移到 iCloud Drive › Coincide › Instructions › %@.md，并将每个智能体链接到该文件，这样其他 Mac 上的 Coincide 也能使用同一文件。当前文件的备份会保留在这台 Mac 上。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "將主檔案移到 iCloud Drive › Coincide › Instructions › %@.md，並將每個代理程式連結到該檔案，讓您其他 Mac 上的 Coincide 也能使用同一個檔案。目前檔案的備份會保留在這部 Mac 上。"
           }
         }
       }
@@ -186974,230 +187540,6 @@
         }
       }
     },
-    "Pulled the latest instructions and pushed yours." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Die neuesten Anweisungen wurden gepullt und Ihre gepusht."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Se han descargado las últimas instrucciones y se han enviado las tuyas."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Se descargaron las últimas instrucciones y se enviaron las tuyas."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Dernières instructions récupérées et vôtres envoyées."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "नवीनतम निर्देश पुल किए और आपके निर्देश पुश किए।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Instruksi terbaru ditarik dan milik Anda di-push."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ultime istruzioni scaricate e le tue inviate."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "最新の指示をプルし、あなたの指示をプッシュしました。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "최신 지침을 풀하고 내 지침을 푸시했습니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "De nieuwste instructies opgehaald en de jouwe gepusht."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Pobrano najnowsze instrukcje i wysłano Twoje."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "As instruções mais recentes foram baixadas e as suas foram enviadas."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Получены последние инструкции, ваши отправлены."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "En son talimatlar çekildi ve sizinkiler gönderildi."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Отримано найновіші інструкції та надіслано ваші."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Đã pull hướng dẫn mới nhất và push hướng dẫn của bạn."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已拉取最新指令并推送了您的指令。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已提取最新指示並推送您的指示。"
-          }
-        }
-      }
-    },
-    "Pulled the latest instructions." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Die neuesten Anweisungen wurden gepullt."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Se han descargado las últimas instrucciones."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Se descargaron las últimas instrucciones."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Dernières instructions récupérées."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "नवीनतम निर्देश पुल किए।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Instruksi terbaru ditarik."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ultime istruzioni scaricate."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "最新の指示をプルしました。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "최신 지침을 풀했습니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "De nieuwste instructies opgehaald."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Pobrano najnowsze instrukcje."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "As instruções mais recentes foram baixadas."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Получены последние инструкции."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "En son talimatlar çekildi."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Отримано найновіші інструкції."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Đã pull hướng dẫn mới nhất."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已拉取最新指令。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已提取最新指示。"
-          }
-        }
-      }
-    },
     "Pulling…" : {
       "localizations" : {
         "de" : {
@@ -187982,6 +188324,118 @@
         }
       }
     },
+    "Push changes right away" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Änderungen sofort pushen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enviar los cambios de inmediato"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enviar los cambios de inmediato"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Envoyer les modifications immédiatement"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बदलाव तुरंत पुश करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Push perubahan segera"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Invia subito le modifiche"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "変更をすぐにプッシュ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "변경 사항 즉시 푸시"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Push wijzigingen meteen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wypychaj zmiany od razu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enviar alterações imediatamente"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сразу отправлять изменения"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Değişiklikleri hemen push et"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Одразу надсилати зміни"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Push thay đổi ngay lập tức"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "立即推送更改"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "立即推送變更"
+          }
+        }
+      }
+    },
     "Push this repository to GitHub to see its pull requests here." : {
       "localizations" : {
         "de" : {
@@ -188318,118 +188772,6 @@
         }
       }
     },
-    "Push when you save" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Beim Sichern pushen"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Hacer push al guardar"
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Hacer push al guardar"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Faire un push à l’enregistrement"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "सेव करते समय पुश करें"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Push saat menyimpan"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Esegui il push al salvataggio"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "保存時にプッシュ"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "저장할 때 푸시"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Push bij bewaren"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Wysyłaj (push) przy zapisie"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Fazer push ao salvar"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Отправлять (push) при сохранении"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Kaydederken push yap"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Надсилати (push) під час збереження"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Push khi lưu"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "存储时推送"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "儲存時推送"
-          }
-        }
-      }
-    },
     "Pushed %@ to %@" : {
       "localizations" : {
         "de" : {
@@ -188656,118 +188998,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "已推送至 %@"
-          }
-        }
-      }
-    },
-    "Pushed your instructions." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ihre Anweisungen wurden gepusht."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Se han enviado tus instrucciones."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Se enviaron tus instrucciones."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Vos instructions ont été envoyées."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "आपके निर्देश पुश किए।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Instruksi Anda sudah di-push."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Le tue istruzioni sono state inviate."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "指示をプッシュしました。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "지침을 푸시했습니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Je instructies zijn gepusht."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Wysłano Twoje instrukcje."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Suas instruções foram enviadas."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ваши инструкции отправлены."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Talimatlarınız gönderildi."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ваші інструкції надіслано."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Đã push hướng dẫn của bạn."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已推送您的指令。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已推送您的指示。"
           }
         }
       }
@@ -238738,118 +238968,6 @@
         }
       }
     },
-    "Sync is off. The master is %@ again." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Die Synchronisierung ist deaktiviert. Die Hauptdatei ist wieder %@."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "La sincronización está desactivada. El archivo principal vuelve a ser %@."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "La sincronización está desactivada. El archivo principal vuelve a ser %@."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "La synchronisation est désactivée. Le fichier principal est de nouveau %@."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "सिंक बंद है। मास्टर फ़ाइल फिर से %@ है।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sinkronisasi nonaktif. Berkas utama kembali ke %@."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "La sincronizzazione è disattivata. Il file principale è di nuovo %@."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "同期はオフです。マスターファイルは再び %@ になりました。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "동기화가 꺼져 있습니다. 마스터 파일은 다시 %@입니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Synchronisatie staat uit. Het hoofdbestand is weer %@."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Synchronizacja jest wyłączona. Plikiem głównym jest znowu %@."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "A sincronização está desativada. O arquivo principal volta a ser %@."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Синхронизация выключена. Основной файл снова %@."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Eşitleme kapalı. Ana dosya yine %@."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Синхронізацію вимкнено. Основним файлом знову є %@."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Đồng bộ đã tắt. Tệp chính lại là %@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "同步已关闭。主文件再次为 %@。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "同步已關閉。主檔案再次為 %@。"
-          }
-        }
-      }
-    },
     "Sync the Master File" : {
       "localizations" : {
         "de" : {
@@ -238962,114 +239080,114 @@
         }
       }
     },
-    "Sync: %@" : {
+    "Sync: Off" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Synchronisierung: %@"
+            "value" : "Synchronisierung: Aus"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Sincronización: %@"
+            "value" : "Sincronización: desactivada"
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Sincronización: %@"
+            "value" : "Sincronización: desactivada"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Synchronisation : %@"
+            "value" : "Synchronisation : désactivée"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "सिंक: %@"
+            "value" : "सिंक: बंद"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Sinkronisasi: %@"
+            "value" : "Sinkronisasi: Mati"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Sincronizzazione: %@"
+            "value" : "Sincronizzazione: disattivata"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "同期: %@"
+            "value" : "同期: オフ"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "동기화: %@"
+            "value" : "동기화: 끔"
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Synchronisatie: %@"
+            "value" : "Synchronisatie: uit"
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Synchronizacja: %@"
+            "value" : "Synchronizacja: wył."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Sincronização: %@"
+            "value" : "Sincronização: desativada"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Синхронизация: %@"
+            "value" : "Синхронизация: выкл."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Eşitleme: %@"
+            "value" : "Eşitleme: Kapalı"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Синхронізація: %@"
+            "value" : "Синхронізація: вимкнено"
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Đồng bộ: %@"
+            "value" : "Đồng bộ: Tắt"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "同步：%@"
+            "value" : "同步：关闭"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "同步：%@"
+            "value" : "同步：關閉"
           }
         }
       }
@@ -239182,6 +239300,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "同步的指示會離開這部 Mac，請勿在其中包含金鑰、權杖和密碼。"
+          }
+        }
+      }
+    },
+    "Synced to" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchronisiert mit"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizado con"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizado con"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchronisé avec"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सिंक स्थान"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Disinkronkan ke"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizzato con"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "同期先"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "동기화 위치"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gesynchroniseerd met"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchronizowane z"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizado com"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Синхронизируется с"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eşitlendiği yerler"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Синхронізується з"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã đồng bộ với"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "同步到"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "同步至"
+          }
+        }
+      }
+    },
+    "Syncing…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird synchronisiert …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizando…"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizando…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchronisation…"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सिंक हो रहा है…"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menyinkronkan…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizzazione…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "同期中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "동기화 중…"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchroniseren…"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchronizowanie…"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizando…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Идёт синхронизация…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eşitleniyor…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Триває синхронізація…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đang đồng bộ…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在同步…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在同步…"
           }
         }
       }
@@ -250304,6 +250646,118 @@
         }
       }
     },
+    "The master and the copy in %@ both changed. Choose which to keep; the other is backed up." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Hauptdatei und die Kopie in %@ wurden beide geändert. Wählen Sie, welche Version behalten werden soll; die andere wird gesichert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El archivo principal y la copia en %@ han cambiado. Elige cuál conservar; se hará una copia de seguridad de la otra."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El archivo principal y la copia en %@ cambiaron. Elige cuál conservar; se creará un respaldo de la otra."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le fichier principal et la copie dans %@ ont tous deux changé. Choisissez la version à conserver ; l’autre est sauvegardée."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "मास्टर फ़ाइल और %@ में मौजूद कॉपी, दोनों बदल गई हैं। चुनें कि कौन-सी रखनी है; दूसरी का बैकअप बना लिया जाता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berkas utama dan salinan di %@ sama-sama berubah. Pilih yang akan dipertahankan; yang lain dicadangkan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il file principale e la copia in %@ sono entrambi cambiati. Scegli quale versione mantenere; dell’altra viene creato un backup."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "マスターと %@ のコピーの両方が変更されました。残す方を選んでください。もう一方はバックアップされます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "마스터와 %@의 사본이 모두 변경되었습니다. 유지할 쪽을 선택하십시오. 다른 쪽은 백업됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het hoofdbestand en de kopie in %@ zijn allebei gewijzigd. Kies welke je wilt behouden; van de andere wordt een reservekopie gemaakt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plik główny i kopia w %@ zostały zmienione. Wybierz, którą wersję zachować; z drugiej zostanie utworzona kopia zapasowa."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O arquivo principal e a cópia em %@ mudaram. Escolha qual versão manter; será feito um backup da outra."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Основной файл и копия в %@ изменились. Выберите, какую версию оставить; для другой будет создана резервная копия."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ana dosya da %@ içindeki kopya da değişti. Hangisinin tutulacağını seçin; diğerinin yedeği alınır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Основний файл і копія в %@ змінилися. Виберіть, яку версію залишити; для іншої буде створено резервну копію."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tệp chính và bản sao trong %@ đều đã thay đổi. Hãy chọn bản cần giữ; bản còn lại sẽ được sao lưu."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "主文件和 %@ 中的副本都已更改。请选择要保留的版本；另一个版本会被备份。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "主檔案和 %@ 中的副本都已變更。請選擇要保留的版本；另一個版本會備份起來。"
+          }
+        }
+      }
+    },
     "The master doesn't exist yet. It starts with the text of %@." : {
       "localizations" : {
         "de" : {
@@ -250416,338 +250870,114 @@
         }
       }
     },
-    "The master is %@." : {
+    "The master stays at %@. Each place you turn on below keeps a copy in step with it: changes made here go there, and changes made there, on your other Macs, come back here." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Die Hauptdatei ist %@."
+            "value" : "Die Hauptdatei bleibt unter %@. Jeder Ort, den Sie unten einschalten, hält eine Kopie mit ihr abgeglichen: Änderungen von hier gelangen dorthin, und Änderungen dort, auf Ihren anderen Macs, kommen hierher zurück."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El archivo principal es %@."
+            "value" : "El archivo principal permanece en %@. Cada lugar que actives abajo mantiene una copia sincronizada con él: los cambios hechos aquí llegan allí, y los cambios hechos allí, en tus otros Mac, vuelven aquí."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El archivo principal es %@."
+            "value" : "El archivo principal se queda en %@. Cada lugar que actives abajo mantiene una copia sincronizada con él: los cambios hechos aquí llegan allá, y los cambios hechos allá, en tus otras Mac, vuelven aquí."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Le fichier principal est %@."
+            "value" : "Le fichier principal reste dans %@. Chaque emplacement que vous activez ci-dessous en conserve une copie synchronisée : les modifications faites ici y sont reportées, et celles faites là-bas, sur vos autres Mac, reviennent ici."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "मास्टर फ़ाइल %@ है।"
+            "value" : "मास्टर फ़ाइल %@ पर ही रहती है। नीचे आप जो भी जगह चालू करते हैं, वह उसकी एक कॉपी उसके साथ सिंक रखती है: यहाँ किए गए बदलाव वहाँ जाते हैं, और वहाँ, आपके दूसरे Mac पर, किए गए बदलाव यहाँ लौट आते हैं।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Berkas utama adalah %@."
+            "value" : "Berkas utama tetap berada di %@. Setiap tempat yang Anda aktifkan di bawah menyimpan salinan yang selaras dengannya: perubahan di sini dikirim ke sana, dan perubahan di sana, di Mac Anda yang lain, kembali ke sini."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Il file principale è %@."
+            "value" : "Il file principale resta in %@. Ogni posizione che attivi qui sotto ne mantiene una copia allineata: le modifiche fatte qui arrivano lì, e quelle fatte lì, sugli altri tuoi Mac, tornano qui."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "マスターファイルは %@ です。"
+            "value" : "マスターは %@ に置かれたままです。下でオンにした場所ごとに、マスターと同期したコピーが保たれます。ここで加えた変更はそちらに反映され、そちら（ほかの Mac）で加えた変更はここに反映されます。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "마스터 파일은 %@입니다."
+            "value" : "마스터는 %@에 그대로 있습니다. 아래에서 켠 각 위치는 마스터와 동기화된 사본을 유지합니다. 여기서 변경한 내용은 그곳으로 전달되고, 그곳(다른 Mac)에서 변경한 내용은 여기로 돌아옵니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Het hoofdbestand is %@."
+            "value" : "Het hoofdbestand blijft in %@. Elke plek die je hieronder aanzet, houdt er een kopie van gelijk: wijzigingen hier gaan daarheen, en wijzigingen daar, op je andere Macs, komen hier terug."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Plikiem głównym jest %@."
+            "value" : "Plik główny pozostaje w %@. Każde miejsce, które włączysz poniżej, przechowuje kopię zgodną z nim: zmiany wprowadzone tutaj trafiają tam, a zmiany wprowadzone tam, na pozostałych Macach, wracają tutaj."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O arquivo principal é %@."
+            "value" : "O arquivo principal fica em %@. Cada local que você ativar abaixo mantém uma cópia em sincronia com ele: as alterações feitas aqui vão para lá, e as feitas lá, nos seus outros Macs, voltam para cá."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Основной файл — %@."
+            "value" : "Основной файл остаётся в %@. Каждое место, включённое ниже, хранит синхронизированную с ним копию: изменения, сделанные здесь, попадают туда, а изменения, сделанные там, на других ваших Mac, возвращаются сюда."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ana dosya: %@."
+            "value" : "Ana dosya %@ konumunda kalır. Aşağıda açtığınız her yer, onunla eşit bir kopya tutar: burada yapılan değişiklikler oraya gider, orada, diğer Mac'lerinizde yapılan değişiklikler de buraya geri gelir."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Основний файл — %@."
+            "value" : "Основний файл залишається в %@. Кожне місце, увімкнене нижче, зберігає синхронізовану з ним копію: зміни, внесені тут, потрапляють туди, а зміни, внесені там, на інших ваших Mac, повертаються сюди."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tệp chính là %@."
+            "value" : "Tệp chính vẫn ở %@. Mỗi nơi bạn bật bên dưới sẽ giữ một bản sao đồng bộ với nó: thay đổi thực hiện ở đây sẽ được chuyển tới đó, và thay đổi thực hiện ở đó, trên các máy Mac khác của bạn, sẽ quay về đây."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "主文件是 %@。"
+            "value" : "主文件保留在 %@。你在下方打开的每个位置都会保留一份与其保持一致的副本：在这里所做的更改会同步到那里，在那里（你的其他 Mac 上）所做的更改也会同步回这里。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "主檔案是 %@。"
-          }
-        }
-      }
-    },
-    "The master is now %@." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Die Hauptdatei ist jetzt %@."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "El archivo principal ahora es %@."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "El archivo principal ahora es %@."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Le fichier principal est maintenant %@."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "मास्टर फ़ाइल अब %@ है।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Berkas utama sekarang adalah %@."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ora il file principale è %@."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "マスターファイルは %@ になりました。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "이제 마스터 파일은 %@입니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Het hoofdbestand is nu %@."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Plikiem głównym jest teraz %@."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Agora o arquivo principal é %@."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Теперь основной файл — %@."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ana dosya artık %@."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Тепер основний файл — %@."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Tệp chính hiện là %@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "主文件现在是 %@。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "主檔案現在是 %@。"
-          }
-        }
-      }
-    },
-    "The master moves into the repository's folder. Coincide commits it when you save, pulls and pushes when you ask, never force-pushes, and never pushes other files." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Die Hauptdatei wird in den Ordner des Repositorys verschoben. Coincide committet sie beim Sichern, pullt und pusht auf Anforderung, führt nie einen Force-Push aus und pusht keine anderen Dateien."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "El archivo principal se mueve a la carpeta del repositorio. Coincide hace commit al guardar, hace pull y push cuando se lo pides, nunca fuerza un push y nunca envía otros archivos."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "El archivo principal se mueve a la carpeta del repositorio. Coincide hace commit al guardar, hace pull y push cuando se lo pides, nunca fuerza un push y nunca envía otros archivos."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Le fichier principal est déplacé dans le dossier du dépôt. Coincide le valide à l’enregistrement, effectue pull et push à votre demande, ne force jamais un push et n’envoie jamais d’autres fichiers."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "मास्टर फ़ाइल रिपॉज़िटरी के फ़ोल्डर में चली जाती है। Coincide सेव करने पर कमिट करता है, आपके कहने पर पुल और पुश करता है, कभी फ़ोर्स-पुश नहीं करता, और अन्य फ़ाइलें कभी पुश नहीं करता।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Berkas utama dipindahkan ke folder repositori. Coincide meng-commit-nya saat Anda menyimpan, melakukan pull dan push saat Anda memintanya, tidak pernah force-push, dan tidak pernah mem-push berkas lain."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Il file principale viene spostato nella cartella del repository. Coincide ne esegue il commit al salvataggio, esegue pull e push su tua richiesta, non forza mai il push e non invia mai altri file."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "マスターファイルはリポジトリのフォルダに移動します。Coincide は、保存時にコミットし、依頼されたときにプルとプッシュを行い、強制プッシュは行わず、ほかのファイルをプッシュすることもありません。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "마스터 파일이 저장소 폴더로 이동합니다. Coincide는 저장할 때 커밋하고, 요청할 때 풀 및 푸시하며, 강제 푸시는 하지 않고, 다른 파일은 푸시하지 않습니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Het hoofdbestand verhuist naar de map van de repository. Coincide commit het wanneer je bewaart, pullt en pusht wanneer je erom vraagt, force-pusht nooit en pusht nooit andere bestanden."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Plik główny trafia do folderu repozytorium. Coincide zatwierdza go (commit) przy zapisie, wykonuje pull i push na życzenie, nigdy nie robi force-push i nigdy nie wysyła innych plików."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "O arquivo principal é movido para a pasta do repositório. O Coincide faz commit ao salvar, faz pull e push quando você pedir, nunca força um push e nunca envia outros arquivos."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Основной файл переносится в папку репозитория. Coincide коммитит его при сохранении, выполняет pull и push по вашей просьбе, никогда не делает force-push и никогда не отправляет другие файлы."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ana dosya deponun klasörüne taşınır. Coincide kaydettiğinizde commit eder, siz istediğinizde pull ve push yapar, asla force-push yapmaz ve başka dosyaları asla push etmez."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Основний файл переміщується до папки репозиторію. Coincide комітить його під час збереження, виконує pull і push на ваш запит, ніколи не робить force-push і ніколи не надсилає інші файли."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Tệp chính được chuyển vào thư mục của kho lưu trữ. Coincide commit khi bạn lưu, pull và push khi bạn yêu cầu, không bao giờ force-push và không bao giờ push các tệp khác."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "主文件会移到仓库的文件夹中。Coincide 在您存储时提交，在您要求时拉取和推送，从不强制推送，也从不推送其他文件。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "主檔案會移到儲存庫的資料夾中。Coincide 會在您儲存時提交，在您要求時提取和推送，絕不強制推送，也絕不推送其他檔案。"
+            "value" : "主檔案會保留在 %@。你在下方開啟的每個位置都會保留一份與其保持一致的副本：在這裡所做的變更會同步到那裡，在那裡（你的其他 Mac 上）所做的變更也會同步回這裡。"
           }
         }
       }
@@ -259831,6 +260061,118 @@
         }
       }
     },
+    "This copy and the master both changed. Open Sync… to choose which to keep." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Kopie und die Hauptdatei wurden beide geändert. Öffnen Sie „Synchronisieren …“, um zu wählen, welche Version behalten wird."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta copia y el archivo principal han cambiado. Abre Sincronizar… para elegir cuál conservar."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta copia y el archivo principal cambiaron. Abre Sincronizar… para elegir cuál conservar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette copie et le fichier principal ont tous deux changé. Ouvrez Synchroniser… pour choisir la version à conserver."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह कॉपी और मास्टर फ़ाइल, दोनों बदल गई हैं। कौन-सी रखनी है, यह चुनने के लिए सिंक… खोलें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Salinan ini dan berkas utama sama-sama berubah. Buka Sinkronkan… untuk memilih yang akan dipertahankan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questa copia e il file principale sono entrambi cambiati. Apri Sincronizza… per scegliere quale versione mantenere."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このコピーとマスターの両方が変更されました。「同期…」を開いて、残す方を選んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 사본과 마스터가 모두 변경되었습니다. 동기화…를 열어 유지할 쪽을 선택하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze kopie en het hoofdbestand zijn allebei gewijzigd. Open Synchroniseer… om te kiezen welke je wilt behouden."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ta kopia i plik główny zostały zmienione. Otwórz Synchronizuj…, aby wybrać, którą wersję zachować."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta cópia e o arquivo principal mudaram. Abra Sincronizar… para escolher qual versão manter."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Эта копия и основной файл изменились. Откройте «Синхронизация…», чтобы выбрать, какую версию оставить."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu kopya da ana dosya da değişti. Hangisinin tutulacağını seçmek için Eşitle…'yi açın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ця копія й основний файл змінилися. Відкрийте «Синхронізація…», щоб вибрати, яку версію залишити."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bản sao này và tệp chính đều đã thay đổi. Hãy mở Đồng bộ… để chọn bản cần giữ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此副本和主文件都已更改。请打开“同步…”选择要保留的版本。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此副本和主檔案都已變更。請打開「同步…」選擇要保留的版本。"
+          }
+        }
+      }
+    },
     "This file changed on disk, and you have unsaved edits." : {
       "localizations" : {
         "de" : {
@@ -267610,118 +267952,6 @@
         }
       }
     },
-    "Turn Off Sync" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Synchronisierung deaktivieren"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Desactivar sincronización"
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Desactivar sincronización"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Désactiver la synchronisation"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "सिंक बंद करें"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Matikan Sinkronisasi"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Disattiva sincronizzazione"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "同期をオフにする"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "동기화 끄기"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Schakel synchronisatie uit"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Wyłącz synchronizację"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Desativar sincronização"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Выключить синхронизацию"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Eşitlemeyi Kapat"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Вимкнути синхронізацію"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Tắt đồng bộ"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "关闭同步"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "關閉同步"
-          }
-        }
-      }
-    },
     "Turn changes" : {
       "localizations" : {
         "de" : {
@@ -268614,118 +268844,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "在「設定 › Cursor」中開啟「顯示帳號用量」以讀取方案限額。"
-          }
-        }
-      }
-    },
-    "Turning sync off copies the master back to this Mac and links the agents to the copy. The repository stays as it is." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Beim Deaktivieren der Synchronisierung wird die Hauptdatei zurück auf diesen Mac kopiert und die Agenten werden mit der Kopie verknüpft. Das Repository bleibt unverändert."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Al desactivar la sincronización, el archivo principal se copia de nuevo en este Mac y los agentes se enlazan con la copia. El repositorio se queda como está."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Al desactivar la sincronización, el archivo principal se copia de vuelta en esta Mac y los agentes se enlazan con la copia. El repositorio se queda como está."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "La désactivation de la synchronisation recopie le fichier principal sur ce Mac et lie les agents à la copie. Le dépôt reste tel quel."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "सिंक बंद करने पर मास्टर फ़ाइल वापस इस Mac पर कॉपी हो जाती है और एजेंट उस कॉपी से लिंक हो जाते हैं। रिपॉज़िटरी जैसी है वैसी रहती है।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mematikan sinkronisasi menyalin berkas utama kembali ke Mac ini dan menautkan agen ke salinan tersebut. Repositori tetap apa adanya."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Disattivando la sincronizzazione, il file principale viene copiato di nuovo su questo Mac e gli agenti vengono collegati alla copia. Il repository resta invariato."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "同期をオフにすると、マスターファイルがこの Mac にコピーし直され、エージェントはそのコピーにリンクされます。リポジトリはそのまま残ります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "동기화를 끄면 마스터 파일이 이 Mac으로 다시 복사되고 에이전트가 그 사본에 링크됩니다. 저장소는 그대로 유지됩니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Als je synchronisatie uitschakelt, wordt het hoofdbestand teruggekopieerd naar deze Mac en worden de agents aan de kopie gekoppeld. De repository blijft zoals hij is."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Wyłączenie synchronizacji kopiuje plik główny z powrotem na ten Mac i dowiązuje agentów do kopii. Repozytorium pozostaje bez zmian."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ao desativar a sincronização, o arquivo principal é copiado de volta para este Mac e os agentes são vinculados à cópia. O repositório permanece como está."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "При выключении синхронизации основной файл копируется обратно на этот Mac, а агенты связываются с копией. Репозиторий остаётся как есть."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Eşitlemeyi kapatmak ana dosyayı bu Mac'e geri kopyalar ve ajanları kopyaya bağlar. Depo olduğu gibi kalır."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Вимкнення синхронізації копіює основний файл назад на цей Mac і пов’язує агентів із копією. Репозиторій залишається без змін."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Tắt đồng bộ sẽ sao chép tệp chính trở lại máy Mac này và liên kết các tác nhân tới bản sao đó. Kho lưu trữ giữ nguyên."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "关闭同步会将主文件复制回这台 Mac，并将各智能体链接到该副本。仓库保持不变。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "關閉同步會將主檔案拷貝回這部 Mac，並將代理程式連結到該副本。儲存庫會維持原樣。"
           }
         }
       }
@@ -271191,6 +271309,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "無限點數"
+          }
+        }
+      }
+    },
+    "Unlink" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trennen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desvincular"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desvincular"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dissocier"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अनलिंक करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Putuskan Tautan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Scollega"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "リンクを解除"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "연결 해제"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ontkoppel"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Odłącz"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desvincular"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Отвязать"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bağlantıyı Kes"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Від’єднати"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hủy liên kết"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "取消关联"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "解除連結"
           }
         }
       }
@@ -274684,118 +274914,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "用於新對話"
-          }
-        }
-      }
-    },
-    "Use iCloud Drive" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "iCloud Drive verwenden"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Usar iCloud Drive"
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Usar iCloud Drive"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Utiliser iCloud Drive"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "iCloud Drive इस्तेमाल करें"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Gunakan iCloud Drive"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Usa iCloud Drive"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "iCloud Drive を使用"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "iCloud Drive 사용"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Gebruik iCloud Drive"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Użyj iCloud Drive"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Usar o iCloud Drive"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Использовать iCloud Drive"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "iCloud Drive Kullan"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Використовувати iCloud Drive"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Dùng iCloud Drive"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "使用 iCloud Drive"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "使用 iCloud Drive"
           }
         }
       }
@@ -278349,6 +278467,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "正在等待 Google 完成登入。"
+          }
+        }
+      }
+    },
+    "Waiting for iCloud Drive to download the copy." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Warten, bis iCloud Drive die Kopie heruntergeladen hat."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esperando a que iCloud Drive descargue la copia."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esperando a que iCloud Drive descargue la copia."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En attente du téléchargement de la copie par iCloud Drive."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iCloud Drive के कॉपी डाउनलोड करने का इंतज़ार हो रहा है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menunggu iCloud Drive mengunduh salinan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In attesa che iCloud Drive scarichi la copia."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iCloud Drive がコピーをダウンロードするのを待っています。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iCloud Drive에서 사본을 다운로드하기를 기다리는 중입니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wachten tot iCloud Drive de kopie heeft gedownload."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oczekiwanie, aż iCloud Drive pobierze kopię."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aguardando o iCloud Drive baixar a cópia."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ожидание загрузки копии из iCloud Drive."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iCloud Drive'ın kopyayı indirmesi bekleniyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Очікування, поки iCloud Drive завантажить копію."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đang chờ iCloud Drive tải bản sao xuống."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在等待 iCloud Drive 下载副本。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在等待 iCloud Drive 下載副本。"
           }
         }
       }
@@ -283283,118 +283513,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "你的自訂 Antigravity 路徑指向下載的執行環境。移除執行環境前，請先清除該路徑。"
-          }
-        }
-      }
-    },
-    "Your local version was backed up to %@." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ihre lokale Version wurde in %@ gesichert."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Se ha hecho una copia de seguridad de tu versión local en %@."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Se creó un respaldo de tu versión local en %@."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Votre version locale a été sauvegardée dans %@."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "आपके लोकल वर्शन का बैकअप %@ में बनाया गया।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Versi lokal Anda dicadangkan ke %@."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "La tua versione locale è stata salvata come backup in %@."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "ローカルのバージョンを %@ にバックアップしました。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "로컬 버전이 %@에 백업되었습니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Er is een reservekopie van je lokale versie gemaakt in %@."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Kopię zapasową Twojej lokalnej wersji zapisano w %@."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Foi feito um backup da sua versão local em %@."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Резервная копия вашей локальной версии сохранена в %@."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Yerel sürümünüzün yedeği şuraya alındı: %@."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Резервну копію вашої локальної версії збережено в %@."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Phiên bản cục bộ của bạn đã được sao lưu vào %@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "本地版本已备份到 %@。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "本機版本已備份到 %@。"
           }
         }
       }

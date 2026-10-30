@@ -48,6 +48,11 @@ struct InstructionsView: View {
         .sheet(isPresented: $model.showingSync) {
             SyncSheet(model: model).instructionsTheme()
         }
+        .onChange(of: model.syncer.revision) {
+            // A sync brought a change from a copy into the master, or moved an older setup's master back.
+            model.checkDisk()
+            Task { await model.reload() }
+        }
     }
 }
 
@@ -99,15 +104,7 @@ private struct MasterCard: View {
             }
             if model.isMasterMode {
                 health
-                HStack(spacing: 6) {
-                    Text("Sync: \(model.syncDescription)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    Spacer(minLength: 4)
-                    if case .git = model.config.sync {
-                        Button("Sync Now") { model.syncNow() }.disabled(model.isSyncing)
-                    }
-                    Button("Sync…") { model.showingSync = true }
-                }
-                .controlSize(.small)
+                SyncSummary(model: model)
             } else {
                 Text(explanation).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
@@ -170,6 +167,75 @@ private struct MasterCard: View {
         panel.message = String(localized: "Choose the file every agent should read.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         model.setMasterPath(url)
+    }
+}
+
+/// Where the master is synced to: a row for each copy with how it stands, or "Sync: Off".
+struct SyncSummary: View {
+    let model: InstructionsModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if model.config.iCloud == nil, model.config.git == nil {
+                HStack(spacing: 6) {
+                    Text("Sync: Off").font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Button("Sync…") { model.showingSync = true }
+                }
+            } else {
+                Text("Synced to").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                if model.config.iCloud != nil {
+                    SyncRow(title: String(localized: "iCloud Drive"), systemImage: "icloud", status: model.iCloudStatus)
+                }
+                if let repository = model.repositoryTitle {
+                    SyncRow(title: repository, systemImage: "arrow.triangle.branch", status: model.gitStatus)
+                }
+                HStack(spacing: 6) {
+                    Spacer(minLength: 4)
+                    Button("Sync Now") { model.syncNow() }.disabled(model.syncer.isRunning)
+                    Button("Sync…") { model.showingSync = true }
+                }
+            }
+        }
+        .controlSize(.small)
+    }
+}
+
+/// One place the master is synced to, with a check when it is in step and the problem when it isn't.
+struct SyncRow: View {
+    let title: String
+    let systemImage: String
+    let status: InstructionCopySyncer.Status?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage).frame(width: 14).foregroundStyle(.secondary)
+                Text(verbatim: title).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 4)
+                switch status {
+                case .inStep: Image(systemName: "checkmark.circle").foregroundStyle(.secondary).help(String(localized: "In step with the master"))
+                case nil: ProgressView().controlSize(.mini)
+                default: Image(systemName: "exclamationmark.triangle").foregroundStyle(Color(nsColor: Theme.warning))
+                }
+            }
+            .font(.caption)
+            if let problem = status?.problem {
+                Text(verbatim: problem).font(.caption).foregroundStyle(.secondary).lineLimit(3).padding(.leading, 20)
+            }
+        }
+    }
+}
+
+extension InstructionCopySyncer.Status {
+    /// What is wrong, for a copy that isn't in step.
+    var problem: String? {
+        switch self {
+        case .inStep: nil
+        case .conflict: String(localized: "This copy and the master both changed. Open Sync… to choose which to keep.")
+        case .downloading: String(localized: "Waiting for iCloud Drive to download the copy.")
+        case .failed(let message): message
+        }
     }
 }
 
