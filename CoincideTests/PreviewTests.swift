@@ -79,6 +79,26 @@ import WebKit
         #expect(session.webView.url?.scheme == "http")
     }
 
+    /// A path typed in the address bar opens the local file; words search with the chosen engine.
+    @Test func typedPathsOpenLocalFiles() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-local-page-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let page = folder.appendingPathComponent("index.html")
+        try Data("<!doctype html><title>Local page</title><p>From disk</p>".utf8).write(to: page)
+        let session = PreviewSession()
+        try session.navigate(page.path)
+        for _ in 0..<500 {
+            if session.webView.title == "Local page", !session.webView.isLoading { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(session.webView.title == "Local page")
+        #expect(session.webView.url?.isFileURL == true)
+        session.searchEngine = { .duckDuckGo }
+        try session.navigate("coincide browser")
+        #expect(session.activeTab.url?.absoluteString == "https://duckduckgo.com/?q=coincide%20browser")
+    }
+
     /// An agent's upload answers the page's file chooser itself: no dialog, the files arrive as if picked, through the
     /// input or a button that opens a hidden one.
     @Test func agentUploadsReachFileInputsWithoutADialog() async throws {

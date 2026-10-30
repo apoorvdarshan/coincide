@@ -19,6 +19,7 @@ public final class PreviewBridge {
                 - read: title, URL, visible text and interactive elements with CSS selectors, and passkey when the \
                 page asked for a passkey this browser can't provide.
                 - navigate with url (http/https only). It returns at once; poll read until loading is false.
+                - search with query: searches with the user's search engine, like navigate.
                 - click with selector; input with selector and text.
                 - upload with selector and files (absolute paths): attaches local files to the page's file input \
                 without any dialog. The selector can name the input or the button or drop area that opens it.

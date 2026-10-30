@@ -39,6 +39,11 @@ final class BrowserSettingsModel {
         set { profile.settings.update { $0.usesPrivateSessions = newValue } }
     }
 
+    var searchEngine: SearchEngine {
+        get { settings.searchEngine }
+        set { profile.settings.update { $0.searchEngine = newValue } }
+    }
+
     var agentControlByDefault: Bool {
         get { settings.agentControlByDefault }
         set { profile.settings.update { $0.agentControlByDefault = newValue } }
@@ -80,6 +85,10 @@ struct BrowserSettingsView: View {
                 } label: {
                     Text("Browsing data")
                     Text("History items: \(model.historyCount). Bookmarks are kept.")
+                }
+                ThemedPicker(selection: $model.searchEngine, options: SearchEngine.allCases.map { .init($0, $0.name) }) {
+                    Text("Search engine")
+                    Text("What the address bar searches with when you type words instead of an address. Addresses such as localhost:3000, IP addresses and file paths always open directly.")
                 }
             } header: {
                 Text("Profile")

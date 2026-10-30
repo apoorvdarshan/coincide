@@ -8,11 +8,11 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     var sessions = PreviewSessions.shared
     private(set) var session: PreviewSession?
     private let content = NSView()
-    private let address = ThemedTextField(placeholder: "localhost:3000")
+    private let address = ThemedTextField(placeholder: String(localized: "Search or enter address"))
     private let status = NSTextField(labelWithString: "")
     private let agentStatus = NSTextField(labelWithString: "")
     private let spinner = NSProgressIndicator()
-    private let empty = NSTextField(wrappingLabelWithString: String(localized: "Open a page to preview it beside your conversation."))
+    private let empty = NSTextField(wrappingLabelWithString: String(localized: "Search the web, or open a site, a local server such as localhost:3000, or a file."))
     let tabStrip = PreviewTabStrip()
     let userTurnBanner = PreviewUserTurnBanner()
     let approvalBanner = PreviewLoginApprovalBanner()

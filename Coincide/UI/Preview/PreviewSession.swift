@@ -14,6 +14,8 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
     fileprivate(set) var passkeyRequested = false
     /// Files an agent's `upload` is attaching: the page's next file chooser gets them instead of a dialog.
     fileprivate var pendingUpload: [URL]?
+    /// The folder a local file the user opened may read from; navigations stay inside it.
+    private var fileRoot: URL?
     var lastUse = Date()
     weak var owner: PreviewSession?
     private var observations: [NSKeyValueObservation] = []
@@ -53,7 +55,9 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
         })
         webView = view
         PreviewParking.shared.park(view)
-        if configuration == nil, let savedURL { view.load(URLRequest(url: savedURL)) }
+        if configuration == nil, let savedURL {
+            if savedURL.isFileURL { openFile(savedURL, in: view) } else { view.load(URLRequest(url: savedURL)) }
+        }
         return view
     }
 
@@ -76,7 +80,24 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
     func navigate(_ url: URL) {
         error = nil
         savedURL = url
-        load().load(URLRequest(url: url))
+        if url.isFileURL { openFile(url, in: load()) } else { load().load(URLRequest(url: url)) }
+    }
+
+    /// A local file the user typed the path of, which may read the files beside it.
+    private func openFile(_ url: URL, in view: WKWebView) {
+        let root = url.deletingLastPathComponent()
+        fileRoot = root
+        view.loadFileURL(url, allowingReadAccessTo: root)
+    }
+
+    /// Web addresses, and local files inside the folder of a file the user opened.
+    private func allows(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        if url.isFileURL {
+            guard let fileRoot else { return false }
+            return url.standardizedFileURL.path.hasPrefix(fileRoot.standardizedFileURL.path)
+        }
+        return PreviewCommand.url(url.absoluteString) != nil
     }
 
     // MARK: WKNavigationDelegate
@@ -111,14 +132,14 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
-        let allowed = navigationAction.request.url.flatMap { PreviewCommand.url($0.absoluteString) } != nil
+        let allowed = allows(navigationAction.request.url)
         decisionHandler(allowed ? .allow : .cancel)
         if !allowed { error = PreviewError.invalidAddress.localizedDescription; owner?.tabChanged(self) }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
-        let addressAllowed = navigationResponse.response.url.flatMap { PreviewCommand.url($0.absoluteString) } != nil
+        let addressAllowed = allows(navigationResponse.response.url)
         decisionHandler(navigationResponse.canShowMIMEType && addressAllowed ? .allow : .cancel)
     }
 
@@ -354,9 +375,15 @@ final class PreviewSession: NSObject {
         for tab in tabs { tab.close() }
     }
 
+    /// The user's search engine, read when something is searched.
+    var searchEngine: () -> SearchEngine = { .google }
+
+    /// What the user typed in the address bar: an address, a local file, or a search.
     func navigate(_ address: String) throws {
-        guard let url = PreviewCommand.url(address) else { throw PreviewError.invalidAddress }
-        activeTab.navigate(url)
+        guard let destination = BrowserAddress.resolve(address, engine: searchEngine(), allowsFiles: true) else {
+            throw PreviewError.invalidAddress
+        }
+        activeTab.navigate(destination.url)
         onChange?()
     }
 
@@ -398,6 +425,10 @@ final class PreviewSession: NSObject {
         onTabLoaded?()
         switch command {
         case .navigate(let url):
+            tab.navigate(url)
+            return ["loading": true, "url": .string(url.absoluteString), "tab": .string(tab.id)]
+        case .search(let query):
+            guard let url = searchEngine().url(for: query) else { throw PreviewError.invalidCommand }
             tab.navigate(url)
             return ["loading": true, "url": .string(url.absoluteString), "tab": .string(tab.id)]
         case .read:
