@@ -174,9 +174,9 @@ extension InspectorPanelButtonsTests {
         #expect(!split.isTerminalOpen)
     }
 
-    /// A window opened with the terminal on the right brings back the terminal panel it had open.
+    /// A window opened with the terminal on the right brings back the terminal panel its thread had open.
     @Test func aNewWindowRestoresTheTerminalPanelOnTheRight() async {
-        let harness = Harness(terminal: .right) {
+        let harness = Harness(terminal: .right, threadPanel: .terminal) {
             $0.isInspectorOpen = true
             $0.inspectorPanel = .terminal
         }
@@ -189,7 +189,7 @@ extension InspectorPanelButtonsTests {
 
     /// A saved terminal panel means nothing with the terminal below the chat: the inspector shows the diff.
     @Test func aSavedTerminalPanelFallsBackToTheDiffWithTheTerminalBelow() async {
-        let harness = Harness(terminal: .bottom) {
+        let harness = Harness(terminal: .bottom, threadPanel: .terminal) {
             $0.isInspectorOpen = true
             $0.inspectorPanel = .terminal
         }

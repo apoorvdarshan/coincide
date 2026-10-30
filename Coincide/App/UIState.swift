@@ -36,6 +36,11 @@ final class UIState {
         var inspectorFraction: Double?
         var isInspectorOpen = false
         var inspectorPanel = InspectorPanel.diff
+        /// The panel each thread's inspector showed when the user last left the thread, by thread id; a thread without
+        /// one had it closed. The inspector follows the open thread (`InspectorFollow`), so a browser opened in one
+        /// thread doesn't stay open on an empty page in every other. `isInspectorOpen` and `inspectorPanel` are what
+        /// the window last showed, read at launch until the selected thread's entry takes over.
+        var threadPanels: [String: InspectorPanel] = [:]
         var diffLayout: DiffLayout = .unified
         /// Last page for each thread; browser storage and agent capabilities are never persisted.
         var previewAddresses: [String: String] = [:]
@@ -97,6 +102,12 @@ final class UIState {
             inspectorFraction = value(.inspectorFraction, defaults.inspectorFraction)
             isInspectorOpen = value(.isInspectorOpen, defaults.isInspectorOpen)
             inspectorPanel = value(.inspectorPanel, defaults.inspectorPanel)
+            // A panel left open window-wide by an earlier version stays open in the thread it was open in.
+            if container.contains(.threadPanels) {
+                threadPanels = value(.threadPanels, defaults.threadPanels)
+            } else if isInspectorOpen, let selectedThreadID {
+                threadPanels = [selectedThreadID.uuidString: inspectorPanel]
+            }
             diffLayout = value(.diffLayout, defaults.diffLayout)
             previewAddresses = value(.previewAddresses, defaults.previewAddresses)
             previewTabs = value(.previewTabs, defaults.previewTabs)

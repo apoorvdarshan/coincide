@@ -35,7 +35,8 @@ import Testing
 
         init(
             width: CGFloat = 1400, sidebarOpen: Bool = true, title: String = "Toolbar buttons",
-            terminal placement: TerminalPlacement = .bottom, state: (inout UIState.Values) -> Void = { _ in }
+            terminal placement: TerminalPlacement = .bottom, threadPanel: UIState.InspectorPanel? = nil,
+            state: (inout UIState.Values) -> Void = { _ in }
         ) {
             UIState.shared.update {
                 $0.isInspectorOpen = false
@@ -45,6 +46,7 @@ import Testing
                 $0.listWidth = 288
                 $0.isTerminalOpen = false
                 $0.windowFrame = nil
+                $0.threadPanels = [:]
                 state(&$0)
             }
             store.updateSettings { $0.terminalPlacement = placement }
@@ -56,6 +58,11 @@ import Testing
             NotificationCenter.default.post(name: ProjectScripts.didChangeNotification, object: project.id)
             threadID = store.createThread(in: project.id).id
             store.updateThread(threadID) { $0.title = title }
+            // The inspector the thread had open, which the window brings back with it.
+            if let threadPanel {
+                let key = threadID.uuidString
+                UIState.shared.update { $0.threadPanels[key] = threadPanel }
+            }
             controller = MainWindowController()
             actions = PanelActions(split: controller.splitController)
             window.alphaValue = 0
