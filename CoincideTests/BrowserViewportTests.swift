@@ -135,6 +135,34 @@ struct BrowserViewportTests {
         #expect((dimensions?["edge"] ?? 1000) <= 420)
     }
 
+    @Test func leavingAHiddenAncestorDoesNotForceLayoutDuringTheVisibilityCallback() async throws {
+        let harness = Harness(width: 620)
+        defer { harness.stop() }
+        for _ in 0..<100 where PreviewParking.shared.isParked(harness.session.webView) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let container = try #require(harness.session.webView.enclosingScrollView?.superview)
+        let probe = LayoutProbe(frame: .zero)
+        container.addSubview(probe)
+        harness.panel.view.isHidden = true
+        probe.needsLayout = true
+        let before = probe.layouts
+        // AppKit also sends this unhide callback when a hidden ancestor is removed during deallocation.
+        harness.panel.view.isHidden = false
+        #expect(probe.layouts == before)
+        for _ in 0..<100 where probe.layouts == before { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(probe.layouts > before)
+        #expect(!PreviewParking.shared.isParked(harness.session.webView))
+    }
+
+    private final class LayoutProbe: NSView {
+        var layouts = 0
+        override func layout() {
+            layouts += 1
+            super.layout()
+        }
+    }
+
     private final class Harness {
         let folder = TemporaryDirectory("browser-viewport")
         let id = UUID()

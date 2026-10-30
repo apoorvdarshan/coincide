@@ -37,12 +37,13 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     private lazy var closePanel = PanelIconButton(symbol: "xmark", label: String(localized: "Close Browser"), target: self, action: #selector(closeBrowser))
     private var observers: [NSObjectProtocol] = []
     private var lastTypedLength = 0
+    private var visibilityUpdateScheduled = false
 
     override func loadView() {
         let root = PreviewPanelView(color: Theme.contentBackground)
         root.setAccessibilityLabel(String(localized: "Browser Preview"))
         root.keyHandler = { [weak self] event in self?.handleKey(event) ?? false }
-        root.visibilityChanged = { [weak self] in self?.update() }
+        root.visibilityChanged = { [weak self] in self?.scheduleVisibilityUpdate() }
         content.onPanelSize = { [weak self] size in self?.session?.activeTab.panelSize = size }
         address.target = self
         address.action = #selector(navigate)
@@ -163,6 +164,24 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         if let focusObserver { NotificationCenter.default.removeObserver(focusObserver) }
         focusObserver = nil
     }
+    /// AppKit can send visibility callbacks while removing a dying split-view ancestor. Refresh after that
+    /// hierarchy mutation finishes; forcing constraint layout inside it can create weak references to a deallocating
+    /// view. Explicit inspector collapse still parks the page immediately through `isPresented`.
+    private func scheduleVisibilityUpdate() {
+        guard !visibilityUpdateScheduled else { return }
+        visibilityUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.visibilityUpdateScheduled = false
+            guard self.isViewLoaded else { return }
+            guard self.isPresented, self.view.window != nil, !self.view.isHiddenOrHasHiddenAncestor else {
+                self.parkShownWebView()
+                return
+            }
+            self.update()
+        }
+    }
+
     private var contentBelowBanner: NSLayoutConstraint!
 
     isolated deinit {
