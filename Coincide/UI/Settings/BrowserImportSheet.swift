@@ -15,7 +15,7 @@ final class BrowserImportModel {
         case done(BrowserImportSummary, [BrowserImportProblem])
     }
 
-    let sources: [BrowserCatalog.Detected]
+    private(set) var sources: [BrowserCatalog.Detected]
     var sourceID: String? { didSet { if sourceID != oldValue { profileID = source?.profiles.first?.id } } }
     var profileID: String?
     /// Cookies alone until the user picks otherwise; their last choice is kept for next time.
@@ -29,18 +29,31 @@ final class BrowserImportModel {
     var siteFilter = ""
     @ObservationIgnored private let profile: BrowserProfile
     @ObservationIgnored private let home: URL
+    @ObservationIgnored private let appURL: (String) -> URL?
 
     init(profile: BrowserProfile, home: URL = FileManager.default.homeDirectoryForCurrentUser,
-        appURL: (String) -> URL? = { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) })
+        appURL: @escaping (String) -> URL? = { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) })
     {
         self.profile = profile
         self.home = home
+        self.appURL = appURL
         sources = BrowserCatalog.detect(home: home, appURL: appURL)
         sourceID = sources.first { $0.status == .available }?.id
         profileID = source?.profiles.first?.id
     }
 
     func refreshRunning() { runningBundleIDs = Self.currentlyRunning() }
+
+    /// Looks again once Full Disk Access may have been turned on, keeping the browser picked.
+    func refreshSources() {
+        guard sources.contains(where: { $0.status == .needsFullDiskAccess }) else { return }
+        let picked = sourceID
+        sources = BrowserCatalog.detect(home: home, appURL: appURL)
+        if let picked, sources.contains(where: { $0.id == picked }) {
+            sourceID = picked
+            if profileID == nil { profileID = source?.profiles.first?.id }
+        }
+    }
 
     private static let kindsKey = "browserImport.kinds"
 
@@ -138,6 +151,10 @@ struct BrowserImportSheet: View {
         }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didTerminateApplicationNotification)) { _ in
             model.refreshRunning()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .coincideFullDiskAccessGranted)) { _ in model.refreshSources() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refreshSources()
         }
     }
 
@@ -260,9 +277,9 @@ struct BrowserImportSheet: View {
             if source.status == .needsFullDiskAccess {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(
-                        "macOS protects \(source.definition.name)’s data. To import it, turn on Coincide in System Settings › Privacy & Security › Full Disk Access, then open this again."
+                        "macOS protects \(source.definition.name)’s data, and only you can let Coincide read it: macOS doesn’t let apps turn on Full Disk Access themselves. Coincide opens the list for you; drag Coincide in and turn it on. If macOS offers Quit & Reopen, choose it and this window comes back."
                     )
-                    Button("Open Privacy Settings") { Self.openFullDiskAccess() }
+                    Button("Allow Full Disk Access…") { FullDiskAccess.request() }
                 }
             } else if case .chromium(let services) = source.definition.engine, model.kinds.contains(.cookies) {
                 Text(
@@ -275,12 +292,6 @@ struct BrowserImportSheet: View {
         .font(.callout)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
-    }
-
-    static func openFullDiskAccess() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-            NSWorkspace.shared.open(url)
-        }
     }
 
     // MARK: Review
@@ -356,7 +367,7 @@ struct BrowserImportSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(Self.message(problem))
                     if problem.reason == .needsFullDiskAccess {
-                        Button("Open Privacy Settings") { Self.openFullDiskAccess() }
+                        Button("Allow Full Disk Access…") { FullDiskAccess.request() }
                     }
                 }
             }

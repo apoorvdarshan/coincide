@@ -32100,6 +32100,118 @@
         }
       }
     },
+    "Allow Full Disk Access…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Festplattenvollzugriff erlauben …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitir acceso total al disco…"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitir acceso total al disco…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autoriser l’accès complet au disque…"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "फ़ुल डिस्क एक्सेस की अनुमति दें…"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Izinkan Akses Disk Penuh…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consenti accesso completo al disco…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "フルディスクアクセスを許可…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "전체 디스크 접근 권한 허용…"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sta volledige schijftoegang toe…"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zezwól na pełny dostęp do dysku…"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitir Acesso Total ao Disco…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешить доступ к диску…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tam Disk Erişimine İzin Ver…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволити повний доступ до диска…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép Truy cập toàn bộ ổ đĩa…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许完全磁盘访问权限…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允許完整磁碟取用權限…"
+          }
+        }
+      }
+    },
     "Allow Once" : {
       "localizations" : {
         "de" : {
@@ -100596,6 +100708,118 @@
         }
       }
     },
+    "Drag Coincide into the list" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ziehe Coincide in die Liste"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrastra Coincide a la lista"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrastra Coincide a la lista"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Faites glisser Coincide dans la liste"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide को सूची में खींचें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seret Coincide ke daftar"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trascina Coincide nell’elenco"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide をリストにドラッグ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide를 목록으로 드래그하세요"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sleep Coincide naar de lijst"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przeciągnij Coincide na listę"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arraste o Coincide para a lista"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перетащите Coincide в список"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide’ı listeye sürükleyin"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перетягніть Coincide у список"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kéo Coincide vào danh sách"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "将 Coincide 拖入列表"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "將 Coincide 拖入列表"
+          }
+        }
+      }
+    },
     "Drag bots to reorder them" : {
       "localizations" : {
         "de" : {
@@ -100704,6 +100928,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "拖移機器人以重新排序"
+          }
+        }
+      }
+    },
+    "Drag into the Full Disk Access list" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In die Liste „Festplattenvollzugriff“ ziehen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrastrar a la lista de Acceso total al disco"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrastrar a la lista de Acceso total al disco"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Faire glisser dans la liste Accès complet au disque"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "फ़ुल डिस्क एक्सेस सूची में खींचें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seret ke daftar Akses Disk Penuh"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trascina nell’elenco Accesso completo al disco"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "フルディスクアクセスのリストにドラッグ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "전체 디스크 접근 권한 목록으로 드래그"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sleep naar de lijst Volledige schijftoegang"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przeciągnij na listę Pełny dostęp do dysku"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrastar para a lista de Acesso Total ao Disco"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перетащить в список «Доступ к диску»"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tam Disk Erişimi listesine sürükleyin"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перетягнути у список «Повний доступ до диска»"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kéo vào danh sách Truy cập toàn bộ ổ đĩa"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "拖入“完全磁盘访问权限”列表"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "拖入「完整磁碟取用權限」列表"
           }
         }
       }
@@ -168525,6 +168861,7 @@
       }
     },
     "Open Privacy Settings" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -256575,6 +256912,118 @@
         }
       }
     },
+    "Then switch it on. This card closes when it’s on." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schalte es dann ein. Diese Karte schließt sich, sobald es aktiv ist."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Luego actívalo. Esta tarjeta se cierra cuando esté activado."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Luego actívalo. Esta tarjeta se cierra cuando esté activado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Puis activez-le. Cette carte se ferme dès que c’est fait."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "फिर इसे चालू करें। चालू होते ही यह कार्ड बंद हो जाएगा।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lalu nyalakan. Kartu ini tertutup setelah menyala."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Poi attivalo. Questa scheda si chiude quando è attivo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "次にオンにしてください。オンになるとこのカードは閉じます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "그런 다음 켜세요. 켜지면 이 카드가 닫힙니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zet het daarna aan. Deze kaart sluit zodra het aan staat."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Potem go włącz. Ta karta zamknie się po włączeniu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Depois ative. Este cartão fecha quando estiver ativado."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Затем включите его. Карточка закроется, когда доступ появится."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sonra açın. Açıldığında bu kart kendiliğinden kapanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Потім увімкніть його. Картка закриється, щойно доступ з’явиться."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rồi bật lên. Thẻ này tự đóng khi đã bật."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "然后打开它。打开后此卡片会自动关闭。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "然後開啟它。開啟後此卡片會自動關閉。"
+          }
+        }
+      }
+    },
     "There are no changes to commit, so a feature branch can't be named." : {
       "localizations" : {
         "de" : {
@@ -286334,7 +286783,120 @@
         }
       }
     },
+    "macOS protects %@’s data, and only you can let Coincide read it: macOS doesn’t let apps turn on Full Disk Access themselves. Coincide opens the list for you; drag Coincide in and turn it on. If macOS offers Quit & Reopen, choose it and this window comes back." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS schützt die Daten von %@, und nur du kannst Coincide erlauben, sie zu lesen: macOS lässt Apps den Festplattenvollzugriff nicht selbst einschalten. Coincide öffnet die Liste für dich; ziehe Coincide hinein und schalte es ein. Bietet macOS „Beenden & erneut öffnen“ an, wähle es, und dieses Fenster kommt zurück."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protege los datos de %@ y solo tú puedes dejar que Coincide los lea: macOS no permite que las apps activen el acceso total al disco por sí mismas. Coincide te abre la lista; arrastra Coincide y actívalo. Si macOS ofrece Salir y volver a abrir, elígelo y esta ventana volverá."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protege los datos de %@ y solo tú puedes dejar que Coincide los lea: macOS no permite que las apps activen el acceso total al disco por sí mismas. Coincide te abre la lista; arrastra Coincide y actívalo. Si macOS ofrece Salir y volver a abrir, elígelo y esta ventana volverá."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protège les données de %@, et vous seul pouvez autoriser Coincide à les lire : macOS ne laisse pas les apps activer elles-mêmes l’accès complet au disque. Coincide ouvre la liste pour vous ; faites-y glisser Coincide et activez-le. Si macOS propose Quitter et rouvrir, choisissez-le et cette fenêtre reviendra."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS %@ के डेटा की सुरक्षा करता है, और केवल आप ही Coincide को इसे पढ़ने दे सकते हैं: macOS ऐप्स को खुद फ़ुल डिस्क एक्सेस चालू नहीं करने देता। Coincide आपके लिए सूची खोलता है; Coincide को उसमें खींचें और चालू करें। अगर macOS “बंद करें और फिर से खोलें” दिखाए, तो उसे चुनें और यह विंडो वापस आ जाएगी।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS melindungi data %@, dan hanya Anda yang dapat mengizinkan Coincide membacanya: macOS tidak mengizinkan app menyalakan Akses Disk Penuh sendiri. Coincide membuka daftarnya untuk Anda; seret Coincide ke dalamnya dan nyalakan. Jika macOS menawarkan Keluar & Buka Ulang, pilih itu dan jendela ini akan kembali."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protegge i dati di %@ e solo tu puoi permettere a Coincide di leggerli: macOS non consente alle app di attivare da sole l’accesso completo al disco. Coincide apre l’elenco per te; trascinaci Coincide e attivalo. Se macOS propone Esci e riapri, sceglilo e questa finestra tornerà."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS は %@ のデータを保護しており、Coincide に読み取りを許可できるのはあなただけです。macOS ではアプリが自分でフルディスクアクセスをオンにすることはできません。Coincide がリストを開くので、Coincide をドラッグしてオンにしてください。macOS が「終了して再度開く」を表示したら選択してください。このウインドウが再び開きます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS는 %@의 데이터를 보호하며, Coincide가 읽도록 허용할 수 있는 사람은 사용자뿐입니다. macOS는 앱이 스스로 전체 디스크 접근 권한을 켜도록 허용하지 않습니다. Coincide가 목록을 열어 드리니 Coincide를 드래그해 넣고 켜세요. macOS가 종료 후 다시 열기를 제안하면 선택하세요. 이 창이 다시 열립니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS beschermt de gegevens van %@ en alleen jij kunt Coincide toestaan ze te lezen: macOS laat apps volledige schijftoegang niet zelf aanzetten. Coincide opent de lijst voor je; sleep Coincide erin en zet het aan. Biedt macOS Stop en open opnieuw aan, kies dat dan en dit venster komt terug."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS chroni dane przeglądarki %@ i tylko Ty możesz pozwolić Coincide je odczytać: macOS nie pozwala aplikacjom samodzielnie włączać pełnego dostępu do dysku. Coincide otworzy listę; przeciągnij do niej Coincide i włącz go. Jeśli macOS zaproponuje Zakończ i otwórz ponownie, wybierz to, a to okno wróci."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O macOS protege os dados do %@, e só você pode deixar o Coincide lê-los: o macOS não permite que apps ativem o Acesso Total ao Disco sozinhos. O Coincide abre a lista para você; arraste o Coincide para ela e ative. Se o macOS oferecer Encerrar e Reabrir, escolha essa opção e esta janela voltará."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS защищает данные %@, и только вы можете разрешить Coincide их читать: macOS не позволяет приложениям самим включать полный доступ к диску. Coincide откроет список; перетащите туда Coincide и включите его. Если macOS предложит «Завершить и открыть снова», выберите это, и окно вернётся."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS %@ verilerini korur ve Coincide’ın bunları okumasına yalnızca siz izin verebilirsiniz: macOS uygulamaların Tam Disk Erişimini kendilerinin açmasına izin vermez. Coincide listeyi sizin için açar; Coincide’ı içine sürükleyip açın. macOS Çık ve Yeniden Aç seçeneğini sunarsa onu seçin, bu pencere geri gelir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS захищає дані %@, і лише ви можете дозволити Coincide їх читати: macOS не дає застосункам самим вмикати повний доступ до диска. Coincide відкриє список; перетягніть туди Coincide й увімкніть його. Якщо macOS запропонує «Вийти й відкрити знову», виберіть це, і вікно повернеться."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS bảo vệ dữ liệu của %@ và chỉ bạn mới có thể cho Coincide đọc chúng: macOS không cho ứng dụng tự bật Truy cập toàn bộ ổ đĩa. Coincide mở danh sách giúp bạn; hãy kéo Coincide vào và bật lên. Nếu macOS đề nghị Thoát & Mở lại, hãy chọn và cửa sổ này sẽ quay lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS 保护 %@ 的数据，只有你能允许 Coincide 读取：macOS 不允许应用自行打开完全磁盘访问权限。Coincide 会为你打开该列表；将 Coincide 拖进去并打开它。如果 macOS 提示“退出并重新打开”，请选择它，此窗口会重新出现。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS 保護 %@ 的資料，只有你能允許 Coincide 讀取：macOS 不允許 App 自行開啟完整磁碟取用權限。Coincide 會為你打開該列表；將 Coincide 拖進去並開啟它。如果 macOS 提示「結束並重新打開」，請選擇它，此視窗會重新出現。"
+          }
+        }
+      }
+    },
     "macOS protects %@’s data. To import it, turn on Coincide in System Settings › Privacy & Security › Full Disk Access, then open this again." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
