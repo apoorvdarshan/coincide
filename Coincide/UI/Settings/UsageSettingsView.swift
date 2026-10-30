@@ -424,6 +424,7 @@ struct UsageSettingsView: View {
                 Text("Show")
                 Text("Plan limits, credits and the menu bar read as what is used or what is left.")
             }
+            UsageRefreshPicker()
             Toggle(isOn: $model.includesOtherSessions) {
                 Text("Include usage from outside Coincide")
                 Text("Also count Claude Code and Codex sessions you ran in a terminal or another app, from their logs on this Mac.")

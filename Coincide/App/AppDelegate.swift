@@ -75,6 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow?.showWindow(nil)
         Task {
             await ProviderRegistry.shared.refresh()
+            // Usage is read now, after the providers' first check, and then on the user's schedule.
+            UsageAutoRefresh.shared.start()
             // Once, on the default agent or the first one set up, now that the registry knows which are.
             BotActions.addStartersIfNeeded()
             ScheduledTasks.shared.start()

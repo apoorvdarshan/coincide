@@ -295,6 +295,7 @@ private struct UsageMenuView: View {
                 MenuBarUsagePicker(title: String(localized: "Menu bar shows"), choice: $model.menuBarUsage, accounts: model.accounts)
                 MenuBarUsagePicker(
                     title: String(localized: "Also show"), choice: $model.menuBarSecondaryUsage, accounts: model.accounts, allowsNone: true)
+                UsageRefreshPicker(showsDescription: false)
             }
             .font(.caption)
             .padding(.horizontal, 14)
