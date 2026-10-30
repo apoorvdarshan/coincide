@@ -162,6 +162,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             // The open thread may be gone; the sidebar then opens its neighbour.
             updateTitle()
             updateRunStatus()
+            forgetDeletedThreadPanels()
         case .bots:
             updateTitle()
         case .settings:
@@ -170,6 +171,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             updateOpenInItem()
         default:
             break
+        }
+    }
+
+    /// Drops the inspector panels remembered for deleted threads (`UIState.Values.threadPanels`).
+    private func forgetDeletedThreadPanels() {
+        let gone = UIState.shared.values.threadPanels.keys.filter { UUID(uuidString: $0).flatMap { store.summary($0) } == nil }
+        guard !gone.isEmpty else { return }
+        UIState.shared.update { state in
+            for key in gone { state.threadPanels.removeValue(forKey: key) }
         }
     }
 

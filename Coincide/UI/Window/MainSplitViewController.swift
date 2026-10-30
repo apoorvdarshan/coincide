@@ -2,7 +2,8 @@ import AppKit
 import CoincideKit
 
 /// Thread list | chat over a collapsible terminal | inspector (the diff, the pull requests or the browser preview),
-/// right of the navigation rail (`MainRootViewController`). Panel sizes and visibility are remembered in `UIState`.
+/// right of the navigation rail (`MainRootViewController`). Panel sizes and visibility are remembered in `UIState`; the
+/// inspector's, open or closed and on which panel, for each thread (`InspectorFollow`).
 ///
 /// Settings › General can put the terminal in the inspector instead, as a fourth panel (`TerminalPlacement`). Switching
 /// moves the same terminal controller, with its running shells, between the two places (`setTerminalPlacement`).
@@ -31,6 +32,8 @@ final class MainSplitViewController: NSSplitViewController {
     private(set) var inspectorFraction: Double?
     /// The inspector's width when it last closed: the split view opens it at that width again.
     private var closedInspectorWidth: CGFloat?
+    /// The open thread, whose panel the inspector remembers (`notePanel`).
+    private(set) var threadID: UUID?
 
     var isSidebarOpen: Bool { !sidebarItem.isCollapsed }
     var isInspectorOpen: Bool { !inspectorItem.isCollapsed }
@@ -204,9 +207,8 @@ final class MainSplitViewController: NSSplitViewController {
         case .bottom:
             if wasOpen {
                 // In place: the panel is about to leave the column, so there is nothing to animate.
-                closedInspectorWidth = inspector.view.frame.width
-                releaseProportion()
-                inspectorItem.isCollapsed = true
+                closeInspector(animated: false)
+                notePanel(nil)
             }
             inspector.detachTerminal()
             content.attachTerminal(open: wasOpen)
@@ -221,12 +223,14 @@ final class MainSplitViewController: NSSplitViewController {
     private func toggleInspector(_ panel: UIState.InspectorPanel) {
         if !inspectorItem.isCollapsed, inspector.panel == panel {
             closeInspector()
+            notePanel(nil)
         } else {
             showInspector(panel)
         }
     }
 
     private func showInspector(_ panel: UIState.InspectorPanel) {
+        notePanel(panel)
         if inspector.panel != panel {
             inspector.show(panel)
             onPanelsChanged?()
@@ -235,9 +239,48 @@ final class MainSplitViewController: NSSplitViewController {
         openInspector()
     }
 
+    // MARK: Following the thread
+
+    /// Remembers the open thread's panel (nil: closed) after the user, or an agent in front of them, opens, closes or
+    /// switches the inspector, so the column comes back that way with the thread (`followThread`).
+    private func notePanel(_ panel: UIState.InspectorPanel?) {
+        guard let threadID else { return }
+        let key = threadID.uuidString
+        guard state.values.threadPanels[key] != panel else { return }
+        state.update { $0.threadPanels[key] = panel }
+    }
+
+    /// Opens, closes or switches the inspector for the thread just opened (`InspectorFollow`). In place, so changing
+    /// threads never slides the column in or out, and at the share, so the panel comes back as wide as it was.
+    private func followThread() {
+        let change = InspectorFollow.change(
+            isOpen: !inspectorItem.isCollapsed, panel: inspector.panel,
+            saved: threadID.flatMap { state.values.threadPanels[$0.uuidString] }, available: inspector.panels)
+        switch change {
+        case .none:
+            break
+        case .show(let panel):
+            if inspector.panel != panel {
+                inspector.show(panel)
+                onPanelsChanged?()
+            }
+            guard inspectorItem.isCollapsed else { break }
+            if hasRestoredLayout {
+                openInspector(animated: false)
+            } else {
+                // At launch, before the window's first layout: as `viewDidLoad` opens a saved inspector. The chat's
+                // width isn't real yet, so measuring it would widen the window for nothing.
+                inspectorItem.isCollapsed = false
+                holdProportion()
+            }
+        case .close:
+            closeInspector(animated: false)
+        }
+    }
+
     /// Opens the inspector at its share. The thread list keeps its width: the space comes from the chat, and from the
     /// window when the chat and the panel would not both get their minimums.
-    private func openInspector() {
+    private func openInspector(animated: Bool = true) {
         // Closed, the inspector leaves the chat everything right of the thread list.
         let available = Double(content.view.frame.width - splitView.dividerThickness)
         growWindow(by: CGFloat(InspectorWidth.shortfall(available: available)))
@@ -245,7 +288,7 @@ final class MainSplitViewController: NSSplitViewController {
         // The split view animates back to the width the inspector closed at. When that is still its width, let it
         // animate and hold the share afterwards; otherwise (a first opening, the window resized meanwhile) open it in
         // place at the share, rather than animate to one width and then jump to another.
-        if let closedInspectorWidth, abs(Double(closedInspectorWidth) - target) < 1, showsPanelChanges {
+        if animated, let closedInspectorWidth, abs(Double(closedInspectorWidth) - target) < 1, showsPanelChanges {
             NSAnimationContext.runAnimationGroup { _ in
                 self.inspectorItem.animator().isCollapsed = false
             } completionHandler: { [weak self] in
@@ -261,10 +304,14 @@ final class MainSplitViewController: NSSplitViewController {
         }
     }
 
-    private func closeInspector() {
+    private func closeInspector(animated: Bool = true) {
         closedInspectorWidth = inspector.view.frame.width
         releaseProportion()
-        setCollapsed(inspectorItem, true)
+        if animated {
+            setCollapsed(inspectorItem, true)
+        } else {
+            inspectorItem.isCollapsed = true
+        }
     }
 
     /// Widens the window (on its screen, keeping it there) so the chat and the inspector both fit. Full screen stays.
@@ -354,11 +401,14 @@ final class MainSplitViewController: NSSplitViewController {
         content.saveLayout()
     }
 
+    /// Shows `threadID` in every panel, then the inspector as the thread last left it (`followThread`).
     func setThreadID(_ threadID: UUID?) {
+        self.threadID = threadID
         content.setThreadID(threadID)
         diff.threadID = threadID
         pullRequests.threadID = threadID
         preview.threadID = threadID
+        if isViewLoaded { followThread() }
     }
 }
 

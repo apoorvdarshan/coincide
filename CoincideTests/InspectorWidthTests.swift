@@ -71,7 +71,12 @@ struct InspectorWidthTests {
         let root: MainRootViewController
         let window: NSWindow
 
-        init(folder: TemporaryDirectory = TemporaryDirectory("split"), width: CGFloat = 1400, values: (inout UIState.Values) -> Void = { _ in }) {
+        /// `threadID` opens once the views have loaded and before they have a window, as the app opens the selected
+        /// thread at launch.
+        init(
+            folder: TemporaryDirectory = TemporaryDirectory("split"), width: CGFloat = 1400, threadID: UUID? = nil,
+            values: (inout UIState.Values) -> Void = { _ in }
+        ) {
             self.folder = folder
             state = UIState(directory: folder.url)
             state.update { state in
@@ -82,6 +87,8 @@ struct InspectorWidthTests {
             }
             split = MainSplitViewController(state: state)
             root = MainRootViewController(split: split)
+            root.loadViewIfNeeded()
+            if let threadID { split.setThreadID(threadID) }
             window = NSWindow(
                 contentRect: NSRect(x: -20000, y: -20000, width: width, height: 800), styleMask: [.borderless],
                 backing: .buffered, defer: false)
