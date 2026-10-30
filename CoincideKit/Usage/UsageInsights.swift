@@ -4,9 +4,10 @@ import Foundation
 /// spent, from Coincide's turns and the Claude Code and Codex logs on this Mac. One instance serves them all, so the
 /// logs are read and the limits checked once, however many places show them.
 ///
-/// Nothing polls. Logs are read again when Settings › Usage or the menu opens (at most every `scanInterval`), when the
-/// user refreshes, and a while after turns finish; limits come from the providers' sessions as they run and from their
-/// checks, which run again when a view opens and the last check is older than `limitsInterval`.
+/// Logs are read again when Settings › Usage or the menu opens (at most every `scanInterval`), when the user refreshes,
+/// a while after turns finish, and on the schedule the user picks (`refreshAutomatically`, `UsageRefreshInterval`);
+/// limits come from the providers' sessions as they run and from their checks, which run again when a view opens and
+/// the last check is older than `limitsInterval`, and on that schedule.
 @MainActor
 public final class UsageInsights {
     public static let shared = UsageInsights(store: .shared, registry: .shared, runner: .shared)
@@ -100,13 +101,14 @@ public final class UsageInsights {
     /// The events with the user's choice of whether other sessions count.
     public var events: [UsageEvent] { events(includeOtherSessions: store.settings.usageIncludesOtherSessions) }
 
-    /// Reads the logs again, unless the last read is recent (`force` reads anyway). Returns when the read is done.
-    public func scan(force: Bool = false) async {
+    /// Reads the logs again, unless the last read is younger than `maxAge` (`scanInterval` by default; `force` reads
+    /// anyway). Returns when the read is done.
+    public func scan(force: Bool = false, maxAge: TimeInterval? = nil) async {
         if let scanTask {
             await scanTask.value
             if !force { return }
         }
-        if !force, let lastScan, Date().timeIntervalSince(lastScan) < scanInterval { return }
+        if !force, let lastScan, Date().timeIntervalSince(lastScan) < (maxAge ?? scanInterval) { return }
         let task = Task { await self.runScan() }
         scanTask = task
         await task.value
@@ -352,10 +354,11 @@ public final class UsageInsights {
         changed()
     }
 
-    /// Checks the providers again when the last check is older than `limitsInterval` (or always, with `force`).
-    public func checkLimits(force: Bool = false) async {
+    /// Checks the providers again when the last check is older than `maxAge` (`limitsInterval` by default), or always
+    /// with `force`.
+    public func checkLimits(force: Bool = false, maxAge: TimeInterval? = nil) async {
         guard !isCheckingLimits else { return }
-        if !force, let lastLimitsCheck, Date().timeIntervalSince(lastLimitsCheck) < limitsInterval { return }
+        if !force, let lastLimitsCheck, Date().timeIntervalSince(lastLimitsCheck) < (maxAge ?? limitsInterval) { return }
         isCheckingLimits = true
         changed()
         await registry.refresh()
@@ -373,6 +376,16 @@ public final class UsageInsights {
             async let browser: Void = readBrowserUsage()
             _ = await (scan, limits, admin, browser)
         }
+    }
+
+    /// The scheduled read: the logs and limits when older than `interval`, and the admin reports and browser pages on
+    /// their own slower schedule, so a short interval doesn't call those every minute.
+    public func refreshAutomatically(every interval: TimeInterval) async {
+        async let scan: Void = scan(maxAge: interval)
+        async let limits: Void = checkLimits(maxAge: interval)
+        async let admin: Void = readAdminReports()
+        async let browser: Void = readBrowserUsage()
+        _ = await (scan, limits, admin, browser)
     }
 
     /// The Refresh button: reads the logs and checks every provider now.

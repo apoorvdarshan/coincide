@@ -145,3 +145,28 @@ struct UserMessageSideSettingsTests {
         #expect(AppStore(directory: directory).settings.userMessageSide == .left)
     }
 }
+
+/// How often usage is read on its own (`UsageRefreshInterval`): automatic by default, faster while busy, never on a
+/// schedule when the user picks Only When Opened.
+struct UsageRefreshSettingsTests {
+    @Test func automaticIsTheDefaultAndOlderFilesGetIt() throws {
+        #expect(AppSettings().usageRefresh == .automatic)
+        let old = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"fontSize": 15}"#.utf8))
+        #expect(old.usageRefresh == .automatic)
+        var settings = AppSettings()
+        settings.usageRefresh = .everyMinute
+        let saved = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        #expect(saved.usageRefresh == .everyMinute)
+        let unreadable = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"usageRefresh": "sometimes"}"#.utf8))
+        #expect(unreadable.usageRefresh == .automatic)
+    }
+
+    @Test func intervalsFollowTheChoice() {
+        #expect(UsageRefreshInterval.automatic.interval(isBusy: true) == 300)
+        #expect(UsageRefreshInterval.automatic.interval(isBusy: false) == 900)
+        #expect(UsageRefreshInterval.everyMinute.interval(isBusy: false) == 60)
+        #expect(UsageRefreshInterval.every5Minutes.interval(isBusy: true) == 300)
+        #expect(UsageRefreshInterval.everyHour.interval(isBusy: true) == 3600)
+        #expect(UsageRefreshInterval.manual.interval(isBusy: true) == nil)
+    }
+}
