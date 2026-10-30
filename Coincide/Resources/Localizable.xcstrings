@@ -172675,118 +172675,6 @@
         }
       }
     },
-    "Open a page to preview it beside your conversation." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Öffne eine Seite, um sie neben deiner Unterhaltung anzuzeigen."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Abre una página para verla junto a tu conversación."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Abre una página para verla junto a tu conversación."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ouvrez une page pour l’afficher à côté de votre conversation."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "अपनी बातचीत के साथ देखने के लिए कोई पेज खोलें।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Buka halaman untuk melihatnya di samping percakapan Anda."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apri una pagina per visualizzarla accanto alla conversazione."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "ページを開くと、会話の横にプレビューが表示されます。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "페이지를 열어 대화 옆에서 미리 보세요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Open een pagina om deze naast je gesprek te bekijken."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Otwórz stronę, aby wyświetlić ją obok rozmowy."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Abra uma página para visualizá-la ao lado da conversa."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Откройте страницу для просмотра рядом с разговором."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bir sayfayı konuşmanızın yanında önizlemek için açın."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Відкрийте сторінку для перегляду поруч із розмовою."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mở một trang để xem trước bên cạnh cuộc trò chuyện."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "打开网页，即可在对话旁预览。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "開啟網頁，即可在對話旁預覽。"
-          }
-        }
-      }
-    },
     "Open a web page" : {
       "localizations" : {
         "de" : {
@@ -215103,6 +214991,118 @@
         }
       }
     },
+    "Search engine" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Suchmaschine"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Motor de búsqueda"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Motor de búsqueda"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Moteur de recherche"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सर्च इंजन"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mesin pencari"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Motore di ricerca"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "検索エンジン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "검색 엔진"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zoekmachine"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wyszukiwarka"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mecanismo de busca"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поисковая система"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arama motoru"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пошукова система"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Công cụ tìm kiếm"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "搜索引擎"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "搜尋引擎"
+          }
+        }
+      }
+    },
     "Search files" : {
       "localizations" : {
         "de" : {
@@ -216235,6 +216235,118 @@
         }
       }
     },
+    "Search or enter address" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Suchen oder Adresse eingeben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buscar o introducir dirección"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buscar o ingresar dirección"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rechercher ou saisir une adresse"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "खोजें या पता लिखें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cari atau masukkan alamat"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cerca o inserisci un indirizzo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "検索またはアドレスを入力"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "검색 또는 주소 입력"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zoek of voer adres in"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Szukaj lub wpisz adres"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buscar ou digitar endereço"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поиск или адрес"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ara veya adres gir"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пошук або адреса"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tìm kiếm hoặc nhập địa chỉ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "搜索或输入地址"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "搜尋或輸入位址"
+          }
+        }
+      }
+    },
     "Search projects…" : {
       "localizations" : {
         "de" : {
@@ -217015,6 +217127,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "在網頁上搜尋「%@」"
+          }
+        }
+      }
+    },
+    "Search the web, or open a site, a local server such as localhost:3000, or a file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Im Web suchen oder eine Website, einen lokalen Server wie localhost:3000 oder eine Datei öffnen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Busca en la web o abre un sitio, un servidor local como localhost:3000 o un archivo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Busca en la web o abre un sitio, un servidor local como localhost:3000 o un archivo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recherchez sur le web, ou ouvrez un site, un serveur local comme localhost:3000 ou un fichier."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "वेब पर खोजें, या कोई साइट, localhost:3000 जैसा लोकल सर्वर या कोई फ़ाइल खोलें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cari di web, atau buka situs, server lokal seperti localhost:3000, atau file."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cerca sul web, oppure apri un sito, un server locale come localhost:3000 o un file."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Web を検索するか、サイト、localhost:3000 などのローカルサーバ、ファイルを開きます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "웹을 검색하거나 사이트, localhost:3000 같은 로컬 서버, 파일을 엽니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zoek op het web, of open een site, een lokale server zoals localhost:3000 of een bestand."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Szukaj w sieci albo otwórz witrynę, lokalny serwer, np. localhost:3000, lub plik."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Busque na web ou abra um site, um servidor local como localhost:3000 ou um arquivo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ищите в интернете или откройте сайт, локальный сервер вроде localhost:3000 или файл."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Web’de arayın ya da bir site, localhost:3000 gibi yerel bir sunucu veya bir dosya açın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Шукайте в інтернеті або відкрийте сайт, локальний сервер на кшталт localhost:3000 чи файл."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tìm kiếm trên web, hoặc mở một trang, máy chủ cục bộ như localhost:3000, hay một tệp."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "搜索网页，或打开网站、localhost:3000 等本地服务器或文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "搜尋網頁，或開啟網站、localhost:3000 等本機伺服器或檔案。"
           }
         }
       }
@@ -282611,6 +282835,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "要在 %@ 中打造什麼？"
+          }
+        }
+      }
+    },
+    "What the address bar searches with when you type words instead of an address. Addresses such as localhost:3000, IP addresses and file paths always open directly." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Womit die Adressleiste sucht, wenn du Wörter statt einer Adresse eingibst. Adressen wie localhost:3000, IP-Adressen und Dateipfade werden immer direkt geöffnet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lo que usa la barra de direcciones para buscar cuando escribes palabras en lugar de una dirección. Direcciones como localhost:3000, las IP y las rutas de archivos siempre se abren directamente."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lo que usa la barra de direcciones para buscar cuando escribes palabras en lugar de una dirección. Direcciones como localhost:3000, las IP y las rutas de archivos siempre se abren directamente."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce qu’utilise la barre d’adresse pour chercher quand vous tapez des mots au lieu d’une adresse. Les adresses comme localhost:3000, les adresses IP et les chemins de fichiers s’ouvrent toujours directement."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पते की जगह शब्द लिखने पर एड्रेस बार किससे खोजता है। localhost:3000 जैसे पते, IP पते और फ़ाइल पाथ हमेशा सीधे खुलते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mesin yang dipakai bar alamat untuk mencari saat Anda mengetik kata, bukan alamat. Alamat seperti localhost:3000, alamat IP, dan jalur file selalu dibuka langsung."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Con cosa cerca la barra degli indirizzi quando scrivi parole invece di un indirizzo. Indirizzi come localhost:3000, indirizzi IP e percorsi di file si aprono sempre direttamente."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アドレスではなく単語を入力したときにアドレスバーが使う検索エンジンです。localhost:3000 などのアドレス、IP アドレス、ファイルパスは常に直接開きます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "주소 대신 단어를 입력했을 때 주소 막대가 사용하는 검색 엔진입니다. localhost:3000 같은 주소, IP 주소, 파일 경로는 항상 바로 열립니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Waarmee de adresbalk zoekt als je woorden typt in plaats van een adres. Adressen zoals localhost:3000, IP-adressen en bestandspaden openen altijd direct."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Czym pasek adresu wyszukuje, gdy wpiszesz słowa zamiast adresu. Adresy takie jak localhost:3000, adresy IP i ścieżki plików zawsze otwierają się bezpośrednio."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O que a barra de endereço usa para buscar quando você digita palavras em vez de um endereço. Endereços como localhost:3000, endereços IP e caminhos de arquivo sempre abrem diretamente."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Чем ищет адресная строка, когда вы вводите слова вместо адреса. Адреса вроде localhost:3000, IP-адреса и пути к файлам всегда открываются напрямую."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Adres yerine kelime yazdığınızda adres çubuğunun neyle arayacağı. localhost:3000 gibi adresler, IP adresleri ve dosya yolları her zaman doğrudan açılır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Чим шукає адресний рядок, коли ви вводите слова замість адреси. Адреси на кшталт localhost:3000, IP-адреси й шляхи до файлів завжди відкриваються напряму."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Công cụ thanh địa chỉ dùng để tìm kiếm khi bạn gõ từ thay vì địa chỉ. Các địa chỉ như localhost:3000, địa chỉ IP và đường dẫn tệp luôn được mở trực tiếp."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "当你输入的是文字而不是地址时，地址栏使用的搜索引擎。localhost:3000 等地址、IP 地址和文件路径总是直接打开。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "當你輸入文字而非位址時，網址列使用的搜尋引擎。localhost:3000 等位址、IP 位址和檔案路徑一律直接開啟。"
           }
         }
       }

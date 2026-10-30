@@ -84,6 +84,7 @@ final class PreviewSessions {
             ?? state.previewAddresses[id.uuidString].map { BrowserTabsState(urls: [$0], selected: 0) }
         let session = PreviewSession(dataStore: profile.makeDataStore(), isPrivate: usesPrivateSessions, restoring: saved, passkeys: passkeys)
         let isPrivate = session.isPrivate
+        session.searchEngine = { [weak self] in self?.profile.settings.settings.searchEngine ?? .google }
         session.onNavigate = { [weak self] url, title in
             UIState.shared.update { $0.previewAddresses[id.uuidString] = url.absoluteString }
             if !isPrivate { self?.profile.library.recordVisit(url: url, title: title) }

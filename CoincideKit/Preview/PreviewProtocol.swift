@@ -5,6 +5,8 @@ import Foundation
 public indirect enum PreviewCommand: Sendable, Equatable {
     case read
     case navigate(URL)
+    /// Searches with the user's search engine.
+    case search(String)
     case click(String)
     case input(selector: String, text: String)
     /// Attaches local files to the page's file input (the selector names it, or the button or label that opens it),
@@ -52,7 +54,7 @@ public indirect enum PreviewCommand: Sendable, Equatable {
         // Page commands can name a tab; the tab commands name theirs themselves.
         guard let id = tab.string, Self.isTabID(id) else { throw PreviewError.invalidCommand }
         switch command {
-        case .read, .navigate, .click, .input, .upload, .screenshot, .fillLogin: self = .inTab(id, command)
+        case .read, .navigate, .search, .click, .input, .upload, .screenshot, .fillLogin: self = .inTab(id, command)
         case .selectTab, .closeTab: self = command
         default: throw PreviewError.invalidCommand
         }
@@ -75,6 +77,11 @@ public indirect enum PreviewCommand: Sendable, Equatable {
                 throw PreviewError.invalidAddress
             }
             return .navigate(url)
+        case "search":
+            guard let query = json["query"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty,
+                query.utf8.count <= 2048
+            else { throw PreviewError.invalidCommand }
+            return .search(query)
         case "click": return .click(try Self.selector(json))
         case "input":
             guard let text = json["text"]?.string, text.utf8.count <= 65_536 else { throw PreviewError.invalidCommand }

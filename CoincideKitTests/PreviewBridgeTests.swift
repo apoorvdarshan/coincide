@@ -94,3 +94,51 @@ import Testing
         #expect(try await status(request) == 403)
     }
 }
+
+/// What typing in the address bar opens: addresses, development servers and local files directly, anything else as a
+/// search with the chosen engine.
+@Suite struct BrowserAddressTests {
+    private func resolve(_ text: String, _ engine: SearchEngine = .google, files: Bool = true, home: URL = URL(fileURLWithPath: "/nonexistent-home")) -> BrowserAddress.Destination? {
+        BrowserAddress.resolve(text, engine: engine, allowsFiles: files, home: home)
+    }
+
+    @Test func wordsSearchAndAddressesOpen() throws {
+        #expect(resolve("best pizza near me")?.url.absoluteString == "https://www.google.com/search?q=best%20pizza%20near%20me")
+        #expect(resolve("hello") == .search(try #require(URL(string: "https://www.google.com/search?q=hello"))))
+        #expect(resolve("next.js")?.url.host == "www.google.com")
+        #expect(resolve("notes.txt")?.url.host == "www.google.com")
+        #expect(resolve("?apoorvdarshan.com")?.url.host == "www.google.com")
+        #expect(resolve("apoorvdarshan.com") == .web(try #require(URL(string: "https://apoorvdarshan.com"))))
+        #expect(resolve("github.com/apoorvdarshan")?.url.absoluteString == "https://github.com/apoorvdarshan")
+        #expect(resolve("https://example.com/a b")?.url.absoluteString == "https://example.com/a%20b")
+        #expect(resolve("ftp://example.com") == nil)
+        #expect(resolve("  ") == nil)
+        #expect(resolve("cats", .duckDuckGo)?.url.absoluteString == "https://duckduckgo.com/?q=cats")
+        for engine in SearchEngine.allCases { #expect(engine.url(for: "a&b=c")?.query?.contains("a%26b%3Dc") == true, "\(engine)") }
+    }
+
+    @Test func developmentServersNeverGoToTheSearchEngine() {
+        for address in ["localhost", "localhost:3000", "localhost:3000/api", "127.0.0.1", "127.0.0.1:8080", "192.168.1.20", "[::1]:8000",
+            "myapp.local", "api.localhost", "devbox:8080", "devbox/"]
+        {
+            let destination = resolve(address)
+            guard case .web(let url) = destination else { Issue.record("\(address) → \(String(describing: destination))"); continue }
+            #expect(url.scheme == "http", "\(address)")
+        }
+    }
+
+    @Test func localFilesOpenOnlyWhenTheUserTypesThem() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("coincide-address-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let page = folder.appendingPathComponent("index.html")
+        try Data("<title>Local</title>".utf8).write(to: page)
+        #expect(resolve(page.path) == .file(page.standardizedFileURL))
+        #expect(resolve(page.absoluteString) == .file(page.standardizedFileURL))
+        #expect(resolve("~/index.html", home: folder) == .file(page.standardizedFileURL))
+        #expect(resolve(page.path, files: false) == nil)
+        // A folder or a missing file doesn't open; a missing path searches like other words.
+        #expect(resolve(folder.path)?.url.host == "www.google.com")
+        #expect(resolve("file:///nonexistent/page.html") == nil)
+    }
+}
