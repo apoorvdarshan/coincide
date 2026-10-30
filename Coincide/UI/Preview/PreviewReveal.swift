@@ -10,12 +10,20 @@ extension MainWindowController {
         splitController.showPreviewPanel()
         return NSApp.isActive && window?.isVisible == true
     }
+
+    /// A thread that is not selected is already hidden; never close another thread's panel.
+    func hidePreview(for threadID: UUID) -> Bool {
+        guard selectedThreadID == threadID, isWindowLoaded else { return true }
+        splitController.hidePreviewPanel()
+        return !splitController.isPreviewOpen
+    }
 }
 
 extension PreviewSessions {
     /// Connects the browsers to the window and notifications. Called once at launch.
     func connectToApp(_ mainWindow: @escaping () -> MainWindowController?) {
         reveal = { threadID in mainWindow()?.revealPreview(for: threadID) ?? false }
+        conceal = { threadID in mainWindow()?.hidePreview(for: threadID) ?? true }
         notifyUser = { threadID, message in NotificationController.shared.browserNeedsUser(threadID, message: message) }
     }
 }

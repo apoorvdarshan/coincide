@@ -15,6 +15,8 @@ final class PreviewSessions {
     /// Asked to bring the thread's browser panel forward; true when the user can now see it. Set by the app; tests
     /// replace it.
     var reveal: (UUID) -> Bool = { _ in false }
+    /// Hides only this thread's browser panel, retaining its pages and agent capability. True when it is hidden.
+    var conceal: (UUID) -> Bool = { _ in true }
     /// Tells the user an agent needs them in a thread they aren't looking at.
     var notifyUser: (UUID, String) -> Void = { _, _ in }
     private var sessions: [UUID: PreviewSession] = [:]
@@ -225,6 +227,9 @@ final class PreviewSessions {
             let visible = reveal(id)
             if !visible { notifyUser(id, String(localized: "The agent opened this thread’s browser for you.")) }
             return ["shown": .bool(visible)]
+        case .hide:
+            sessions[id]?.lastAgentUse = Date()
+            return ["hidden": .bool(conceal(id))]
         case .askUser(let message, let timeout):
             let session = session(for: id)
             session.lastAgentUse = Date()

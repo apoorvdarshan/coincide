@@ -7,6 +7,10 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     /// Replaced by tests before the view loads.
     var sessions = PreviewSessions.shared
     private(set) var session: PreviewSession?
+    /// Set by the inspector before it collapses or switches panels, before a hidden layout can shrink the page.
+    var isPresented = true {
+        didSet { if oldValue != isPresented, isViewLoaded { update() } }
+    }
     private let content = PreviewPageContainer()
     private let address = ThemedTextField(placeholder: String(localized: "Search or enter address"))
     private let status = NSTextField(labelWithString: "")
@@ -38,6 +42,8 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         let root = PreviewPanelView(color: Theme.contentBackground)
         root.setAccessibilityLabel(String(localized: "Browser Preview"))
         root.keyHandler = { [weak self] event in self?.handleKey(event) ?? false }
+        root.visibilityChanged = { [weak self] in self?.update() }
+        content.onPanelSize = { [weak self] size in self?.session?.activeTab.panelSize = size }
         address.target = self
         address.action = #selector(navigate)
         address.delegate = self
@@ -141,6 +147,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     /// Tooltips name ⌘T and ⌘W only while they reach the panel, that is while focus is inside it.
     override func viewDidAppear() {
         super.viewDidAppear()
+        update()
         guard focusObserver == nil, let window = view.window else { return }
         focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification, object: window, queue: .main) {
             [weak self] _ in
@@ -174,6 +181,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
 
     private func parkShownWebView() {
         guard let shown = shownWebView else { return }
+        content.removePage()
         shown.removeFromSuperview()
         shown.translatesAutoresizingMaskIntoConstraints = true
         PreviewParking.shared.park(shown)
@@ -182,7 +190,10 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
 
     /// Puts the active tab's web view in the panel, returning the one shown before to the parking window.
     private func showActiveTab() {
-        guard let session else { parkShownWebView(); return }
+        guard isPresented, view.window != nil, !view.isHiddenOrHasHiddenAncestor, let session else {
+            parkShownWebView()
+            return
+        }
         let web = session.webView
         guard web !== shownWebView else { return }
         // Switching tabs keeps focus in the panel, so its shortcuts go on working (⌘W must not fall to Archive Thread).
@@ -192,8 +203,8 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         parkShownWebView()
         web.removeFromSuperview()
         web.translatesAutoresizingMaskIntoConstraints = true
-        content.addSubview(web, positioned: .below, relativeTo: empty)
         content.viewportSize = session.activeTab.viewportSize
+        content.show(web)
         content.needsLayout = true
         content.layoutSubtreeIfNeeded()
         shownWebView = web
@@ -453,14 +464,66 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     }
 }
 
-/// A requested CSS viewport keeps its dimensions when the panel resizes. Resetting returns to normal panel sizing.
+/// Normal browsing fills the panel. A fixed testing viewport remains its requested size inside a scrollable canvas,
+/// so its right and bottom edges stay reachable in a smaller panel without changing page zoom or the site's CSS.
 private final class PreviewPageContainer: NSView {
-    var viewportSize: NSSize?
+    var viewportSize: NSSize? {
+        didSet {
+            scroll.hasHorizontalScroller = viewportSize != nil
+            scroll.hasVerticalScroller = viewportSize != nil
+            scroll.tile()
+            sizePage()
+        }
+    }
+    var onPanelSize: ((NSSize) -> Void)?
+    private let scroll = NSScrollView()
+    private weak var page: WKWebView?
     override var isFlipped: Bool { true }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.autohidesScrollers = true
+        scroll.autoresizingMask = [.width, .height]
+        scroll.frame = bounds
+        addSubview(scroll)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func show(_ page: WKWebView) {
+        self.page = page
+        page.autoresizingMask = []
+        scroll.documentView = page
+        sizePage()
+    }
+
+    func removePage() {
+        scroll.documentView = nil
+        page = nil
+    }
+
     override func layout() {
         super.layout()
-        for case let page as WKWebView in subviews {
-            page.frame = NSRect(origin: .zero, size: viewportSize ?? bounds.size)
-        }
+        scroll.frame = bounds
+        scroll.layoutSubtreeIfNeeded()
+        sizePage()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        scroll.frame = bounds
+        sizePage()
+    }
+
+    private func sizePage() {
+        guard let page, bounds.width > 0, bounds.height > 0 else { return }
+        let available = scroll.contentSize
+        guard available.width > 0, available.height > 0 else { return }
+        onPanelSize?(bounds.size)
+        page.setFrameSize(viewportSize ?? available)
+        if viewportSize == nil { scroll.contentView.scroll(to: .zero) }
     }
 }

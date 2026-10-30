@@ -204,6 +204,22 @@ final class PreviewTabButton: NSView {
 /// The browser panel's background view, which takes the panel's shortcuts while focus is inside it.
 final class PreviewPanelView: SolidBackgroundView {
     var keyHandler: ((NSEvent) -> Bool)?
+    var visibilityChanged: (() -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        visibilityChanged?()
+    }
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        visibilityChanged?()
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        visibilityChanged?()
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if keyHandler?(event) == true { return true }

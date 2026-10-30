@@ -20,6 +20,8 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// The folder a local file the user opened may read from; navigations stay inside it.
     private var fileRoot: URL?
     var viewportSize: NSSize?
+    /// The last usable panel area, retained while parked and when a fixed test viewport is reset in the background.
+    var panelSize: NSSize?
     let downloads: PreviewDownloads
     var lastUse = Date()
     weak var owner: PreviewSession?
@@ -43,7 +45,7 @@ final class PreviewTab: NSObject, WKNavigationDelegate, WKUIDelegate {
     func load(configuration: WKWebViewConfiguration? = nil) -> WKWebView {
         if let webView { return webView }
         guard let owner else { fatalError("A tab outlived its browser") }
-        let view = WKWebView(frame: NSRect(origin: .zero, size: PreviewParking.defaultSize),
+        let view = WKWebView(frame: NSRect(origin: .zero, size: viewportSize ?? panelSize ?? PreviewParking.defaultSize),
             configuration: configuration ?? owner.makeConfiguration())
         view.navigationDelegate = self
         view.uiDelegate = self
@@ -476,7 +478,7 @@ final class PreviewSession: NSObject {
         lastUse = Date()
         defer { onChange?() }
         switch command {
-        case .show, .askUser, .fillLogin:
+        case .show, .hide, .askUser, .fillLogin:
             // The panel's commands; `PreviewSessions` answers them.
             throw PreviewError.invalidCommand
         case .tabs:
@@ -519,7 +521,8 @@ final class PreviewSession: NSObject {
                 return ["answered": .string(dialog.kind.rawValue), "tab": .string(tab.id)]
             case .read:
                 return ["dialog": dialog.json, "url": .string(webView.url?.absoluteString ?? ""), "title": .string(webView.title ?? ""),
-                        "loading": .bool(webView.isLoading), "tab": .string(tab.id)]
+                        "loading": .bool(webView.isLoading), "tab": .string(tab.id),
+                        "viewport": viewport(of: tab, webView: webView), "panelVisible": .bool(panelIsVisible(webView))]
             default:
                 throw PreviewError.dialogOpen
             }
@@ -536,7 +539,7 @@ final class PreviewSession: NSObject {
         case .viewport(let width, let height):
             tab.viewportSize = width.flatMap { w in height.map { NSSize(width: w, height: $0) } }
             if let size = tab.viewportSize { webView.setFrameSize(size) }
-            else if PreviewParking.shared.isParked(webView) { webView.setFrameSize(PreviewParking.defaultSize) }
+            else if PreviewParking.shared.isParked(webView) { webView.setFrameSize(tab.panelSize ?? PreviewParking.defaultSize) }
             onChange?()
             return ["width": .number(webView.bounds.width), "height": .number(webView.bounds.height)]
         case .dialog:
@@ -589,6 +592,8 @@ final class PreviewSession: NSObject {
             var object = result.object ?? [:]
             object["loading"] = .bool(webView.isLoading)
             object["tab"] = .string(tab.id)
+            object["viewport"] = viewport(of: tab, webView: webView, dimensions: object["viewport"])
+            object["panelVisible"] = .bool(panelIsVisible(webView))
             if let error = tab.error { object["error"] = .string(error) }
             if tab.passkeyRequested { object["passkey"] = .string(PasskeySupport.agentNote) }
             return .object(object)
@@ -620,6 +625,17 @@ final class PreviewSession: NSObject {
         default:
             throw PreviewError.invalidCommand
         }
+    }
+
+    private func panelIsVisible(_ webView: WKWebView) -> Bool {
+        guard let window = webView.window else { return false }
+        return !PreviewParking.shared.isParked(webView) && window.isVisible && !window.isMiniaturized && !webView.isHiddenOrHasHiddenAncestor
+    }
+
+    private func viewport(of tab: PreviewTab, webView: WKWebView, dimensions: JSONValue? = nil) -> JSONValue {
+        var result = dimensions?.object ?? ["width": .number(webView.bounds.width), "height": .number(webView.bounds.height)]
+        result["mode"] = .string(tab.viewportSize == nil ? "panel" : "fixed")
+        return .object(result)
     }
 
     private func script(_ body: String, arguments: [String: Any] = [:], in webView: WKWebView, frame: WKFrameInfo? = nil) async throws -> JSONValue {
@@ -719,7 +735,8 @@ final class PreviewSession: NSObject {
                 disabled: !!el.disabled
             }));
         return {url: location.href.slice(0, 8192), title: document.title.slice(0, 1000),
-            text: fullText.slice((page - 1) * 30000, page * 30000), elements, page, pages};
+            text: fullText.slice((page - 1) * 30000, page * 30000), elements, page, pages,
+            viewport: {width: innerWidth, height: innerHeight}};
         """#
     private static let clickScript = #"""
         const el = document.querySelector(selector);

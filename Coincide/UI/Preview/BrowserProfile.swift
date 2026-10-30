@@ -120,7 +120,7 @@ final class PreviewParking {
     /// Moves `view` into the parking window at its last size (or the default), unless it's already shown elsewhere.
     func park(_ view: WKWebView) {
         guard let content = window.contentView, view.superview == nil || view.superview === content else { return }
-        let size = view.frame.width >= 320 && view.frame.height >= 240 ? view.frame.size : Self.defaultSize
+        let size = view.frame.width > 0 && view.frame.height > 0 ? view.frame.size : Self.defaultSize
         view.translatesAutoresizingMaskIntoConstraints = true
         view.frame = NSRect(origin: .zero, size: size)
         if view.superview !== content { content.addSubview(view) }

@@ -79,6 +79,7 @@ final class MainSplitViewController: NSSplitViewController {
 
     override func viewDidLoad() {
         let values = state.values
+        preview.isPresented = values.isInspectorOpen && values.inspectorPanel == .preview
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = 240
         sidebarItem.maximumThickness = 400
@@ -127,6 +128,7 @@ final class MainSplitViewController: NSSplitViewController {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     if collapsed { self.releaseProportion() }
+                    self.preview.isPresented = !collapsed && self.inspector.panel == .preview
                     self.dividerHandle.isHidden = collapsed
                     self.state.update { $0.isInspectorOpen = !collapsed }
                     self.onPanelsChanged?()
@@ -163,6 +165,13 @@ final class MainSplitViewController: NSSplitViewController {
 
     /// Opens the inspector on the browser preview, leaving it open if it already shows it.
     func showPreviewPanel() { showInspector(.preview) }
+
+    /// Hides the browser only if it is the inspector's visible panel; other panels are left alone.
+    func hidePreviewPanel() {
+        guard isPreviewOpen else { return }
+        closeInspector()
+        notePanel(nil)
+    }
 
     func togglePullRequestsPanel() {
         toggleInspector(.pullRequests)
@@ -230,6 +239,7 @@ final class MainSplitViewController: NSSplitViewController {
     }
 
     private func showInspector(_ panel: UIState.InspectorPanel) {
+        preview.isPresented = panel == .preview && !inspectorItem.isCollapsed
         notePanel(panel)
         if inspector.panel != panel {
             inspector.show(panel)
@@ -276,6 +286,7 @@ final class MainSplitViewController: NSSplitViewController {
         case .close:
             closeInspector(animated: false)
         }
+        preview.isPresented = isPreviewOpen
     }
 
     /// Opens the inspector at its share. The thread list keeps its width: the space comes from the chat, and from the
@@ -305,6 +316,7 @@ final class MainSplitViewController: NSSplitViewController {
     }
 
     private func closeInspector(animated: Bool = true) {
+        preview.isPresented = false
         closedInspectorWidth = inspector.view.frame.width
         releaseProportion()
         if animated {
