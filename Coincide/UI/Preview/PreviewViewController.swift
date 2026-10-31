@@ -11,6 +11,8 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
     var isPresented = true {
         didSet { if oldValue != isPresented, isViewLoaded { update() } }
     }
+    /// Called after the user closes the last tab, so the browser closes as the terminal does with its last tab.
+    var onLastTabClosed: (() -> Void)?
     private let content = PreviewPageContainer()
     private let address = ThemedTextField(placeholder: String(localized: "Search or enter address"))
     private let status = NSTextField(labelWithString: "")
@@ -51,7 +53,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         address.setAccessibilityLabel(String(localized: "Preview Address"))
         address.setContentCompressionResistancePriority(.init(200), for: .horizontal)
         tabStrip.onSelect = { [weak self] id in self?.selectTab(id) }
-        tabStrip.onClose = { [weak self] id in self?.session?.closeTab(id) }
+        tabStrip.onClose = { [weak self] id in self?.closeTab(id) }
         tabStrip.onNew = { [weak self] in self?.newTab() }
         tabStrip.setContentHuggingPriority(.defaultLow, for: .horizontal)
         tabStrip.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -309,6 +311,28 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         session.select(tab)
     }
 
+    /// Closes a tab from the panel: its close button, a middle-click or ⌘W. As with the terminal, closing the last tab
+    /// closes the browser; the session keeps an empty new tab in its place, so the browser opens again on that.
+    /// True when the browser closed.
+    @discardableResult
+    func closeTab(_ id: String) -> Bool {
+        guard let session, session.tab(id) != nil else { return false }
+        let wasLast = session.tabs.count == 1
+        let hadFocus = (view as? PreviewPanelView)?.containsFocus == true
+        session.closeTab(id)
+        guard wasLast else { return false }
+        if hadFocus { AppEvents.post(.coincideFocusComposer) }
+        onLastTabClosed?()
+        return true
+    }
+
+    /// Puts the cursor in the address field when the active tab is an empty new tab, as opening a new tab does. For the
+    /// user opening the browser; an agent showing it never takes focus.
+    func focusAddressIfBlank() {
+        guard let session, let window = view.window, session.activeTab.url == nil, !session.activeTab.isLoading else { return }
+        window.makeFirstResponder(address)
+    }
+
     /// ⌘T, ⌘W and ⌘⇧[ / ⌘⇧] while focus is in the panel. Elsewhere they keep their usual meaning (⌘W archives the
     /// thread, as the menu says).
     func handleKey(_ event: NSEvent) -> Bool {
@@ -318,8 +342,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         if shortcut == KeyShortcut("mod+t") {
             newTab()
         } else if shortcut == KeyShortcut("mod+w") {
-            session.closeTab(session.activeTab.id)
-            view.window?.makeFirstResponder(session.webView)
+            if !closeTab(session.activeTab.id) { view.window?.makeFirstResponder(session.webView) }
         } else if shortcut == KeyShortcut("mod+shift+]") {
             session.selectTab(offset: 1)
         } else if shortcut == KeyShortcut("mod+shift+[") {

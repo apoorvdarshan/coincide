@@ -111,6 +111,8 @@ final class MainSplitViewController: NSSplitViewController {
             guard let self, self.isTerminalOpen else { return }
             self.toggleTerminalPanel()
         }
+        // Closing the browser's last tab closes the browser the same way.
+        preview.onLastTabClosed = { [weak self] in self?.hidePreviewPanel() }
         installDividerHandle()
         if !inspectorItem.isCollapsed { holdProportion() }
 
@@ -161,7 +163,15 @@ final class MainSplitViewController: NSSplitViewController {
         toggleInspector(.diff)
     }
 
-    func togglePreviewPanel() { toggleInspector(.preview) }
+    func togglePreviewPanel() {
+        toggleInspector(.preview)
+        // Like a new tab, an empty browser opens with the cursor in its address field, once the panel has joined the window.
+        guard isPreviewOpen else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isPreviewOpen else { return }
+            self.preview.focusAddressIfBlank()
+        }
+    }
 
     /// Opens the inspector on the browser preview, leaving it open if it already shows it.
     func showPreviewPanel() { showInspector(.preview) }

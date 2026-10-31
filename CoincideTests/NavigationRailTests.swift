@@ -71,6 +71,26 @@ struct InspectorPanelTests {
         #expect(split.isDiffOpen)
     }
 
+    /// As with the terminal, closing the browser's last tab closes the browser, and only when it is the panel showing.
+    @Test func closingTheBrowsersLastTabClosesTheBrowser() {
+        let saved = UIState.shared.values
+        defer { UIState.shared.update { $0 = saved } }
+        UIState.shared.update {
+            $0.isInspectorOpen = false
+            $0.inspectorPanel = .diff
+        }
+        let split = MainSplitViewController()
+        split.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 800)
+        split.togglePreviewPanel()
+        #expect(split.isPreviewOpen)
+        split.preview.onLastTabClosed?()
+        #expect(!split.isPreviewOpen && !split.isInspectorOpen)
+        // Another panel showing is left alone.
+        split.toggleDiffPanel()
+        split.preview.onLastTabClosed?()
+        #expect(split.isDiffOpen)
+    }
+
     /// With the terminal on the right it is a fourth panel, switched to and from like the others; below the chat the
     /// inspector has no terminal panel.
     @Test func theTerminalIsAFourthPanelOnTheRight() {

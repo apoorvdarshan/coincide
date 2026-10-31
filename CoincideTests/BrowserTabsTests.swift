@@ -168,6 +168,83 @@ import WebKit
         await harness.tearDown()
     }
 
+    /// As with the terminal, closing the last tab closes the browser, and the browser opens again on an empty new tab
+    /// with the cursor in its address field. Agents may close the last tab too, without closing the browser.
+    @Test func closingTheLastTabClosesTheBrowserAndReopensOnAnEmptyTab() async throws {
+        let harness = BrowserProfileTests.Harness()
+        let id = UUID()
+        do {
+            let panel = PreviewViewController()
+            panel.sessions = harness.sessions
+            panel.threadID = id
+            var browserClosings = 0
+            panel.onLastTabClosed = { browserClosings += 1 }
+            let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 600, height: 500), styleMask: [.borderless],
+                backing: .buffered, defer: true)
+            window.alphaValue = 0
+            window.contentViewController = panel
+            defer { window.contentViewController = nil }
+            let session = try #require(panel.session)
+            try await waitFor { session.webView.window === window }
+            func addressHasFocus() -> Bool {
+                ((window.firstResponder as? NSTextView)?.delegate as? NSTextField)?.accessibilityLabel()
+                    == String(localized: "Preview Address")
+            }
+
+            try session.navigate("http://127.0.0.1:9/a")
+            session.newTab(URL(string: "http://127.0.0.1:9/b"))
+            // Closing one of two tabs keeps the browser open.
+            #expect(!panel.closeTab(session.tabs[1].id))
+            #expect(browserClosings == 0 && session.tabs.count == 1)
+            // A page in the tab: opening the browser leaves focus where it is.
+            window.makeFirstResponder(nil)
+            panel.focusAddressIfBlank()
+            #expect(!addressHasFocus())
+
+            // The last tab's close button closes the browser and leaves an empty new tab in its place.
+            let last = session.activeTab.id
+            let button = try #require(panel.tabStrip.buttons.first)
+            #expect(!button.close.isHidden)
+            button.close.performClick(nil)
+            #expect(browserClosings == 1)
+            #expect(session.tabs.count == 1 && session.activeTab.id != last && session.activeTab.url == nil)
+            #expect(UIState.shared.values.previewTabs[id.uuidString]?.urls == [""])
+            // Opening the browser again puts the cursor in that empty tab's address field.
+            panel.focusAddressIfBlank()
+            #expect(addressHasFocus())
+
+            // ⌘W on the last tab, with focus in the panel, closes the browser too.
+            try session.navigate("http://127.0.0.1:9/c")
+            window.makeFirstResponder(session.webView)
+            let closeKey = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: "w", charactersIgnoringModifiers: "w",
+                isARepeat: false, keyCode: 13)!
+            #expect(panel.handleKey(closeKey))
+            #expect(browserClosings == 2 && session.tabs.count == 1 && session.activeTab.url == nil)
+
+            // An agent closing the last tab gets an empty one; the browser stays as it is and access is kept.
+            try await harness.sessions.enableAccess(for: id)
+            let client = BridgeClient(try #require(harness.sessions.bridge.access(for: id)))
+            let only = session.activeTab.id
+            let closed = try await client.send(["action": "close-tab", "tab": .string(only)])
+            #expect(closed["closed"]?.string == only)
+            #expect(closed["active"]?.string == session.activeTab.id && session.activeTab.id != only)
+            let tabs = try await client.send(["action": "tabs"])["tabs"]?.array ?? []
+            #expect(tabs.count == 1 && tabs.first?["url"]?.string == "")
+            #expect(try await client.send(["action": "read"])["error"] == nil)
+            #expect(harness.sessions.bridge.access(for: id) != nil)
+            #expect(browserClosings == 2)
+            #expect(window.isVisible == false)
+        }
+        // A relaunch restores the closed browser as one empty tab.
+        let relaunched = PreviewSessions(profile: harness.profile, bridge: PreviewBridge(directory: harness.folder.appendingPathComponent("bridge2")))
+        let restored = relaunched.session(for: id)
+        #expect(restored.tabs.count == 1 && restored.activeTab.url == nil)
+        relaunched.stop()
+        UIState.shared.update { $0.previewTabs.removeValue(forKey: id.uuidString) }
+        await harness.tearDown()
+    }
+
     @Test func linksCanOpenInANewTab() {
         let url = URL(string: "https://example.test/")!
         #expect(LinkRouting.request(for: url, commandKey: true, optionKey: true, opensInDefaultBrowser: false)?.destination == .coincideBrowserNewTab)
