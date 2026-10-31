@@ -33,6 +33,8 @@ public struct AppshotSettings: Codable, Hashable, Sendable {
     public var shortcut: AppshotShortcut?
     /// Add the text the app exposes in that window through Accessibility, as a "Window text" card.
     public var includesWindowText = true
+    /// Play the screenshot sound when an appshot is taken, at the alert volume.
+    public var playsSound = true
 
     public nonisolated init() {}
 
@@ -44,6 +46,7 @@ public struct AppshotSettings: Codable, Hashable, Sendable {
         trigger = (try? container.decodeIfPresent(AppshotTrigger.self, forKey: .trigger)) ?? defaults.trigger
         shortcut = (try? container.decodeIfPresent(AppshotShortcut.self, forKey: .shortcut)) ?? defaults.shortcut
         includesWindowText = (try? container.decodeIfPresent(Bool.self, forKey: .includesWindowText)) ?? defaults.includesWindowText
+        playsSound = (try? container.decodeIfPresent(Bool.self, forKey: .playsSound)) ?? defaults.playsSound
     }
 
     /// The recorded shortcut when it is the trigger and usable; nil otherwise.

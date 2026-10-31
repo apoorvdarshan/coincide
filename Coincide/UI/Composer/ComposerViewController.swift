@@ -1776,6 +1776,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         if target == threadID {
             attachments += images.filter { image in !attachments.contains { $0.path == image.path } }
             refreshAttachments()
+            if let last = images.last { attachmentStrip.reveal(last) }
             focus()
         } else if store.summary(target) != nil {
             parkedAttachments[target, default: []] += images
