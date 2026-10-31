@@ -8,7 +8,9 @@ final class TerminalViewController: NSViewController {
     var threadID: UUID? {
         didSet {
             guard threadID != oldValue, isViewLoaded else { return }
-            let refocus = terminalHasFocus
+            let refocus = Self.takesFocusOnThreadSwitch(
+                isShown: isShown, hadFocus: terminalHasFocus, responder: view.window?.firstResponder,
+                event: NSApp.currentEvent?.type)
             showThread()
             if refocus { focusActiveTerminal() }
         }
@@ -105,7 +107,17 @@ final class TerminalViewController: NSViewController {
         switch change {
         case .tabs:
             let hadTabs = shownTabCount > 0
+            let hadFocus = terminalHasFocus
             reloadTabs()
+            // The focused terminal went away (closed, or its shell exited): focus passes to the terminal shown in its
+            // place, or with none left, back to the composer.
+            if hadFocus, !terminalHasFocus {
+                if terminals.activeSession != nil {
+                    focusActiveTerminal()
+                } else {
+                    AppEvents.post(.coincideFocusComposer)
+                }
+            }
             // As in T3 Code, closing the last terminal closes the panel, in place (`onLastTerminalClosed`), as when
             // a shell exits by itself.
             if hadTabs, terminals.tabs.isEmpty, isShown, canCreateTerminals {
@@ -286,18 +298,18 @@ final class TerminalViewController: NSViewController {
     private func closeTab(_ id: UUID) {
         guard let terminals, let tab = terminals.tabs.first(where: { $0.id == id }) else { return }
         confirmClosing(tab.sessions) { [weak self, weak terminals] in
-            let refocus = self?.terminalHasFocus ?? false
             terminals?.close(tab)
-            if refocus { self?.focusActiveTerminal() }
+            // Closed from the terminal's own header: the terminal left takes focus, wherever focus was.
+            self?.focusActiveTerminal()
         }
     }
 
+    /// Closes terminals from ⌘W, the context menu or the exit banner, all in the terminal itself; the one left takes focus.
     private func close(_ sessions: [TerminalSession]) {
         guard let terminals, !sessions.isEmpty else { return }
         confirmClosing(sessions) { [weak self, weak terminals] in
-            let refocus = self?.terminalHasFocus ?? false
             for session in sessions { terminals?.close(session) }
-            if refocus { self?.focusActiveTerminal() }
+            self?.focusActiveTerminal()
         }
     }
 
@@ -404,6 +416,17 @@ final class TerminalViewController: NSViewController {
     }
 
     // MARK: Focus and visibility
+
+    /// Whether a thread switch moves keyboard focus into the new thread's terminal. A focused terminal hands focus on to
+    /// it; otherwise it takes focus while the panel shows, as when the panel opens, unless the user is typing elsewhere
+    /// (the composer, a search field) or the switch came from a key press, such as moving through the sidebar with the
+    /// arrow keys, where focus stays.
+    static func takesFocusOnThreadSwitch(
+        isShown: Bool, hadFocus: Bool, responder: NSResponder?, event: NSEvent.EventType?
+    ) -> Bool {
+        if hadFocus { return true }
+        return isShown && event != .keyDown && !(responder is NSTextInputClient)
+    }
 
     private var terminalHasFocus: Bool {
         guard isViewLoaded, let responder = view.window?.firstResponder as? NSView else { return false }

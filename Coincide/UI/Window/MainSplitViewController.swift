@@ -188,20 +188,19 @@ final class MainSplitViewController: NSSplitViewController {
     }
 
     /// Opens or closes the terminal: its drawer below the chat, or its panel in the inspector, which another panel's
-    /// button switches away from like a tab.
+    /// button switches away from like a tab. Opening it focuses its terminal, so typing and ⌘T or ⌘W reach it at once.
     func toggleTerminalPanel() {
         switch terminalPlacement {
-        case .bottom:
-            content.toggleTerminal()
-        case .right:
-            toggleInspector(.terminal)
-            // The drawer's terminal takes focus as it opens; a tab joining the window doesn't, so ask once it shows.
-            if isTerminalOpen {
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.isTerminalOpen else { return }
-                    self.content.terminal.focus()
-                }
-            }
+        case .bottom: content.toggleTerminal()
+        case .right: toggleInspector(.terminal)
+        }
+        // Asked for here rather than left to the panel noticing it shows: in either place the terminal joins the window
+        // as it opens (a collapsed drawer's view is out of it), which the panel takes for the window appearing with
+        // it, when focus stays with the composer. Once it shows, it starts a terminal if the thread has none.
+        guard isTerminalOpen else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isTerminalOpen else { return }
+            self.content.terminal.focus()
         }
     }
 
@@ -564,8 +563,9 @@ final class ChatTerminalSplitViewController: NSSplitViewController {
         terminal.threadID = threadID
     }
 
-    /// Opens or closes the terminal drawer. Closing a focused terminal returns focus to the composer;
-    /// once open, the terminal controller starts a shell if the thread has none and focuses it.
+    /// Opens or closes the terminal drawer. Closing a focused terminal returns focus to the composer; once open, the
+    /// terminal controller starts a shell if the thread has none, and `MainSplitViewController.toggleTerminalPanel`
+    /// focuses it.
     func toggleTerminal() {
         guard let terminalItem else { return }
         let opening = terminalItem.isCollapsed
