@@ -9,14 +9,19 @@ final class AgentHostService: NSObject, NSXPCListenerDelegate {
     private nonisolated let team = AgentHostIdentity.currentTeam()
     private let notifier = AgentHostNotifier()
     private var timer: Timer?
+    /// Tells the app this host runs, even while the app can't reach it (`AgentSessionLocks.runningHost`).
+    private let hostLease: AgentSessionLease?
     let core: AgentHostCore
 
     override init() {
         let info = Bundle.main.infoDictionary ?? [:]
+        let build = info["CFBundleVersion"] as? String ?? "0"
         let providers = AgentHostProviders()
+        let locks = AgentSessionLocks.shared()
+        hostLease = locks.acquireHostLock(build: build)
         core = AgentHostCore(
-            logDirectory: AgentHostPaths.directory(), build: info["CFBundleVersion"] as? String ?? "0",
-            version: info["CFBundleShortVersionString"] as? String ?? "0"
+            logDirectory: AgentHostPaths.directory(), build: build,
+            version: info["CFBundleShortVersionString"] as? String ?? "0", locks: locks
         ) { launch, account in providers.provider(for: account)?.makeSession(launch) }
         super.init()
         core.onAttention = { [notifier] in notifier.post($0) }
@@ -31,6 +36,7 @@ final class AgentHostService: NSObject, NSXPCListenerDelegate {
         notifier.start()
         listener.delegate = self
         listener.resume()
+        AgentHostRelocation.didStart()
         // Background work ends without an event, and the idle grace runs out without one.
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.core.evaluateLifecycle() }
@@ -41,6 +47,7 @@ final class AgentHostService: NSObject, NSXPCListenerDelegate {
 
     nonisolated func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
         guard let team else { return false }
+        AgentHostRelocation.didAcceptConnection()
         connection.setCodeSigningRequirement(AgentHostIdentity.requirement(identifier: AgentHostIdentity.appBundleID, team: team))
         let handler = AgentHostConnection(connection: connection)
         connection.exportedInterface = NSXPCInterface(with: AgentHostXPC.self)
@@ -200,8 +207,8 @@ final class AgentHostNotifier: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
     ) async {
-        // Coincide.app, three folders up from Contents/Helpers/CoincideAgentHost.app. It catches up on launch.
-        let app = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        // The Coincide.app this host came from. It catches up on launch.
+        guard let app = await AgentHostRelocation.appBundle else { return }
         _ = try? await NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
     }
 }

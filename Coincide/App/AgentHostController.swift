@@ -32,10 +32,20 @@ final class AgentHostController {
     var isApplyingBacklog: Bool { client?.isApplyingBacklog ?? false }
     private var settingsObservation: ObservationToken?
     private var notifiesWhileAppIsClosed: Bool?
+    /// Which sessions another process runs (`AgentSessionLocks`), so the app never starts them a second time.
+    private let ownership = AgentSessionOwnership()
+    /// Routes waiting for the connection being made.
+    private var connectionWaiters: [CheckedContinuation<Void, Never>] = []
+    /// How long the next attempt to reach a host that didn't answer waits; doubles up to `maximumRetryDelay`.
+    private var retryDelay: TimeInterval = 0
+    private var isRetryScheduled = false
 
     private let service = SMAppService.agent(plistName: AgentHostIdentity.plistName)
     private static let turnedOnKey = "AgentHostEnabled"
     private static let launchTimeout: TimeInterval = 1.5
+    /// How long a new session waits for a host being connected to before it starts in the app.
+    private static let routeWait: TimeInterval = 8
+    private static let maximumRetryDelay: TimeInterval = 30
 
     /// The user's choice in Settings; on unless they turned it off.
     var isTurnedOn: Bool {
@@ -64,6 +74,12 @@ final class AgentHostController {
     /// Decides where agents run, before any window shows: the app must know which threads the host still runs
     /// agents for before it reads their transcripts. Waits at most `launchTimeout` for the host.
     func startAtLaunch() {
+        let runner = ThreadRunner.shared
+        // Before any transcript is read, and whether or not the host answers: a thread whose session another process
+        // still runs keeps its unfinished items, which may still finish.
+        AppStore.shared.threadsWithHostedAgents.formUnion(ownership.threadsRunningElsewhere())
+        runner.sessionLocks = ownership.locks
+        runner.sessionRoute = { [weak self] key in await self?.route(for: key) ?? .startInApp }
         connect(waitingForHello: true)
         settingsObservation = AppStore.shared.observe { [weak self] change in
             guard case .settings = change else { return }
@@ -120,24 +136,68 @@ final class AgentHostController {
         mode = .connecting
         let hello = makeHello()
         if waitingForHello {
-            if let welcome = transport.helloSynchronously(hello, timeout: Self.launchTimeout) {
-                connected(welcome, hello: hello, transport: transport)
-            } else {
-                failToConnect(transport)
+            switch transport.helloSynchronously(hello, timeout: Self.launchTimeout) {
+            case .welcome(let welcome): connected(welcome, hello: hello, transport: transport)
+            case .refused: failToConnect(transport, refused: true)
+            case .timedOut: failToConnect(transport, refused: false)
             }
         } else {
             Task {
                 if let welcome = try? await transport.hello(hello) {
                     connected(welcome, hello: hello, transport: transport)
                 } else {
-                    failToConnect(transport)
+                    failToConnect(transport, refused: true)
                 }
+            }
+        }
+    }
+
+    // MARK: Routing
+
+    /// Where a thread's new session runs (`AgentSessionRoute`). While the host is being connected to, it waits for it
+    /// briefly rather than start the agent in the app, where quitting would stop it. A session another process still
+    /// runs is never started again here.
+    func route(for key: AgentSessionKey) async -> AgentSessionRoute {
+        if mode == .connecting, isTurnedOn { await waitForConnection(timeout: Self.routeWait) }
+        let host: AgentSessionRoute.Host = client?.isConnected == true && ThreadRunner.shared.hostedSession != nil
+            ? .connected(nil) : .unavailable
+        let elsewhere = host == .unavailable && ownership.ownerElsewhere(of: key) != nil
+        return AgentSessionRoute.decide(host: host, runningElsewhere: elsewhere)
+    }
+
+    private func waitForConnection(timeout: TimeInterval) async {
+        await withCheckedContinuation { continuation in
+            connectionWaiters.append(continuation)
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in self?.resumeWaiters() }
+        }
+    }
+
+    private func resumeWaiters() {
+        let waiters = connectionWaiters
+        connectionWaiters = []
+        for waiter in waiters { waiter.resume() }
+    }
+
+    /// Tries again later, waiting longer each time, for as long as the host should be used and isn't.
+    private func scheduleRetry(after delay: TimeInterval? = nil) {
+        guard !isRetryScheduled else { return }
+        retryDelay = delay ?? min(max(retryDelay * 2, 2), Self.maximumRetryDelay)
+        isRetryScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + retryDelay) { [weak self] in
+            guard let self else { return }
+            self.isRetryScheduled = false
+            guard self.transport == nil, self.isTurnedOn else { return }
+            switch self.mode {
+            case .inApp(.unreachable), .inApp(.incompatibleHostBusy): self.connect(waitingForHello: false)
+            default: break
             }
         }
     }
 
     private func connected(_ welcome: AgentHostWelcome, hello: AgentHostHello, transport: XPCAgentHostTransport) {
         guard self.transport === transport else { return }
+        defer { resumeWaiters() }
+        retryDelay = 0
         switch AgentHostCompatibility.evaluate(app: hello, host: welcome) {
         case .use:
             use(transport, welcome: welcome)
@@ -160,7 +220,10 @@ final class AgentHostController {
             self.transport = nil
             transport.onDisconnect = nil
             transport.invalidate()
+            // Its sessions go on there (the locks keep the app from starting them again), and it exits once they
+            // finish: then this build's host answers.
             mode = .inApp(.incompatibleHostBusy)
+            scheduleRetry(after: Self.maximumRetryDelay)
         }
     }
 
@@ -211,12 +274,24 @@ final class AgentHostController {
         client?.flushAcknowledgements()
     }
 
-    private func failToConnect(_ transport: XPCAgentHostTransport) {
+    /// The host didn't answer, or answered in a way the app refused. The app keeps trying, and until it gets through,
+    /// sessions another process still runs are left alone (`route`).
+    private func failToConnect(_ transport: XPCAgentHostTransport, refused: Bool) {
         guard self.transport === transport else { return }
         self.transport = nil
         transport.onDisconnect = nil
         transport.invalidate()
-        mode = .inApp(.unreachable)
+        if refused, !AgentHostLegacyOwnership.runningHostPIDs().isEmpty {
+            // A host runs, yet the app refused it: an update replaced its files while it ran (a host from before
+            // hosts ran from their own copy), so its signature no longer checks out. It goes on running its agents;
+            // asked to, it exits once they finish, and this build's host starts on the next attempt.
+            XPCAgentHostTransport.retireUnverifiedHost()
+            mode = .inApp(.incompatibleHostBusy)
+        } else {
+            mode = .inApp(.unreachable)
+        }
+        resumeWaiters()
+        scheduleRetry()
     }
 
     /// The host exited (idle, retired, or crashed): the next need connects again.
