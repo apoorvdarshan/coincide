@@ -43,12 +43,19 @@ struct AlwaysOnPowerTests {
         #expect(PowerSettings.parse(general: "SleepDisabled 0", custom: custom)?.sleepDisabled == false)
     }
 
-    @Test func awakeNeedsSleepDisabledAndNoIdleSleepWhereChosen() {
-        let charging = PowerSettings(sleepDisabled: true, chargerSleep: 0, batterySleep: 5)
-        #expect(charging.isAwake(onlyWhileCharging: true))
-        #expect(!charging.isAwake(onlyWhileCharging: false))
-        #expect(!PowerSettings(sleepDisabled: false, chargerSleep: 0, batterySleep: 0).isAwake(onlyWhileCharging: false))
-        #expect(PowerSettings(sleepDisabled: true, chargerSleep: 0, batterySleep: nil).isAwake(onlyWhileCharging: false))
+    @Test func awakeNeedsNoChargerIdleSleepAndSleepDisabledExceptOnBatteryWhenItSleepsThere() {
+        let awake = PowerSettings(sleepDisabled: true, chargerSleep: 0, batterySleep: 5)
+        #expect(awake.isAwake(sleepsOnBattery: false))
+        #expect(awake.isAwake(sleepsOnBattery: true))
+        #expect(!PowerSettings(sleepDisabled: true, chargerSleep: 10, batterySleep: 5).isAwake(sleepsOnBattery: false))
+        #expect(!PowerSettings(sleepDisabled: false, chargerSleep: 0, batterySleep: 5).isAwake(sleepsOnBattery: false))
+        // On battery, sleeping there means sleep must be enabled.
+        let unplugged = PowerSettings(sleepDisabled: false, chargerSleep: 0, batterySleep: 5, onBattery: true)
+        #expect(unplugged.isAwake(sleepsOnBattery: true))
+        #expect(!unplugged.isAwake(sleepsOnBattery: false))
+        var stillDisabled = unplugged
+        stillDisabled.sleepDisabled = true
+        #expect(!stillDisabled.isAwake(sleepsOnBattery: true))
     }
 }
 
@@ -77,28 +84,18 @@ struct AlwaysOnScriptTests {
 
     private let power = PowerSettings(sleepDisabled: false, chargerSleep: 10, batterySleep: 3)
 
-    @Test func turningOnOnlyWhileChargingLeavesBatteryAlone() throws {
-        let script = try AlwaysOnScript.apply(onlyWhileCharging: true, current: power)
-        let result = try run(script)
+    @Test func turningOnChangesTheChargersIdleSleepAndDisablesSleepButLeavesBatteryAlone() throws {
+        let result = try run(try AlwaysOnScript.apply(current: power))
         #expect(result.status == 0)
         #expect(result.calls == ["-c sleep 0", "-a disablesleep 1"])
-    }
-
-    @Test func turningOnEverywhereAlsoStopsBatteryIdleSleep() throws {
-        let result = try run(try AlwaysOnScript.apply(onlyWhileCharging: false, current: power))
-        #expect(result.status == 0)
-        #expect(result.calls == ["-c sleep 0", "-b sleep 0", "-a disablesleep 1"])
-        // A Mac without a battery is never asked about one.
         let desktop = PowerSettings(sleepDisabled: false, chargerSleep: 10, batterySleep: nil)
-        #expect(try run(try AlwaysOnScript.apply(onlyWhileCharging: false, current: desktop)).calls == ["-c sleep 0", "-a disablesleep 1"])
+        #expect(try run(try AlwaysOnScript.apply(current: desktop)).calls == ["-c sleep 0", "-a disablesleep 1"])
     }
 
     @Test func aFailedStepPutsBackWhatTheScriptChangedAndFails() throws {
-        let result = try run(try AlwaysOnScript.apply(onlyWhileCharging: false, current: power), failing: "-a disablesleep 1")
+        let result = try run(try AlwaysOnScript.apply(current: power), failing: "-a disablesleep 1")
         #expect(result.status != 0)
-        #expect(result.calls == [
-            "-c sleep 0", "-b sleep 0", "-a disablesleep 1", "-c sleep 10", "-b sleep 3", "-a disablesleep 0",
-        ])
+        #expect(result.calls == ["-c sleep 0", "-a disablesleep 1", "-c sleep 10", "-a disablesleep 0"])
     }
 
     @Test func restoringPutsBackOnlySavedValuesWithSleepLast() throws {
@@ -116,18 +113,73 @@ struct AlwaysOnScriptTests {
         #expect(result.calls == ["-c sleep 10", "-b sleep 3", "-a disablesleep 0"])
     }
 
-    @Test func switchingBatterySleepUndoesItselfOnFailure() throws {
-        #expect(try run(try AlwaysOnScript.batterySleep(0, undo: 3)).calls == ["-b sleep 0"])
-        let failed = try run(try AlwaysOnScript.batterySleep(0, undo: 3), failing: "-b sleep 0")
+    @Test func disablingSleepAloneUndoesItselfOnFailure() throws {
+        #expect(try run(AlwaysOnScript.sleepDisabled(true, undo: false)).calls == ["-a disablesleep 1"])
+        let failed = try run(AlwaysOnScript.sleepDisabled(true, undo: false), failing: "-a disablesleep 1")
         #expect(failed.status != 0)
-        #expect(failed.calls == ["-b sleep 0", "-b sleep 3"])
+        #expect(failed.calls == ["-a disablesleep 1", "-a disablesleep 0"])
     }
 
     @Test func valuesOutsidePmsetsRangeAreRefused() {
         #expect(throws: AlwaysOnScript.Failure.invalidValue) {
             try AlwaysOnScript.restore(AlwaysOnRestorePoint(chargerSleep: -1))
         }
-        #expect(throws: AlwaysOnScript.Failure.invalidValue) { try AlwaysOnScript.batterySleep(0, undo: 1_000_000) }
+        #expect(throws: AlwaysOnScript.Failure.invalidValue) {
+            try AlwaysOnScript.restore(AlwaysOnRestorePoint(batterySleep: 1_000_000))
+        }
+    }
+}
+
+/// The battery helper's one decision, against a fake Mac.
+struct BatterySleepSwitchTests {
+    final class FakeControl: BatterySleepControl {
+        var battery: Bool? = false
+        var disabled: Bool? = false
+        var refuses = false
+        var sets: [Bool] = []
+
+        func onBattery() -> Bool? { battery }
+        func sleepDisabled() -> Bool? { disabled }
+        func setSleepDisabled(_ value: Bool) -> Bool {
+            sets.append(value)
+            guard !refuses else { return false }
+            disabled = value
+            return true
+        }
+    }
+
+    @Test func sleepIsDisabledOnTheChargerAndEnabledOnBattery() {
+        let control = FakeControl()
+        let helper = BatterySleepSwitch(control: control)
+        #expect(helper.update() == true)
+        #expect(control.disabled == true)
+        control.battery = true
+        #expect(helper.update() == false)
+        #expect(control.disabled == false)
+        control.battery = false
+        helper.update()
+        #expect(control.sets == [true, false, true])
+    }
+
+    @Test func repeatedReportsChangeNothing() {
+        let control = FakeControl()
+        let helper = BatterySleepSwitch(control: control)
+        helper.update()
+        // Battery percentage updates arrive as power source changes too.
+        for _ in 0..<5 { helper.update() }
+        #expect(control.sets == [true])
+    }
+
+    @Test func anUnknownSourceOrARefusalLeavesTheSettingAlone() {
+        let control = FakeControl()
+        control.battery = nil
+        let helper = BatterySleepSwitch(control: control)
+        #expect(helper.update() == nil)
+        #expect(control.sets.isEmpty)
+        control.battery = false
+        control.refuses = true
+        #expect(helper.update() == false)
+        #expect(control.disabled == false)
     }
 }
 
@@ -150,7 +202,8 @@ struct AlwaysOnSettingsTests {
     @Test func offByDefaultWithTheRepositorysDefaults() throws {
         let settings = AppSettings().alwaysOn
         #expect(!settings.enabled)
-        #expect(settings.onlyWhileCharging)
+        // Awake on battery too, without the battery helper, as macbook-24x7-agents does.
+        #expect(!settings.sleepsOnBattery)
         #expect(settings.displayOffOnLidClose)
         #expect(!settings.keepDisplaysOff)
         #expect(!settings.muteWhileClosed)

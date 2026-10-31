@@ -15,10 +15,15 @@ struct AlwaysOnControllerTests {
         var serviceState = AlwaysOnServiceState.notRegistered
         var registrations = 0
         var unregistrations = 0
+        var batteryHelperState = AlwaysOnServiceState.notRegistered
+        /// The user allows the battery helper in Login Items as soon as it's registered.
+        var approvesBatteryHelper = true
         var hasLid = true
         var standalone: StandaloneAlwaysOn?
         var removed: [StandaloneAlwaysOn] = []
         var audioRestores: [URL] = []
+        /// What happened, in order: admin, watcher+, watcher-, helper+, helper-.
+        var events: [String] = []
         /// Checked at each prompt and registration, for what must already be on disk then.
         var onAdmin: (() -> Void)?
         var onRegister: (() -> Void)?
@@ -27,20 +32,46 @@ struct AlwaysOnControllerTests {
 
         func runAsAdministrator(_ script: String, prompt: String) async -> AlwaysOnAdminResult {
             scripts.append(script)
+            events.append("admin")
             onAdmin?()
             if adminResult == .succeeded, let current = power { power = Self.applying(script, to: current) }
+            switchSleepLikeTheHelper()
             return adminResult
         }
 
         func registerService() throws {
             onRegister?()
             registrations += 1
+            events.append("watcher+")
             serviceState = .running
         }
 
         func unregisterService() async throws {
             unregistrations += 1
+            events.append("watcher-")
             serviceState = .notRegistered
+        }
+
+        func registerBatteryHelper() throws {
+            events.append("helper+")
+            batteryHelperState = approvesBatteryHelper ? .running : .needsApproval
+            switchSleepLikeTheHelper()
+        }
+
+        func unregisterBatteryHelper() async throws {
+            events.append("helper-")
+            batteryHelperState = .notRegistered
+        }
+
+        /// What the running helper does: sleep disabled on the charger, enabled on battery.
+        func switchSleepLikeTheHelper() {
+            guard batteryHelperState == .running, let current = power else { return }
+            power?.sleepDisabled = !current.onBattery
+        }
+
+        func unplug(_ onBattery: Bool) {
+            power?.onBattery = onBattery
+            switchSleepLikeTheHelper()
         }
 
         func openLoginItems() {}
@@ -91,14 +122,15 @@ struct AlwaysOnControllerTests {
         system.onAdmin = { savedBeforePrompt = AlwaysOnRestorePoint.load(from: point) }
         system.onRegister = { enabledOnDiskAtRegistration = AlwaysOnSettings.read(settingsFile: settingsFile).enabled }
         await controller.setEnabled(true)
-        #expect(savedBeforePrompt == AlwaysOnRestorePoint(sleepDisabled: false, chargerSleep: 10, batterySleep: nil))
-        #expect(system.scripts == [try AlwaysOnScript.apply(onlyWhileCharging: true, current: PowerSettings(
-            sleepDisabled: false, chargerSleep: 10, batterySleep: 3))])
+        #expect(savedBeforePrompt == AlwaysOnRestorePoint(sleepDisabled: false, chargerSleep: 10))
+        #expect(system.scripts == [try AlwaysOnScript.apply(current: PowerSettings(sleepDisabled: false, chargerSleep: 10, batterySleep: 3))])
         #expect(store.settings.alwaysOn.enabled)
         #expect(enabledOnDiskAtRegistration)
-        #expect(system.registrations == 1)
+        #expect(system.events == ["admin", "watcher+"])
         #expect(controller.service == .running)
-        #expect(controller.power?.isAwake(onlyWhileCharging: true) == true)
+        // No battery helper unless the Mac should sleep on battery.
+        #expect(controller.batteryHelper == .notRegistered)
+        #expect(controller.power?.isAwake(sleepsOnBattery: false) == true)
         #expect(controller.problem == nil)
     }
 
@@ -126,6 +158,7 @@ struct AlwaysOnControllerTests {
         #expect(AlwaysOnRestorePoint.load(from: restorePointFile) == nil)
         #expect(system.unregistrations == 1)
         #expect(system.audioRestores == [AlwaysOnIdentity.audioStateFile(in: folder.url)])
+        #expect(system.power == PowerSettings(sleepDisabled: false, chargerSleep: 10, batterySleep: 3))
     }
 
     @Test func aCancelledTurnOffKeepsItOnAndSaysWhy() async throws {
@@ -150,36 +183,146 @@ struct AlwaysOnControllerTests {
         #expect(!store.settings.alwaysOn.enabled)
     }
 
-    @Test func switchingOnlyWhileChargingChangesBatterySleepAndPutsItBack() async throws {
+    // MARK: Sleeping on battery
+
+    @Test func theBatteryHelperRunsOnlyWhileKeepAwakeAndTheOptionAreOn() async throws {
+        let store = store
+        let controller = controller(store)
+        await controller.setSleepsOnBattery(true)
+        #expect(store.settings.alwaysOn.sleepsOnBattery)
+        #expect(system.events.isEmpty)
+        await controller.setEnabled(true)
+        #expect(system.events == ["admin", "watcher+", "helper+"])
+        #expect(controller.batteryHelper == .running)
+        // Unplugged, sleep is on again; plugged in, off.
+        system.unplug(true)
+        await controller.refresh()
+        #expect(system.power?.sleepDisabled == false)
+        #expect(!controller.isOutOfStep)
+        system.unplug(false)
+        #expect(system.power?.sleepDisabled == true)
+        // Off: the helper goes before the saved values come back, so it can't switch sleep after them.
+        system.unplug(true)
+        await controller.setEnabled(false)
+        #expect(Array(system.events.suffix(3)) == ["helper-", "admin", "watcher-"])
+        #expect(system.power == PowerSettings(sleepDisabled: false, chargerSleep: 10, batterySleep: 3, onBattery: true))
+        #expect(controller.batteryHelper == .notRegistered)
+    }
+
+    @Test func turningTheOptionOnWhileAwakeAsksForNoPassword() async throws {
         let store = store
         let controller = controller(store)
         await controller.setEnabled(true)
-        await controller.setOnlyWhileCharging(false)
-        #expect(system.scripts.last == (try AlwaysOnScript.batterySleep(0, undo: 3)))
-        #expect(!store.settings.alwaysOn.onlyWhileCharging)
-        #expect(AlwaysOnRestorePoint.load(from: restorePointFile)?.batterySleep == 3)
-        #expect(system.power?.batterySleep == 0)
-        await controller.setOnlyWhileCharging(true)
-        #expect(system.scripts.last == (try AlwaysOnScript.batterySleep(3, undo: 0)))
-        #expect(store.settings.alwaysOn.onlyWhileCharging)
-        #expect(AlwaysOnRestorePoint.load(from: restorePointFile)?.batterySleep == nil)
-        // Cancelled: neither the setting nor the restore point moves.
-        system.adminResult = .cancelled
-        let before = AlwaysOnRestorePoint.load(from: restorePointFile)
-        await controller.setOnlyWhileCharging(false)
-        #expect(store.settings.alwaysOn.onlyWhileCharging)
-        #expect(AlwaysOnRestorePoint.load(from: restorePointFile) == before)
+        system.unplug(true)
+        await controller.setSleepsOnBattery(true)
+        #expect(system.scripts.count == 1)
+        #expect(system.events.last == "helper+")
+        #expect(system.power?.sleepDisabled == false)
     }
+
+    @Test func turningTheOptionOffOnBatteryDisablesSleepAgain() async throws {
+        let store = store
+        let controller = controller(store)
+        store.updateSettings { $0.alwaysOn.sleepsOnBattery = true }
+        await controller.setEnabled(true)
+        system.unplug(true)
+        await controller.setSleepsOnBattery(false)
+        #expect(Array(system.events.suffix(2)) == ["helper-", "admin"])
+        #expect(system.scripts.last == AlwaysOnScript.sleepDisabled(true, undo: false))
+        #expect(system.power?.sleepDisabled == true)
+        #expect(!store.settings.alwaysOn.sleepsOnBattery)
+        #expect(controller.batteryHelper == .notRegistered)
+        #expect(!controller.isOutOfStep)
+    }
+
+    @Test func turningTheOptionOffOnTheChargerNeedsNoPassword() async throws {
+        let store = store
+        let controller = controller(store)
+        store.updateSettings { $0.alwaysOn.sleepsOnBattery = true }
+        await controller.setEnabled(true)
+        await controller.setSleepsOnBattery(false)
+        #expect(system.scripts.count == 1)
+        #expect(system.events.last == "helper-")
+    }
+
+    @Test func aCancelledPromptAfterRemovingTheHelperShowsHowToFixIt() async throws {
+        let store = store
+        let controller = controller(store)
+        store.updateSettings { $0.alwaysOn.sleepsOnBattery = true }
+        await controller.setEnabled(true)
+        system.unplug(true)
+        system.adminResult = .cancelled
+        await controller.setSleepsOnBattery(false)
+        #expect(controller.problem?.isEmpty == false)
+        #expect(controller.isOutOfStep)
+        system.adminResult = .succeeded
+        await controller.applyAgain()
+        #expect(!controller.isOutOfStep)
+    }
+
+    @Test func aCancelledTurnOffStartsTheBatteryHelperAgain() async throws {
+        let store = store
+        let controller = controller(store)
+        store.updateSettings { $0.alwaysOn.sleepsOnBattery = true }
+        await controller.setEnabled(true)
+        system.adminResult = .cancelled
+        await controller.setEnabled(false)
+        #expect(store.settings.alwaysOn.enabled)
+        #expect(Array(system.events.suffix(3)) == ["helper-", "admin", "helper+"])
+        #expect(controller.batteryHelper == .running)
+    }
+
+    @Test func aHelperWaitingForApprovalIsShownButNotOutOfStep() async throws {
+        system.approvesBatteryHelper = false
+        let store = store
+        let controller = controller(store)
+        store.updateSettings { $0.alwaysOn.sleepsOnBattery = true }
+        await controller.setEnabled(true)
+        system.unplug(true)
+        await controller.refresh()
+        #expect(controller.batteryHelper == .needsApproval)
+        // Until it's allowed, sleep stays disabled on battery, as without the option.
+        #expect(system.power?.sleepDisabled == true)
+        #expect(!controller.isOutOfStep)
+    }
+
+    @Test func aMacWithoutABatteryNeverGetsTheHelper() async throws {
+        system.power = PowerSettings(sleepDisabled: false, chargerSleep: 10, batterySleep: nil)
+        let store = store
+        let controller = controller(store)
+        await controller.refresh()
+        await controller.setEnabled(true)
+        await controller.setSleepsOnBattery(true)
+        #expect(!system.events.contains("helper+"))
+    }
+
+    @Test func launchRemovesAHelperNothingNeedsAndStartsOneThatWentMissing() async throws {
+        let store = store
+        system.batteryHelperState = .running
+        let controller = controller(store)
+        controller.startAtLaunch()
+        for _ in 0..<100 where !system.events.contains("helper-") { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(system.events == ["helper-"])
+        store.updateSettings {
+            $0.alwaysOn.enabled = true
+            $0.alwaysOn.sleepsOnBattery = true
+        }
+        let relaunched = AlwaysOnController(store: store, system: system)
+        relaunched.startAtLaunch()
+        for _ in 0..<100 where !system.events.contains("helper+") { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(system.events.suffix(2) == ["watcher+", "helper+"])
+        #expect(system.scripts.isEmpty)
+    }
+
+    // MARK: Options and launch
 
     @Test func displayAndSoundOptionsNeedNoPassword() async {
         let store = store
         let controller = controller(store)
         controller.set(\.muteWhileClosed, true)
         controller.set(\.keepDisplaysOff, true)
-        await controller.setOnlyWhileCharging(false)
         #expect(store.settings.alwaysOn.muteWhileClosed)
         #expect(store.settings.alwaysOn.keepDisplaysOff)
-        #expect(!store.settings.alwaysOn.onlyWhileCharging)
         #expect(system.scripts.isEmpty)
     }
 
@@ -215,6 +358,8 @@ struct AlwaysOnControllerTests {
         #expect(system.scripts.count == 2)
     }
 
+    // MARK: macbook-24x7-agents
+
     private func standalone(muting: Bool = true) throws -> StandaloneAlwaysOn {
         StandaloneAlwaysOn(
             label: "com.someone.lidwatch", plist: try folder.file("LaunchAgents/com.someone.lidwatch.plist"),
@@ -249,7 +394,7 @@ struct AlwaysOnControllerTests {
         #expect(system.scripts.isEmpty)
         let options = store.settings.alwaysOn
         #expect(options.enabled && options.keepDisplaysOff && options.muteWhileClosed && options.displayOffOnLidClose)
-        #expect(!options.onlyWhileCharging)
+        #expect(!options.sleepsOnBattery)
         #expect(AlwaysOnRestorePoint.load(from: restorePointFile) == .macOSDefaults(hasBattery: true))
         #expect(AlwaysOnAudioState(url: AlwaysOnIdentity.audioStateFile(in: folder.url)).previousMute == false)
         #expect(!FileManager.default.fileExists(atPath: install.audioStateFile.path))
@@ -268,11 +413,17 @@ struct AlwaysOnControllerTests {
         #expect(!store.settings.alwaysOn.muteWhileClosed)
     }
 
+    // MARK: Settings
+
     @Test func searchFindsAndRevealsKeepAwake() throws {
         let entries = SettingsSearchResults.entries(kinds: [])
-        for query in ["keep awake", "24/7", "24x7", "sleep", "lid", "clamshell", "pmset", "macbook-24x7-agents"] {
+        for query in [
+            "keep awake", "24/7", "24x7", "sleep", "lid", "clamshell", "pmset", "macbook-24x7-agents", "battery",
+            "charger", "unplugged", "battery helper", "disablesleep",
+        ] {
             #expect(entries.contains { $0.setting == .keepAwake && $0.matches(query) }, "Missing search alias: \(query)")
         }
+        #expect(entries.contains { $0.setting == .keepAwake && $0.title == String(localized: "Sleep normally on battery") })
         let entry = try #require(entries.first { $0.setting == .keepAwake })
         #expect(entry.pane == .section(.general))
         let store = store
@@ -287,8 +438,10 @@ struct AlwaysOnControllerTests {
         var settings = AppSettings()
         settings.alwaysOn.enabled = true
         settings.alwaysOn.muteWhileClosed = true
+        settings.alwaysOn.sleepsOnBattery = true
         GeneralSettingsView.restoreDefaults(in: &settings)
         #expect(settings.alwaysOn.enabled)
         #expect(settings.alwaysOn.muteWhileClosed)
+        #expect(settings.alwaysOn.sleepsOnBattery)
     }
 }

@@ -309,6 +309,12 @@ struct SettingsSearchResults: View {
                     "24/7", "24x7", "pmset", "macbook-24x7-agents",
                 ]),
             SettingsSearchEntry(
+                title: String(localized: "Sleep normally on battery"), pane: general, setting: .keepAwake,
+                keywords: [
+                    String(localized: "Battery"), String(localized: "Charger"), String(localized: "Unplugged"),
+                    String(localized: "Lid"), String(localized: "Battery helper"), "disablesleep",
+                ]),
+            SettingsSearchEntry(
                 title: String(localized: "Command-line control"), pane: general, setting: .commandLine,
                 keywords: ["coincide", String(localized: "Terminal"), String(localized: "Command line"), "CLI", String(localized: "Automation")]),
             SettingsSearchEntry(

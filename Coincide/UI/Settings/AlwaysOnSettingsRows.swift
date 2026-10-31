@@ -37,9 +37,14 @@ struct AlwaysOnSettingsRows: View {
                 optionRows
             }
             statusRow
-            Text("Keep it plugged in: on battery the Mac runs until the battery is empty. With the lid closed, give it airflow. While this is on, Apple menu › Sleep does nothing. Turn it off here before you delete Coincide.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            Group {
+                if !options.sleepsOnBattery {
+                    Text("Keep it plugged in: on battery the Mac runs until the battery is empty.")
+                }
+                Text("With the lid closed, give it airflow. While sleep is disabled, Apple menu › Sleep does nothing. Turn Keep Awake off here before you delete Coincide.")
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
         }
         .task { await controller.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -48,12 +53,15 @@ struct AlwaysOnSettingsRows: View {
     }
 
     @ViewBuilder private var optionRows: some View {
-        if controller.power?.hasBattery ?? true {
-            Toggle(isOn: chargingBinding) {
-                Text("Only while charging")
-                Text("Changes idle sleep only for the charger. While Keep Awake is on, the Mac doesn’t sleep on battery either, lid closed included.")
+        if controller.hasBattery {
+            Toggle(isOn: batteryBinding) {
+                Text("Sleep normally on battery")
+                Text("On battery the Mac sleeps as usual, closing the lid included; on the charger it stays awake. macOS can only switch this as administrator, so Coincide adds a small battery helper that runs as root only while this and Keep Awake are on. It takes no input and only switches sleep when you plug in or unplug. You allow it once in Login Items. Off, the Mac stays awake on battery too, without the helper.")
             }
             .disabled(controller.isWorking)
+            if options.enabled, options.sleepsOnBattery {
+                batteryHelperRow
+            }
         }
         if controller.hasLid {
             Toggle(isOn: optionBinding(\.displayOffOnLidClose)) {
@@ -67,6 +75,34 @@ struct AlwaysOnSettingsRows: View {
                 Text("Mute sound while the lid is closed")
                 Text("Your mute setting comes back when you open the lid.")
             }
+        }
+    }
+
+    private var batteryHelperRow: some View {
+        LabeledContent {
+            switch controller.batteryHelper {
+            case .needsApproval:
+                Button("Open Login Items…") { controller.openLoginItems() }
+            case .notRegistered:
+                Button("Apply Again") { Task { await controller.applyAgain() } }
+                    .disabled(controller.isWorking)
+            case .running, .missing:
+                EmptyView()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                SettingsStatusDot(color: controller.batteryHelper == .running ? .green : .orange)
+                Text(batteryHelperHeadline)
+            }
+        }
+    }
+
+    private var batteryHelperHeadline: String {
+        switch controller.batteryHelper {
+        case .running: String(localized: "The battery helper is running")
+        case .needsApproval: String(localized: "Allow the battery helper in Login Items. Until then the Mac stays awake on battery.")
+        case .notRegistered: String(localized: "The battery helper isn’t running")
+        case .missing: String(localized: "This copy of Coincide doesn’t include the battery helper.")
         }
     }
 
@@ -90,12 +126,17 @@ struct AlwaysOnSettingsRows: View {
     private var statusColor: Color {
         guard let power = controller.power else { return Color(nsColor: Theme.surfaceBorder) }
         if controller.isOutOfStep || (options.enabled && controller.service != .running && controller.hasLid) { return .orange }
-        return power.sleepDisabled ? .green : Color(nsColor: Theme.surfaceBorder)
+        let sleepingOnBattery = options.enabled && options.sleepsOnBattery && power.onBattery
+        return power.sleepDisabled || sleepingOnBattery ? .green : Color(nsColor: Theme.surfaceBorder)
     }
 
     private var statusHeadline: String {
         guard let power = controller.power else { return String(localized: "Sleep settings unavailable") }
-        if !power.sleepDisabled { return String(localized: "This Mac sleeps as usual") }
+        if !power.sleepDisabled {
+            return options.enabled && options.sleepsOnBattery && power.onBattery
+                ? String(localized: "On battery this Mac sleeps as usual; plugged in, it stays awake")
+                : String(localized: "This Mac sleeps as usual")
+        }
         guard options.enabled || controller.standalone != nil else { return String(localized: "Sleep is disabled outside Coincide") }
         guard controller.hasLid, options.enabled else { return String(localized: "This Mac stays awake") }
         switch controller.service {
@@ -128,8 +169,8 @@ struct AlwaysOnSettingsRows: View {
         Binding(get: { options.enabled }, set: { value in Task { await controller.setEnabled(value) } })
     }
 
-    private var chargingBinding: Binding<Bool> {
-        Binding(get: { options.onlyWhileCharging }, set: { value in Task { await controller.setOnlyWhileCharging(value) } })
+    private var batteryBinding: Binding<Bool> {
+        Binding(get: { options.sleepsOnBattery }, set: { value in Task { await controller.setSleepsOnBattery(value) } })
     }
 
     private func optionBinding(_ option: WritableKeyPath<AlwaysOnSettings, Bool>) -> Binding<Bool> {

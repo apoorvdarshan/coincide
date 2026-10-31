@@ -98,6 +98,24 @@ targets:
         PRODUCT_MODULE_NAME: CoincideAlwaysOn
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.always-on
         SKIP_INSTALL: YES
+  # Keep Awake's battery helper (CoincidePowerHelper/main.swift), a launchd daemon run as root while "Sleep normally on
+  # battery" is on: it switches `pmset disablesleep` with the power source. Embedded in Coincide.app/Contents/Helpers.
+  CoincidePowerHelper:
+    type: tool
+    platform: macOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    sources:
+      - path: CoincidePowerHelper
+      - path: CoincideKit/AlwaysOn/BatterySleep.swift
+    settings:
+      base:
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+        PRODUCT_NAME: coincide-power-helper
+        PRODUCT_MODULE_NAME: CoincidePowerHelper
+        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.power-helper
+        SKIP_INSTALL: YES
   # The background agent host (see AgentHostProtocol.swift): a LaunchAgent inside Coincide.app that owns agent
   # sessions so they outlive the app. An app bundle without a Dock icon, so it can post notifications.
   CoincideAgentHost:
@@ -110,6 +128,7 @@ targets:
       - path: CoincideAgentHost
         excludes:
           - LaunchAgents
+          - LaunchDaemons
       # For the app icon on its notifications.
       - path: Coincide/Resources/Assets.xcassets
     dependencies:
@@ -149,6 +168,12 @@ targets:
           copyFiles:
             destination: wrapper
             subpath: Contents/Library/LaunchAgents
+      # Keep Awake's battery helper, registered with SMAppService.daemon(plistName:), which looks for it here.
+      - path: CoincideAgentHost/LaunchDaemons
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchDaemons
     dependencies:
       - target: CoincideKit
       - target: CoincideAgentHost
@@ -164,6 +189,9 @@ targets:
         link: false
         embed: false
       - target: CoincideAlwaysOn
+        link: false
+        embed: false
+      - target: CoincidePowerHelper
         link: false
         embed: false
       - package: SwiftTerm
@@ -204,6 +232,15 @@ targets:
           - $(BUILT_PRODUCTS_DIR)/coincide-always-on
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/coincide-always-on
+      # Where com.apoorvdarshan.coincide.power-helper.plist's BundleProgram points.
+      - name: Embed battery helper
+        script: |
+          /bin/mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
+          /usr/bin/install -m 755 "$BUILT_PRODUCTS_DIR/coincide-power-helper" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/coincide-power-helper"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/coincide-power-helper
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/coincide-power-helper
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide

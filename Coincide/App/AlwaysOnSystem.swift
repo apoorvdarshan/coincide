@@ -43,6 +43,12 @@ protocol AlwaysOnSystem: AnyObject {
     var serviceState: AlwaysOnServiceState { get }
     func registerService() throws
     func unregisterService() async throws
+    /// The battery helper, a launchd daemon running as root (`coincide-power-helper`). Registering it asks the user to
+    /// allow it once in Login Items.
+    var batteryHelperState: AlwaysOnServiceState { get }
+    func registerBatteryHelper() throws
+    /// Returns once its process is gone, so nothing it does can race what comes next.
+    func unregisterBatteryHelper() async throws
     func openLoginItems()
     var hasLid: Bool { get }
     func findStandalone() -> StandaloneAlwaysOn?
@@ -54,14 +60,18 @@ protocol AlwaysOnSystem: AnyObject {
 
 final class MacAlwaysOnSystem: AlwaysOnSystem {
     private let service = SMAppService.agent(plistName: AlwaysOnIdentity.plistName)
+    private let batteryHelper = SMAppService.daemon(plistName: AlwaysOnIdentity.batteryHelperPlistName)
     private let pmset = URL(fileURLWithPath: "/usr/bin/pmset")
 
     func readPower() async -> PowerSettings? {
         async let general = ProcessRunner.run(pmset, ["-g"], timeout: 10)
         async let custom = ProcessRunner.run(pmset, ["-g", "custom"], timeout: 10)
         let (current, profiles) = await (general, custom)
-        guard current.succeeded, profiles.succeeded else { return nil }
-        return PowerSettings.parse(general: current.stdout, custom: profiles.stdout)
+        guard current.succeeded, profiles.succeeded,
+            var power = PowerSettings.parse(general: current.stdout, custom: profiles.stdout)
+        else { return nil }
+        power.onBattery = PowerSource.isOnBattery() ?? false
+        return power
     }
 
     func runAsAdministrator(_ script: String, prompt: String) async -> AlwaysOnAdminResult {
@@ -80,7 +90,26 @@ final class MacAlwaysOnSystem: AlwaysOnSystem {
         return .failed(reason.isEmpty ? String(localized: "macOS didn’t change the sleep settings.") : reason)
     }
 
-    var serviceState: AlwaysOnServiceState {
+    var serviceState: AlwaysOnServiceState { Self.state(of: service) }
+
+    func registerService() throws { try service.register() }
+    func unregisterService() async throws { try await service.unregister() }
+
+    var batteryHelperState: AlwaysOnServiceState { Self.state(of: batteryHelper) }
+    func registerBatteryHelper() throws { try batteryHelper.register() }
+
+    func unregisterBatteryHelper() async throws {
+        try await batteryHelper.unregister()
+        // launchd stops it after unregistering; wait up to five seconds for the process to go.
+        let path = Bundle.main.bundleURL.appendingPathComponent(AlwaysOnIdentity.batteryHelperPath).path
+        for _ in 0..<25 {
+            let running = await ProcessRunner.run(URL(fileURLWithPath: "/usr/bin/pgrep"), ["-f", "-x", path], timeout: 5)
+            if !running.succeeded { return }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
+    private static func state(of service: SMAppService) -> AlwaysOnServiceState {
         switch service.status {
         case .enabled: .running
         case .requiresApproval: .needsApproval
@@ -88,9 +117,6 @@ final class MacAlwaysOnSystem: AlwaysOnSystem {
         default: .notRegistered
         }
     }
-
-    func registerService() throws { try service.register() }
-    func unregisterService() async throws { try await service.unregister() }
     func openLoginItems() { SMAppService.openSystemSettingsLoginItems() }
     var hasLid: Bool { ClamshellSensor.hasLid }
 
