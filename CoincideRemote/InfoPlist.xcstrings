@@ -7,115 +7,115 @@
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote verwendet die Kamera, um den Kopplungscode zu scannen, den dein Mac anzeigt."
+            "value" : "Coincide Remote verwendet die Kamera, um den Kopplungscode deines Mac zu scannen und Fotos zum Anhängen aufzunehmen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Coincide Remote uses the camera to scan the pairing code your Mac shows."
+            "value" : "Coincide Remote uses the camera to scan the pairing code your Mac shows and to take photos you attach."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote usa la cámara para escanear el código de enlace que muestra tu Mac."
+            "value" : "Coincide Remote usa la cámara para escanear el código de vinculación que muestra tu Mac y para hacer las fotos que adjuntas."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote usa la cámara para escanear el código de enlace que muestra tu Mac."
+            "value" : "Coincide Remote usa la cámara para escanear el código de vinculación que muestra tu Mac y para tomar las fotos que adjuntas."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote utilise l'appareil photo pour scanner le code de jumelage affiché par votre Mac."
+            "value" : "Coincide Remote utilise l’appareil photo pour scanner le code de jumelage affiché par votre Mac et prendre les photos que vous joignez."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote आपके Mac पर दिख रहा पेयरिंग कोड स्कैन करने के लिए कैमरे का इस्तेमाल करता है।"
+            "value" : "Coincide Remote आपके Mac पर दिखने वाला पेयरिंग कोड स्कैन करने और अटैच की जाने वाली फ़ोटो लेने के लिए कैमरा इस्तेमाल करता है।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote menggunakan kamera untuk memindai kode pemasangan yang ditampilkan Mac Anda."
+            "value" : "Coincide Remote menggunakan kamera untuk memindai kode pemasangan yang ditampilkan Mac Anda dan mengambil foto yang Anda lampirkan."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote usa la fotocamera per scansionare il codice di abbinamento mostrato dal Mac."
+            "value" : "Coincide Remote usa la fotocamera per scansionare il codice di abbinamento mostrato dal Mac e scattare le foto che alleghi."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remoteは、Macに表示されたペアリングコードをスキャンするためにカメラを使用します。"
+            "value" : "Coincide Remote は、Mac に表示されるペアリングコードの読み取りと、添付する写真の撮影にカメラを使用します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote는 Mac에 표시된 페어링 코드를 스캔하기 위해 카메라를 사용합니다."
+            "value" : "Coincide Remote는 Mac에 표시된 페어링 코드를 스캔하고 첨부할 사진을 찍는 데 카메라를 사용합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote gebruikt de camera om de koppelcode te scannen die je Mac toont."
+            "value" : "Coincide Remote gebruikt de camera om de koppelcode van je Mac te scannen en foto’s te maken die je bijvoegt."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote używa aparatu do skanowania kodu parowania wyświetlanego na Macu."
+            "value" : "Coincide Remote używa aparatu do skanowania kodu parowania wyświetlanego przez Maca i robienia zdjęć, które załączasz."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O Coincide Remote usa a câmera para escanear o código de emparelhamento exibido no seu Mac."
+            "value" : "O Coincide Remote usa a câmera para ler o código de pareamento que o seu Mac mostra e tirar as fotos que você anexa."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote использует камеру, чтобы сканировать код привязки, показанный на Mac."
+            "value" : "Coincide Remote использует камеру, чтобы сканировать код привязки на экране Mac и снимать фото для вложений."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote, Mac'inizin gösterdiği eşleştirme kodunu taramak için kamerayı kullanır."
+            "value" : "Coincide Remote, kamerayı Mac’inizin gösterdiği eşleştirme kodunu taramak ve eklediğiniz fotoğrafları çekmek için kullanır."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote використовує камеру, щоб сканувати код прив’язки, який показує ваш Mac."
+            "value" : "Coincide Remote використовує камеру, щоб сканувати код пари на екрані Mac і знімати фото для вкладень."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote dùng camera để quét mã ghép đôi mà máy Mac của bạn hiển thị."
+            "value" : "Coincide Remote dùng camera để quét mã ghép nối mà máy Mac hiển thị và chụp ảnh bạn đính kèm."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 使用相机扫描 Mac 显示的配对码。"
+            "value" : "Coincide Remote 使用相机扫描 Mac 显示的配对码，并拍摄你要附加的照片。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 會使用相機掃描 Mac 顯示的配對碼。"
+            "value" : "Coincide Remote 使用相機掃描 Mac 顯示的配對碼，並拍攝你要附加的照片。"
           }
         }
       }

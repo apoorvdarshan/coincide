@@ -562,6 +562,37 @@ public struct RemoteTurnState: Codable, Hashable, Sendable {
     }
 }
 
+/// A suggestion for the word being typed in the composer: a file for `@`, a command or skill for `/`.
+public struct RemoteCompletion: Codable, Hashable, Sendable, Identifiable {
+    public enum Kind: String, Codable, Sendable {
+        case file, folder, command, skill
+        case unknown
+
+        public init(from decoder: Decoder) throws {
+            self = Kind(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+        }
+    }
+
+    public var kind: Kind
+    /// What replaces the typed word, such as `@Sources/App.swift ` or `/review `.
+    public var insert: String
+    public var title: String
+    /// A folder's path, a command's description or its argument hint.
+    public var detail: String?
+
+    public var id: String { insert }
+
+    public init(kind: Kind, insert: String, title: String, detail: String? = nil) {
+        self.kind = kind
+        self.insert = insert
+        self.title = title
+        self.detail = detail
+    }
+
+    /// Most suggestions the Mac sends for one word.
+    public static let maxResults = 40
+}
+
 /// A preview an item shows, as the Mac's transcript draws it (`TranscriptMedia`). Only what the item itself references
 /// is listed; the phone can ask for nothing else.
 public struct RemoteMedia: Codable, Hashable, Sendable, Identifiable {
