@@ -177,7 +177,8 @@ final class RemoteStoreAdapter {
     private func startObserving() {
         token = store.observe { [weak self] change in self?.handle(change) }
         let center = NotificationCenter.default
-        for name in [Notification.Name.coincideThreadActivityChanged, ThreadInbox.didChange] {
+        // Schedules change the threads' clocks.
+        for name in [Notification.Name.coincideThreadActivityChanged, ThreadInbox.didChange, ScheduledTasks.didChange] {
             notificationTokens.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.emit(.workspace) }
             })
@@ -288,7 +289,14 @@ final class RemoteStoreAdapter {
             isStarting: runner.isStarting(thread.id), pendingApprovals: pending.approvals, pendingQuestions: pending.questions,
             unseen: services.unseen(thread.id), queuedMessages: runner.queuedMessages(thread.id).count, hasDraft: thread.hasDraft,
             itemCount: thread.itemCount, runningSince: runner.turn(thread.id)?.startedAt,
-            hasBackgroundWork: !runner.backgroundTasks(thread.id).isEmpty)
+            hasBackgroundWork: !runner.backgroundTasks(thread.id).isEmpty, scheduleCount: scheduleCount(thread.id),
+            nextScheduledRun: schedules.nextRun(inThread: thread.id)?.date)
+    }
+
+    /// How many schedules send into the thread; nil for none, so threads without any send nothing new.
+    private func scheduleCount(_ threadID: UUID) -> Int? {
+        let count = schedules.schedules.tasks.lazy.filter { $0.threadID == threadID }.count
+        return count == 0 ? nil : count
     }
 
     func selection(_ selection: ModelSelection) -> RemoteSelection {
@@ -529,7 +537,7 @@ final class RemoteStoreAdapter {
             provider: item.provider?.rawValue, modelID: item.modelID, approval: approval, questions: questions, answers: answers,
             attachments: item.attachments?.map { ($0 as NSString).lastPathComponent },
             context: item.context?.map(\.summary), steered: item.isSteered, isClipped: clipped, createdAt: item.createdAt,
-            completedAt: item.completedAt)
+            completedAt: item.completedAt, scheduleName: item.schedule?.name)
     }
 
     // MARK: Actions

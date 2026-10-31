@@ -1,13 +1,16 @@
 import CoincideRemoteKit
 import SwiftUI
 
-/// The Mac's scheduled tasks, as its Scheduled Tasks window lists them: each task's project, state and schedule, its
-/// next run, and what its last run said. Tap one to edit it; its menu runs it now, pauses or resumes it, opens its last
-/// run or deletes it. Every run starts on the Mac, in a new thread of the task's project.
+/// The Mac's scheduled tasks, grouped as its Scheduled panel groups them: by the bot (with its character), thread or
+/// project their runs go to. Each shows its state and schedule, its next run, and what its last run said. Tap one to
+/// edit it; its menu runs it now, pauses or resumes it, opens its thread or last run, or deletes it. With `threadID`, only
+/// that thread's schedules, from the clock in its header; a new one sends into that thread.
 struct ScheduledTasksView: View {
+    var threadID: UUID? = nil
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
     @State private var tasks: RemoteScheduledTasks?
     @State private var problem: String?
     @State private var editing: ScheduledTaskEditor.Target?
@@ -21,39 +24,31 @@ struct ScheduledTasksView: View {
                     .foregroundStyle(.orange)
                     .sidebarRow()
             }
-            ForEach(tasks?.tasks ?? []) { task in
-                Button { editing = .edit(task) } label: { ScheduledTaskRow(task: task) }
-                    .buttonStyle(SidebarRowButtonStyle())
-                    .contextMenu { menu(task) }
-                    .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) { deleting = task } label: { Label("Delete", systemImage: "trash") }
-                        Button { act(task.isPaused ? .resume : .pause, task) } label: {
-                            Label(task.isPaused ? "Resume" : "Pause", systemImage: task.isPaused ? "play" : "pause")
-                        }
-                        .tint(.gray)
-                    }
-                    .swipeActions(edge: .leading) {
-                        Button { act(.runNow, task) } label: { Label("Run Now", systemImage: "play.fill") }
-                            .tint(.indigo)
-                            .disabled(!task.canRunNow)
-                    }
-                    .sidebarRow()
+            ForEach(groups, id: \.owner) { group in
+                Section {
+                    ForEach(group.tasks) { task in row(task) }
+                } header: {
+                    if threadID == nil { ScheduleGroupHeader(owner: group.owner) }
+                }
             }
         }
         .sidebarList(theme)
         .overlay { placeholder }
         .refreshable { await load() }
-        .navigationTitle("Scheduled Tasks")
+        .navigationTitle(threadID == nil ? "Scheduled Tasks" : "Scheduled in This Thread")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if threadID != nil {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { editing = .new } label: { Label("New Task", systemImage: "plus") }
-                    .disabled(tasks == nil || !client.isConnected || folderProjects.isEmpty)
+                    .disabled(tasks == nil || !client.isConnected || (threadID == nil && folderProjects.isEmpty))
             }
         }
         .task(id: client.isConnected) { await load() }
         .sheet(item: $editing) { target in
-            ScheduledTaskEditor(target: target, projects: folderProjects) { saved in tasks = saved }
+            ScheduledTaskEditor(target: target, projects: folderProjects, threadID: threadID) { saved in tasks = saved }
         }
         .confirmationDialog(
             "Delete scheduled task “\(deleting?.name ?? "")”?",
@@ -68,12 +63,46 @@ struct ScheduledTasksView: View {
         }
     }
 
+    /// The schedules shown, grouped by where their runs go, the soonest group first.
+    private var groups: [(owner: RemoteScheduleOwner, tasks: [RemoteScheduledTask])] {
+        RemoteScheduleOwner.groups((tasks?.tasks ?? []).filter { threadID == nil || $0.threadID == threadID })
+    }
+
+    @ViewBuilder
+    private func row(_ task: RemoteScheduledTask) -> some View {
+        Button { editing = .edit(task) } label: { ScheduledTaskRow(task: task) }
+            .buttonStyle(SidebarRowButtonStyle())
+            .contextMenu { menu(task) }
+            .swipeActions(edge: .trailing) {
+                Button(role: .destructive) { deleting = task } label: { Label("Delete", systemImage: "trash") }
+                Button { act(task.isPaused ? .resume : .pause, task) } label: {
+                    Label(task.isPaused ? "Resume" : "Pause", systemImage: task.isPaused ? "play" : "pause")
+                }
+                .tint(.gray)
+            }
+            .swipeActions(edge: .leading) {
+                Button { act(.runNow, task) } label: { Label("Run Now", systemImage: "play.fill") }
+                    .tint(.indigo)
+                    .disabled(!task.canRunNow)
+            }
+            .sidebarRow()
+    }
+
     private var folderProjects: [RemoteProject] { client.workspace.projects.filter { !$0.isChats } }
 
     @ViewBuilder private var placeholder: some View {
         if let problem {
             ContentUnavailableView("Can’t Show Scheduled Tasks", systemImage: "calendar.badge.exclamationmark", description: Text(problem))
                 .foregroundStyle(theme.secondaryInk)
+        } else if let tasks, threadID != nil, groups.isEmpty, tasks.error == nil {
+            ContentUnavailableView {
+                Label("Nothing Scheduled Here", systemImage: "clock")
+            } description: {
+                Text("Add a schedule, or ask the agent to do something later or on a schedule.")
+            } actions: {
+                Button("New Task") { editing = .new }.prominentButton()
+            }
+            .foregroundStyle(theme.secondaryInk)
         } else if let tasks, tasks.tasks.isEmpty, tasks.error == nil {
             ContentUnavailableView {
                 Label("No Scheduled Tasks", systemImage: "calendar.badge.clock")
@@ -98,7 +127,9 @@ struct ScheduledTasksView: View {
             Label(task.isPaused ? "Resume" : "Pause", systemImage: task.isPaused ? "play" : "pause")
         }
         Button { editing = .edit(task) } label: { Label("Edit…", systemImage: "pencil") }
-        if let thread = task.lastThreadID {
+        if let thread = task.threadID, client.summary(thread) != nil, threadID == nil {
+            Button { navigator.selection = thread } label: { Label("Open Thread", systemImage: "bubble.left.and.text.bubble.right") }
+        } else if task.threadID == nil, let thread = task.lastThreadID {
             Button { navigator.selection = thread } label: { Label("Open Last Run", systemImage: "bubble.left.and.text.bubble.right") }
         }
         Divider()
@@ -123,7 +154,84 @@ struct ScheduledTasksView: View {
     }
 }
 
-/// A task as the Mac's window lists it: its name; its project, state and schedule; and its next run.
+/// A group's heading in the list, as the Mac's Scheduled panel heads it: a bot's character and name, a thread's agent
+/// logo and title over its project, or a project's folder. Tapping a bot's or thread's opens that conversation.
+struct ScheduleGroupHeader: View {
+    let owner: RemoteScheduleOwner
+    @Environment(RemoteClient.self) private var client
+    @Environment(Navigator.self) private var navigator
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 8) {
+                leading.frame(width: 22, height: 22)
+                Text(title).font(.footnote.weight(.semibold)).foregroundStyle(theme.ink).lineLimit(1)
+                if let subtitle {
+                    Text(subtitle).font(.caption).foregroundStyle(theme.tertiaryInk).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(thread == nil)
+        .textCase(nil)
+        .accessibilityLabel([title, subtitle].compactMap(\.self).joined(separator: ", "))
+    }
+
+    private var bot: RemoteBot? {
+        guard case .bot(let id) = owner else { return nil }
+        return client.workspace.bots?.first { $0.id == id }
+    }
+
+    /// The conversation the heading opens: the thread's, or the bot's latest.
+    private var thread: UUID? {
+        switch owner {
+        case .thread(let id): client.summary(id) == nil ? nil : id
+        case .bot: bot?.threadIDs.first
+        case .project: nil
+        }
+    }
+
+    @ViewBuilder private var leading: some View {
+        switch owner {
+        case .bot:
+            BotAvatarImage(avatar: bot?.avatar, size: 22, name: bot?.name)
+        case .thread(let id):
+            if let provider = client.summary(id)?.selection.provider {
+                AgentLogo(provider: provider, size: 15)
+            } else {
+                Image(systemName: "bubble.left").font(.caption).foregroundStyle(theme.secondaryInk)
+            }
+        case .project:
+            Image(systemName: "folder").font(.caption.weight(.medium)).foregroundStyle(theme.secondaryInk)
+        }
+    }
+
+    private var title: String {
+        switch owner {
+        case .bot: bot?.name ?? String(localized: "Bot")
+        case .thread(let id): client.summary(id)?.title ?? String(localized: "Deleted thread")
+        case .project(let id): client.project(id)?.name ?? String(localized: "Project unavailable")
+        }
+    }
+
+    private var subtitle: String? {
+        switch owner {
+        case .bot: String(localized: "Bot")
+        case .thread(let id):
+            client.summary(id).flatMap { client.project($0.projectID) }.map { $0.isChats ? String(localized: "Chat") : $0.name }
+        case .project: String(localized: "A new thread each run")
+        }
+    }
+
+    private func open() {
+        if let thread { navigator.selection = thread }
+    }
+}
+
+/// A task as the Mac's window lists it: its name; its state and schedule; and its next run.
 struct ScheduledTaskRow: View {
     let task: RemoteScheduledTask
     @Environment(RemoteClient.self) private var client
@@ -138,7 +246,17 @@ struct ScheduledTaskRow: View {
                 .padding(.top, 2)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(task.name).font(.callout.weight(.semibold)).foregroundStyle(theme.ink).lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(task.name).font(.callout.weight(.semibold)).foregroundStyle(theme.ink).lineLimit(1)
+                    if task.createdByAgent == true {
+                        Image(systemName: "sparkles").font(.caption2).foregroundStyle(theme.tertiaryInk)
+                            .accessibilityLabel("Created by the agent")
+                    }
+                    Spacer(minLength: 4)
+                    if task.needsApproval == true {
+                        StatusBadge(text: String(localized: "Needs approval"), color: .orange)
+                    }
+                }
                 Text(details).font(.footnote).foregroundStyle(theme.secondaryInk).lineLimit(1)
                 Text(nextRun).font(.footnote).foregroundStyle(theme.tertiaryInk).lineLimit(1)
                 if let message = task.lastMessage, task.state == .failed || task.state == .interrupted {
@@ -151,8 +269,9 @@ struct ScheduledTaskRow: View {
     }
 
     private var details: String {
-        let project = client.project(task.projectID)?.name ?? String(localized: "Project unavailable")
-        return [project, task.stateText, task.scheduleText].filter { !$0.isEmpty }.joined(separator: " · ")
+        // A thread schedule's group names its thread; a project task's names its project.
+        // A task waiting for approval says so in its badge.
+        [task.needsApproval == true ? "" : task.stateText, task.scheduleText].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private var nextRun: String {
@@ -161,7 +280,8 @@ struct ScheduledTaskRow: View {
     }
 
     private var symbol: String {
-        switch task.state {
+        if task.needsApproval == true { return "clock.badge.questionmark" }
+        return switch task.state {
         case .running: "play.circle.fill"
         case .paused: "pause.circle"
         case .failed, .interrupted, .missed: "exclamationmark.circle"
@@ -171,7 +291,8 @@ struct ScheduledTaskRow: View {
     }
 
     private var color: Color {
-        switch task.state {
+        if task.needsApproval == true { return .orange }
+        return switch task.state {
         case .running: .green
         case .failed, .interrupted, .missed: .orange
         default: theme.secondaryInk
@@ -196,6 +317,8 @@ struct ScheduledTaskEditor: View {
 
     let target: Target
     let projects: [RemoteProject]
+    /// A new task's thread, from the thread's clock: it sends into that thread rather than starting new ones.
+    var threadID: UUID? = nil
     let onSave: (RemoteScheduledTasks) -> Void
     @Environment(RemoteClient.self) private var client
     @Environment(\.dismiss) private var dismiss
@@ -213,6 +336,9 @@ struct ScheduledTaskEditor: View {
         if case .edit(let task) = target { return task }
         return nil
     }
+
+    /// The thread it sends into, if it's a thread schedule.
+    private var thread: UUID? { existing?.threadID ?? (existing == nil ? threadID : nil) }
 
     /// The schedule is one the phone can't edit (a newer Mac's kind): it's kept as the Mac has it.
     private var keepsSchedule: Bool { existing?.recurrence.kind == .unknown }
@@ -240,8 +366,12 @@ struct ScheduledTaskEditor: View {
     @ViewBuilder private var fields: some View {
         Section {
             TextField("Name", text: $name)
-            Picker("Project", selection: $projectID) {
-                ForEach(projects) { project in Text(project.name).tag(Optional(project.id)) }
+            if let thread {
+                LabeledContent("Sends to", value: client.summary(thread)?.title ?? String(localized: "Thread unavailable"))
+            } else {
+                Picker("Project", selection: $projectID) {
+                    ForEach(projects) { project in Text(project.name).tag(Optional(project.id)) }
+                }
             }
         }
         Section {
@@ -250,7 +380,10 @@ struct ScheduledTaskEditor: View {
         } header: {
             Text("Task")
         } footer: {
-            Text("Each run starts a new thread in the project, with its defaults.")
+            Text(
+                thread == nil
+                    ? String(localized: "Each run starts a new thread in the project, with its defaults.")
+                    : String(localized: "Each run sends this into the thread as your next message, with its agent, model and access. A busy thread gets it when its turn ends."))
         }
         Section("Schedule") {
             if keepsSchedule, let existing {
@@ -284,7 +417,7 @@ struct ScheduledTaskEditor: View {
 
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && projectID != nil
+            && (projectID != nil || thread != nil)
     }
 
     private func load() {
@@ -297,7 +430,7 @@ struct ScheduledTaskEditor: View {
             recurrence = task.recurrence
             isPaused = task.isPaused
         } else {
-            projectID = projects.first?.id
+            projectID = threadID.flatMap { client.summary($0)?.projectID } ?? projects.first?.id
             recurrence = RemoteTaskRecurrence(kind: .daily, date: Date().addingTimeInterval(3600))
         }
         time = Calendar.current.date(bySettingHour: recurrence.hour, minute: recurrence.minute, second: 0, of: Date()) ?? Date()
@@ -313,7 +446,7 @@ struct ScheduledTaskEditor: View {
         schedule.minute = parts.minute ?? schedule.minute
         let draft = RemoteScheduledTaskDraft(
             id: existing?.id, name: name, projectID: projectID, prompt: prompt, recurrence: keepsSchedule ? nil : schedule,
-            isPaused: isPaused)
+            isPaused: isPaused, threadID: existing == nil ? threadID : nil)
         if let saved = await client.saveScheduledTask(draft) {
             onSave(saved)
             dismiss()

@@ -307,6 +307,10 @@ public struct RemoteThreadSummary: Codable, Hashable, Sendable, Identifiable {
     /// An agent of the thread still works in the background after its reply (a subagent or a background command), so
     /// the Mac's sidebar keeps its spinner. Nil from an older Mac.
     public var hasBackgroundWork: Bool?
+    /// The thread's schedules (thread schedules that send into it), for the clock in its header. Nil from an older Mac.
+    public var scheduleCount: Int?
+    /// When its next active schedule runs, if one is active.
+    public var nextScheduledRun: Date?
 
     public init(
         id: UUID, projectID: UUID, title: String, createdAt: Date = Date(), updatedAt: Date = Date(),
@@ -315,8 +319,10 @@ public struct RemoteThreadSummary: Codable, Hashable, Sendable, Identifiable {
         isHidden: Bool = false, branch: String? = nil, hasWorktree: Bool = false, isRunning: Bool = false,
         isStarting: Bool = false, pendingApprovals: Int = 0, pendingQuestions: Int = 0, unseen: String? = nil,
         queuedMessages: Int = 0, hasDraft: Bool = false, itemCount: Int = 0, runningSince: Date? = nil,
-        hasBackgroundWork: Bool? = nil
+        hasBackgroundWork: Bool? = nil, scheduleCount: Int? = nil, nextScheduledRun: Date? = nil
     ) {
+        self.scheduleCount = scheduleCount
+        self.nextScheduledRun = nextScheduledRun
         self.id = id
         self.projectID = projectID
         self.title = title
@@ -456,14 +462,17 @@ public struct RemoteItem: Codable, Hashable, Sendable, Identifiable {
     /// an agent's reply shows. The phone asks for each one's pixels by its index (`RemoteRequest.media`). Nil from an
     /// older Mac, which sends only attachment names.
     public var media: [RemoteMedia]?
+    /// The schedule that sent this message of the user's, shown as "Scheduled · name" over it. Nil otherwise.
+    public var scheduleName: String?
 
     public init(
         id: UUID, index: Int, kind: Kind, text: String = "", title: String? = nil, detail: String? = nil,
         category: String? = nil, status: String? = nil, provider: String? = nil, modelID: String? = nil,
         approval: RemoteApproval? = nil, questions: RemoteQuestionSet? = nil, answers: [String: [String]]? = nil,
         attachments: [String]? = nil, context: [String]? = nil, steered: Bool = false, isClipped: Bool = false,
-        createdAt: Date = Date(), completedAt: Date? = nil, media: [RemoteMedia]? = nil
+        createdAt: Date = Date(), completedAt: Date? = nil, media: [RemoteMedia]? = nil, scheduleName: String? = nil
     ) {
+        self.scheduleName = scheduleName
         self.media = media
         self.id = id
         self.index = index

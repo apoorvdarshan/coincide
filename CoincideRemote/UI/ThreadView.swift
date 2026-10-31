@@ -252,6 +252,8 @@ struct ThreadView: View {
     @Environment(\.theme) private var theme
     /// The usage-limit banner over the composer, as the Mac shows it.
     @State private var usageWarning: RemoteUsageWarning?
+    /// The thread's schedules, from the clock in its header.
+    @State private var showsSchedules = false
 
     var body: some View {
         let blocks = TranscriptBlock.build(
@@ -325,6 +327,11 @@ struct ThreadView: View {
             ToolbarItem(placement: .principal) {
                 ThreadTitle(model: model)
             }
+            if let summary = model.summary, summary.hasSchedules {
+                ToolbarItem(placement: .topBarTrailing) {
+                    ThreadScheduleClock(summary: summary) { showsSchedules = true }
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 if let summary = model.summary {
                     Menu {
@@ -336,7 +343,19 @@ struct ThreadView: View {
             }
         }
         .toolbarBackgroundVisibility(.automatic, for: .navigationBar)
-        .onAppear { client.markSeen(model.id) }
+        .sheet(isPresented: $showsSchedules) {
+            NavigationStack { ScheduledTasksView(threadID: model.id) }
+                .presentationDetents([.medium, .large])
+        }
+        .onAppear {
+            client.markSeen(model.id)
+            #if DEBUG
+            // Screenshots of the thread's schedules: `-CoincideRemoteDemoThread -CoincideRemoteDemoThreadSchedules`.
+            if DemoData.isEnabled, ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoThreadSchedules") {
+                showsSchedules = true
+            }
+            #endif
+        }
         .onChange(of: model.items.count) { client.markSeen(model.id) }
     }
 
@@ -394,6 +413,33 @@ struct ThreadTitle: View {
         var parts = [client.project(summary.projectID)?.name ?? ""]
         if let branch = summary.branch { parts.append(branch) }
         return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
+/// The clock in a thread's header while it has schedules, as on the Mac's toolbar: the next run ("9:00", "Tue 9:00"),
+/// or just the clock when every schedule is paused. It opens the thread's schedules.
+struct ThreadScheduleClock: View {
+    let summary: RemoteThreadSummary
+    let open: () -> Void
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        // The timeline keeps "Tue 9:00" turning into "9:00" as the day changes.
+        TimelineView(.everyMinute) { context in
+            let next = summary.compactNextRun(now: context.date)
+            // An icon and the time side by side: a toolbar shows a Label as its icon alone.
+            Button(action: open) {
+                HStack(spacing: 4) {
+                    Image(systemName: "clock")
+                    if let next { Text(next).monospacedDigit().lineLimit(1).fixedSize() }
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(theme.ink)
+                .padding(.horizontal, next == nil ? 0 : 4)
+            }
+            .accessibilityLabel("Scheduled Tasks")
+            .accessibilityValue(next.map { String(localized: "Next run \($0)") } ?? String(localized: "All paused"))
+        }
     }
 }
 

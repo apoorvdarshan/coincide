@@ -78,11 +78,13 @@ enum DemoData {
         let collapsed = has("Collapsed")
         let now = Date()
         func thread(_ title: String, _ project: UUID, _ selection: RemoteSelection, minutes: Double, id: UUID = UUID(),
-                    pinned: Bool = false, running: Bool = false, approvals: Int = 0, unseen: String? = nil) -> RemoteThreadSummary {
+                    pinned: Bool = false, running: Bool = false, approvals: Int = 0, unseen: String? = nil,
+                    schedules: Int? = nil) -> RemoteThreadSummary {
             RemoteThreadSummary(
                 id: id, projectID: project, title: title, updatedAt: now.addingTimeInterval(-minutes * 60), selection: selection,
                 isPinned: pinned, branch: "main", isRunning: running, pendingApprovals: approvals, unseen: unseen, itemCount: 8,
-                runningSince: running && !old ? now.addingTimeInterval(-41) : nil, hasBackgroundWork: old ? nil : false)
+                runningSince: running && !old ? now.addingTimeInterval(-41) : nil, hasBackgroundWork: old ? nil : false,
+                scheduleCount: old ? nil : schedules, nextScheduledRun: old || schedules == nil ? nil : Self.nextStandup)
         }
         let versionsID = UUID(uuidString: "99999999-9999-9999-9999-999999999999")!
         return RemoteWorkspace(
@@ -97,7 +99,7 @@ enum DemoData {
             ],
             threads: [
                 thread("Release checklist", otherProjectID, codex, minutes: 300, pinned: pins),
-                thread("iPhone image previews in threads", projectID, claude, minutes: 1, id: threadID, running: true),
+                thread("iPhone image previews in threads", projectID, claude, minutes: 1, id: threadID, running: true, schedules: 2),
                 thread("Fix stale transcript row heights", projectID, codex, minutes: 25, unseen: "completed"),
                 thread("Run git push for the remote branch", projectID, claude, minutes: 50, approvals: 1),
                 thread("Paywall copy for annual plan", otherProjectID, codex, minutes: 60 * 26, unseen: "failed"),
@@ -116,7 +118,7 @@ enum DemoData {
                 thread("Restore Spotify to profile", chatsID, claude, minutes: 60 * 52),
                 thread("Monthly AI token usage per provider", chatsID, claude, minutes: 60 * 54),
                 thread("yo", chatsID, antigravity, minutes: 60 * 56),
-                thread("Plan my Saturday", botsID, claude, minutes: 12, id: bruleeThreadID, unseen: "completed"),
+                thread("Plan my Saturday", botsID, claude, minutes: 12, id: bruleeThreadID, unseen: "completed", schedules: 1),
             ],
             bots: [
                 RemoteBot(
@@ -429,11 +431,34 @@ enum DemoData {
                 key: "demo", text: "Claude Code 5-hour limit reached. It resets in 1 hr 12 min.", fraction: 1, canResumeAtReset: true))
     }
 
-    /// Two scheduled tasks in the demo project: one daily, one paused weekly that failed last time.
+    /// When the demo thread's standup runs next: 9:00 tomorrow.
+    static var nextStandup: Date {
+        Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date().addingTimeInterval(86_400)) ?? Date()
+    }
+
+    /// Scheduled tasks for the demo: two that send into the demo thread (one an agent made, waiting for approval), one in
+    /// Brulee's conversation, and two project tasks, one daily and one paused weekly that failed last time.
     static var scheduledTasks: RemoteScheduledTasks {
         let calendar = Calendar.current
         let tomorrow = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: Date().addingTimeInterval(86_400)) ?? Date()
-        return RemoteScheduledTasks(tasks: [
+        let threadSchedules = isOldMac ? [] : [
+            RemoteScheduledTask(
+                id: UUID(uuidString: "5C4ED01E-0000-4000-8000-000000000003")!, name: "Standup summary", projectID: projectID,
+                prompt: "Summarize what changed since yesterday.", recurrence: RemoteTaskRecurrence(kind: .unknown),
+                stateText: "", scheduleText: "Weekdays at 9:00 AM", nextRunAt: nextStandup, threadID: threadID),
+            RemoteScheduledTask(
+                id: UUID(uuidString: "5C4ED01E-0000-4000-8000-000000000004")!, name: "Check CI every 2 hours", projectID: projectID,
+                prompt: "Check CI and fix what's red.", recurrence: RemoteTaskRecurrence(kind: .unknown), stateText: "Needs approval",
+                scheduleText: "Every 2 hours", canRunNow: false, threadID: threadID, needsApproval: true, createdByAgent: true),
+            RemoteScheduledTask(
+                id: UUID(uuidString: "5C4ED01E-0000-4000-8000-000000000005")!, name: "Weekend plan", projectID: botsID,
+                prompt: "Suggest a plan for Saturday.", recurrence: RemoteTaskRecurrence(kind: .weekly, hour: 10, minute: 0, weekday: 7),
+                scheduleText: "Every Saturday at 10:00 AM",
+                nextRunAt: calendar.nextDate(after: Date(), matching: DateComponents(hour: 10, minute: 0, weekday: 7), matchingPolicy: .nextTime),
+                threadID: bruleeThreadID,
+                botID: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!),
+        ]
+        return RemoteScheduledTasks(tasks: threadSchedules + [
             RemoteScheduledTask(
                 id: UUID(uuidString: "5C4ED01E-0000-4000-8000-000000000001")!, name: "Morning dependency check", projectID: projectID,
                 prompt: "Check for outdated Swift packages and open a PR for safe updates.",
@@ -560,6 +585,9 @@ enum DemoData {
                     attachments: media?.filter { $0.kind == .image }.map(\.label), media: media))
         }
         add(.user, "Add a Remote section to Settings with a pairing QR code.", id: earlier)
+        if !isOldMac, summary.hasSchedules {
+            items[items.count - 1].scheduleName = "Standup summary"
+        }
         add(.tool, title: "Read GeneralSettingsView.swift", category: "read", status: "completed")
         add(.tool, title: "Edit RemoteSettingsView.swift", category: "fileChange", status: "completed")
         add(.assistant, """

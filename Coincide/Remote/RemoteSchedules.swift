@@ -32,15 +32,23 @@ extension RemoteStoreAdapter {
             stateText: SchedulePresentation.status(task, isRunning: isRunning)?.label ?? String(localized: "Scheduled"),
             scheduleText: recurrence.summary, nextRunAt: task.nextRunAt, lastRunAt: task.lastRunAt, lastMessage: task.lastMessage,
             lastThreadID: task.lastThreadID.flatMap { store.summary($0) == nil ? nil : $0 },
-            canRunNow: !isRunning && store.project(task.projectID) != nil)
+            canRunNow: !isRunning && store.project(task.projectID) != nil && !task.isAwaitingApproval && task.pauseReason == nil,
+            threadID: task.threadID, botID: task.threadID.flatMap { store.summary($0)?.botID },
+            needsApproval: task.isAwaitingApproval ? true : nil, createdByAgent: task.createdByAgent)
     }
 
     /// Creates or edits a task as the Mac's editor saves it; a run in progress keeps going.
     func saveScheduledTask(_ draft: RemoteScheduledTaskDraft) throws -> RemoteScheduledTasks {
         let existing = draft.id.flatMap { id in schedules.schedules.tasks.first { $0.id == id } }
         // A thread schedule stays with its thread, a chat's or a bot's included; a project task needs a project.
-        let projectID = existing?.threadID != nil ? existing!.projectID : draft.projectID
-        guard let project = store.project(projectID), existing?.threadID != nil || (!project.isChats && !project.isBots) else {
+        let threadID = existing.map(\.threadID) ?? draft.threadID
+        if existing == nil, let threadID, store.summary(threadID) == nil {
+            throw RemoteError(.notFound, String(localized: "That thread no longer exists."))
+        }
+        let projectID = existing?.projectID ?? threadID.flatMap { store.summary($0)?.projectID } ?? draft.projectID
+        guard let project = store.project(threadID != nil ? projectID : draft.projectID),
+            threadID != nil || (!project.isChats && !project.isBots)
+        else {
             throw RemoteError(.notFound, String(localized: "The scheduled task's project is no longer available."))
         }
         if draft.id != nil, existing == nil {
@@ -65,7 +73,8 @@ extension RemoteStoreAdapter {
         var task =
             existing
             ?? ScheduledTask(
-                name: draft.name, projectID: project.id, prompt: draft.prompt, recurrence: recurrence, isPaused: draft.isPaused)
+                name: draft.name, projectID: project.id, prompt: draft.prompt, recurrence: recurrence, isPaused: draft.isPaused,
+                threadID: threadID)
         task.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         task.projectID = project.id
         task.prompt = draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
