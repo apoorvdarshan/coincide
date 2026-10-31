@@ -35,6 +35,7 @@ struct CheckoutRow: View {
         if let summary, client.project(summary.projectID)?.isChats == false {
             HStack(spacing: 12) {
                 Label(summary.hasWorktree ? String(localized: "Worktree") : String(localized: "Local checkout"), systemImage: "folder")
+                    .lineLimit(1)
                 Spacer(minLength: 8)
                 if let branch = summary.branch, !branch.isEmpty {
                     Label(branch, systemImage: "arrow.triangle.branch").lineLimit(1).truncationMode(.middle)

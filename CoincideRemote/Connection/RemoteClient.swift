@@ -74,7 +74,12 @@ final class RemoteClient {
         return false
     }
 
-    var savedMacs: [SavedMac] { saved.all.sorted { ($0.lastConnectedAt ?? $0.pairedAt) > ($1.lastConnectedAt ?? $1.pairedAt) } }
+    var savedMacs: [SavedMac] {
+        #if DEBUG
+        if DemoData.isEnabled { return [DemoData.mac] }
+        #endif
+        return saved.all.sorted { ($0.lastConnectedAt ?? $0.pairedAt) > ($1.lastConnectedAt ?? $1.pairedAt) }
+    }
 
     init() {
         #if DEBUG
@@ -82,7 +87,11 @@ final class RemoteClient {
             mac = DemoData.mac
             server = DemoData.server
             workspace = DemoData.workspace
-            phase = .connected(DemoData.server.name)
+            phase = DemoData.phase
+            macSettings = DemoData.isEmpty ? nil : DemoData.macSettings
+            if DemoData.has("Attachments") {
+                drafts[DemoData.threadID] = ComposerDraft(text: "Match these two screens", images: DemoData.draftImages)
+            }
             return
         }
         // Pairs on launch with a code passed as `-CoincideRemotePair <code>`, for testing in the simulator.
@@ -120,6 +129,9 @@ final class RemoteClient {
 
     /// Tries again now, such as when the app returns to the foreground.
     func reconnectIfNeeded() {
+        #if DEBUG
+        if DemoData.isEnabled { return }
+        #endif
         guard mac != nil else { return }
         switch phase {
         case .offline, .idle:
@@ -574,7 +586,12 @@ final class RemoteClient {
     func load(_ id: UUID) async {
         #if DEBUG
         if DemoData.isEnabled, let model = threads[id], let summary = summary(id) {
-            model.apply(DemoData.transcript(summary))
+            // `-CoincideRemoteDemoLoading`: the transcript never arrives, to show the thread loading.
+            if DemoData.has("Loading") {
+                model.isLoading = true
+            } else {
+                model.apply(DemoData.transcript(summary))
+            }
             return
         }
         #endif
@@ -639,6 +656,9 @@ final class RemoteClient {
 
     /// Asks for the Mac's Settings, which then stay current.
     func loadMacSettings() async {
+        #if DEBUG
+        if DemoData.isEnabled { return }
+        #endif
         guard isConnected else { return }
         do {
             if case .settings(let snapshot) = try await request(.settings) {

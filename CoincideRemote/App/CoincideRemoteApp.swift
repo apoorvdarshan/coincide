@@ -18,6 +18,9 @@ struct CoincideRemoteApp: App {
             .environment(client)
             .environment(appearance)
             .environment(navigator)
+            #if DEBUG
+            .modifier(DebugWindowSizing())
+            #endif
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { client.reconnectIfNeeded() }
@@ -79,6 +82,8 @@ final class Navigator {
     /// Each tab's pushed screens.
     var paths: [AppTab: [Route]] = [:]
     var searchText = ""
+    /// The Settings pane on screen: pushed over the list of panes, or beside it in a wide window.
+    var settingsPane: SettingsPane?
     var showsConnect = false
     var newThreadRequests = 0
     var renaming: RemoteThreadSummary?
@@ -181,6 +186,7 @@ final class Navigator {
     /// Back to the tabs' first screens, as after pairing another Mac.
     func reset() {
         paths = [:]
+        settingsPane = nil
     }
 
     func noteOpened(_ threadID: UUID) {

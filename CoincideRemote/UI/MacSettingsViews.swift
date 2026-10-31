@@ -1,69 +1,8 @@
 import CoincideRemoteKit
 import SwiftUI
 
-/// The Mac's Settings panes in Settings, under the Mac's name: General through Computer Use, then Providers and About.
-struct MacSettingsSections: View {
-    @Environment(RemoteClient.self) private var client
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        if let snapshot = client.macSettings {
-            Section {
-                ForEach(snapshot.pages.filter { $0.group == .app && $0.id != "providers" }) { page in
-                    NavigationLink { MacSettingsPageView(pageID: page.id) } label: { MacSettingsLabel(page: page) }
-                }
-            } header: {
-                Text(client.server?.name ?? "Mac")
-            }
-            Section("Providers") {
-                if let overview = snapshot.page("providers") {
-                    NavigationLink { MacSettingsPageView(pageID: overview.id) } label: { MacSettingsLabel(page: overview) }
-                }
-                ForEach(snapshot.pages.filter { $0.group == .provider }) { page in
-                    NavigationLink { MacSettingsPageView(pageID: page.id) } label: { MacSettingsLabel(page: page) }
-                }
-            }
-            if let about = snapshot.page("about") {
-                Section {
-                    NavigationLink { MacSettingsPageView(pageID: about.id) } label: { MacSettingsLabel(page: about) }
-                }
-            }
-        } else if client.macSettingsUnsupported {
-            Section {
-                Label("Update Coincide on your Mac to change its settings here.", systemImage: "arrow.down.circle")
-                    .foregroundStyle(theme.secondaryInk)
-            }
-        } else if client.isConnected {
-            Section {
-                ProgressView().frame(maxWidth: .infinity)
-            }
-        }
-    }
-}
-
-/// A pane's colored tile and title, as in the Mac's sidebar, with a provider's status dot.
-struct MacSettingsLabel: View {
-    let page: RemoteSettingsPage
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: page.symbol)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Self.color(page.color)))
-                .accessibilityHidden(true)
-            Text(page.title)
-            Spacer()
-            if let status = page.status {
-                Circle()
-                    .fill(Self.statusColor(status))
-                    .frame(width: 8, height: 8)
-                    .accessibilityLabel(Text(Self.statusLabel(status)))
-            }
-        }
-    }
-
+/// The Mac Settings sidebar's tile colors and provider status dots, by the names the Mac sends.
+enum MacSettingsLabel {
     static func color(_ name: String) -> Color {
         switch name {
         case "indigo": .indigo

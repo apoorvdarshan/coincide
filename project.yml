@@ -317,6 +317,8 @@ targets:
       Release: Signing.xcconfig
     sources:
       - path: CoincideTests
+      # Coincide Remote's layout rules are plain size math, tested here with the Mac's suite (RemoteLayoutTests).
+      - path: CoincideRemote/UI/RemoteLayout.swift
     dependencies:
       - target: Coincide
       # Linked for `import CoincideKit`; the host app already embeds it.
