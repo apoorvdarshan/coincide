@@ -72,7 +72,7 @@ struct RemoteLayoutTests {
         // An iPhone 17 Pro's composer (366 points) while the agent works: steer shows its symbol (send shows it too),
         // the model keeps its name, and the later menus show their symbols.
         let phone = RemoteLayout.footer(width: 366, chips: menus, pinned: [steer], fixed: attachAndSend, height: 44)
-        #expect(phone.pinned.allSatisfy(\.isCompact))
+        #expect(phone.pinned.allSatisfy { $0.isCompact })
         #expect(phone.chips.map(\.isCompact) == [false, true, true, true])
         #expect(phone.chips.allSatisfy { $0.line == 0 })
         // Idle, the effort's label fits too.
@@ -84,7 +84,7 @@ struct RemoteLayoutTests {
         // Slide Over (284 points inside the composer) while the agent works: seven 44-point controls can't share a line.
         let slideOver = RemoteLayout.footer(width: 284, chips: menus, pinned: [steer], fixed: attachAndSend, height: 44)
         expectWellFormed(slideOver, width: 284)
-        #expect(slideOver.chips.allSatisfy(\.isCompact))
+        #expect(slideOver.chips.allSatisfy { $0.isCompact })
         #expect(slideOver.chips.map(\.line).max() == 1)
         #expect(slideOver.size.height == 88)
         // Accessibility text sizes make every control taller and wider; lines grow to hold them.
