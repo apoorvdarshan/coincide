@@ -64,6 +64,8 @@ public struct Bot: Codable, Hashable, Sendable, Identifiable {
         {
             avatar = starter.avatar
         }
+        // A name that is still its character's former default, rather than one the user wrote, becomes the plain name.
+        if BotAvatar.Shape.formerDefaultNames[avatar.shape] == name { name = avatar.shape.defaultName }
     }
 
     private enum LookKeys: String, CodingKey {
@@ -151,18 +153,22 @@ public struct BotAvatar: Codable, Hashable, Sendable {
             }
         }
 
-        /// The character's name, which a new bot with it starts with.
+        /// The character's name, which a new bot with it starts with: a proper name in plain ASCII, the same in every
+        /// language, so it is not localized.
         public nonisolated var defaultName: String {
             switch self {
-            case .alien: String(localized: "Alien")
-            case .star: String(localized: "Star")
-            case .croissant: String(localized: "Croissant")
-            case .bomboloni: String(localized: "Bomboloni")
-            case .cherry: String(localized: "Cherry")
-            case .teddy: String(localized: "Teddy")
-            case .brulee: String(localized: "Brûlée")
+            case .alien: "Alien"
+            case .star: "Star"
+            case .croissant: "Croissant"
+            case .bomboloni: "Bomboloni"
+            case .cherry: "Cherry"
+            case .teddy: "Teddy"
+            case .brulee: "Brulee"
             }
         }
+
+        /// Default names a character had before names were plain ASCII, so a bot still carrying one is renamed.
+        nonisolated static let formerDefaultNames: [Shape: String] = [.brulee: "Br\u{FB}l\u{E9}e"]
     }
 
     public enum Tint: String, Codable, CaseIterable, Sendable {
