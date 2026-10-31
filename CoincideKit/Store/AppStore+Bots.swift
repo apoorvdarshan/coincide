@@ -1,19 +1,23 @@
 import Foundation
 
-/// `bots.json`: the user's bots, and whether the starters were offered.
+/// `bots.json`: the user's bots, whether the starters were offered, and from which lineup.
 struct BotsFile: Codable, Sendable {
     var addedStarters: Bool
     var bots: [Bot]
+    /// The starter lineup (`BotStarter.lineup`) the bots were last saved under. A file from before lineups is the
+    /// first one.
+    var starterLineup: Int
     /// Bots this version could not read, which loading leaves out (and copies the file aside for).
     var skipped = 0
 
-    nonisolated init(addedStarters: Bool, bots: [Bot]) {
+    nonisolated init(addedStarters: Bool, bots: [Bot], starterLineup: Int = BotStarter.lineup) {
         self.addedStarters = addedStarters
         self.bots = bots
+        self.starterLineup = starterLineup
     }
 
     private enum CodingKeys: String, CodingKey {
-        case addedStarters, bots
+        case addedStarters, bots, starterLineup
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -22,6 +26,7 @@ struct BotsFile: Codable, Sendable {
         let list = container.lenient(LenientList<Bot>.self, forKey: .bots)
         bots = list?.elements ?? []
         skipped = list?.skipped ?? 0
+        starterLineup = container.lenient(Int.self, forKey: .starterLineup) ?? 1
     }
 }
 
@@ -111,6 +116,28 @@ extension AppStore {
         saveBots()
         notify(.bots)
         return true
+    }
+
+    /// Moves bots saved under an earlier starter lineup to this one, once. A retired starter the user never used or
+    /// changed goes, with its conversations, which hold nothing (opening a bot leaves an empty one). A starter the
+    /// user used or changed stays. The current starters were never offered under the old lineup, so they are offered
+    /// again (`addStarterBotsIfNeeded`) and then, as before, stay deleted if the user deletes them.
+    func adoptCurrentStarterLineup() {
+        guard starterLineup < BotStarter.lineup else { return }
+        starterLineup = BotStarter.lineup
+        let retired = BotStarter.retired
+        let unused = bots.filter { bot in
+            guard retired.contains(where: { $0.isUntouched(bot) }) else { return false }
+            return threadSummaries.values.allSatisfy { $0.botID != bot.id || ($0.itemCount == 0 && !$0.hasDraft) }
+        }
+        let gone = Set(unused.map(\.id))
+        for thread in threadSummaries.values where thread.botID.map(gone.contains) == true {
+            deleteThread(thread.id)
+        }
+        bots.removeAll { gone.contains($0.id) }
+        addedStarterBots = false
+        saveBots()
+        notify(.bots)
     }
 
     /// A bot's conversations, the most recently active first. Archived ones are left out unless asked for.

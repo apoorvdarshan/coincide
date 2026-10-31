@@ -44,6 +44,8 @@ public final class AppStore {
     public internal(set) var bots: [Bot] = []
     /// Whether the starter bots were offered once, so deleting them does not bring them back.
     var addedStarterBots = false
+    /// The starter lineup the bots are saved under (`adoptCurrentStarterLineup`); a new store starts on this version's.
+    var starterLineup = BotStarter.lineup
 
     public let directory: URL
     /// Threads whose transcript is in memory.
@@ -767,7 +769,7 @@ public final class AppStore {
     }
 
     func saveBots() {
-        writer.write(BotsFile(addedStarters: addedStarterBots, bots: bots), to: botsURL)
+        writer.write(BotsFile(addedStarters: addedStarterBots, bots: bots, starterLineup: starterLineup), to: botsURL)
     }
 
     private func load() {
@@ -781,9 +783,12 @@ public final class AppStore {
         if let value = Self.read(BotsFile.self, from: botsURL, decoder: decoder) {
             bots = value.bots
             addedStarterBots = value.addedStarters
+            starterLineup = value.starterLineup
             if value.skipped > 0 { Self.setAside(botsURL, copy: true) }
         }
         loadThreadSummaries()
+        // After the threads, which tell a starter the user used from one they never touched.
+        adoptCurrentStarterLineup()
         rehomeOrphanedBotConversations()
     }
 
