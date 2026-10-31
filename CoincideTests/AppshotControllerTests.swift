@@ -149,6 +149,7 @@ struct AppshotControllerTests {
         let fixture = Fixture()
         let controller = fixture.controller
         controller.enabled = true
+        controller.includesWindowText = true
         defer { controller.shutdown() }
         controller.recordInteraction(with: fixture.thread)
         controller.takeAppshot()
@@ -171,6 +172,26 @@ struct AppshotControllerTests {
         #expect(fixture.store.thread(fixture.thread)?.items.isEmpty == true)
         #expect(fixture.store.thread(fixture.thread)?.draftContext == [context])
         #expect(fixture.hud.messages == ["Appshot of Safari added"] && fixture.hud.alerts == [false])
+    }
+
+    @Test func byDefaultAnAppshotIsOnlyThePicture() async {
+        let fixture = Fixture()
+        let controller = fixture.controller
+        var screen = Self.screen(capturedInto: fixture.captured)
+        let read = Box<CGRect>()
+        screen.readText = { window in
+            await MainActor.run { read.values.append(window.bounds) }
+            return "Should not be read"
+        }
+        controller.screen = screen
+        controller.enabled = true
+        defer { controller.shutdown() }
+        controller.recordInteraction(with: fixture.thread)
+        controller.takeAppshot()
+        await waitForCapture(controller)
+        #expect(fixture.captured.values.count == 1)
+        #expect(read.values.isEmpty)
+        #expect(fixture.strip().context.isEmpty)
     }
 
     @Test func withoutARecentThreadAnAppshotStartsAChat() async {
@@ -319,6 +340,7 @@ struct AppshotControllerTests {
         }
         controller.screen = screen
         controller.enabled = true
+        controller.includesWindowText = true
         defer { controller.shutdown() }
         controller.takeAppshot()
         await waitForCapture(controller)

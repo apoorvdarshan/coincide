@@ -191,8 +191,10 @@ enum Theme {
         return image
     }
 
+    /// A system symbol, or one of the app's own from its asset catalog (`coincide.bot`, the bot character).
     static func symbol(_ name: String, size: CGFloat = 13, weight: NSFont.Weight = .regular) -> NSImage? {
         let config = NSImage.SymbolConfiguration(pointSize: size, weight: weight)
-        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        return (NSImage(systemSymbolName: name, accessibilityDescription: nil) ?? NSImage(named: name))?
+            .withSymbolConfiguration(config)
     }
 }

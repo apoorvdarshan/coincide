@@ -31,8 +31,9 @@ public struct AppshotSettings: Codable, Hashable, Sendable {
     public var trigger: AppshotTrigger = .bothCommandKeys
     /// The shortcut for `.shortcut`; nil until the user records one.
     public var shortcut: AppshotShortcut?
-    /// Add the text the app exposes in that window through Accessibility, as a "Window text" card.
-    public var includesWindowText = true
+    /// Add the text the app exposes in that window through Accessibility, as a "Window text" card. Off by default:
+    /// the picture alone is what the user asked to share.
+    public var includesWindowText = false
     /// Play the screenshot sound when an appshot is taken, at the alert volume.
     public var playsSound = true
 

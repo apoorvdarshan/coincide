@@ -98,7 +98,7 @@ struct PaletteCatalog {
                 behavior: .run { ThreadActions.newChat() }))
         items.append(
             PaletteItem(
-                id: "action:new-bot", title: String(localized: "New Bot…"), icon: symbol("face.smiling"),
+                id: "action:new-bot", title: String(localized: "New Bot…"), icon: symbol("coincide.bot"),
                 keywords: ["new bot", "bot", "assistant", "persona", "create"], behavior: .run { window?.newBot(nil) }))
         for bot in store.bots {
             let id = bot.id
