@@ -109,6 +109,9 @@ final class RemoteStoreAdapter {
     var settingsServices = SettingsServices.live
     /// The global instruction files Settings › Instructions lists and edits.
     lazy var instructions = RemoteInstructions.live
+    /// Moves threads between the project's folder and worktrees (`RemoteCheckouts`): the app's own, or one over a test
+    /// store.
+    lazy var worktrees: WorktreeService = store === AppStore.shared ? .shared : WorktreeService(store: store, git: .shared)
     let registry: ProviderRegistry
     let services: Services
     private var token: ObservationToken?
@@ -892,7 +895,8 @@ final class RemoteStoreAdapter {
                 result.append(
                     RemoteUsage(
                         provider: kind.rawValue, providerName: kind.displayName, accountID: account.id,
-                        accountName: accounts.count > 1 ? account.name : nil,
+                        // Named only beside other accounts, and never as the provider again ("Claude Code · Claude Code").
+                        accountName: accounts.count > 1 && !account.isDefault && account.name != kind.displayName ? account.name : nil,
                         windows: limits.windows.map {
                             RemoteUsage.Window(id: $0.id, label: $0.label, usedPercent: $0.usedPercent, resetsAt: $0.resetsAt)
                         }, checkedAt: limits.checkedAt))

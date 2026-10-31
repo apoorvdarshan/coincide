@@ -28,6 +28,35 @@ struct NotificationRoutingTests {
             receivedAt: now.addingTimeInterval(-heardAgo))
     }
 
+    func locked(_ mac: MacActivity) -> MacActivity {
+        var mac = mac
+        mac.isScreenLocked = true
+        return mac
+    }
+
+    func asleep(_ mac: MacActivity) -> MacActivity {
+        var mac = mac
+        mac.isDisplayAsleep = true
+        return mac
+    }
+
+    /// The phone hears whether the user is at the Mac, and stays quiet while they are, unless that news is stale.
+    @Test func thePhoneStaysQuietOnlyWhileFreshNewsSaysTheUserIsAtTheMac() throws {
+        let here = MacActivity(isAppActive: false, idleSeconds: 10, visibleThreadID: nil).remote
+        let away = MacActivity(isAppActive: false, idleSeconds: 600, visibleThreadID: nil).remote
+        let lockedHere = locked(MacActivity(isAppActive: true, idleSeconds: 1, visibleThreadID: nil)).remote
+        #expect(here.isActive && !away.isActive && !lockedHere.isActive)
+        #expect(RemoteMacPresence.keepsPhoneQuiet(here, receivedAt: now.addingTimeInterval(-30), now: now))
+        #expect(!RemoteMacPresence.keepsPhoneQuiet(here, receivedAt: now.addingTimeInterval(-(RemoteMacPresence.lifetime + 1)), now: now))
+        #expect(!RemoteMacPresence.keepsPhoneQuiet(away, receivedAt: now, now: now))
+        #expect(!RemoteMacPresence.keepsPhoneQuiet(lockedHere, receivedAt: now, now: now))
+        // An older Mac sends none: the phone notifies as before.
+        #expect(!RemoteMacPresence.keepsPhoneQuiet(nil, receivedAt: nil, now: now))
+        let event = RemoteServerMessage.event(.macPresence(here))
+        let decoded = try RemoteProtocol.makeDecoder().decode(RemoteServerMessage.self, from: RemoteProtocol.makeEncoder().encode(event))
+        #expect(decoded == event)
+    }
+
     func target(_ id: String = "phone", activeAgo: TimeInterval = 600) -> PushTarget {
         PushTarget(deviceID: id, zone: "alerts-\(id)", lastActiveAt: now.addingTimeInterval(-activeAgo))
     }
@@ -64,9 +93,14 @@ struct NotificationRoutingTests {
             ("Mac idle, alerts on but no CloudKit on this Mac", mac(idle: away), [], [target()], false, .mac),
             ("Mac idle, alerts on but phone unused for hours", mac(idle: away), [],
                 [target(activeAgo: NotificationRouting.pushRecency + 60)], true, .mac),
-            // Both in use: whichever was touched last.
-            ("Both active, phone touched last", mac(idle: 30), [phone(idle: 2)], [], true, .device("phone")),
+            // Both in use: the Mac, since the phone's notification would reach the Mac too (iPhone Mirroring).
+            ("Both active, phone touched last", mac(idle: 30), [phone(idle: 2)], [], true, .mac),
             ("Both active, Mac touched last", mac(idle: 2), [phone(idle: 30)], [], true, .mac),
+            // A locked or sleeping Mac isn't in use, however recent its last input.
+            ("Mac locked, phone in front", locked(mac(idle: 5)), [phone()], [], true, .device("phone")),
+            ("Mac asleep, phone locked with alerts on", asleep(mac(idle: 5)), [phone(.background)], [target()], true,
+                .push(target())),
+            ("Mac locked, no phone", locked(mac(idle: 5)), [], [], true, .mac),
             ("Both active, Mac touched last and showing the thread", mac(idle: 2, showing: thread), [phone(idle: 30)], [],
                 true, .none),
             ("Two phones in front, the newer wins", mac(idle: away), [phone(id: "phone", idle: 40), phone(id: "ipad", idle: 3)], [],

@@ -110,11 +110,17 @@ final class PhoneAlerts: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: Live alerts
 
+    /// Whether the Mac said lately that the user is at it (`RemoteMacPresence`); set by the app.
+    var macKeepsQuiet: () -> Bool = { false }
+
     /// An alert the Mac sent over the connection.
     func deliver(_ alert: RemoteNotification) {
         guard markShown(alert.id) else { return }
         if isForeground, visibleThread() == alert.threadID { return }
         if isForeground { withAnimation(.snappy) { banner = alert } }
+        // The user is at the Mac, which notifies there: a notification here would show on the Mac a second time
+        // through iPhone Mirroring.
+        guard !macKeepsQuiet() else { return }
         // Into Notification Center too, until the thread is seen. In front the banner above is the alert.
         let content = UNMutableNotificationContent()
         content.title = alert.title

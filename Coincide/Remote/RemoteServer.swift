@@ -123,7 +123,10 @@ final class RemoteServer {
         addressTimer?.invalidate()
         // Addresses change as the Mac moves between networks or Tailscale connects.
         addressTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshAddresses() }
+            MainActor.assumeIsolated {
+                self?.refreshAddresses()
+                self?.sendMacPresence()
+            }
         }
     }
 
@@ -253,6 +256,14 @@ final class RemoteServer {
             if session.deliver(notification) { delivered = true }
         }
         return delivered
+    }
+
+    /// Tells connected phones whether the user is at this Mac (every half minute, with the address check), so they post
+    /// no notifications of their own meanwhile.
+    func sendMacPresence() {
+        guard !connections.isEmpty else { return }
+        let presence = MacActivity.current(visibleThreadID: nil).remote
+        for connection in connections.values { connection.session?.sendMacPresence(presence) }
     }
 
     /// Tells connected phones the user saw the thread.

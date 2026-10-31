@@ -158,7 +158,7 @@ struct MacSettingsRowView: View {
             }
             .disabled(!client.isConnected)
         case .usage:
-            NavigationLink { UsageView() } label: { Label(row.title, systemImage: "gauge.with.dots.needle.33percent") }
+            NavigationLink { UsageDashboardView() } label: { Label(row.title, systemImage: "gauge.with.dots.needle.33percent") }
         case .page:
             if let target = row.target {
                 NavigationLink { MacSettingsPageView(pageID: target) } label: {

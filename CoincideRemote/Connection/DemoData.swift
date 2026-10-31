@@ -350,6 +350,75 @@ enum DemoData {
         return RemoteSettingsSnapshot(pages: pages)
     }
 
+    /// Settings › Usage as a Mac with Claude Code (two accounts) and Codex would describe it.
+    static var usageDashboard: RemoteUsageDashboard {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        var daily: [RemoteUsageDashboard.Day] = []
+        for offset in 0..<30 {
+            let day = calendar.date(byAdding: .day, value: -offset, to: today) ?? today
+            let wave = Double((offset * 7) % 11 + 2)
+            daily.append(.init(day: day, provider: "claude", tokens: wave * 1_400_000, cost: wave * 3.1))
+            if offset % 3 != 0 { daily.append(.init(day: day, provider: "codex", tokens: wave * 600_000, cost: wave * 1.2)) }
+        }
+        typealias Row = RemoteUsageDashboard.Row
+        return RemoteUsageDashboard(
+            scopeTitle: "All Agents", periodName: "Last 30 days", days: 30,
+            providers: [.init(id: "claude", title: "Claude Code"), .init(id: "codex", title: "Codex")],
+            tiles: [
+                .init(title: "Today", tokens: "18.2M", cost: "≈ $41.20", trend: "12% vs yesterday", trendIsUp: true),
+                .init(title: "Last 7 days", tokens: "96.4M", cost: "≈ $212.80", trend: "4% vs the 7 days before", trendIsUp: false),
+                .init(title: "Last 30 days", tokens: "402M", cost: "≈ $890.15", trend: "21% vs the 30 days before", trendIsUp: true),
+            ],
+            closestTitle: "Codex", closestProvider: "codex",
+            closest: Row(title: "Weekly", value: "81% used", fill: 0.81, paceMark: 0.3, level: .near, details: ["Resets in 5 days", "Ahead of pace"]),
+            daily: daily,
+            topModels: [
+                .init(title: "claude-opus-4-7", provider: "claude", share: 0.62, tokens: "249M", cost: "$612.40"),
+                .init(title: "gpt-5.5", provider: "codex", share: 0.28, tokens: "113M", cost: "$201.10"),
+                .init(title: "claude-sonnet-4-5", provider: "claude", share: 0.1, tokens: "40M", cost: "$76.65"),
+            ],
+            topProjects: [
+                .init(title: "coincide", share: 0.71, tokens: "285M", cost: "$640.00"),
+                .init(title: "fud-ai", share: 0.19, tokens: "76M", cost: "$170.30"),
+            ],
+            activity: [.init(title: "Turns", value: "1,284"), .init(title: "Active time", value: "61h 12m"), .init(title: "Threads", value: "96")],
+            accounts: [
+                .init(
+                    id: "claude/default", provider: "claude", title: "Claude Code", plan: "Max 20×", checkedAt: Date().addingTimeInterval(-240),
+                    rows: [
+                        Row(title: "Session", value: "34% used", fill: 0.34, paceMark: 0.5, details: ["Resets in 2 hours"]),
+                        Row(title: "Weekly", value: "20% used", fill: 0.2, paceMark: 0.45, details: ["Resets next week"]),
+                        Row(title: "Weekly · Fable", value: "0% used", fill: 0, details: ["Resets next week"]),
+                        Row(title: "Extra usage", value: "$12.40 of $50 used", fill: 0.25, details: ["Resets Nov 1"]),
+                    ],
+                    periodTokens: "289M", periodCost: "$689.05", periodSource: "From Claude Code’s logs on this Mac."),
+                .init(
+                    id: "claude/work", provider: "claude", title: "Claude Code · Work", plan: "Team", checkedAt: Date().addingTimeInterval(-600),
+                    rows: [Row(title: "Weekly", value: "9% used", fill: 0.09, paceMark: 0.45, details: ["Resets in 3 days"])],
+                    periodTokens: "12M", periodCost: "$31.20", periodSource: "From Claude Code’s logs on this Mac."),
+                .init(
+                    id: "codex/default", provider: "codex", title: "Codex", plan: "Pro", checkedAt: Date().addingTimeInterval(-120),
+                    rows: [
+                        Row(title: "Session", value: "0% used", fill: 0, details: ["Resets in 5 hours"]),
+                        Row(title: "Weekly", value: "81% used", fill: 0.81, paceMark: 0.3, level: .near, details: ["Resets in 5 days", "Ahead of pace"]),
+                        Row(title: "Credits", value: "412 left", fill: 0.62, details: ["Of the most Coincide has seen, 660"]),
+                    ],
+                    periodTokens: "113M", periodCost: "$201.10", periodSource: "From Codex’s logs on this Mac."),
+            ],
+            updatedAt: Date().addingTimeInterval(-90))
+    }
+
+    /// The demo thread's checkout: the project's folder on main, with branches to switch to.
+    static var checkout: RemoteCheckout {
+        RemoteCheckout(
+            workspace: .local, branch: "main", canPickBranch: true, canCreateBranch: true,
+            branches: [
+                RemoteBranch(name: "main", isCurrent: true), RemoteBranch(name: "remote-duo-ipad-layout"),
+                RemoteBranch(name: "remote-settings-polish", isCheckedOutElsewhere: true), RemoteBranch(name: "origin/main", isRemote: true),
+            ])
+    }
+
     /// An instruction file's text, for the document editor.
     static func document(_ key: String) -> RemoteSettingsDocument {
         RemoteSettingsDocument(

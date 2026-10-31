@@ -259,6 +259,14 @@ public enum RemoteRequest: Hashable, Sendable {
     /// Suggestions for the word being typed: `@` and a query for files in the thread's folder, `/` for the commands
     /// and skills its agent offers there. Answers `completions`. An older Mac answers `unsupported`.
     case completions(threadID: UUID, trigger: String, query: String)
+    /// Where the thread works and on which branch, with the branches it can use. Answers `checkout`. An older Mac
+    /// answers `unsupported`, and the phone shows the checkout read only.
+    case checkout(threadID: UUID)
+    /// Changes where the thread works or its branch, as the Mac's checkout menus do. Answers the updated `checkout`.
+    case changeCheckout(threadID: UUID, action: RemoteCheckoutAction)
+    /// Settings › Usage as the Mac shows it, for a period and filters, reading the providers again first when asked.
+    /// Answers `usageDashboard`. An older Mac answers `unsupported`, and the phone shows `usageLimits` instead.
+    case usageDashboard(RemoteUsageQuery)
 
     /// The request's name on the wire.
     public var name: String {
@@ -297,6 +305,9 @@ public enum RemoteRequest: Hashable, Sendable {
         case .setProjectExpanded: "setProjectExpanded"
         case .media: "media"
         case .completions: "completions"
+        case .checkout: "checkout"
+        case .changeCheckout: "changeCheckout"
+        case .usageDashboard: "usageDashboard"
         }
     }
 }
@@ -325,6 +336,7 @@ private struct RequestBody: Codable {
     var full: Bool?
     var trigger: String?
     var query: String?
+    var checkoutAction: RemoteCheckoutAction?
 }
 
 public enum RemoteProtocolError: Error, Equatable, Sendable {
@@ -431,6 +443,11 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
             request = .media(
                 threadID: try need(f.threadID, "threadID"), itemID: try need(f.itemID, "itemID"), index: try need(f.index, "index"),
                 full: f.full ?? false)
+        case "checkout": request = .checkout(threadID: try need(try fields().threadID, "threadID"))
+        case "usageDashboard": request = .usageDashboard(try body(RemoteUsageQuery.self))
+        case "changeCheckout":
+            let f = try fields()
+            request = .changeCheckout(threadID: try need(f.threadID, "threadID"), action: try need(f.checkoutAction, "checkoutAction"))
         case "completions":
             let f = try fields()
             request = .completions(threadID: try need(f.threadID, "threadID"), trigger: try need(f.trigger, "trigger"), query: f.query ?? "")
@@ -452,6 +469,7 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case .presence(let presence): try container.encode(presence, forKey: .body); return
         case .saveBot(let draft): try container.encode(draft, forKey: .body); return
         case .saveSettingsDocument(let document): try container.encode(document, forKey: .body); return
+        case .usageDashboard(let query): try container.encode(query, forKey: .body); return
         case .ping, .usageLimits, .settings: return
         case .changeSetting(let key, let value):
             f.key = key
@@ -465,7 +483,12 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case .openThread(let threadID, let limit):
             f.threadID = threadID
             f.limit = limit
-        case .closeThread(let threadID), .markSeen(let threadID), .stop(let threadID), .showThread(let threadID): f.threadID = threadID
+        case .closeThread(let threadID), .markSeen(let threadID), .stop(let threadID), .showThread(let threadID),
+            .checkout(let threadID):
+            f.threadID = threadID
+        case .changeCheckout(let threadID, let action):
+            f.threadID = threadID
+            f.checkoutAction = action
         case .loadEarlier(let threadID, let beforeIndex, let limit):
             f.threadID = threadID
             f.beforeIndex = beforeIndex
@@ -537,6 +560,10 @@ public enum RemoteResult: Hashable, Sendable {
     case completions([RemoteCompletion])
     /// A settings document's text. Only a phone that asked (`settingsDocument`, `saveSettingsDocument`) ever gets it.
     case settingsDocument(RemoteSettingsDocument)
+    /// A thread's checkout. Only a phone that asked (`checkout`, `changeCheckout`) ever gets it.
+    case checkout(RemoteCheckout)
+    /// Settings › Usage. Only a phone that asked (`usageDashboard`) ever gets it.
+    case usageDashboard(RemoteUsageDashboard)
 
     var name: String {
         switch self {
@@ -555,6 +582,8 @@ public enum RemoteResult: Hashable, Sendable {
         case .media: "media"
         case .completions: "completions"
         case .settingsDocument: "settingsDocument"
+        case .checkout: "checkout"
+        case .usageDashboard: "usageDashboard"
         }
     }
 }
@@ -582,6 +611,9 @@ public enum RemoteEvent: Hashable, Sendable {
     case clearNotifications(threadID: UUID)
     /// The Mac's Settings changed, sent only to a phone that asked for them. An older phone ignores it.
     case settings(RemoteSettingsSnapshot)
+    /// Whether the user is at the Mac, every half minute: while they are, the phone posts no notifications, which
+    /// macOS would show again beside the Mac's own (iPhone Mirroring). An older phone ignores it.
+    case macPresence(RemoteMacPresence)
 
     var name: String {
         switch self {
@@ -595,6 +627,7 @@ public enum RemoteEvent: Hashable, Sendable {
         case .notify: "notify"
         case .clearNotifications: "clearNotifications"
         case .settings: "settings"
+        case .macPresence: "macPresence"
         }
     }
 }
@@ -680,6 +713,8 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case "media": result = .media(try body(RemoteMediaData.self))
             case "completions": result = .completions(try body(ValueBody<[RemoteCompletion]>.self).value)
             case "settingsDocument": result = .settingsDocument(try body(RemoteSettingsDocument.self))
+            case "checkout": result = .checkout(try body(RemoteCheckout.self))
+            case "usageDashboard": result = .usageDashboard(try body(RemoteUsageDashboard.self))
             default:
                 self = .unknown(type)
                 return
@@ -700,6 +735,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case "threadRemoved": self = .event(.threadRemoved(try body(ValueBody<UUID>.self).value))
             case "revoked": self = .event(.revoked)
             case "notify": self = .event(.notify(try body(RemoteNotification.self)))
+            case "macPresence": self = .event(.macPresence(try body(RemoteMacPresence.self)))
             case "clearNotifications": self = .event(.clearNotifications(threadID: try body(ValueBody<UUID>.self).value))
             case "settings": self = .event(.settings(try body(RemoteSettingsSnapshot.self)))
             default: self = .unknown(type)
@@ -737,6 +773,8 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case .media(let media): try container.encode(media, forKey: .body)
             case .completions(let completions): try container.encode(ValueBody(value: completions), forKey: .body)
             case .settingsDocument(let document): try container.encode(document, forKey: .body)
+            case .checkout(let checkout): try container.encode(checkout, forKey: .body)
+            case .usageDashboard(let dashboard): try container.encode(dashboard, forKey: .body)
             }
         case .event(let event):
             try container.encode("event", forKey: .kind)
@@ -751,6 +789,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case .threadRemoved(let id): try container.encode(ValueBody(value: id), forKey: .body)
             case .revoked: break
             case .notify(let notification): try container.encode(notification, forKey: .body)
+            case .macPresence(let presence): try container.encode(presence, forKey: .body)
             case .clearNotifications(let threadID): try container.encode(ValueBody(value: threadID), forKey: .body)
             case .settings(let snapshot): try container.encode(snapshot, forKey: .body)
             }

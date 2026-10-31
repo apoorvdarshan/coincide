@@ -77,8 +77,13 @@ enum Route: Hashable {
 @Observable
 final class Navigator {
     var tab: AppTab {
-        didSet { UserDefaults.standard.set(tab.rawValue, forKey: "navigation.tab") }
+        didSet {
+            UserDefaults.standard.set(tab.rawValue, forKey: "navigation.tab")
+            if tab != .search { browsingTab = tab }
+        }
     }
+    /// The tab search filters: the one open when the search button was tapped. Search has no page of its own.
+    private(set) var browsingTab: AppTab = .projects
     /// Each tab's pushed screens.
     var paths: [AppTab: [Route]] = [:]
     var searchText = ""
@@ -103,12 +108,19 @@ final class Navigator {
     init() {
         tab = AppTab(rawValue: UserDefaults.standard.string(forKey: "navigation.tab") ?? "") ?? .projects
         if tab == .search { tab = .projects }
+        browsingTab = tab
         #if DEBUG
         if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-CoincideRemoteTab"),
             index + 1 < ProcessInfo.processInfo.arguments.count,
             let requested = AppTab(rawValue: ProcessInfo.processInfo.arguments[index + 1])
         {
             tab = requested
+            browsingTab = requested
+        }
+        // Screenshots of search: `-CoincideRemoteTab chats -CoincideRemoteDemoSearch "greeting"` searches that tab.
+        if DemoData.isEnabled, let query = DemoData.value(after: "-CoincideRemoteDemoSearch") {
+            searchText = query
+            tab = .search
         }
         if DemoData.isEnabled, ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoThread") {
             paths[tab] = [.thread(DemoData.threadID)]
