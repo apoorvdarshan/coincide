@@ -300,6 +300,7 @@ struct ThreadView: View {
                     .background(theme.content)
             }
         }
+        // The scroll view insets its content by the composer's height, so the last message ends above it.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
                 WaitingBanner(model: model)
@@ -309,7 +310,10 @@ struct ThreadView: View {
             }
             .frame(maxWidth: 860)
             .padding(.horizontal, 10)
+            .padding(.top, 4)
             .padding(.bottom, 6)
+            .frame(maxWidth: .infinity)
+            .background { ComposerBackdrop() }
         }
         .navigationTitle(model.summary?.title ?? "")
         .navigationBarTitleDisplayMode(.inline)
@@ -336,6 +340,28 @@ struct ThreadView: View {
         Binding(
             get: { model.scrollAnchor.map { $0.uuidString } },
             set: { value in model.scrollAnchor = value.flatMap(UUID.init(uuidString:)) })
+    }
+}
+
+/// Behind the composer and the checkout row under it, as on the Mac: the transcript's own color down to the screen's
+/// edge, so messages scrolling under them are hidden rather than showing through, and a short fade above where they
+/// slide under.
+struct ComposerBackdrop: View {
+    @Environment(\.theme) private var theme
+
+    static let fadeHeight: CGFloat = 12
+
+    var body: some View {
+        theme.content
+            .overlay(alignment: .top) {
+                LinearGradient(colors: [theme.content.opacity(0), theme.content], startPoint: .top, endPoint: .bottom)
+                    .frame(height: Self.fadeHeight)
+                    .offset(y: -Self.fadeHeight)
+                    // The fade lies over the transcript, which stays tappable through it.
+                    .allowsHitTesting(false)
+            }
+            .ignoresSafeArea(edges: .bottom)
+            .accessibilityHidden(true)
     }
 }
 

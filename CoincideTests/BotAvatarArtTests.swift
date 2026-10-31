@@ -1,4 +1,5 @@
 import AppKit
+import CoincideRemoteKit
 import Testing
 
 @testable import Coincide
@@ -123,5 +124,85 @@ struct BotAvatarArtTests {
         editor.pickShape(try button(third, in: editor))
         #expect(editor.draft.avatar.shape == third)
         #expect(editor.nameField.stringValue == "Biscuit")
+    }
+
+    // MARK: Coincide Remote's editor
+
+    /// Coincide Remote's look (`BotEditorLook`) next to the Mac editor's draft: same character, color, name and picker
+    /// colors.
+    private func expectSame(
+        _ look: BotEditorLook, _ editor: BotEditor, sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        #expect(look.character.rawValue == editor.draft.avatar.shape.rawValue, sourceLocation: sourceLocation)
+        #expect(look.tint.rawValue == editor.draft.avatar.tint.rawValue, sourceLocation: sourceLocation)
+        #expect(look.name == editor.nameField.stringValue, sourceLocation: sourceLocation)
+        for choice in editor.shapeButtons {
+            guard case .shape(let shape) = choice.kind, let character = BotArtwork.Character(rawValue: shape.rawValue) else {
+                continue
+            }
+            #expect(look.pickerTint(for: character).rawValue == choice.tint.rawValue, "\(shape)", sourceLocation: sourceLocation)
+        }
+    }
+
+    @Test func thePhonesEditorShowsAndPicksCharactersAsTheMacsDoes() throws {
+        let (editor, folder) = editor()
+        _ = folder
+        let start = try #require(BotArtwork.Character(rawValue: editor.draft.avatar.shape.rawValue))
+        var look = BotEditorLook(character: start)
+        expectSame(look, editor)
+        // Every character the picker offers is in its own color, not the bot's (a pink alien, star and teddy before).
+        for option in BotArtwork.Character.allCases where option != start {
+            #expect(look.pickerTint(for: option) == option.defaultTint)
+        }
+
+        // Picking each character in turn brings its color and name.
+        for option in BotArtwork.Character.allCases.reversed() where option != start {
+            look.pick(option)
+            editor.pickShape(try button(try #require(BotAvatar.Shape(rawValue: option.rawValue)), in: editor))
+            expectSame(look, editor)
+            #expect(look == BotEditorLook(character: option))
+        }
+
+        // A color the user picks shows on the chosen character only, and the next pick brings that one's own color.
+        look.tint = .sky
+        let sky = BotChoiceButton(kind: .tint(.sky), target: editor, action: NSSelectorFromString("pickTint:"))
+        _ = editor.perform(NSSelectorFromString("pickTint:"), with: sky)
+        expectSame(look, editor)
+        let chosen = look.character
+        #expect(look.pickerTint(for: chosen) == .sky)
+        let next = try #require(BotArtwork.Character.allCases.first { $0 != chosen })
+        look.pick(next)
+        editor.pickShape(try button(try #require(BotAvatar.Shape(rawValue: next.rawValue)), in: editor))
+        expectSame(look, editor)
+        #expect(look.tint == next.defaultTint)
+
+        // A name the user wrote stays; an emptied one takes the next character's.
+        look.name = "Biscuit"
+        editor.nameField.stringValue = "Biscuit"
+        let third = try #require(BotArtwork.Character.allCases.first { $0 != next })
+        look.pick(third)
+        editor.pickShape(try button(try #require(BotAvatar.Shape(rawValue: third.rawValue)), in: editor))
+        expectSame(look, editor)
+        #expect(look.name == "Biscuit")
+        look.name = " "
+        editor.nameField.stringValue = " "
+        look.pick(next)
+        editor.pickShape(try button(try #require(BotAvatar.Shape(rawValue: next.rawValue)), in: editor))
+        expectSame(look, editor)
+        #expect(look.name == next.defaultName)
+        // Picking the chosen character again changes nothing.
+        look.tint = .lilac
+        look.pick(next)
+        #expect(look.tint == .lilac)
+    }
+
+    @Test func thePhonesNewBotIsACharacterNoBotIsYet() {
+        let all = Set(BotArtwork.Character.allCases)
+        for free in BotArtwork.Character.allCases {
+            #expect(BotEditorLook.newBot(avoiding: all.subtracting([free])) == BotEditorLook(character: free))
+        }
+        // With every character taken, any of them in its own color and name.
+        let any = BotEditorLook.newBot(avoiding: all)
+        #expect(any == BotEditorLook(character: any.character))
     }
 }

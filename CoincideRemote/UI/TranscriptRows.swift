@@ -48,17 +48,7 @@ struct ItemView: View {
     var body: some View {
         switch item.kind {
         case .user:
-            VStack(alignment: theme.userMessagesOnLeft ? .leading : .trailing, spacing: 6) {
-                // The pictures the user attached, above their message as in Messages.
-                if item.media?.isEmpty == false {
-                    MediaStrip(item: item, threadID: threadID, alignment: theme.userMessagesOnLeft ? .leading : .trailing)
-                        .padding(theme.userMessagesOnLeft ? .trailing : .leading, 40)
-                        .frame(maxWidth: .infinity, alignment: theme.userMessagesOnLeft ? .leading : .trailing)
-                }
-                if !item.text.isEmpty || item.media == nil || item.context?.isEmpty == false || item.steered {
-                    UserMessage(item: item)
-                }
-            }
+            UserMessage(item: item, threadID: threadID)
         case .assistant:
             HStack(alignment: .top, spacing: 12) {
                 AgentRail(provider: item.provider)
@@ -111,33 +101,45 @@ struct AgentRail: View {
     }
 }
 
+/// The user's message, as the Mac's quiet card: the pictures they attached, sized to the card's room, above their text.
 struct UserMessage: View {
     let item: RemoteItem
+    let threadID: UUID
     @Environment(\.theme) private var theme
 
+    private var alignment: HorizontalAlignment { theme.userMessagesOnLeft ? .leading : .trailing }
+
     var body: some View {
+        // Attachments show as pictures when the Mac sends previews; an older Mac sends only their names.
+        let names = item.media == nil ? (item.attachments ?? []) : []
+        let extras = names.map { ("photo", $0) } + (item.context ?? []).map { ("text.quote", $0) }
+        let hasPictures = item.media?.isEmpty == false
         HStack {
             if !theme.userMessagesOnLeft { Spacer(minLength: 40) }
-            VStack(alignment: theme.userMessagesOnLeft ? .leading : .trailing, spacing: 6) {
-                if !item.text.isEmpty {
-                    Text(item.text)
-                        .foregroundStyle(theme.ink)
-                        .textSelection(.enabled)
+            VStack(alignment: alignment, spacing: 8) {
+                if hasPictures {
+                    MediaStrip(item: item, threadID: threadID, alignment: alignment)
                 }
-                // Attachments show as pictures when the Mac sends previews; an older Mac sends only their names.
-                let names = item.media == nil ? (item.attachments ?? []) : []
-                let extras = names.map { ("photo", $0) } + (item.context ?? []).map { ("text.quote", $0) }
-                if !extras.isEmpty {
-                    ForEach(Array(extras.enumerated()), id: \.offset) { _, extra in
-                        Label(extra.1, systemImage: extra.0)
-                            .font(.caption)
-                            .lineLimit(1)
-                            .foregroundStyle(theme.secondaryInk)
+                if !item.text.isEmpty || !extras.isEmpty || item.steered || !hasPictures {
+                    VStack(alignment: alignment, spacing: 6) {
+                        if !item.text.isEmpty {
+                            Text(item.text)
+                                .foregroundStyle(theme.ink)
+                                .textSelection(.enabled)
+                        }
+                        ForEach(Array(extras.enumerated()), id: \.offset) { _, extra in
+                            Label(extra.1, systemImage: extra.0)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .foregroundStyle(theme.secondaryInk)
+                        }
+                        if item.steered {
+                            Label("Sent into the running turn", systemImage: "arrow.turn.down.right")
+                                .font(.caption2).foregroundStyle(theme.secondaryInk)
+                        }
                     }
-                }
-                if item.steered {
-                    Label("Sent into the running turn", systemImage: "arrow.turn.down.right")
-                        .font(.caption2).foregroundStyle(theme.secondaryInk)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(Text("You: \(item.text)"))
                 }
             }
             .padding(.horizontal, 14)
@@ -145,8 +147,8 @@ struct UserMessage: View {
             .background(theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             if theme.userMessagesOnLeft { Spacer(minLength: 40) }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("You: \(item.text)"))
+        // The pictures stay their own buttons, to open them full screen.
+        .accessibilityElement(children: .contain)
     }
 }
 
