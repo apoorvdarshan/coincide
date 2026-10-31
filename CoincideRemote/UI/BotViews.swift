@@ -114,7 +114,16 @@ struct BotsView: View {
         .overlay {
             if bots.isEmpty, client.isConnected {
                 ContentUnavailableView {
-                    Label("No Bots", systemImage: "face.smiling")
+                    // The Mac's own characters, not a stock symbol: the bot a new one starts as.
+                    VStack(spacing: 12) {
+                        HStack(spacing: -10) {
+                            BotAvatarImage(avatar: RemoteBotAvatar(.teddy, .caramel), size: 56)
+                            BotAvatarImage(avatar: RemoteBotAvatar(.brulee, .rose), size: 72)
+                            BotAvatarImage(avatar: RemoteBotAvatar(.alien, .mint), size: 56)
+                        }
+                        .accessibilityHidden(true)
+                        Text("No Bots").font(.title3.weight(.semibold)).foregroundStyle(theme.ink)
+                    }
                 } description: {
                     Text(client.workspace.bots == nil
                         ? "Update Coincide on your Mac to use bots here."

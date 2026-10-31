@@ -16,121 +16,19 @@ struct ConnectView: View {
     @State private var manualHost = ""
 
     var body: some View {
-        List {
-            Section {
-                VStack(spacing: 12) {
-                    Image(systemName: "macbook.and.iphone")
-                        .font(.system(size: 48))
-                        .foregroundStyle(theme.accent)
-                        .accessibilityHidden(true)
-                    Text("Connect to Coincide")
-                        .font(.title2.bold())
-                    Text("On your Mac, open Coincide’s Settings › General › Remote, turn on Allow Coincide Remote, and click Pair iPhone or iPad.")
-                        .font(.callout)
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(theme.secondaryInk)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .listRowBackground(Color.clear)
+        ScrollView {
+            VStack(spacing: 28) {
+                hero
+                actions
+                if let payload, error != nil { manualAddress(payload) }
+                macs
             }
-
-            Section {
-                Button {
-                    error = nil
-                    scanning = true
-                } label: {
-                    Label("Scan Pairing Code", systemImage: "qrcode.viewfinder")
-                }
-                Button {
-                    pasteCode()
-                } label: {
-                    Label("Paste Pairing Code", systemImage: "doc.on.clipboard")
-                }
-                if pairing {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("Pairing with \(payload?.name ?? "the Mac")…")
-                    }
-                }
-                if let error {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .font(.callout)
-                }
-            } footer: {
-                Text("The code works once, for a few minutes. Copy Code on the Mac puts it on your clipboard with Universal Clipboard.")
-            }
-
-            if let payload, error != nil {
-                Section {
-                    TextField("Address, such as 192.168.1.20 or mac.tailnet.ts.net", text: $manualHost)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                    Button("Try This Address") {
-                        var edited = payload
-                        edited.hosts.insert(RemoteHostCandidate(host: manualHost.trimmingCharacters(in: .whitespaces), kind: .manual), at: 0)
-                        pair(edited)
-                    }
-                    .disabled(manualHost.trimmingCharacters(in: .whitespaces).isEmpty || pairing)
-                } header: {
-                    Text("Enter an Address")
-                } footer: {
-                    Text("If the Mac’s addresses can’t be reached from here, enter one that can, such as its Tailscale address.")
-                }
-            }
-
-            if !client.bonjour.macs.isEmpty {
-                Section("On This Network") {
-                    ForEach(client.bonjour.macs) { mac in
-                        let saved = client.savedMacs.first { $0.serverID == mac.serverID }
-                        Button {
-                            if let saved {
-                                client.connect(to: saved)
-                                close()
-                            } else {
-                                error = String(localized: "Scan the pairing code \(mac.name) shows to pair with it.")
-                            }
-                        } label: {
-                            HStack {
-                                Label(mac.name, systemImage: "desktopcomputer")
-                                Spacer()
-                                Text(saved == nil ? "Not paired" : "Paired").font(.caption).foregroundStyle(theme.secondaryInk)
-                            }
-                        }
-                    }
-                }
-            } else if client.bonjour.isDenied {
-                Section("On This Network") {
-                    Text("Allow Local Network access for Coincide Remote in Settings › Privacy & Security › Local Network to find Macs nearby.")
-                        .font(.callout)
-                        .foregroundStyle(theme.secondaryInk)
-                }
-            }
-
-            let saved = client.savedMacs
-            if !saved.isEmpty {
-                Section("Paired Macs") {
-                    ForEach(saved) { mac in
-                        Button {
-                            client.connect(to: mac)
-                            close()
-                        } label: {
-                            VStack(alignment: .leading) {
-                                Text(mac.name)
-                                Text(mac.hosts.map(\.host).joined(separator: ", "))
-                                    .font(.caption)
-                                    .foregroundStyle(theme.secondaryInk)
-                                    .lineLimit(1)
-                            }
-                        }
-                    }
-                }
-            }
+            .frame(maxWidth: 520)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity)
         }
-        .scrollContentBackground(.hidden)
-        .background(theme.content)
+        .background(theme.sidebar.ignoresSafeArea())
         .navigationTitle(isOnboarding ? "" : String(localized: "Pair a Mac"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -144,6 +42,155 @@ struct ConnectView: View {
                 handle(code)
             }
         }
+    }
+
+    /// Coincide's mark and what to do on the Mac.
+    private var hero: some View {
+        VStack(spacing: 14) {
+            Image("BrandMark")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 96, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(theme.border, lineWidth: theme.borderWidth))
+                .shadow(color: .black.opacity(theme.isDark ? 0.5 : 0.15), radius: 18, y: 8)
+                .accessibilityHidden(true)
+            Text("Connect to Coincide")
+                .font(.title2.bold())
+                .foregroundStyle(theme.ink)
+                .multilineTextAlignment(.center)
+            Text("On your Mac, open Coincide’s Settings › General › Remote, turn on Allow Coincide Remote, and click Pair iPhone or iPad.")
+                .font(.callout)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(theme.secondaryInk)
+        }
+        .padding(.top, isOnboarding ? 36 : 8)
+    }
+
+    /// Scan or paste the code, and how pairing is going.
+    private var actions: some View {
+        VStack(spacing: 10) {
+            Button {
+                error = nil
+                scanning = true
+            } label: {
+                Label("Scan Pairing Code", systemImage: "qrcode.viewfinder")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .prominentButton()
+            Button {
+                pasteCode()
+            } label: {
+                Label("Paste Pairing Code", systemImage: "doc.on.clipboard")
+                    .foregroundStyle(theme.ink)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.glass)
+            if pairing {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Pairing with \(payload?.name ?? "the Mac")…")
+                }
+                .font(.callout)
+                .foregroundStyle(theme.secondaryInk)
+                .padding(.top, 4)
+            }
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            Text("The code works once, for a few minutes. Copy Code on the Mac puts it on your clipboard with Universal Clipboard.")
+                .font(.footnote)
+                .foregroundStyle(theme.tertiaryInk)
+                .multilineTextAlignment(.center)
+                .padding(.top, 4)
+        }
+    }
+
+    /// An address to try when the Mac's own can't be reached from here.
+    private func manualAddress(_ payload: RemotePairingPayload) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SidebarHeader(Text("Enter an Address"))
+            TextField("Address, such as 192.168.1.20 or mac.tailnet.ts.net", text: $manualHost)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
+                .padding(12)
+                .background(theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(theme.border, lineWidth: theme.borderWidth))
+            Text("If the Mac’s addresses can’t be reached from here, enter one that can, such as its Tailscale address.")
+                .font(.footnote)
+                .foregroundStyle(theme.secondaryInk)
+            Button("Try This Address") {
+                var edited = payload
+                edited.hosts.insert(RemoteHostCandidate(host: manualHost.trimmingCharacters(in: .whitespaces), kind: .manual), at: 0)
+                pair(edited)
+            }
+            .buttonStyle(.glass)
+            .disabled(manualHost.trimmingCharacters(in: .whitespaces).isEmpty || pairing)
+        }
+    }
+
+    /// Macs found on this network, and ones paired before, as the sidebar lists things.
+    @ViewBuilder private var macs: some View {
+        let saved = client.savedMacs
+        VStack(alignment: .leading, spacing: 0) {
+            if !client.bonjour.macs.isEmpty {
+                SidebarHeader(Text("On This Network"))
+                ForEach(client.bonjour.macs) { mac in
+                    let pairedMac = saved.first { $0.serverID == mac.serverID }
+                    Button {
+                        if let pairedMac {
+                            client.connect(to: pairedMac)
+                            close()
+                        } else {
+                            error = String(localized: "Scan the pairing code \(mac.name) shows to pair with it.")
+                        }
+                    } label: {
+                        macRow(name: mac.name, detail: pairedMac == nil ? String(localized: "Not paired") : String(localized: "Paired"))
+                    }
+                    .buttonStyle(SidebarRowButtonStyle())
+                }
+            } else if client.bonjour.isDenied {
+                SidebarHeader(Text("On This Network"))
+                Text("Allow Local Network access for Coincide Remote in Settings › Privacy & Security › Local Network to find Macs nearby.")
+                    .font(.footnote)
+                    .foregroundStyle(theme.secondaryInk)
+                    .padding(.horizontal, 10)
+            }
+            if !saved.isEmpty {
+                SidebarHeader(Text("Paired Macs"))
+                ForEach(saved) { mac in
+                    Button {
+                        client.connect(to: mac)
+                        close()
+                    } label: {
+                        macRow(name: mac.name, detail: mac.hosts.map(\.host).joined(separator: ", "))
+                    }
+                    .buttonStyle(SidebarRowButtonStyle())
+                }
+            }
+        }
+    }
+
+    private func macRow(name: String, detail: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "laptopcomputer")
+                .font(.callout)
+                .foregroundStyle(theme.secondaryInk)
+                .frame(width: 24)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name).font(.callout).foregroundStyle(theme.ink).lineLimit(1)
+                Text(detail).font(.caption).foregroundStyle(theme.secondaryInk).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private func close() {

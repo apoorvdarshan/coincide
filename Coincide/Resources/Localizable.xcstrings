@@ -2735,6 +2735,118 @@
         }
       }
     },
+    "%@ changed on your Mac. Reload it to see the change, then edit again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ wurde auf deinem Mac geändert. Lade die Datei neu, um die Änderung zu sehen, und bearbeite sie dann erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ ha cambiado en tu Mac. Vuelve a cargarlo para ver el cambio y edítalo de nuevo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ cambió en tu Mac. Vuelve a cargarlo para ver el cambio y edítalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ a changé sur votre Mac. Rechargez-le pour voir la modification, puis modifiez-le à nouveau."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ आपके Mac पर बदल गई है। बदलाव देखने के लिए इसे फिर से लोड करें, फिर दोबारा संपादित करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ berubah di Mac Anda. Muat ulang untuk melihat perubahannya, lalu edit lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ è cambiato sul Mac. Ricaricalo per vedere la modifica, poi modificalo di nuovo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ はMacで変更されました。変更を確認するには再読み込みしてから、もう一度編集してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@이(가) Mac에서 변경되었습니다. 변경 사항을 보려면 다시 불러온 다음 다시 편집하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ is gewijzigd op je Mac. Laad het opnieuw om de wijziging te zien en bewerk het dan opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plik %@ zmienił się na Macu. Wczytaj go ponownie, aby zobaczyć zmianę, a potem edytuj jeszcze raz."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ mudou no seu Mac. Recarregue para ver a alteração e edite novamente."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Файл %@ изменился на Mac. Загрузите его заново, чтобы увидеть изменение, а затем отредактируйте снова."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ Mac’inizde değişti. Değişikliği görmek için yeniden yükleyin, sonra tekrar düzenleyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Файл %@ змінився на Mac. Завантажте його знову, щоб побачити зміну, а потім відредагуйте ще раз."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ đã thay đổi trên máy Mac của bạn. Hãy tải lại để xem thay đổi rồi chỉnh sửa lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 已在你的 Mac 上更改。请重新载入以查看更改，然后再编辑。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 已在你的 Mac 上變更。請重新載入以查看變更，然後再編輯。"
+          }
+        }
+      }
+    },
     "%@ continued after background work finished." : {
       "localizations" : {
         "de" : {
@@ -14885,6 +14997,364 @@
         }
       }
     },
+    "%lld hidden" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ausgeblendet"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ausgeblendet"
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ocultos"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld oculto"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ocultos"
+                }
+              }
+            }
+          }
+        },
+        "es-419" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ocultos"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld oculto"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ocultos"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld masqués"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld masqué"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld masqués"
+                }
+              }
+            }
+          }
+        },
+        "hi" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld छिपा हुआ"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld छिपे हुए"
+                }
+              }
+            }
+          }
+        },
+        "id" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld disembunyikan"
+                }
+              }
+            }
+          }
+        },
+        "it" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld nascosti"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld nascosto"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld nascosti"
+                }
+              }
+            }
+          }
+        },
+        "ja" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "非表示 %lld"
+                }
+              }
+            }
+          }
+        },
+        "ko" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "숨김 %lld개"
+                }
+              }
+            }
+          }
+        },
+        "nl" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld verborgen"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld verborgen"
+                }
+              }
+            }
+          }
+        },
+        "pl" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ukryte"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ukrytych"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ukryty"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ukrytego"
+                }
+              }
+            }
+          }
+        },
+        "pt-BR" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ocultos"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld oculto"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld ocultos"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld скрыты"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld скрыто"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld скрыта"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld скрыто"
+                }
+              }
+            }
+          }
+        },
+        "tr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld gizli"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld gizli"
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld приховані"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld прихованих"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld прихована"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld прихованої"
+                }
+              }
+            }
+          }
+        },
+        "vi" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld đã ẩn"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "已隐藏 %lld 个"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "已隱藏 %lld 個"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld images" : {
       "localizations" : {
         "de" : {
@@ -15517,6 +15987,364 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%lld 個符合項目"
+          }
+        }
+      }
+    },
+    "%lld models" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Modell"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Modelle"
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelos"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelo"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelos"
+                }
+              }
+            }
+          }
+        },
+        "es-419" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelos"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelo"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelos"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modèles"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modèle"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modèles"
+                }
+              }
+            }
+          }
+        },
+        "hi" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld मॉडल"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld मॉडल"
+                }
+              }
+            }
+          }
+        },
+        "id" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld model"
+                }
+              }
+            }
+          }
+        },
+        "it" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelli"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modello"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelli"
+                }
+              }
+            }
+          }
+        },
+        "ja" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld 個のモデル"
+                }
+              }
+            }
+          }
+        },
+        "ko" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "모델 %lld개"
+                }
+              }
+            }
+          }
+        },
+        "nl" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld model"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modellen"
+                }
+              }
+            }
+          }
+        },
+        "pl" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modele"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modeli"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld model"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelu"
+                }
+              }
+            }
+          }
+        },
+        "pt-BR" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelos"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelo"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld modelos"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld модели"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld моделей"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld модель"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld модели"
+                }
+              }
+            }
+          }
+        },
+        "tr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld model"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld model"
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld моделі"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld моделей"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld модель"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld моделі"
+                }
+              }
+            }
+          }
+        },
+        "vi" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld mô hình"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld 个模型"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld 個模型"
+                }
+              }
+            }
           }
         }
       }
@@ -17435,6 +18263,364 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%lld 個結果"
+          }
+        }
+      }
+    },
+    "%lld starred" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld mit Stern"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld mit Stern"
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld destacados"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld destacado"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld destacados"
+                }
+              }
+            }
+          }
+        },
+        "es-419" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld destacados"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld destacado"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld destacados"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld favoris"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld favori"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld favoris"
+                }
+              }
+            }
+          }
+        },
+        "hi" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld तारांकित"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld तारांकित"
+                }
+              }
+            }
+          }
+        },
+        "id" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld berbintang"
+                }
+              }
+            }
+          }
+        },
+        "it" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld preferiti"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld preferito"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld preferiti"
+                }
+              }
+            }
+          }
+        },
+        "ja" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "スター付き %lld"
+                }
+              }
+            }
+          }
+        },
+        "ko" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "별표 %lld개"
+                }
+              }
+            }
+          }
+        },
+        "nl" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld met ster"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld met ster"
+                }
+              }
+            }
+          }
+        },
+        "pl" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld oznaczone gwiazdką"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld oznaczonych gwiazdką"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld oznaczony gwiazdką"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld oznaczonego gwiazdką"
+                }
+              }
+            }
+          }
+        },
+        "pt-BR" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld com estrela"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld com estrela"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld com estrela"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld в избранном"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld в избранном"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld в избранном"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld в избранном"
+                }
+              }
+            }
+          }
+        },
+        "tr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld yıldızlı"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld yıldızlı"
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld у вибраному"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld у вибраному"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld у вибраному"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld у вибраному"
+                }
+              }
+            }
+          }
+        },
+        "vi" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld được gắn sao"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "已加星标 %lld 个"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "已加星號 %lld 個"
+                }
+              }
+            }
           }
         }
       }
@@ -30426,6 +31612,118 @@
         }
       }
     },
+    "Agents can use their thread’s browser in the background and open it when they need you." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agenten können den Browser ihres Threads im Hintergrund verwenden und ihn öffnen, wenn sie dich brauchen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los agentes pueden usar el navegador de su hilo en segundo plano y abrirlo cuando te necesiten."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los agentes pueden usar el navegador de su hilo en segundo plano y abrirlo cuando te necesiten."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les agents peuvent utiliser le navigateur de leur fil en arrière-plan et l’ouvrir lorsqu’ils ont besoin de vous."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एजेंट अपने थ्रेड के ब्राउज़र का बैकग्राउंड में उपयोग कर सकते हैं और ज़रूरत पड़ने पर आपके लिए उसे खोल सकते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agen dapat menggunakan browser utasnya di latar belakang dan membukanya saat mereka membutuhkan Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gli agenti possono usare il browser del proprio thread in background e aprirlo quando hanno bisogno di te."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントはスレッドのブラウザをバックグラウンドで使用し、あなたの操作が必要なときに開くことができます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트는 스레드의 브라우저를 백그라운드에서 사용하고, 사용자가 필요할 때 브라우저를 열 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agents kunnen de browser van hun thread op de achtergrond gebruiken en openen wanneer ze je nodig hebben."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agenci mogą używać przeglądarki swojego wątku w tle i otwierać ją, gdy potrzebują Twojej pomocy."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os agentes podem usar o navegador do seu tópico em segundo plano e abri-lo quando precisarem de você."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Агенты могут пользоваться браузером своего треда в фоне и открывать его, когда им нужна ваша помощь."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajanlar, iş parçacıklarının tarayıcısını arka planda kullanabilir ve size ihtiyaç duyduklarında açabilir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Агенти можуть користуватися браузером свого треду у фоні й відкривати його, коли їм потрібна ваша допомога."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tác tử có thể dùng trình duyệt của luồng ở chế độ nền và mở nó khi cần đến bạn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "智能体可以在后台使用其线程的浏览器，并在需要你时打开它。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理程式可在背景使用其執行緒的瀏覽器，並在需要你時打開它。"
+          }
+        }
+      }
+    },
     "Agents can view the screen and interact with apps while Computer Use is on. All providers use a private connection for each thread." : {
       "localizations" : {
         "de" : {
@@ -30534,6 +31832,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "開啟電腦控制時，代理可以查看螢幕並操作 App。所有供應商均為每個對話串使用獨立的私人連線。"
+          }
+        }
+      }
+    },
+    "Agents can’t read cookies, site storage or what’s typed in password fields, and ask you to take over for sign-ins, CAPTCHAs and two-factor codes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agenten können keine Cookies, keinen Website-Speicher und nichts lesen, was in Passwortfelder eingegeben wird, und bitten dich, bei Anmeldungen, CAPTCHAs und Zwei-Faktor-Codes zu übernehmen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los agentes no pueden leer cookies, el almacenamiento de los sitios ni lo que se escribe en los campos de contraseña, y te piden que tomes el control para iniciar sesión, resolver CAPTCHAs e introducir códigos de dos factores."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los agentes no pueden leer cookies, el almacenamiento de los sitios ni lo que se escribe en los campos de contraseña, y te piden que tomes el control para iniciar sesión, resolver CAPTCHAs e ingresar códigos de dos factores."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les agents ne peuvent pas lire les cookies, le stockage des sites ni ce qui est saisi dans les champs de mot de passe, et vous demandent de prendre le relais pour les connexions, les CAPTCHA et les codes à deux facteurs."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एजेंट कुकी, साइट स्टोरेज या पासवर्ड फ़ील्ड में टाइप की गई चीज़ें नहीं पढ़ सकते, और साइन-इन, CAPTCHA और टू-फ़ैक्टर कोड के लिए आपसे संभालने को कहते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agen tidak dapat membaca cookie, penyimpanan situs, atau apa yang diketik di kolom kata sandi, dan meminta Anda mengambil alih untuk masuk, CAPTCHA, dan kode dua faktor."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gli agenti non possono leggere i cookie, lo spazio di archiviazione dei siti o ciò che viene digitato nei campi password, e ti chiedono di subentrare per accessi, CAPTCHA e codici a due fattori."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントはCookie、サイトのストレージ、パスワード欄に入力された内容を読み取れません。サインイン、CAPTCHA、2要素認証コードはあなたに引き継ぎを求めます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트는 쿠키, 사이트 저장 공간 또는 암호 필드에 입력한 내용을 읽을 수 없으며, 로그인, CAPTCHA 및 2단계 인증 코드는 사용자에게 넘깁니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agents kunnen geen cookies, siteopslag of wat in wachtwoordvelden wordt getypt lezen, en vragen je het over te nemen bij inloggen, CAPTCHA's en tweestapscodes."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agenci nie mogą odczytywać plików cookie, danych stron ani tego, co wpisano w polach haseł, i proszą Cię o przejęcie przy logowaniu, CAPTCHA i kodach dwuskładnikowych."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os agentes não conseguem ler cookies, o armazenamento dos sites nem o que é digitado em campos de senha, e pedem que você assuma em logins, CAPTCHAs e códigos de dois fatores."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Агенты не могут читать файлы cookie, хранилище сайтов и то, что вводится в поля паролей, и просят вас взять управление на себя при входе, CAPTCHA и кодах двухфакторной проверки."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajanlar çerezleri, site depolamasını veya parola alanlarına yazılanları okuyamaz; oturum açma, CAPTCHA ve iki adımlı kodlar için kontrolü size bırakır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Агенти не можуть читати файли cookie, сховище сайтів і те, що вводиться в поля паролів, і просять вас перебрати керування під час входу, CAPTCHA та кодів двофакторної перевірки."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tác tử không thể đọc cookie, bộ nhớ trang web hoặc nội dung nhập vào ô mật khẩu, và sẽ nhờ bạn tiếp quản khi đăng nhập, giải CAPTCHA và nhập mã xác thực hai yếu tố."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "智能体无法读取 Cookie、网站存储或在密码栏中输入的内容，遇到登录、验证码和双重认证代码时会请你接手。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理程式無法讀取 Cookie、網站儲存空間或在密碼欄位中輸入的內容，遇到登入、驗證碼和雙重認證碼時會請你接手。"
           }
         }
       }
@@ -107552,6 +108962,118 @@
         }
       }
     },
+    "Each thread starts signed out, and forgets its cookies when it closes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jeder Thread beginnt abgemeldet und vergisst seine Cookies, wenn er geschlossen wird."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cada hilo empieza sin sesión iniciada y olvida sus cookies al cerrarse."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cada hilo empieza sin sesión iniciada y olvida sus cookies al cerrarse."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chaque fil démarre déconnecté et oublie ses cookies à sa fermeture."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "हर थ्रेड साइन आउट होकर शुरू होता है और बंद होने पर अपनी कुकी भूल जाता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Setiap utas dimulai dalam keadaan keluar, dan melupakan cookie-nya saat ditutup."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ogni thread inizia senza accesso e dimentica i suoi cookie quando si chiude."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "各スレッドはサインアウトした状態で始まり、閉じるとCookieを消去します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "각 스레드는 로그아웃된 상태로 시작하며, 닫히면 쿠키를 지웁니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elke thread begint uitgelogd en vergeet zijn cookies wanneer hij sluit."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Każdy wątek zaczyna bez zalogowania i zapomina swoje pliki cookie po zamknięciu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cada tópico começa desconectado e esquece seus cookies ao ser fechado."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Каждый тред начинается без входа в аккаунты и забывает свои файлы cookie при закрытии."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Her iş parçacığı oturum kapalı başlar ve kapandığında çerezlerini unutur."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Кожен тред починається без входу в облікові записи й забуває свої файли cookie після закриття."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mỗi luồng bắt đầu ở trạng thái chưa đăng nhập và quên cookie khi đóng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "每个线程开始时都未登录，关闭时会清除其 Cookie。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "每個執行緒開始時都未登入，關閉時會清除其 Cookie。"
+          }
+        }
+      }
+    },
     "Each thread’s browser has its own temporary storage, cleared when Coincide quits. Imported cookies and saved sign-ins aren’t used." : {
       "localizations" : {
         "de" : {
@@ -110062,118 +111584,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "編輯筆記本 %@"
-          }
-        }
-      }
-    },
-    "Edit on Your Mac" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Auf deinem Mac bearbeiten"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Editar en tu Mac"
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Editar en tu Mac"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Modifier sur votre Mac"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "अपने Mac पर संपादित करें"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Edit di Mac Anda"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Modifica sul Mac"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mac で編集"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mac에서 편집"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bewerken op je Mac"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Edytuj na Macu"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Editar no seu Mac"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Изменить на Mac"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mac’inizde düzenleyin"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Змінити на Mac"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sửa trên máy Mac"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "在 Mac 上编辑"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "在 Mac 上編輯"
           }
         }
       }
@@ -130032,114 +131442,114 @@
         }
       }
     },
-    "Hidden models" : {
+    "Hidden models stay out of the model picker until you show them again." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ausgeblendete Modelle"
+            "value" : "Ausgeblendete Modelle erscheinen nicht in der Modellauswahl, bis du sie wieder einblendest."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modelos ocultos"
+            "value" : "Los modelos ocultos no aparecen en el selector de modelos hasta que vuelvas a mostrarlos."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modelos ocultos"
+            "value" : "Los modelos ocultos no aparecen en el selector de modelos hasta que vuelvas a mostrarlos."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modèles masqués"
+            "value" : "Les modèles masqués n’apparaissent pas dans le sélecteur de modèles tant que vous ne les affichez pas à nouveau."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "छिपे मॉडल"
+            "value" : "छिपे हुए मॉडल तब तक मॉडल पिकर में नहीं दिखते जब तक आप उन्हें फिर से नहीं दिखाते।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Model tersembunyi"
+            "value" : "Model yang disembunyikan tidak muncul di pemilih model sampai Anda menampilkannya lagi."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modelli nascosti"
+            "value" : "I modelli nascosti non compaiono nel selettore dei modelli finché non li mostri di nuovo."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "非表示のモデル"
+            "value" : "非表示にしたモデルは、再び表示するまでモデル選択に表示されません。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "숨긴 모델"
+            "value" : "숨긴 모델은 다시 표시할 때까지 모델 선택기에 나타나지 않습니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Verborgen modellen"
+            "value" : "Verborgen modellen staan niet in de modelkiezer totdat je ze weer toont."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ukryte modele"
+            "value" : "Ukryte modele nie pojawiają się w wyborze modeli, dopóki ich ponownie nie pokażesz."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Modelos ocultos"
+            "value" : "Modelos ocultos ficam fora do seletor de modelos até você mostrá-los de novo."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Скрытые модели"
+            "value" : "Скрытые модели не показываются в выборе моделей, пока вы снова их не покажете."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Gizli modeller"
+            "value" : "Gizli modeller, yeniden gösterene kadar model seçicide görünmez."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Приховані моделі"
+            "value" : "Приховані моделі не показуються у виборі моделей, доки ви знову їх не покажете."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Mô hình bị ẩn"
+            "value" : "Các mô hình đã ẩn sẽ không có trong bộ chọn mô hình cho đến khi bạn hiện lại."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "已隐藏的模型"
+            "value" : "隐藏的模型不会出现在模型选择器中，直到你再次显示它们。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "已隱藏的模型"
+            "value" : "隱藏的模型不會出現在模型選擇器中，直到你再次顯示它們。"
           }
         }
       }
@@ -134200,118 +135610,6 @@
         }
       }
     },
-    "Imported sign-ins and password managers stay on your Mac." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Importierte Anmeldungen und Passwortmanager bleiben auf deinem Mac."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Los inicios de sesión importados y los gestores de contraseñas se quedan en tu Mac."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Los inicios de sesión importados y los administradores de contraseñas se quedan en tu Mac."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Les connexions importées et les gestionnaires de mots de passe restent sur votre Mac."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "आयात किए गए साइन-इन और पासवर्ड मैनेजर आपके Mac पर ही रहते हैं।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Info masuk yang diimpor dan pengelola kata sandi tetap di Mac Anda."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Gli accessi importati e i gestori di password restano sul Mac."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "読み込んだサインイン情報とパスワードマネージャは Mac に残ります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "가져온 로그인과 암호 관리자는 Mac에 남습니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Geïmporteerde aanmeldingen en wachtwoordbeheerders blijven op je Mac."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Zaimportowane logowania i menedżery haseł zostają na Macu."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Logins importados e gerenciadores de senhas ficam no seu Mac."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Импортированные входы и менеджеры паролей остаются на Mac."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "İçe aktarılan oturum açma bilgileri ve parola yöneticileri Mac’inizde kalır."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Імпортовані входи й менеджери паролів залишаються на Mac."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Thông tin đăng nhập đã nhập và trình quản lý mật khẩu vẫn ở trên máy Mac."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "导入的登录信息和密码管理器保留在 Mac 上。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "匯入的登入資訊和密碼管理器保留在 Mac 上。"
-          }
-        }
-      }
-    },
     "Importing…" : {
       "localizations" : {
         "de" : {
@@ -135112,6 +136410,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "與主檔案保持一致"
+          }
+        }
+      }
+    },
+    "In the model picker" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In der Modellauswahl"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En el selector de modelos"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En el selector de modelos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dans le sélecteur de modèles"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "मॉडल पिकर में"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Di pemilih model"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nel selettore dei modelli"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "モデル選択に表示"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모델 선택기에 표시"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In de modelkiezer"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "W wyborze modeli"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No seletor de modelos"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "В выборе моделей"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Model seçicide"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "У виборі моделей"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trong bộ chọn mô hình"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在模型选择器中"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在模型選擇器中"
           }
         }
       }
@@ -139039,118 +140449,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "指示"
-          }
-        }
-      }
-    },
-    "Instructions are long documents; edit them on your Mac." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Anweisungen sind lange Dokumente; bearbeite sie auf deinem Mac."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Las instrucciones son documentos largos; edítalas en tu Mac."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Las instrucciones son documentos largos; edítalas en tu Mac."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Les instructions sont de longs documents ; modifiez-les sur votre Mac."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "निर्देश लंबे दस्तावेज़ होते हैं; इन्हें अपने Mac पर संपादित करें।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Instruksi adalah dokumen panjang; edit di Mac Anda."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Le istruzioni sono documenti lunghi; modificale sul Mac."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "指示は長い文書なので、Mac で編集してください。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "지침은 긴 문서이므로 Mac에서 편집하세요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Instructies zijn lange documenten; bewerk ze op je Mac."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Instrukcje to długie dokumenty; edytuj je na Macu."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "As instruções são documentos longos; edite-as no seu Mac."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Инструкции — длинные документы; редактируйте их на Mac."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Talimatlar uzun belgelerdir; bunları Mac’inizde düzenleyin."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Інструкції — довгі документи; редагуйте їх на Mac."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Hướng dẫn là tài liệu dài; hãy sửa trên máy Mac."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "说明是较长的文档，请在 Mac 上编辑。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "說明是較長的文件，請在 Mac 上編輯。"
           }
         }
       }
@@ -148750,6 +150048,118 @@
         }
       }
     },
+    "Linking files to a master and copying it to iCloud or a repository happen on your Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dateien mit einer Hauptdatei verknüpfen und sie nach iCloud oder in ein Repository kopieren geht auf deinem Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enlazar archivos a un archivo principal y copiarlo a iCloud o a un repositorio se hace en tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vincular archivos a un archivo principal y copiarlo a iCloud o a un repositorio se hace en tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lier des fichiers à un fichier principal et le copier dans iCloud ou un dépôt se fait sur votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "फ़ाइलों को मुख्य फ़ाइल से लिंक करना और उसे iCloud या किसी रिपॉज़िटरी में कॉपी करना आपके Mac पर होता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menautkan file ke file utama dan menyalinnya ke iCloud atau repositori dilakukan di Mac Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Collegare i file a un file principale e copiarlo su iCloud o in un repository si fa sul Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ファイルのマスターへのリンクや、iCloudまたはリポジトリへのコピーはMacで行います。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "파일을 마스터에 연결하고 iCloud나 저장소에 복사하는 작업은 Mac에서 합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bestanden aan een hoofdbestand koppelen en het naar iCloud of een repository kopiëren doe je op je Mac."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Łączenie plików z plikiem głównym oraz kopiowanie go do iCloud lub repozytorium odbywa się na Macu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vincular arquivos a um arquivo principal e copiá-lo para o iCloud ou um repositório é feito no seu Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Связывание файлов с основным и его копирование в iCloud или репозиторий выполняются на Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dosyaları bir ana dosyaya bağlamak ve onu iCloud’a veya bir depoya kopyalamak Mac’inizde yapılır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пов’язування файлів з основним і його копіювання в iCloud чи репозиторій виконуються на Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Việc liên kết tệp với tệp chính và sao chép nó lên iCloud hoặc một kho mã được thực hiện trên máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "将文件链接到主文件以及将其复制到 iCloud 或代码库需要在你的 Mac 上完成。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "將檔案連結至主檔案，以及將其拷貝到 iCloud 或儲存庫，需要在你的 Mac 上完成。"
+          }
+        }
+      }
+    },
     "Links" : {
       "localizations" : {
         "de" : {
@@ -154134,6 +155544,118 @@
         }
       }
     },
+    "Master" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hauptdatei"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Archivo principal"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Archivo principal"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fichier principal"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "मुख्य फ़ाइल"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "File utama"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "File principale"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "マスター"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "마스터"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hoofdbestand"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plik główny"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arquivo principal"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Основной файл"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ana dosya"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Основний файл"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tệp chính"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "主文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "主檔案"
+          }
+        }
+      }
+    },
     "Master password" : {
       "localizations" : {
         "de" : {
@@ -159176,6 +160698,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "模型設定"
+          }
+        }
+      }
+    },
+    "Model picker" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modellauswahl"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Selector de modelos"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Selector de modelos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sélecteur de modèles"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "मॉडल पिकर"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pemilih model"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Selettore dei modelli"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "モデル選択"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모델 선택기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modelkiezer"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wybór modeli"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seletor de modelos"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выбор моделей"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Model seçici"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вибір моделей"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bộ chọn mô hình"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "模型选择器"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "模型選擇器"
           }
         }
       }
@@ -176895,6 +178529,118 @@
         }
       }
     },
+    "Not created yet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Noch nicht erstellt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aún no creado"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aún no creado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pas encore créé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अभी बनाई नहीं गई"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Belum dibuat"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Non ancora creato"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未作成"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "아직 생성되지 않음"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nog niet aangemaakt"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jeszcze nieutworzony"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ainda não criado"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ещё не создан"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Henüz oluşturulmadı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ще не створено"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chưa tạo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "尚未创建"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "尚未建立"
+          }
+        }
+      }
+    },
     "Not done" : {
       "localizations" : {
         "de" : {
@@ -182542,6 +184288,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "打開方式"
+          }
+        }
+      }
+    },
+    "Open Instructions on Your Mac" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anweisungen auf deinem Mac öffnen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir Instrucciones en tu Mac"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir Instrucciones en tu Mac"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir Instructions sur votre Mac"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अपने Mac पर निर्देश खोलें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buka Instruksi di Mac Anda"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apri Istruzioni sul Mac"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Macで「指示」を開く"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac에서 지침 열기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instructies openen op je Mac"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otwórz Instrukcje na Macu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir Instruções no seu Mac"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Открыть «Инструкции» на Mac"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Talimatlar’ı Mac’inizde Açın"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Відкрити «Інструкції» на Mac"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mở Hướng dẫn trên máy Mac"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Mac 上打开“指令”"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Mac 上打開「指令」"
           }
         }
       }
@@ -192024,6 +193882,118 @@
         }
       }
     },
+    "Password managers, saved logins and browser imports stay on your Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passwortmanager, gespeicherte Anmeldungen und Browser-Importe bleiben auf deinem Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los gestores de contraseñas, los inicios de sesión guardados y las importaciones del navegador se quedan en tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los administradores de contraseñas, los inicios de sesión guardados y las importaciones del navegador se quedan en tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les gestionnaires de mots de passe, les identifiants enregistrés et les importations de navigateur restent sur votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पासवर्ड मैनेजर, सहेजे गए लॉगिन और ब्राउज़र इंपोर्ट आपके Mac पर ही रहते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pengelola kata sandi, login tersimpan, dan impor browser tetap berada di Mac Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gestori di password, accessi salvati e importazioni dal browser restano sul Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "パスワードマネージャ、保存済みのログイン、ブラウザからの読み込みはMacに残ります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "암호 관리자, 저장된 로그인 및 브라우저 가져오기는 Mac에 남아 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wachtwoordbeheerders, bewaarde aanmeldingen en browserimports blijven op je Mac."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menedżery haseł, zapisane loginy i importy z przeglądarek pozostają na Macu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gerenciadores de senhas, logins salvos e importações do navegador ficam no seu Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Менеджеры паролей, сохранённые логины и импорт из браузеров остаются на Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Parola yöneticileri, kaydedilmiş girişler ve tarayıcı içe aktarmaları Mac’inizde kalır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Менеджери паролів, збережені логіни й імпорт із браузерів залишаються на Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình quản lý mật khẩu, thông tin đăng nhập đã lưu và dữ liệu nhập từ trình duyệt vẫn ở trên máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "密码管理器、已存储的登录信息和浏览器导入的数据都保留在你的 Mac 上。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "密碼管理器、已儲存的登入資訊和瀏覽器輸入的資料都保留在你的 Mac 上。"
+          }
+        }
+      }
+    },
     "Passwords" : {
       "localizations" : {
         "de" : {
@@ -192132,6 +194102,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "密碼"
+          }
+        }
+      }
+    },
+    "Passwords and Imports" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passwörter und Importe"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contraseñas e importaciones"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contraseñas e importaciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mots de passe et importations"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पासवर्ड और इंपोर्ट"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kata Sandi dan Impor"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Password e importazioni"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "パスワードと読み込み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "암호 및 가져오기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wachtwoorden en imports"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hasła i importy"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Senhas e importações"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пароли и импорт"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Parolalar ve İçe Aktarmalar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Паролі та імпорт"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mật khẩu và dữ liệu nhập"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "密码与导入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "密碼與輸入"
           }
         }
       }
@@ -249172,6 +251254,230 @@
         }
       }
     },
+    "Star the models you use most, or hide the ones you never pick." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Markiere die Modelle, die du am meisten nutzt, mit einem Stern, oder blende die aus, die du nie wählst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Destaca los modelos que más usas u oculta los que nunca eliges."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Destaca los modelos que más usas u oculta los que nunca eliges."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajoutez aux favoris les modèles que vous utilisez le plus, ou masquez ceux que vous ne choisissez jamais."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जिन मॉडल का आप सबसे ज़्यादा उपयोग करते हैं उन्हें तारांकित करें, या जिन्हें कभी नहीं चुनते उन्हें छिपाएँ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beri bintang pada model yang paling sering Anda gunakan, atau sembunyikan yang tidak pernah Anda pilih."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aggiungi ai preferiti i modelli che usi di più o nascondi quelli che non scegli mai."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "よく使うモデルにスターを付けたり、選ばないモデルを非表示にしたりできます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "가장 많이 쓰는 모델에 별표를 표시하거나, 선택하지 않는 모델을 숨기세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geef de modellen die je het meest gebruikt een ster, of verberg de modellen die je nooit kiest."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oznacz gwiazdką modele, których używasz najczęściej, albo ukryj te, których nigdy nie wybierasz."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Marque com estrela os modelos que você mais usa ou oculte os que nunca escolhe."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Добавьте в избранное модели, которыми пользуетесь чаще всего, или скройте те, что никогда не выбираете."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En çok kullandığınız modelleri yıldızlayın veya hiç seçmediklerinizi gizleyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Додайте у вибране моделі, якими користуєтеся найчастіше, або приховайте ті, які ніколи не вибираєте."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gắn sao cho các mô hình bạn dùng nhiều nhất, hoặc ẩn những mô hình bạn không bao giờ chọn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "为最常用的模型加星标，或隐藏从不选择的模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "為最常用的模型加上星號，或隱藏從不選擇的模型。"
+          }
+        }
+      }
+    },
+    "Starred models come first in the model picker." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modelle mit Stern stehen in der Modellauswahl ganz oben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los modelos destacados aparecen primero en el selector de modelos."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los modelos destacados aparecen primero en el selector de modelos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les modèles favoris apparaissent en premier dans le sélecteur de modèles."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "तारांकित मॉडल मॉडल पिकर में सबसे पहले आते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Model berbintang tampil pertama di pemilih model."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I modelli preferiti compaiono per primi nel selettore dei modelli."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スター付きのモデルはモデル選択の先頭に表示されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "별표 표시한 모델은 모델 선택기의 맨 위에 나타납니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modellen met een ster staan bovenaan in de modelkiezer."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modele oznaczone gwiazdką są na początku wyboru modeli."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modelos com estrela aparecem primeiro no seletor de modelos."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Избранные модели показываются первыми в выборе моделей."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yıldızlı modeller model seçicide en üstte görünür."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вибрані моделі показуються першими у виборі моделей."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mô hình được gắn sao hiển thị đầu tiên trong bộ chọn mô hình."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "加星标的模型会显示在模型选择器的最前面。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "加上星號的模型會顯示在模型選擇器的最前面。"
+          }
+        }
+      }
+    },
     "Start Speaking" : {
       "localizations" : {
         "de" : {
@@ -259713,6 +262019,118 @@
         }
       }
     },
+    "That file isn’t one of the instruction files any more." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Datei gehört nicht mehr zu den Anweisungsdateien."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ese archivo ya no es uno de los archivos de instrucciones."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ese archivo ya no es uno de los archivos de instrucciones."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce fichier ne fait plus partie des fichiers d’instructions."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह फ़ाइल अब निर्देश फ़ाइलों में से एक नहीं है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "File itu bukan lagi salah satu file instruksi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quel file non è più uno dei file di istruzioni."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "そのファイルは指示ファイルではなくなりました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "해당 파일은 더 이상 지침 파일이 아닙니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dat bestand is geen instructiebestand meer."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten plik nie jest już jednym z plików instrukcji."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esse arquivo não é mais um dos arquivos de instruções."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот файл больше не относится к файлам инструкций."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu dosya artık talimat dosyalarından biri değil."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей файл більше не належить до файлів інструкцій."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tệp đó không còn là một trong các tệp hướng dẫn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "该文件已不再是指令文件之一。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "該檔案已不再是指令檔案之一。"
+          }
+        }
+      }
+    },
     "That preview is no longer available." : {
       "localizations" : {
         "de" : {
@@ -269807,6 +272225,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "此回合執行時所在的檔案夾已不存在。"
+          }
+        }
+      }
+    },
+    "The global instruction files every agent reads, in every project." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die globalen Anweisungsdateien, die jeder Agent in jedem Projekt liest."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los archivos de instrucciones globales que todos los agentes leen en todos los proyectos."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los archivos de instrucciones globales que todos los agentes leen en todos los proyectos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les fichiers d’instructions globaux que chaque agent lit, dans chaque projet."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "वैश्विक निर्देश फ़ाइलें जिन्हें हर एजेंट हर प्रोजेक्ट में पढ़ता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "File instruksi global yang dibaca setiap agen, di setiap proyek."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I file di istruzioni globali che ogni agente legge, in ogni progetto."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "すべてのエージェントがすべてのプロジェクトで読むグローバル指示ファイル。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모든 에이전트가 모든 프로젝트에서 읽는 전역 지침 파일입니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De algemene instructiebestanden die elke agent in elk project leest."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Globalne pliki instrukcji, które każdy agent czyta w każdym projekcie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os arquivos de instruções globais que todo agente lê, em todo projeto."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Глобальные файлы инструкций, которые каждый агент читает в каждом проекте."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Her ajanın her projede okuduğu genel talimat dosyaları."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Глобальні файли інструкцій, які кожен агент читає в кожному проєкті."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Các tệp hướng dẫn chung mà mọi tác tử đọc, trong mọi dự án."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "每个智能体在每个项目中都会读取的全局指令文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "每個代理程式在每個專案中都會讀取的全域指令檔案。"
           }
         }
       }
@@ -281804,6 +284334,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "此檔案已在磁碟上變更。"
+          }
+        }
+      }
+    },
+    "This file is too long to edit here. Edit it on your Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Datei ist zu lang, um sie hier zu bearbeiten. Bearbeite sie auf deinem Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este archivo es demasiado largo para editarlo aquí. Edítalo en tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este archivo es demasiado largo para editarlo aquí. Edítalo en tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce fichier est trop long pour être modifié ici. Modifiez-le sur votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह फ़ाइल यहाँ संपादित करने के लिए बहुत लंबी है। इसे अपने Mac पर संपादित करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "File ini terlalu panjang untuk diedit di sini. Edit di Mac Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questo file è troppo lungo per modificarlo qui. Modificalo sul Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このファイルは長すぎるため、ここでは編集できません。Macで編集してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 파일은 여기서 편집하기에 너무 깁니다. Mac에서 편집하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dit bestand is te lang om hier te bewerken. Bewerk het op je Mac."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten plik jest za długi, aby edytować go tutaj. Edytuj go na Macu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este arquivo é longo demais para editar aqui. Edite-o no seu Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Файл слишком длинный, чтобы редактировать его здесь. Отредактируйте его на Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu dosya burada düzenlemek için çok uzun. Mac’inizde düzenleyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Файл задовгий, щоб редагувати його тут. Відредагуйте його на Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tệp này quá dài để chỉnh sửa ở đây. Hãy chỉnh sửa trên máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此文件太长，无法在这里编辑。请在 Mac 上编辑。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此檔案太長，無法在這裡編輯。請在 Mac 上編輯。"
           }
         }
       }

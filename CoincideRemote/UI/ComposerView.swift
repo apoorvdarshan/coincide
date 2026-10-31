@@ -616,7 +616,8 @@ nonisolated enum ComposerFooterRole: LayoutValueKey {
 /// The composer's footer, placed by `RemoteLayout.footer`: menus never run under steer, attach or send, at any width or
 /// text size.
 struct ComposerFooterLayout: Layout {
-    var spacing: CGFloat = 2
+    /// The menus' own padding already sets them apart, as on the Mac's footer; a 390-point phone keeps the model's name.
+    var spacing: CGFloat = 0
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? subviews.reduce(0) { $0 + $1.sizeThatFits(.unspecified).width + spacing }

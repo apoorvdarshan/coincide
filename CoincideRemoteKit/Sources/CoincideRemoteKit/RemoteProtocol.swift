@@ -244,6 +244,11 @@ public enum RemoteRequest: Hashable, Sendable {
     case changeSetting(key: String, value: RemoteSettingValue)
     /// Runs a row's action, or brings up its place on the Mac for one that finishes there. Answers `settings`.
     case settingsAction(key: String)
+    /// The text of a `document` row. Answers `settingsDocument`. An older Mac answers `unsupported`.
+    case settingsDocument(key: String)
+    /// Saves a `document` row's text, refused when the document changed since the version given. Answers the saved
+    /// `settingsDocument`. An older Mac answers `unsupported`.
+    case saveSettingsDocument(RemoteSettingsDocument)
     /// Expands or collapses a project in the Mac's sidebar, so both show the same. Answers `ok`. An older Mac answers
     /// `unsupported`, and the phone keeps the choice to itself.
     case setProjectExpanded(projectID: UUID, expanded: Bool)
@@ -287,6 +292,8 @@ public enum RemoteRequest: Hashable, Sendable {
         case .settings: "settings"
         case .changeSetting: "changeSetting"
         case .settingsAction: "settingsAction"
+        case .settingsDocument: "settingsDocument"
+        case .saveSettingsDocument: "saveSettingsDocument"
         case .setProjectExpanded: "setProjectExpanded"
         case .media: "media"
         case .completions: "completions"
@@ -414,6 +421,8 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
             let f = try fields()
             request = .changeSetting(key: try need(f.key, "key"), value: try need(f.value, "value"))
         case "settingsAction": request = .settingsAction(key: try need(try fields().key, "key"))
+        case "settingsDocument": request = .settingsDocument(key: try need(try fields().key, "key"))
+        case "saveSettingsDocument": request = .saveSettingsDocument(try body(RemoteSettingsDocument.self))
         case "setProjectExpanded":
             let f = try fields()
             request = .setProjectExpanded(projectID: try need(f.projectID, "projectID"), expanded: try need(f.expanded, "expanded"))
@@ -442,11 +451,12 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case .updateSettings(let settings): try container.encode(settings, forKey: .body); return
         case .presence(let presence): try container.encode(presence, forKey: .body); return
         case .saveBot(let draft): try container.encode(draft, forKey: .body); return
+        case .saveSettingsDocument(let document): try container.encode(document, forKey: .body); return
         case .ping, .usageLimits, .settings: return
         case .changeSetting(let key, let value):
             f.key = key
             f.value = value
-        case .settingsAction(let key): f.key = key
+        case .settingsAction(let key), .settingsDocument(let key): f.key = key
         case .newBotConversation(let botID): f.botID = botID
         case .deleteBot(let botID, let deletesConversations):
             f.botID = botID
@@ -525,6 +535,8 @@ public enum RemoteResult: Hashable, Sendable {
     case media(RemoteMediaData)
     /// Suggestions for the composer. Only a phone that asked (`completions`) ever gets them.
     case completions([RemoteCompletion])
+    /// A settings document's text. Only a phone that asked (`settingsDocument`, `saveSettingsDocument`) ever gets it.
+    case settingsDocument(RemoteSettingsDocument)
 
     var name: String {
         switch self {
@@ -542,6 +554,7 @@ public enum RemoteResult: Hashable, Sendable {
         case .settings: "settings"
         case .media: "media"
         case .completions: "completions"
+        case .settingsDocument: "settingsDocument"
         }
     }
 }
@@ -596,6 +609,9 @@ public struct RemoteError: Codable, Hashable, Sendable, Error {
         case notFound
         case notAllowed
         case failed
+        /// A save refused because what it changes changed since the phone read it (`saveSettingsDocument`). An older
+        /// phone reads it as `unknown`.
+        case conflict
         case unknown
 
         public init(from decoder: Decoder) throws {
@@ -663,6 +679,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case "settings": result = .settings(try body(RemoteSettingsSnapshot.self))
             case "media": result = .media(try body(RemoteMediaData.self))
             case "completions": result = .completions(try body(ValueBody<[RemoteCompletion]>.self).value)
+            case "settingsDocument": result = .settingsDocument(try body(RemoteSettingsDocument.self))
             default:
                 self = .unknown(type)
                 return
@@ -719,6 +736,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case .settings(let snapshot): try container.encode(snapshot, forKey: .body)
             case .media(let media): try container.encode(media, forKey: .body)
             case .completions(let completions): try container.encode(ValueBody(value: completions), forKey: .body)
+            case .settingsDocument(let document): try container.encode(document, forKey: .body)
             }
         case .event(let event):
             try container.encode("event", forKey: .kind)

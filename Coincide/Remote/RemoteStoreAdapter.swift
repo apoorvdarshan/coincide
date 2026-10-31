@@ -107,6 +107,8 @@ final class RemoteStoreAdapter {
     let runner: ThreadRunner
     /// What the Settings catalog needs from the running app (`RemoteSettingsCatalog`).
     var settingsServices = SettingsServices.live
+    /// The global instruction files Settings › Instructions lists and edits.
+    lazy var instructions = RemoteInstructions.live
     let registry: ProviderRegistry
     let services: Services
     private var token: ObservationToken?
