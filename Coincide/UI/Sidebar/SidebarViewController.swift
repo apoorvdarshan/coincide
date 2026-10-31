@@ -30,7 +30,10 @@ final class SidebarViewController: NSViewController {
     }
     private var token: ObservationToken?
 
-    private lazy var topRows = SidebarHeaderView { AppEvents.newThread() }
+    private lazy var topRows = SidebarHeaderView(
+        onNewThread: { AppEvents.newThread() },
+        onSchedules: { NSApp.sendAction(#selector(MainWindowController.toggleSchedulesPanel(_:)), to: nil, from: nil) })
+    private var schedulesOpen = false
     private var searchField: NSSearchField { topRows.searchField }
     private let outlineView = SidebarOutlineView()
     private let scrollView = NSScrollView()
@@ -140,6 +143,7 @@ final class SidebarViewController: NSViewController {
         searchField.action = #selector(searchChanged)
         searchField.delegate = self
         topRows.setNewThreadShortcut(KeyBindingsController.shared.displayString(for: .newThread))
+        updateSchedulesRow()
         topRows.translatesAutoresizingMaskIntoConstraints = false
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("main"))
@@ -213,6 +217,8 @@ final class SidebarViewController: NSViewController {
             self, selector: #selector(hideJumpHints), name: NSApplication.didResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(keyBindingsChanged), name: KeyBindingsController.didChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(schedulesChanged), name: ScheduledTasks.didChange, object: nil)
         // Project folders are moved and deleted in other apps.
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
@@ -664,7 +670,7 @@ final class SidebarViewController: NSViewController {
             canArchive: ThreadActions.canArchive(thread.id), canFork: ThreadForking.canFork(thread.id),
             hasBackgroundWork: !background.isEmpty, toolTip: lines.joined(separator: "\n"),
             accessibilityLabel: [thread.title, status.label, project?.name].compactMap(\.self).joined(separator: ", "),
-            jumpHint: jumpHint)
+            jumpHint: jumpHint, schedule: scheduleNote([thread.id]))
     }
 
     /// The most urgent status among threads, for collapsed projects and "Show more" rows.
@@ -712,7 +718,8 @@ final class SidebarViewController: NSViewController {
         return BotRowModel(
             name: bot.displayName, avatar: bot.avatar, preview: latest?.preview ?? String(localized: "Say hello"),
             updatedAt: latest?.updatedAt, status: status, toolTip: lines.joined(separator: "\n"),
-            accessibilityLabel: [bot.displayName, status.label, latest?.preview].compactMap(\.self).joined(separator: ", "))
+            accessibilityLabel: [bot.displayName, status.label, latest?.preview].compactMap(\.self).joined(separator: ", "),
+            schedule: scheduleNote(conversations.map(\.id)))
     }
 
     /// Updates project rows (their collapsed status) and "Show more" rows (their hidden status).
@@ -751,6 +758,36 @@ final class SidebarViewController: NSViewController {
     private func showAllThreads(_ showAll: Bool, in projectID: UUID) {
         if showAll { expandedLists.insert(projectID) } else { expandedLists.remove(projectID) }
         rebuild()
+    }
+
+    // MARK: Schedules
+
+    /// Lights the Scheduled row while the panel shows.
+    func setSchedulesOpen(_ open: Bool) {
+        guard open != schedulesOpen else { return }
+        schedulesOpen = open
+        updateSchedulesRow()
+    }
+
+    private func updateSchedulesRow() {
+        let active = ScheduledTasks.shared.schedules.tasks.filter(\.isActive).count
+        topRows.setSchedules(
+            shortcut: KeyBindingsController.shared.displayString(for: .showSchedules), active: active, isOpen: schedulesOpen)
+    }
+
+    /// Schedules changed: the rows' clocks and the Scheduled row's count follow.
+    @objc private func schedulesChanged() {
+        updateSchedulesRow()
+        guard hasLoaded else { return }
+        refreshVisibleThreadRows()
+    }
+
+    /// The tooltip of a row's clock: the active schedules of these threads; nil when they have none.
+    private func scheduleNote(_ threadIDs: [UUID]) -> String? {
+        let service = ScheduledTasks.shared
+        let tasks = threadIDs.flatMap { service.tasks(inThread: $0) }
+        guard tasks.contains(where: \.isActive) else { return nil }
+        return SchedulePresentation.threadToolTip(tasks)
     }
 
     private func refreshVisibleThreadRows() {
@@ -814,6 +851,7 @@ final class SidebarViewController: NSViewController {
     /// New shortcuts change the hints shown, or whether the keys held still show them.
     @objc private func keyBindingsChanged() {
         topRows.setNewThreadShortcut(KeyBindingsController.shared.displayString(for: .newThread))
+        updateSchedulesRow()
         guard showsJumpHints else { return }
         if KeyBindingsController.shared.showsThreadJumpHints(for: NSEvent.modifierFlags) {
             refreshVisibleThreadRows()
@@ -1535,6 +1573,10 @@ extension SidebarViewController: NSMenuDelegate {
         let past = NSMenuItem(title: String(localized: "Past Conversations"), action: nil, keyEquivalent: "")
         past.submenu = BotActions.pastConversationsMenu(for: id, target: self, action: #selector(openConversationFromMenu(_:)))
         menu.addItem(past)
+        // In its latest conversation, which the bot's row opens.
+        if let latest = store.conversations(of: id).first {
+            menu.addItem(item(String(localized: "Schedule…"), #selector(scheduleFromMenu(_:)), latest.id))
+        }
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Edit Bot…"), #selector(editBotFromMenu(_:)), id))
         menu.addItem(.separator())
@@ -1575,6 +1617,7 @@ extension SidebarViewController: NSMenuDelegate {
         let fork = item(String(localized: "Fork Thread"), #selector(forkFromMenu(_:)), id)
         fork.isEnabled = ThreadForking.canFork(id)
         menu.addItem(fork)
+        menu.addItem(item(String(localized: "Schedule…"), #selector(scheduleFromMenu(_:)), id))
         addMoveMenu(to: menu, [id])
         menu.addItem(.separator())
         addOpenItems(to: menu)
@@ -1788,6 +1831,12 @@ extension SidebarViewController: NSMenuDelegate {
     @objc private func forkFromMenu(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID else { return }
         ThreadForking.fork(id)
+    }
+
+    /// A new schedule that sends a message into the thread.
+    @objc private func scheduleFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        ScheduleActions.newSchedule(inThread: id, in: view.window)
     }
 
     @objc private func copyThreadID(_ sender: NSMenuItem) {

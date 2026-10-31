@@ -133,7 +133,7 @@ final class ComposerApprovalBanner: ComposerBanner {
     func show(_ item: TranscriptItem, othersWaiting: Int) {
         let isNew = item.id != itemID
         itemID = item.id
-        let kind = Self.heading(for: item.category)
+        let kind = item.isScheduleApproval ? String(localized: "Schedule approval") : Self.heading(for: item.category)
         heading.stringValue = kind
         agent.stringValue = item.provider?.displayName ?? ""
         counter.stringValue = othersWaiting > 0 ? String(localized: "\(othersWaiting) more waiting") : ""

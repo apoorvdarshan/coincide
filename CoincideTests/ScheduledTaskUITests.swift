@@ -155,7 +155,7 @@ import Testing
         let project = store.addProject(at: directory.url)
         let task = ScheduledTask(name: "Daily review", projectID: project.id, prompt: "Review the open changes",
             recurrence: TaskRecurrence(kind: .daily, timeZoneID: "UTC", hour: 9, minute: 15))
-        let editor = ScheduledTaskEditor(task: task, projects: [project])
+        let editor = ScheduledTaskEditor(task: task, isNew: false, store: store)
         let prompt = try #require(descendants(editor.view).compactMap { $0 as? NSTextView }.first)
         let save = try #require(descendants(editor.view).compactMap { $0 as? NSButton }.first { $0.title == "Save" })
         var attempted: ScheduledTask?
@@ -169,11 +169,101 @@ import Testing
     }
 
     @Test func nextRunShowsTheSchedulesZoneAndFailedPausedStateIsVisible() {
+        // A zone other than the Mac's, whose name the time then carries.
+        let zone = TimeZone.current.identifier == "Asia/Kolkata" ? "Europe/Paris" : "Asia/Kolkata"
         var task = ScheduledTask(name: "Review", projectID: UUID(), prompt: "Review",
-            recurrence: TaskRecurrence(timeZoneID: "Asia/Kolkata"))
+            recurrence: TaskRecurrence(timeZoneID: zone))
         task.isPaused = true; task.lastOutcome = .failed
-        #expect(ScheduledTasksViewController.state(task) == "Failed · Paused")
-        #expect(ScheduledTasksViewController.date(Date(), task: task).contains("Asia/Kolkata"))
+        #expect(SchedulePresentation.status(task, isRunning: false)?.label == "Failed · Paused")
+        #expect(SchedulePresentation.fullTime(Date(), zoneID: task.recurrence.timeZoneID).contains(zone))
+        #expect(!SchedulePresentation.fullTime(Date(), zoneID: TimeZone.current.identifier).contains("("))
+    }
+
+    /// A thread schedule sends its prompt into its own thread, marked with its name, with the thread's own agent,
+    /// model and access. While the thread is busy (here, a subagent outlasting the turn) the next run waits, then goes.
+    @Test func threadSchedulesSendIntoTheirThreadAndWaitWhileItIsBusy() async throws {
+        let directory = TemporaryDirectory("scheduled-thread")
+        let store = AppStore(directory: directory.url)
+        store.updateSettings {
+            $0.checkpointsEnabled = false
+            $0.generatesThreadTitles = false
+            $0.defaultSelection = ModelSelection(provider: .codex, modelID: "scheduled-test")
+        }
+        let provider = ScheduledTestProvider()
+        let registry = ProviderRegistry(store: store, providers: [provider])
+        await registry.refresh()
+        let runner = ThreadRunner(store: store, registry: registry)
+        let project = store.addProject(at: directory.url)
+        let thread = store.createThread(in: project.id)
+        store.updateThread(thread.id) { $0.accessMode = .approval }
+        let first = ISO8601DateFormatter().date(from: "2026-10-28T09:00:00Z")!
+        var now = first.addingTimeInterval(-3600)
+        let service = ScheduledTasks(store: store, registry: registry, runner: runner, now: { now })
+        let task = ScheduledTask(name: "Standup", projectID: project.id, prompt: "Post the standup",
+            recurrence: TaskRecurrence(kind: .daily, timeZoneID: "UTC", hour: 9), threadID: thread.id, now: now)
+        try service.scheduler.save(task)
+        service.start()
+        defer { service.stop(); runner.shutdownAll(); store.flush() }
+
+        now = first
+        service.scheduler.tick()
+        try await waitUntil { store.thread(thread.id)?.items.contains { $0.kind == .user } == true && !runner.isRunning(thread.id) }
+        let message = try #require(store.thread(thread.id)?.items.first { $0.kind == .user })
+        #expect(message.text == "Post the standup")
+        #expect(message.schedule == TranscriptItem.ScheduleMark(id: task.id, name: "Standup"))
+        #expect(store.threads(in: project.id).count == 1)
+        #expect(store.thread(thread.id)?.accessMode == .approval)
+        #expect(service.schedules.task(task.id)?.lastThreadID == thread.id)
+        #expect(service.threadState(thread.id) == .busy)
+
+        now = first.addingTimeInterval(86_400)
+        service.scheduler.tick()
+        #expect(service.schedules.task(task.id)?.pendingDelivery != nil)
+        #expect(store.thread(thread.id)?.items.filter { $0.kind == .user }.count == 1)
+        try #require(provider.sessions.first).finishBackgroundWork()
+        #expect(service.threadState(thread.id) == .ready)
+        service.scheduler.tick()
+        try await waitUntil { store.thread(thread.id)?.items.filter { $0.kind == .user }.count == 2 }
+        #expect(service.schedules.task(task.id)?.pendingDelivery == nil)
+
+        // Archiving the thread pauses the schedule, and unarchiving resumes it.
+        store.updateThread(thread.id) { $0.isArchived = true }
+        store.notify(.threadList)
+        #expect(service.schedules.task(task.id)?.pauseReason == .threadArchived)
+        store.updateThread(thread.id) { $0.isArchived = false }
+        store.notify(.threadList)
+        #expect(service.schedules.task(task.id)?.isActive == true)
+    }
+
+    /// A thread schedule's editor names its thread, previews a valid cron expression's next runs and refuses to save
+    /// one that runs too often.
+    @Test func theEditorPreviewsCronAndNamesTheThread() throws {
+        let directory = TemporaryDirectory("schedule-editor-thread")
+        let store = AppStore(directory: directory.url)
+        let project = store.addProject(at: directory.url)
+        let thread = store.createThread(in: project.id)
+        store.updateThread(thread.id) { $0.title = "Release prep" }
+        let task = ScheduledTask(name: "Weekday check", projectID: project.id, prompt: "Check CI",
+            recurrence: TaskRecurrence(kind: .cron, timeZoneID: "UTC", cron: "0 9 * * 1-5"), threadID: thread.id)
+        let editor = ScheduledTaskEditor(task: task, isNew: false, store: store)
+        let labels = descendants(editor.view).compactMap { $0 as? NSTextField }
+        #expect(labels.contains { $0.stringValue.contains("Release prep") })
+        let preview = try #require(labels.first { $0.accessibilityLabel() == "Next runs" })
+        #expect(preview.stringValue.contains("Custom schedule: 0 9 * * 1-5"))
+        let save = try #require(descendants(editor.view).compactMap { $0 as? NSButton }.first { $0.title == "Save" })
+        #expect(save.isEnabled)
+        let cron = try #require(labels.first { $0.accessibilityLabel() == "Cron expression" })
+        cron.stringValue = "* * * * *"
+        NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: cron)
+        editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: cron))
+        #expect(preview.stringValue == "Runs must be at least 5 minutes apart.")
+        #expect(!save.isEnabled)
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        try #require(condition())
     }
     private func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
 }

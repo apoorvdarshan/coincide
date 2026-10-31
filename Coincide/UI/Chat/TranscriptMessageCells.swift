@@ -19,7 +19,8 @@ extension UserMessageSide {
 
 /// The user's message: a quiet card with image thumbnails, pills for the context attached to it (quotes, terminal
 /// output, diff comments, files), long text folded behind "Show full message", and T3's "Edit from here" and copy
-/// actions that appear on hover. A message steered into a running turn carries T3's "Steer" mark above the card.
+/// actions that appear on hover. A message steered into a running turn carries T3's "Steer" mark above the card, and one a
+/// schedule sent carries "Scheduled · name" there.
 ///
 /// The card hugs its content and, by default, sits on the right across from the agents' replies, as in a chat app
 /// (Settings › General › Your messages); the actions and the "Steer" mark line up with the card's outer edge. On the
@@ -129,13 +130,23 @@ final class TranscriptUserCell: TranscriptCell {
         timeLabel.toolTip = TranscriptFormat.fullTimestamp(item.createdAt)
         // As in T3, the conversation cannot be rewound while a turn runs.
         rewindButton.isEnabled = !host.isThreadRunning
-        steerIcon.isHidden = !item.isSteered
-        steerLabel.isHidden = !item.isSteered
-        if item.isSteered {
-            steerIcon.image = Theme.symbol("arrow.uturn.forward", size: Theme.fontSize - 3, weight: .medium)
+        let hasMark = Self.hasMark(item)
+        steerIcon.isHidden = !hasMark
+        steerLabel.isHidden = !hasMark
+        if let schedule = item.schedule {
+            steerIcon.image = Theme.symbol("clock", size: Theme.fontSize - 3, weight: .medium)
+            steerLabel.stringValue = String(localized: "Scheduled · \(schedule.name)")
             steerLabel.font = .systemFont(ofSize: Theme.fontSize - 2)
+            for view in [steerIcon, steerLabel] as [NSView] { view.toolTip = String(localized: "Sent by the schedule “\(schedule.name)”") }
+        } else if item.isSteered {
+            steerIcon.image = Theme.symbol("arrow.uturn.forward", size: Theme.fontSize - 3, weight: .medium)
+            steerLabel.stringValue = String(localized: "Steer")
+            steerLabel.font = .systemFont(ofSize: Theme.fontSize - 2)
+            for view in [steerIcon, steerLabel] as [NSView] { view.toolTip = String(localized: "Steered the active turn") }
         }
-        setAccessibilityLabel(item.isSteered ? String(localized: "You, steered the active turn") : String(localized: "You"))
+        setAccessibilityLabel(
+            item.schedule.map { String(localized: "You, sent by the schedule “\($0.name)”") }
+                ?? (item.isSteered ? String(localized: "You, steered the active turn") : String(localized: "You")))
         updateActionsVisibility(animated: false)
     }
 
@@ -198,8 +209,11 @@ final class TranscriptUserCell: TranscriptCell {
         }
     }
 
+    /// Whether the card has a mark over it: "Steer", or the schedule that sent it.
+    static func hasMark(_ item: TranscriptItem) -> Bool { item.isSteered || item.schedule != nil }
+
     private static func steerMarkSpace(_ item: TranscriptItem) -> CGFloat {
-        item.isSteered ? steerMarkHeight + steerMarkGap : 0
+        hasMark(item) ? steerMarkHeight + steerMarkGap : 0
     }
 
     static func shouldCollapse(_ text: String) -> Bool {
@@ -269,7 +283,7 @@ final class TranscriptUserCell: TranscriptCell {
         let x = isOnRight ? column.x + column.width - bubbleWidth : column.x
         let bubble = NSRect(x: x, y: top, width: bubbleWidth, height: y + padding)
         let actionsY = bubble.maxY + 4
-        let steerMark = item.isSteered ? NSRect(x: column.x, y: 0, width: column.width, height: steerMarkHeight) : nil
+        let steerMark = hasMark(item) ? NSRect(x: column.x, y: 0, width: column.width, height: steerMarkHeight) : nil
         return Layout(
             steerMark: steerMark, bubble: bubble, thumbnails: thumbnails, pills: pills, text: text, toggle: toggle,
             actionsY: actionsY, height: actionsY + 20 + bottomSpacing(for: row) - 12, isCollapsed: isCollapsed,
@@ -330,7 +344,9 @@ final class TranscriptUserCell: TranscriptCell {
             // Over the card, at its outer edge: the icon, then the label.
             let iconSize: CGFloat = 12
             steerLabel.sizeToFit()
-            let labelSize = NSSize(width: ceil(steerLabel.frame.width), height: ceil(steerLabel.frame.height))
+            steerLabel.lineBreakMode = .byTruncatingTail
+            // A long schedule name is cut short within the column.
+            let labelSize = NSSize(width: min(ceil(steerLabel.frame.width), max(mark.width - 20, 0)), height: ceil(steerLabel.frame.height))
             let origins = Self.rowOrigins(
                 widths: [iconSize, labelSize.width], gaps: [3],
                 edge: layout.isOnRight ? layout.bubble.maxX - 2 : layout.bubble.minX + 2,

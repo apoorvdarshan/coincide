@@ -1,21 +1,24 @@
 import AppKit
 import CoincideKit
 
-/// The rows above the projects: start a thread, and search the threads. Both are plain rows that light up on hover,
-/// in the place of a toolbar button and a bordered search field.
+/// The rows above the projects: start a thread, search the threads, and every schedule. They are plain rows that light
+/// up on hover, in the place of toolbar buttons and a bordered search field.
 final class SidebarHeaderView: NSView {
     static let rowHeight: CGFloat = 32
 
     let searchField = NSSearchField()
     private let newThreadRow: SidebarActionRow
     private let searchRow = SidebarSearchRow()
+    /// Opens the Scheduled panel; lit while it shows, with how many schedules are active.
+    let schedulesRow: SidebarActionRow
 
-    init(onNewThread: @escaping () -> Void) {
+    init(onNewThread: @escaping () -> Void, onSchedules: @escaping () -> Void = {}) {
         newThreadRow = SidebarActionRow(
             symbol: "square.and.pencil", title: String(localized: "New Thread"), action: onNewThread)
+        schedulesRow = SidebarActionRow(symbol: "clock", title: String(localized: "Scheduled"), action: onSchedules)
         super.init(frame: .zero)
         searchRow.field = searchField
-        let stack = NSStackView(views: [newThreadRow, searchRow])
+        let stack = NSStackView(views: [newThreadRow, searchRow, schedulesRow])
         stack.orientation = .vertical
         stack.spacing = 1
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -27,8 +30,10 @@ final class SidebarHeaderView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             newThreadRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             searchRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            schedulesRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             newThreadRow.heightAnchor.constraint(equalToConstant: Self.rowHeight),
             searchRow.heightAnchor.constraint(equalToConstant: Self.rowHeight),
+            schedulesRow.heightAnchor.constraint(equalToConstant: Self.rowHeight),
         ])
     }
 
@@ -40,12 +45,31 @@ final class SidebarHeaderView: NSView {
     func setNewThreadShortcut(_ keys: String?) {
         newThreadRow.shortcut = keys
     }
+
+    /// The Scheduled row's shortcut, its count of active schedules and whether the panel shows.
+    func setSchedules(shortcut: String?, active: Int, isOpen: Bool) {
+        schedulesRow.shortcut = shortcut
+        schedulesRow.count = active > 0 ? "\(active)" : nil
+        schedulesRow.isActive = isOpen
+    }
 }
 
-/// A sidebar row that runs an action: a symbol, a title and, on hover, its shortcut.
+/// A sidebar row that runs an action: a symbol, a title and, on hover, its shortcut. A count, such as the active
+/// schedules', shows in the shortcut's place until the pointer is over the row.
 final class SidebarActionRow: NSControl, PointerCursorControl {
     var shortcut: String? {
-        didSet { shortcutLabel.stringValue = shortcut ?? "" }
+        didSet { update() }
+    }
+    var count: String? {
+        didSet { update() }
+    }
+    /// Lit like a selected row while what it opens shows.
+    var isActive = false {
+        didSet {
+            guard isActive != oldValue else { return }
+            setAccessibilitySelected(isActive)
+            needsDisplay = true
+        }
     }
 
     private let icon = NSImageView()
@@ -129,13 +153,16 @@ final class SidebarActionRow: NSControl, PointerCursorControl {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        let fill: NSColor? = isPressed ? Theme.sidebarSelection : isHovered ? Theme.sidebarHover : nil
+        let fill: NSColor? = isPressed || isActive ? Theme.sidebarSelection : isHovered ? Theme.sidebarHover : nil
         layer?.backgroundColor = fill?.cgColor
     }
 
     private func update() {
         needsDisplay = true
-        shortcutLabel.alphaValue = isHovered ? 1 : 0
+        let showsCount = !isHovered || shortcut == nil
+        shortcutLabel.stringValue = (showsCount ? count : shortcut) ?? ""
+        shortcutLabel.alphaValue = isHovered || (showsCount && count != nil) ? 1 : 0
+        shortcutLabel.font = showsCount && count != nil ? .monospacedDigitSystemFont(ofSize: 12, weight: .regular) : .systemFont(ofSize: 12)
     }
 }
 

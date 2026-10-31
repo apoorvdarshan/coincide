@@ -491,15 +491,30 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
     /// True for a message the user sent into a running turn (T3 Code's steer), which belongs to that turn rather
     /// than opening one of its own. Nil for everything else, so other items are written as before.
     public var steered: Bool?
+    /// The schedule that sent this message of the user's into the thread (`ScheduledTask`), shown as
+    /// "Scheduled · name" over it. Nil for everything else.
+    public var schedule: ScheduleMark?
     public var createdAt: Date
     public var completedAt: Date?
+
+    /// Which schedule sent a message.
+    public struct ScheduleMark: Codable, Hashable, Sendable {
+        public var id: UUID
+        public var name: String
+
+        public nonisolated init(id: UUID, name: String) {
+            self.id = id
+            self.name = name
+        }
+    }
 
     public nonisolated init(
         id: UUID = UUID(), kind: Kind, text: String = "", title: String? = nil, detail: String? = nil,
         category: ToolCategory? = nil, status: ItemStatus? = nil, provider: ProviderKind? = nil,
         modelID: String? = nil, externalID: String? = nil, approval: ApprovalInfo? = nil,
         questions: UserInputRequest? = nil, answers: [String: [String]]? = nil, attachments: [String]? = nil,
-        context: [MessageContext]? = nil, steered: Bool? = nil, createdAt: Date = Date(), completedAt: Date? = nil
+        context: [MessageContext]? = nil, steered: Bool? = nil, schedule: ScheduleMark? = nil, createdAt: Date = Date(),
+        completedAt: Date? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -517,6 +532,7 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
         self.attachments = attachments
         self.context = context
         self.steered = steered
+        self.schedule = schedule
         self.createdAt = createdAt
         self.completedAt = completedAt
     }
@@ -551,6 +567,7 @@ public struct TranscriptItem: Codable, Hashable, Sendable, Identifiable {
             container.contains(.context) && (try? container.decodeNil(forKey: .context)) != true
             ? container.lenientArray(MessageContext.self, forKey: .context) : nil
         steered = container.lenient(Bool.self, forKey: .steered)
+        schedule = container.lenient(ScheduleMark.self, forKey: .schedule)
         createdAt = container.lenient(Date.self, forKey: .createdAt) ?? .distantPast
         completedAt = container.lenient(Date.self, forKey: .completedAt)
     }

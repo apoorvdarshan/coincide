@@ -116,6 +116,7 @@ struct MainMenuTests {
             // ⌘W archives the open thread; the window closes with ⌘⇧W, and deleting has no shortcut.
             "Thread › Archive Thread": "⌘W", "Thread › Delete Thread…": "", "File › Close Window": "⇧⌘W",
             "View › Archived Threads…": "⌥⌘A", "Coincide › Quit Coincide": "⌘Q",
+            "View › Show Scheduled Tasks": "⌥⌘S", "Thread › Schedule…": "",
         ]
         for (title, keys) in expected {
             #expect(byTitle[title] == keys, "\(title)")

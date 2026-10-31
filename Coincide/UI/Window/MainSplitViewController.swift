@@ -18,7 +18,9 @@ final class MainSplitViewController: NSSplitViewController {
     let diff = DiffViewController()
     let pullRequests = PullRequestsViewController()
     let preview = PreviewViewController()
-    private(set) lazy var inspector = InspectorViewController(diff: diff, pullRequests: pullRequests, preview: preview)
+    let schedules = SchedulesPanelController()
+    private(set) lazy var inspector = InspectorViewController(
+        diff: diff, pullRequests: pullRequests, preview: preview, schedules: schedules)
     let dividerHandle = InspectorDividerHandle()
 
     private let state: UIState
@@ -40,6 +42,7 @@ final class MainSplitViewController: NSSplitViewController {
     var isDiffOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .diff }
     var isPullRequestsOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .pullRequests }
     var isPreviewOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .preview }
+    var isSchedulesOpen: Bool { !inspectorItem.isCollapsed && inspector.panel == .schedules }
     /// Where the terminal opens: in the drawer below the chat or in the inspector.
     private(set) var terminalPlacement: TerminalPlacement
     /// Whether the terminal shows, wherever it is.
@@ -187,6 +190,18 @@ final class MainSplitViewController: NSSplitViewController {
         toggleInspector(.pullRequests)
     }
 
+    /// Opens or closes the Scheduled panel, which stays open across threads.
+    func toggleSchedulesPanel() {
+        toggleInspector(.schedules)
+        guard isSchedulesOpen else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isSchedulesOpen else { return }
+            self.schedules.focusSearch()
+        }
+    }
+
+    func showSchedulesPanel() { showInspector(.schedules) }
+
     /// Opens or closes the terminal: its drawer below the chat, or its panel in the inspector, which another panel's
     /// button switches away from like a tab. Opening it focuses its terminal, so typing and ⌘T or ⌘W reach it at once.
     func toggleTerminalPanel() {
@@ -263,7 +278,8 @@ final class MainSplitViewController: NSSplitViewController {
     /// Remembers the open thread's panel (nil: closed) after the user, or an agent in front of them, opens, closes or
     /// switches the inspector, so the column comes back that way with the thread (`followThread`).
     private func notePanel(_ panel: UIState.InspectorPanel?) {
-        guard let threadID else { return }
+        // The window-wide panel isn't a thread's: showing or closing it leaves what the thread remembers.
+        guard let threadID, panel?.isWindowWide != true, !(panel == nil && inspector.panel.isWindowWide) else { return }
         let key = threadID.uuidString
         guard state.values.threadPanels[key] != panel else { return }
         state.update { $0.threadPanels[key] = panel }
@@ -429,6 +445,7 @@ final class MainSplitViewController: NSSplitViewController {
         diff.threadID = threadID
         pullRequests.threadID = threadID
         preview.threadID = threadID
+        schedules.threadID = threadID
         if isViewLoaded { followThread() }
     }
 }
@@ -438,7 +455,10 @@ final class MainSplitViewController: NSSplitViewController {
 /// toolbar's buttons (`InspectorPanelButtons`) choose. A panel not showing is out of the window, so it loads nothing
 /// until it shows again; the terminal's shells keep running meanwhile, as they do in a closed drawer.
 final class InspectorViewController: NSTabViewController {
-    init(diff: DiffViewController, pullRequests: PullRequestsViewController, preview: PreviewViewController = PreviewViewController()) {
+    init(
+        diff: DiffViewController, pullRequests: PullRequestsViewController, preview: PreviewViewController = PreviewViewController(),
+        schedules: SchedulesPanelController = SchedulesPanelController()
+    ) {
         super.init(nibName: nil, bundle: nil)
         tabStyle = .unspecified
         transitionOptions = []
@@ -446,6 +466,7 @@ final class InspectorViewController: NSTabViewController {
         addTabViewItem(NSTabViewItem(viewController: diff))
         addTabViewItem(NSTabViewItem(viewController: pullRequests))
         addTabViewItem(NSTabViewItem(viewController: preview))
+        addTabViewItem(NSTabViewItem(viewController: schedules))
         // The terminal's panel is added only with the terminal (`attachTerminal`).
         selectedTabViewItemIndex = panels.firstIndex(of: UIState.shared.values.inspectorPanel) ?? 0
     }
@@ -454,7 +475,7 @@ final class InspectorViewController: NSTabViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     /// The panels in tab order.
-    private(set) var panels: [UIState.InspectorPanel] = [.diff, .pullRequests, .preview]
+    private(set) var panels: [UIState.InspectorPanel] = [.diff, .pullRequests, .preview, .schedules]
     var panel: UIState.InspectorPanel { panels[selectedTabViewItemIndex] }
     var hasTerminal: Bool { panels.contains(.terminal) }
 

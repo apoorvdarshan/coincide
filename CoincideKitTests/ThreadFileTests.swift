@@ -220,7 +220,7 @@ struct ThreadFileTests {
                 MessageContext(
                     .diffComment(.init(path: "a.swift", lineStart: 2, lineEnd: 3, isBeforeChange: false, diff: "+x", comment: "why"))),
                 MessageContext(.file(.init(path: "/tmp/spec.pdf"))),
-            ], steered: true, completedAt: Date())
+            ], steered: true, schedule: TranscriptItem.ScheduleMark(id: UUID(), name: "Standup"), completedAt: Date())
         store.append(full, to: thread.id)
         // Fields that fall back to a value when unreadable, holding that value.
         store.append(TranscriptItem(kind: .user, text: "", createdAt: .distantPast), to: thread.id)

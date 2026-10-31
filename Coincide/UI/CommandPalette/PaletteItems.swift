@@ -126,9 +126,22 @@ struct PaletteCatalog {
                     trailing: keys(.openInEditor),
                     keywords: ["open", "editor", "finder", "terminal", "reveal"], behavior: .run { window?.openInPreferred(nil) }))
         }
-        items.append(PaletteItem(id: "action:scheduled-tasks", title: String(localized: "Scheduled Tasks…"),
-            icon: symbol("clock"), keywords: ["schedule", "tasks", "automation", "daily", "weekly"],
-            behavior: .run { window?.showScheduledTasks(nil) }))
+        items.append(
+            PaletteItem(
+                id: "action:scheduled-tasks",
+                title: window?.splitController.isSchedulesOpen == true
+                    ? String(localized: "Hide Scheduled Tasks") : String(localized: "Show Scheduled Tasks"),
+                icon: symbol("clock"), trailing: keys(.showSchedules),
+                keywords: ["schedule", "scheduled", "tasks", "automation", "cron", "recurring", "daily", "weekly", "reminder"],
+                behavior: .run { window?.toggleSchedulesPanel(nil) }))
+        if let thread {
+            items.append(
+                PaletteItem(
+                    id: "action:schedule-in-thread", title: String(localized: "Schedule a Message in This Thread…"),
+                    icon: symbol("clock.badge.plus"),
+                    keywords: ["schedule", "later", "remind", "recurring", "every", "cron", "timer"],
+                    behavior: .run { ScheduleActions.newSchedule(inThread: thread.id, in: window?.window) }))
+        }
         items.append(
             PaletteItem(
                 id: "action:edit-instructions", title: String(localized: "Edit Instructions"), icon: symbol("text.book.closed"),
@@ -185,9 +198,14 @@ struct PaletteCatalog {
         let core = items
         items = []
         if let thread { items += composerActions(for: thread) + searchActions(for: thread) }
-        items.append(PaletteItem(id: "action:scheduled-tasks", title: String(localized: "Scheduled Tasks…"),
-            icon: symbol("clock"), keywords: ["schedule", "tasks", "automation", "daily", "weekly"],
-            behavior: .run { window?.showScheduledTasks(nil) }))
+        items.append(
+            PaletteItem(
+                id: "action:scheduled-tasks",
+                title: window?.splitController.isSchedulesOpen == true
+                    ? String(localized: "Hide Scheduled Tasks") : String(localized: "Show Scheduled Tasks"),
+                icon: symbol("clock"), trailing: keys(.showSchedules),
+                keywords: ["schedule", "scheduled", "tasks", "automation", "cron", "recurring", "daily", "weekly", "reminder"],
+                behavior: .run { window?.toggleSchedulesPanel(nil) }))
         if let split = window?.splitController {
             items.append(
                 PaletteItem(

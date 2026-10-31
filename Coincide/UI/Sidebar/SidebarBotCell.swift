@@ -12,6 +12,8 @@ struct BotRowModel: Equatable {
     var status: ThreadRowModel.Status
     var toolTip: String
     var accessibilityLabel: String
+    /// Its conversations' active schedules, for the clock's tooltip; nil hides the clock.
+    var schedule: String? = nil
 }
 
 /// A bot in the sidebar: its avatar, name and time on the first line, its latest message below, like a conversation
@@ -24,6 +26,7 @@ final class BotCell: HoverCellView {
     private let badge = StatusBadge()
     private let unseenDot = StatusDot()
     private let spinner = NSProgressIndicator()
+    private let clock = NSImageView()
     private var model: BotRowModel?
 
     override init(frame frameRect: NSRect) {
@@ -41,10 +44,13 @@ final class BotCell: HoverCellView {
         spinner.controlSize = .small
         spinner.isDisplayedWhenStopped = false
         unseenDot.isHidden = true
+        clock.image = Theme.symbol("clock", size: 9, weight: .semibold)
+        clock.contentTintColor = .tertiaryLabelColor
+        clock.isHidden = true
         textField = nameField
-        let accessories = NSStackView(views: [badge, unseenDot, spinner, timeField])
+        let accessories = NSStackView(views: [clock, badge, unseenDot, spinner, timeField])
         accessories.spacing = 4
-        for view: NSView in [badge, unseenDot, spinner, timeField] {
+        for view: NSView in [clock, badge, unseenDot, spinner, timeField] {
             view.setContentHuggingPriority(.required, for: .horizontal)
             view.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
@@ -83,7 +89,10 @@ final class BotCell: HoverCellView {
         previewField.stringValue = model.preview
         let unseen = model.status == .completed || model.status == .failed
         nameField.font = .systemFont(ofSize: 13, weight: unseen ? .semibold : .medium)
-        toolTip = model.toolTip
+        clock.isHidden = model.schedule == nil
+        clock.toolTip = model.schedule
+        clock.setAccessibilityLabel(model.schedule)
+        toolTip = [model.toolTip, model.schedule].compactMap(\.self).joined(separator: "\n")
         setAccessibilityLabel(model.accessibilityLabel)
         updateStatus()
         refreshTime()
@@ -126,6 +135,7 @@ final class BotCell: HoverCellView {
         nameField.textColor = emphasized ? selectedText : .labelColor
         previewField.textColor = emphasized ? selectedText.withAlphaComponent(0.8) : .secondaryLabelColor
         unseenDot.color = emphasized ? selectedText : .systemGreen
+        clock.contentTintColor = emphasized ? selectedText : .tertiaryLabelColor
         unseenDot.isHidden = !badge.isHidden || model.status != .completed
         timeField.isHidden = !badge.isHidden
         timeField.textColor = emphasized ? selectedText : model.status.isRunning ? Theme.ink : .secondaryLabelColor

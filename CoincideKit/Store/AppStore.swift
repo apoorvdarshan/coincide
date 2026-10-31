@@ -618,11 +618,13 @@ public final class AppStore {
         return thread
     }
 
-    /// Anything left running when an earlier run quit can no longer finish.
+    /// Anything left running when an earlier run quit can no longer finish. An approval Coincide asked for itself (no
+    /// provider, `ThreadRunner.localApprovals`) still can: it waits for the user across launches.
     private static func settleUnfinishedItems(of thread: inout ChatThread) {
         for index in thread.items.indices
         where thread.items[index].status == .running || thread.items[index].status == .waiting {
             let kind = thread.items[index].kind
+            if kind == .approval, thread.items[index].provider == nil, thread.items[index].approval != nil { continue }
             thread.items[index].status = kind == .approval || kind == .question ? .declined : .failed
         }
     }

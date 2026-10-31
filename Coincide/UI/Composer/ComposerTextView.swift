@@ -18,6 +18,8 @@ final class ComposerTextView: NSTextView {
     var onKeyDown: ((NSEvent) -> Bool)?
     /// Whether files or images are being dragged over the text.
     var onDragHover: ((Bool) -> Void)?
+    /// Schedules what's typed, from the text's context menu; nil leaves the item out.
+    var onSchedule: (() -> Void)?
 
     private static let mentionPattern = try? NSRegularExpression(pattern: "(?<![\\w@])@(?:\"[^\"\\n]+\"|[^\\s@\"]+)")
     /// Mentions are only tinted below this length, so pasting a huge log stays fast.
@@ -51,6 +53,20 @@ final class ComposerTextView: NSTextView {
         maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         updateDragTypeRegistration()
     }
+
+    /// The text's context menu leads with Schedule Message…, which sends what's typed later or on a schedule.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        guard onSchedule != nil else { return menu }
+        let item = NSMenuItem(title: String(localized: "Schedule Message…"), action: #selector(scheduleMessage(_:)), keyEquivalent: "")
+        item.target = self
+        item.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
+        menu.insertItem(item, at: 0)
+        menu.insertItem(.separator(), at: 1)
+        return menu
+    }
+
+    @objc private func scheduleMessage(_ sender: Any?) { onSchedule?() }
 
     /// Replaces the whole text without registering an undo step, for loading drafts.
     func setText(_ text: String) {

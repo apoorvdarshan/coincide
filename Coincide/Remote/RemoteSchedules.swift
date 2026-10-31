@@ -29,18 +29,20 @@ extension RemoteStoreAdapter {
                 kind: RemoteTaskRecurrence.Kind(rawValue: recurrence.kind.rawValue) ?? .unknown, timeZoneID: recurrence.timeZoneID,
                 date: recurrence.date, hour: recurrence.hour, minute: recurrence.minute, weekday: recurrence.weekday),
             isPaused: task.isPaused, state: state,
-            stateText: isRunning ? String(localized: "Running") : ScheduledTasksViewController.state(task),
-            scheduleText: recurrence.kind.title, nextRunAt: task.nextRunAt, lastRunAt: task.lastRunAt, lastMessage: task.lastMessage,
+            stateText: SchedulePresentation.status(task, isRunning: isRunning)?.label ?? String(localized: "Scheduled"),
+            scheduleText: recurrence.summary, nextRunAt: task.nextRunAt, lastRunAt: task.lastRunAt, lastMessage: task.lastMessage,
             lastThreadID: task.lastThreadID.flatMap { store.summary($0) == nil ? nil : $0 },
             canRunNow: !isRunning && store.project(task.projectID) != nil)
     }
 
     /// Creates or edits a task as the Mac's editor saves it; a run in progress keeps going.
     func saveScheduledTask(_ draft: RemoteScheduledTaskDraft) throws -> RemoteScheduledTasks {
-        guard let project = store.project(draft.projectID), !project.isChats, !project.isBots else {
+        let existing = draft.id.flatMap { id in schedules.schedules.tasks.first { $0.id == id } }
+        // A thread schedule stays with its thread, a chat's or a bot's included; a project task needs a project.
+        let projectID = existing?.threadID != nil ? existing!.projectID : draft.projectID
+        guard let project = store.project(projectID), existing?.threadID != nil || (!project.isChats && !project.isBots) else {
             throw RemoteError(.notFound, String(localized: "The scheduled task's project is no longer available."))
         }
-        let existing = draft.id.flatMap { id in schedules.schedules.tasks.first { $0.id == id } }
         if draft.id != nil, existing == nil {
             throw RemoteError(.notFound, String(localized: "That scheduled task no longer exists."))
         }
@@ -49,8 +51,12 @@ extension RemoteStoreAdapter {
             guard let kind = TaskRecurrence.Kind(rawValue: sent.kind.rawValue) else {
                 throw RemoteError(.badRequest, String(localized: "This Mac doesn’t know that schedule."))
             }
-            recurrence = TaskRecurrence(
-                kind: kind, timeZoneID: sent.timeZoneID, date: sent.date, hour: sent.hour, minute: sent.minute, weekday: sent.weekday)
+            // The phone sends the fields every kind shares; a kind's own (its days, interval or cron expression) stay as
+            // the Mac has them.
+            var merged = existing?.recurrence.kind == kind ? existing!.recurrence : TaskRecurrence(kind: kind)
+            merged.timeZoneID = sent.timeZoneID; merged.date = sent.date; merged.hour = sent.hour
+            merged.minute = sent.minute; merged.weekday = sent.weekday
+            recurrence = merged
         } else if let existing {
             recurrence = existing.recurrence
         } else {
@@ -84,7 +90,7 @@ extension RemoteStoreAdapter {
             case .runNow:
                 guard task.activeThreadID == nil, !schedules.hasActiveWork(task) else { throw ScheduleError.alreadyRunning }
                 try schedules.scheduler.runNow(task.id)
-            case .delete: try schedules.schedules.delete(task.id)
+            case .delete: try schedules.delete(task.id)
             case .unknown: throw RemoteError(.unsupported, String(localized: "This Mac doesn’t know that action."))
             }
         } catch let error as RemoteError {

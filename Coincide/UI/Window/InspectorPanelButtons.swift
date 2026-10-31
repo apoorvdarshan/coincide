@@ -13,6 +13,9 @@ import CoincideKit
 final class InspectorPanelButtons: NSView {
     static let buttonWidth: CGFloat = 30
 
+    /// The open thread's schedules: a clock with the next run ("9:00"), shown while the thread has any. It opens their
+    /// popup (`ThreadSchedulesPopup`) rather than a panel.
+    let scheduleButton = ComposerControlButton()
     let diffButton: ComposerControlButton
     let pullRequestsButton: ComposerControlButton
     let previewButton: ComposerControlButton
@@ -66,8 +69,10 @@ final class InspectorPanelButtons: NSView {
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.cornerCurve = .continuous
+        scheduleButton.isHidden = true
+        scheduleButton.setAccessibilityLabel(String(localized: "Scheduled Tasks"))
         // The stack detaches the hidden terminal button, so the pill is only as wide as the buttons it shows.
-        let stack = NSStackView(views: entries.map(\.0))
+        let stack = NSStackView(views: [scheduleButton] + entries.map(\.0))
         stack.orientation = .horizontal
         stack.spacing = 0
         stack.edgeInsets = NSEdgeInsets(top: 1, left: 1, bottom: 1, right: 1)
@@ -96,10 +101,22 @@ final class InspectorPanelButtons: NSView {
     }
 
     /// The buttons the pill shows, in order.
-    var shownButtons: [ComposerControlButton] { entries.map(\.0).filter { !$0.isHidden } }
+    var shownButtons: [ComposerControlButton] { ([scheduleButton] + entries.map(\.0)).filter { !$0.isHidden } }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: Self.buttonWidth * CGFloat(shownButtons.count) + 2, height: 28)
+        let panels = entries.map(\.0).filter { !$0.isHidden }.count
+        let schedule = scheduleButton.isHidden ? 0 : scheduleButton.intrinsicContentSize.width
+        return NSSize(width: Self.buttonWidth * CGFloat(panels) + schedule + 2, height: 28)
+    }
+
+    /// Shows the clock for a thread with schedules, titled with its next run, or hides it.
+    func showSchedules(nextRun: String?, toolTip: String?, visible: Bool) {
+        let changed = scheduleButton.isHidden == visible
+        scheduleButton.isHidden = !visible
+        scheduleButton.configure(title: nextRun ?? "", symbolName: "clock", chevron: false)
+        scheduleButton.toolTip = toolTip
+        scheduleButton.setAccessibilityValue(toolTip)
+        if changed || visible { invalidateIntrinsicContentSize() }
     }
 
     override var wantsUpdateLayer: Bool { true }

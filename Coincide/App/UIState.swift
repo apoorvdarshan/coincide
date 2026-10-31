@@ -17,6 +17,9 @@ final class UIState {
     /// What the inspector column at the window's right shows. The terminal is one of them only while Settings › General
     /// puts it on the right (`TerminalPlacement.right`).
     enum InspectorPanel: String, Codable {
+        /// Every schedule (`SchedulesPanelController`). Unlike the others it belongs to the window, not a thread: it
+        /// stays while the window opens other threads (`InspectorFollow`).
+        case schedules
         case diff
         case pullRequests
         case preview
