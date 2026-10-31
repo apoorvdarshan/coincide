@@ -10,6 +10,17 @@ struct ComputerUseSettingsTests {
         #expect(settings.fontSize == 16)
     }
 
+    @Test(arguments: ["null", "3", #""false""#, "[]", "{}"])
+    func theAgentCursorShowsUnlessTurnedOff(value: String) throws {
+        #expect(AppSettings().computerUseShowsAgentCursor)
+        let unreadable = try JSONDecoder().decode(
+            AppSettings.self, from: Data(#"{"computerUseShowsAgentCursor":\#(value),"fontSize":16}"#.utf8))
+        #expect(unreadable.computerUseShowsAgentCursor)
+        #expect(unreadable.fontSize == 16)
+        let off = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"computerUseShowsAgentCursor":false}"#.utf8))
+        #expect(!off.computerUseShowsAgentCursor)
+    }
+
     @Test(arguments: ["null", "3", #""true""#, "[]", "{}"])
     func unreadableComputerUseDoesNotEnableAccessOrLoseOtherSettings(value: String) throws {
         let data = Data(#"{"computerUseEnabled":\#(value),"fontSize":16,"commandLineControl":false}"#.utf8)

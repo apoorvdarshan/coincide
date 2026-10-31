@@ -37,7 +37,9 @@ struct FakeComputerUseDriver {
                 peer.close()
                 record('proxy', socket=path)
                 tools = [dict(name=name, inputSchema=dict(type='object', properties=dict(session=dict(type='string'))))
-                         for name in ['start_session', 'end_session', 'list_windows', 'get_window_state', 'click']]
+                         for name in ['start_session', 'end_session', 'list_windows', 'get_window_state', 'click',
+                                      'set_agent_cursor_enabled', 'get_agent_cursor_state']]
+                position = None
                 for line in sys.stdin:
                     message = json.loads(line)
                     if 'id' not in message:
@@ -56,7 +58,12 @@ struct FakeComputerUseDriver {
                             continue
                         if arguments.get('query') == 'exit':
                             sys.exit(7)
-                        result = dict(structuredContent=dict(name=name, session=arguments.get('session'), proxyPID=os.getpid()))
+                        if name == 'get_agent_cursor_state':
+                            result = dict(structuredContent=dict(session=arguments.get('session'), position=position))
+                        else:
+                            if 'x' in arguments and 'y' in arguments:
+                                position = dict(x=arguments['x'], y=arguments['y'])
+                            result = dict(structuredContent=dict(name=name, session=arguments.get('session'), proxyPID=os.getpid()))
                     print(json.dumps(dict(jsonrpc='2.0', id=message['id'], result=result)), flush=True)
             """#)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
@@ -120,6 +127,24 @@ struct ComputerUseRuntimeTests {
         let stillWorking = try await runtime.call(threadID: b, name: "list_windows", arguments: [:])
         #expect(stillWorking.at("structuredContent.proxyPID") == second.at("structuredContent.proxyPID"))
         try await helper.waitFor { $0.contains { $0["name"]?.string == "end_session" } }
+    }
+
+    @Test func coincideHidesTheDriversMainDisplayCursorAndReadsItsPosition() async throws {
+        let helper = try FakeComputerUseDriver()
+        let runtime = ComputerUseRuntime(executable: helper.executable)
+        defer { runtime.stop() }
+        let id = UUID()
+        let session = "coincide-" + id.uuidString.lowercased()
+        _ = try await runtime.toolCatalog(threadID: id)
+        let hidden = try #require(helper.events.first { $0["name"]?.string == "set_agent_cursor_enabled" })
+        #expect(hidden.at("arguments.enabled")?.bool == false)
+        #expect(hidden.at("arguments.session")?.string == session)
+        #expect(await runtime.cursorPosition(threadID: id) == nil)
+        _ = try await runtime.call(threadID: id, name: "click", arguments: ["pid": 1, "x": 733, "y": -540])
+        #expect(await runtime.cursorPosition(threadID: id) == CGPoint(x: 733, y: -540))
+        #expect(await runtime.cursorPosition(threadID: UUID()) == nil)
+        runtime.stop()
+        #expect(await runtime.cursorPosition(threadID: id) == nil)
     }
 
     @Test func agentSessionAndTransportOverridesAreRejectedBeforeStarting() async throws {

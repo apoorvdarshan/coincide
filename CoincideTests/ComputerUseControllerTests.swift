@@ -3,12 +3,23 @@ import Foundation
 import Testing
 @testable import Coincide
 
+/// Records where the controller would draw the agent cursor, instead of opening overlay windows.
+@MainActor
+final class RecordingAgentCursor: AgentCursorPresenting {
+    private(set) var moves: [(point: CGPoint, pressed: Bool)] = []
+    private(set) var hides = 0
+
+    func move(to point: CGPoint, pressed: Bool) { moves.append((point, pressed)) }
+    func hide() { hides += 1 }
+}
+
 /// The controller's switch, desktop lease and agent-facing shapes, against the fake helper. Nothing here opens a
 /// window, captures the screen or asks macOS for a permission.
 @MainActor
 struct ComputerUseControllerTests {
     private let folder = TemporaryDirectory("computer-use-controller")
     private let driver: FakeComputerUseDriver
+    private let cursor = RecordingAgentCursor()
     private let controller: ComputerUseController
 
     init() throws {
@@ -16,7 +27,7 @@ struct ComputerUseControllerTests {
         let bridge = ComputerUseBridge(directory: folder.url.appendingPathComponent("bridge", isDirectory: true))
         controller = ComputerUseController(
             store: AppStore(directory: try folder.folder("data")), bridge: bridge,
-            runtime: ComputerUseRuntime(executable: driver.executable, requestTimeout: 5))
+            runtime: ComputerUseRuntime(executable: driver.executable, requestTimeout: 5), cursor: cursor)
         controller.accessibilityCheck = { true }
         controller.screenRecordingCheck = { false }
     }
@@ -85,6 +96,33 @@ struct ComputerUseControllerTests {
         #expect(controller.desktopOwner == nil)
         _ = try await call("click", in: b, ["pid": 1, "element_token": "y"])
         #expect(controller.desktopOwner == b)
+    }
+
+    @Test func theCursorFollowsActionsButNotReadsAndHidesWhenOff() async throws {
+        defer { controller.shutdown() }
+        controller.enabled = true
+        let id = UUID()
+        try await controller.enableAccess(for: id)
+        _ = try await call("list_windows", in: id)
+        #expect(cursor.moves.isEmpty)
+        _ = try await call("click", in: id, ["pid": 1, "x": 733, "y": -540])
+        #expect(cursor.moves.count == 1)
+        #expect(cursor.moves.last?.point == CGPoint(x: 733, y: -540))
+        #expect(cursor.moves.last?.pressed == true)
+
+        let hides = cursor.hides
+        controller.showsAgentCursor = false
+        #expect(!controller.showsAgentCursor)
+        #expect(cursor.hides > hides)
+        _ = try await call("click", in: id, ["pid": 1, "x": 10, "y": 10])
+        #expect(cursor.moves.count == 1)
+
+        controller.showsAgentCursor = true
+        _ = try await call("click", in: id, ["pid": 1, "x": 20, "y": 30])
+        #expect(cursor.moves.last?.point == CGPoint(x: 20, y: 30))
+        let beforeOff = cursor.hides
+        controller.enabled = false
+        #expect(cursor.hides > beforeOff)
     }
 
     @Test func withoutAccessibilityNothingReachesTheHelper() async throws {

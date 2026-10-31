@@ -120,6 +120,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var commandLineControl: Bool
     /// Agents may view and control this Mac through Coincide's private, thread-scoped Computer Use connection.
     public var computerUseEnabled: Bool
+    /// Coincide draws the agent's cursor on whichever display it acts on (Cua Driver's own overlay covers only the main
+    /// display, trycua/cua#5336).
+    public var computerUseShowsAgentCursor: Bool
     /// ⌘Q quits only when held or pressed twice (`QuitShortcutGuard`); a single press shows a hint. Quitting from the
     /// menu, the Dock, logging out or AppleScript is never held up.
     public var holdToQuit: Bool
@@ -204,6 +207,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         confirmBeforeArchivingThreads = true
         commandLineControl = true
         computerUseEnabled = false
+        computerUseShowsAgentCursor = true
         holdToQuit = true
         opensLinksInDefaultBrowser = false
         generatesThreadTitles = true
@@ -261,6 +265,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         confirmBeforeArchivingThreads = value(.confirmBeforeArchivingThreads, defaults.confirmBeforeArchivingThreads)
         commandLineControl = value(.commandLineControl, defaults.commandLineControl)
         computerUseEnabled = value(.computerUseEnabled, defaults.computerUseEnabled)
+        computerUseShowsAgentCursor = value(.computerUseShowsAgentCursor, defaults.computerUseShowsAgentCursor)
         holdToQuit = value(.holdToQuit, defaults.holdToQuit)
         opensLinksInDefaultBrowser = value(.opensLinksInDefaultBrowser, defaults.opensLinksInDefaultBrowser)
         generatesThreadTitles = value(.generatesThreadTitles, defaults.generatesThreadTitles)

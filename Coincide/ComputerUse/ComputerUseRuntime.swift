@@ -283,7 +283,29 @@ final class ComputerUseRuntime {
                 params: ["name": "start_session", "arguments": ["session": .string(client.session)]], timeout: min(requestTimeout, 15))
             guard started["isError"]?.bool != true else { throw Failure.invalidResponse }
         }
+        // Cua Driver's own cursor covers only the main display (trycua/cua#5336); Coincide draws the session's cursor
+        // itself (`AgentCursorOverlay`). The driver keeps tracking the position, which `cursorPosition` reads.
+        if client.hasTool("set_agent_cursor_enabled") {
+            _ = try? await client.connection.request("tools/call", params: [
+                "name": "set_agent_cursor_enabled", "arguments": ["session": .string(client.session), "enabled": false],
+            ], timeout: min(requestTimeout, 15))
+        }
         client.initialized = true
+    }
+
+    /// Where the thread's agent cursor last acted, in global screen points with the origin at the top left of the main
+    /// display (Core Graphics' convention). Coincide's own request, not an agent's; nil when the helper can't say.
+    func cursorPosition(threadID: UUID) async -> CGPoint? {
+        guard isRunning, let client = clients[threadID], client.initialized, client.hasTool("get_agent_cursor_state"),
+            !client.connection.isClosed
+        else { return nil }
+        guard let state = try? await client.connection.request("tools/call", params: [
+            "name": "get_agent_cursor_state", "arguments": ["session": .string(client.session)],
+        ], timeout: min(requestTimeout, 5)), state["isError"]?.bool != true,
+            let x = state.at("structuredContent.position.x")?.number, let y = state.at("structuredContent.position.y")?.number,
+            x.isFinite, y.isFinite
+        else { return nil }
+        return CGPoint(x: x, y: y)
     }
 
     private static func environment(directory: URL) -> [String: String] {

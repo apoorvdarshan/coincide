@@ -38,9 +38,13 @@ final class ComputerUseController {
     static let desktopLease: TimeInterval = 60
     /// Screenshots kept in each thread's private folder; older ones are removed.
     static let screenshotLimit = 32
+    /// Actions that press at the cursor, shown with a pulse.
+    static let pressingTools: Set<String> = ["click", "double_click", "right_click", "drag"]
 
     @ObservationIgnored let bridge: ComputerUseBridge
     @ObservationIgnored let runtime: ComputerUseRuntime
+    /// Draws the agent cursor on whichever display it acts on; tests replace it.
+    @ObservationIgnored let cursor: AgentCursorPresenting
     @ObservationIgnored private let store: AppStore
     @ObservationIgnored private var observation: ObservationToken?
     @ObservationIgnored private var leaseExpiry: Date?
@@ -49,6 +53,7 @@ final class ComputerUseController {
     @ObservationIgnored var screenRecordingCheck: () -> Bool = { CGPreflightScreenCaptureAccess() }
 
     private(set) var isEnabled: Bool
+    private(set) var isShowingAgentCursor: Bool
     private(set) var accessibilityGranted = false
     private(set) var screenRecordingGranted = false
     private(set) var isRunning = false
@@ -58,17 +63,29 @@ final class ComputerUseController {
     /// The thread whose actions currently own the shared desktop.
     private(set) var desktopOwner: UUID?
 
-    init(store: AppStore = .shared, bridge: ComputerUseBridge = ComputerUseBridge(), runtime: ComputerUseRuntime = ComputerUseRuntime()) {
+    init(store: AppStore = .shared, bridge: ComputerUseBridge = ComputerUseBridge(), runtime: ComputerUseRuntime = ComputerUseRuntime(),
+        cursor: AgentCursorPresenting = AgentCursorOverlay())
+    {
         self.store = store
         self.bridge = bridge
         self.runtime = runtime
+        self.cursor = cursor
         isEnabled = store.settings.computerUseEnabled
+        isShowingAgentCursor = store.settings.computerUseShowsAgentCursor
     }
 
     var enabled: Bool {
         get { isEnabled }
         set {
             store.updateSettings { $0.computerUseEnabled = newValue }
+            apply()
+        }
+    }
+
+    var showsAgentCursor: Bool {
+        get { isShowingAgentCursor }
+        set {
+            store.updateSettings { $0.computerUseShowsAgentCursor = newValue }
             apply()
         }
     }
@@ -95,6 +112,7 @@ final class ComputerUseController {
             guard let self else { return }
             activeThreads.removeAll()
             releaseDesktop()
+            cursor.hide()
             lastError = String(localized: "The computer-use helper stopped unexpectedly. It restarts on the next request.")
             refresh()
         }
@@ -117,12 +135,15 @@ final class ComputerUseController {
         runtime.stop()
         activeThreads.removeAll()
         releaseDesktop()
+        cursor.hide()
     }
 
     /// Follows the saved switch: turning it off ends every thread's access at once.
     private func apply() {
         let enabled = store.settings.computerUseEnabled
         defer { refresh() }
+        isShowingAgentCursor = store.settings.computerUseShowsAgentCursor
+        if !isShowingAgentCursor { cursor.hide() }
         guard enabled != isEnabled || (enabled && !bridge.isReady) else { return }
         isEnabled = enabled
         if enabled {
@@ -135,6 +156,7 @@ final class ComputerUseController {
             runtime.stop()
             activeThreads.removeAll()
             releaseDesktop()
+            cursor.hide()
             lastError = nil
         }
     }
@@ -150,6 +172,7 @@ final class ComputerUseController {
         runtime.stop()
         activeThreads.removeAll()
         releaseDesktop()
+        cursor.hide()
         lastError = nil
         refresh()
         guard isEnabled else { return }
@@ -230,8 +253,17 @@ final class ComputerUseController {
             guard isEnabled, bridge.access(for: id) != nil else { throw ComputerUseError.unavailable }
             activeThreads.insert(id)
             if changesScreen, desktopOwner == id { leaseExpiry = Date().addingTimeInterval(Self.desktopLease) }
+            if changesScreen, isShowingAgentCursor, result["isError"]?.bool != true { await showCursor(for: id, after: name) }
             return Self.publicResult(result, directory: directory)
         }
+    }
+
+    /// Shows the cursor where the action happened, on that action's display. Never fails the action.
+    private func showCursor(for id: UUID, after tool: String) async {
+        guard let point = await runtime.cursorPosition(threadID: id), isEnabled, isShowingAgentCursor,
+            bridge.access(for: id) != nil
+        else { return }
+        cursor.move(to: point, pressed: Self.pressingTools.contains(tool))
     }
 
     private func recordingFailure<T>(_ body: () async throws -> T) async throws -> T {
@@ -271,6 +303,7 @@ final class ComputerUseController {
         runtime.end(threadID: id)
         activeThreads.remove(id)
         releaseDesktop(id)
+        if activeThreads.isEmpty { cursor.hide() }
     }
 
     /// For a thread that no longer exists: also revokes its capability.

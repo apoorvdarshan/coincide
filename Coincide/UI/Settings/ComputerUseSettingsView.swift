@@ -25,6 +25,10 @@ struct ComputerUseSettingsView: View {
                     Text("Allow agents to use this Mac")
                     Text("Agents can view the screen and interact with apps while Computer Use is on. All providers use a private connection for each thread.")
                 }
+                Toggle(isOn: $controller.showsAgentCursor) {
+                    Text("Show agent cursor")
+                    Text("Shows where agents click and type, on whichever display they’re working on.")
+                }
                 LabeledContent("Status") {
                     Text(controller.stateDescription)
                         .foregroundStyle(.secondary)
