@@ -18,6 +18,9 @@ struct CoincideRemoteApp: App {
             .environment(client)
             .environment(appearance)
             .environment(navigator)
+            #if DEBUG
+            .modifier(DebugWindowSizing())
+            #endif
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { client.reconnectIfNeeded() }

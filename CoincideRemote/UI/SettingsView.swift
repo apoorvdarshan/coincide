@@ -45,6 +45,12 @@ struct SettingsView: View {
         } message: {
             Text("To connect again, pair with the code the Mac shows. Revoke this device in the Mac’s Settings too.")
         }
+        #if DEBUG
+        // Screenshots of a pane without taps: `-CoincideRemoteSettingsPane general`.
+        .navigationDestination(isPresented: .constant(DemoData.value(after: "-CoincideRemoteSettingsPane") != nil)) {
+            MacSettingsPageView(pageID: DemoData.value(after: "-CoincideRemoteSettingsPane") ?? "")
+        }
+        #endif
     }
 
     @ViewBuilder private var sections: some View {

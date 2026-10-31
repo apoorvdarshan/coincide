@@ -35,13 +35,47 @@ enum DemoData {
     /// timers sends.
     static var isOldMac: Bool { ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoOldMac") }
 
+    static func has(_ flag: String) -> Bool { ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemo" + flag) }
+
+    /// The argument after `name`, such as `-CoincideRemoteSettingsPane general`.
+    static func value(after name: String) -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else { return nil }
+        return arguments[index + 1]
+    }
+
+    /// The connection's state: `-CoincideRemoteDemoOffline`, `…Connecting` or `…NeedsPairing` show those banners.
+    static var phase: RemoteClient.Phase {
+        if has("Offline") {
+            return .offline("Apoorv’s MacBook Pro isn’t reachable. Make sure Coincide is open with Remote turned on.")
+        }
+        if has("Connecting") { return .connecting(server.name) }
+        if has("NeedsPairing") { return .needsPairing("Apoorv’s MacBook Pro removed this device. Pair it again to connect.") }
+        return .connected(server.name)
+    }
+
+    /// `-CoincideRemoteDemoEmpty`: a Mac with no projects, chats or bots yet. `-CoincideRemoteDemoConnecting` before the
+    /// first workspace arrives looks the same.
+    static var isEmpty: Bool { has("Empty") || has("Connecting") }
+
     static var workspace: RemoteWorkspace {
+        if isEmpty {
+            return RemoteWorkspace(
+                projects: [RemoteProject(id: chatsID, name: "Chats", path: "~/Library/Application Support/Coincide", isChats: true)],
+                threads: [], bots: [], providers: [], pinnedOrder: [])
+        }
+        return fullWorkspace
+    }
+
+    private static var fullWorkspace: RemoteWorkspace {
         let claude = RemoteSelection(provider: "claude", modelID: "opus", modelName: "Opus", effort: "high")
         let codex = RemoteSelection(provider: "codex", modelID: "gpt", modelName: "GPT-6.1-Sol", effort: "medium", speed: "priority")
         let grok = RemoteSelection(provider: "grok", modelID: "grok", modelName: "Grok 4.7")
         let antigravity = RemoteSelection(provider: "antigravity", modelID: "gemini", modelName: "Gemini 3.5 Pro")
         let old = isOldMac
         let pins = ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoPinned")
+        // `-CoincideRemoteDemoCollapsed`: every project folded up, as on a Mac whose sidebar shows only folders.
+        let collapsed = has("Collapsed")
         let now = Date()
         func thread(_ title: String, _ project: UUID, _ selection: RemoteSelection, minutes: Double, id: UUID = UUID(),
                     pinned: Bool = false, running: Bool = false, approvals: Int = 0, unseen: String? = nil) -> RemoteThreadSummary {
@@ -56,7 +90,7 @@ enum DemoData {
                 RemoteProject(
                     id: projectID, name: "coincide", path: "~/coincide",
                     scripts: [RemoteScript(id: UUID(), name: "Tests", command: "xcodebuild test", icon: "test")],
-                    isExpanded: old ? nil : true),
+                    isExpanded: old ? nil : !collapsed),
                 RemoteProject(id: otherProjectID, name: "fud-ai", path: "~/fud-ai", isExpanded: old ? nil : false),
                 RemoteProject(id: versionsID, name: "verceltics", path: "~/verceltics", isExpanded: old ? nil : false),
                 RemoteProject(id: chatsID, name: "Chats", path: "~/Library/Application Support/Coincide", isChats: true),
@@ -111,6 +145,160 @@ enum DemoData {
                     ]),
             ],
             pinnedOrder: [])
+    }
+
+    /// The Mac's Settings as its catalog (`RemoteSettingsCatalog`) describes them, abridged.
+    static var macSettings: RemoteSettingsSnapshot {
+        func toggle(_ id: String, _ title: String, _ on: Bool, detail: String? = nil) -> RemoteSettingsRow {
+            RemoteSettingsRow(id: id, kind: .toggle, title: title, detail: detail, value: .bool(on))
+        }
+        func choice(_ id: String, _ title: String, _ value: String, _ options: [(String, String)]) -> RemoteSettingsRow {
+            RemoteSettingsRow(
+                id: id, kind: .choice, title: title, value: .string(value),
+                options: options.map { RemoteSettingOption(id: $0.0, title: $0.1) })
+        }
+        func onMac(_ id: String, _ title: String) -> RemoteSettingsRow {
+            RemoteSettingsRow(id: id, kind: .action, title: title, finishesOnMac: true)
+        }
+        let themes = RemotePalette.dark.map { ($0.id, $0.name) }
+        let lightThemes = RemotePalette.light.map { ($0.id, $0.name) }
+        let agents = [("claude", "Claude Code"), ("codex", "Codex"), ("cursor", "Cursor"), ("grok", "Grok Build"),
+                      ("opencode", "OpenCode"), ("antigravity", "Antigravity")]
+        var pages = [
+            RemoteSettingsPage(id: "general", title: "General", symbol: "gearshape", color: "gray", sections: [
+                RemoteSettingsSection(id: "appearance", title: "Appearance", rows: [
+                    choice("general.appearance", "Appearance", "system", [("system", "System"), ("light", "Light"), ("dark", "Dark")]),
+                    choice("general.darkTheme", "Dark theme", "carbon", themes),
+                    choice("general.lightTheme", "Light theme", "carbon-light", lightThemes),
+                    RemoteSettingsRow(
+                        id: "general.fontSize", kind: .number, title: "Text size", value: .number(13), minimum: 10, maximum: 24,
+                        step: 1, unit: "pt"),
+                    choice("general.replyTypeface", "Reply typeface", "serif", [("serif", "New York"), ("system", "System")]),
+                    choice("general.userMessageSide", "Your messages", "right", [("right", "On the right"), ("left", "On the left")]),
+                ]),
+                RemoteSettingsSection(id: "chat", title: "Chat", rows: [
+                    toggle("general.sendOnReturn", "Send with Return", true),
+                    choice("general.followUpBehavior", "While the agent works", "steer", [("steer", "Steer"), ("queue", "Queue")]),
+                    toggle("general.showReasoning", "Show reasoning", true),
+                    toggle("general.generatesThreadTitles", "Name threads with the agent", true),
+                    toggle("general.notifyWhenInBackground", "Notify when a turn finishes", true),
+                ]),
+                RemoteSettingsSection(id: "agents", title: "Agents", rows: [
+                    toggle("general.checkpointsEnabled", "Checkpoints before each turn", true),
+                    RemoteSettingsRow(
+                        id: "general.worktreeBranchPrefix", kind: .text, title: "Worktree branch prefix", value: .string("coincide/")),
+                    RemoteSettingsRow(
+                        id: "general.idleSessionTimeoutMinutes", kind: .number, title: "Stop idle agents after", value: .number(30),
+                        minimum: 5, maximum: 240, step: 5, unit: "min"),
+                ]),
+                RemoteSettingsSection(
+                    id: "keepAwake", title: "Keep Awake", footer: "Turning Keep Awake on or off asks for your Mac’s password, so finish it there.",
+                    rows: [
+                        RemoteSettingsRow(
+                            id: "keepAwake.status", kind: .status, title: "Keep this Mac awake 24/7",
+                            detail: "This Mac stays awake, lid closed too", state: "ok"),
+                        onMac("keepAwake.open", "Turn On or Off on Your Mac"),
+                        toggle("keepAwake.displayOffOnLidClose", "Turn the display off when the lid closes", true),
+                    ]),
+            ]),
+            RemoteSettingsPage(id: "models", title: "Models", symbol: "cube", color: "purple", sections: [
+                RemoteSettingsSection(id: "defaults", title: "New threads", rows: [
+                    choice("models.defaultProvider", "Agent", "claude", Array(agents.prefix(2))),
+                    choice("models.defaultModel", "Model", "opus", [("opus", "Claude Opus"), ("sonnet", "Claude Sonnet")]),
+                    choice("models.defaultAccessMode", "Access", "fullAccess", [("fullAccess", "Full access"), ("approval", "Ask for approval")]),
+                ]),
+                RemoteSettingsSection(id: "lists", rows: [
+                    RemoteSettingsRow(id: "models.favorites", kind: .info, title: "Favorites", detail: "3"),
+                    RemoteSettingsRow(id: "models.hidden", kind: .info, title: "Hidden models", detail: "5"),
+                ]),
+            ]),
+            RemoteSettingsPage(id: "usage", title: "Usage", symbol: "chart.bar.fill", color: "green", sections: [
+                RemoteSettingsSection(id: "limits", rows: [RemoteSettingsRow(id: "usage.limits", kind: .usage, title: "Usage Limits")]),
+                RemoteSettingsSection(id: "display", rows: [
+                    choice("usage.displayMode", "Show", "used", [("used", "Used"), ("left", "Left")]),
+                    toggle("usage.menuBar", "Show usage in the menu bar", true),
+                ]),
+            ]),
+            RemoteSettingsPage(id: "instructions", title: "Instructions", symbol: "text.document", color: "teal", sections: [
+                RemoteSettingsSection(
+                    id: "instructions", footer: "Instructions are long documents; edit them on your Mac.",
+                    rows: [onMac("instructions.open", "Edit on Your Mac")]),
+            ]),
+            RemoteSettingsPage(id: "archive", title: "Archive", symbol: "archivebox", color: "brown", sections: [
+                RemoteSettingsSection(id: "threads", rows: [
+                    RemoteSettingsRow(
+                        id: "archive.restore.1", kind: .action, title: "Old onboarding copy", detail: "Oct 12, 2026 at 4:10 PM",
+                        action: "Restore"),
+                    RemoteSettingsRow(
+                        id: "archive.restore.2", kind: .action, title: "Try the Linear MCP", detail: "Oct 3, 2026 at 11:42 AM",
+                        action: "Restore"),
+                ]),
+            ]),
+            RemoteSettingsPage(id: "keyboard", title: "Keyboard", symbol: "keyboard", color: "gray", sections: [
+                RemoteSettingsSection(id: "shortcuts", footer: "Change shortcuts on your Mac.", rows: [
+                    RemoteSettingsRow(id: "keyboard.newThread", kind: .info, title: "New Thread", detail: "⌘N"),
+                    RemoteSettingsRow(id: "keyboard.search", kind: .info, title: "Search", detail: "⌘K"),
+                ]),
+            ]),
+            RemoteSettingsPage(id: "browser", title: "Browser", symbol: "globe", color: "cyan", sections: [
+                RemoteSettingsSection(
+                    id: "browser", footer: "Imported sign-ins and password managers stay on your Mac.",
+                    rows: [onMac("browser.open", "Open Browser Settings on Your Mac")]),
+            ]),
+            RemoteSettingsPage(id: "computerUse", title: "Computer Use", symbol: "desktopcomputer", color: "blue", sections: [
+                RemoteSettingsSection(id: "computerUse", rows: [
+                    toggle("computerUse.enabled", "Allow agents to use this Mac", false),
+                    toggle("computerUse.cursor", "Show agent cursor", true),
+                ]),
+                RemoteSettingsSection(id: "permissions", title: "Permissions", footer: "macOS asks for these on the Mac itself.", rows: [
+                    RemoteSettingsRow(id: "computerUse.accessibility", kind: .status, title: "Accessibility", detail: "Allowed", state: "ok"),
+                    RemoteSettingsRow(
+                        id: "computerUse.screenRecording", kind: .status, title: "Screen Recording", detail: "Not allowed", state: "warning"),
+                    onMac("computerUse.open", "Grant on Your Mac"),
+                ]),
+            ]),
+        ]
+        let states = ["claude": "ready", "codex": "ready", "cursor": "attention", "grok": "off", "opencode": "ready", "antigravity": "off"]
+        pages.append(
+            RemoteSettingsPage(id: "providers", title: "Overview", symbol: "square.grid.2x2", color: "indigo", sections: [
+                RemoteSettingsSection(id: "agents", rows: agents.map { id, name in
+                    RemoteSettingsRow(
+                        id: "providers.\(id)", kind: .page, title: name,
+                        detail: states[id] == "ready" ? "Ready" : states[id] == "off" ? "Off" : "Needs setup", state: states[id],
+                        target: "provider.\(id)")
+                }),
+            ]))
+        for (id, name) in agents {
+            let state = states[id] ?? "off"
+            pages.append(
+                RemoteSettingsPage(id: "provider.\(id)", title: name, symbol: "sparkles", color: "indigo", group: .provider, status: state, sections: [
+                    RemoteSettingsSection(id: "state", rows: [
+                        toggle("provider.\(id).enabled", "Use \(name)", state != "off"),
+                        RemoteSettingsRow(
+                            id: "provider.\(id).status", kind: .status, title: "Status",
+                            detail: state == "ready" ? "Ready" : state == "off" ? "Off" : "Needs setup",
+                            state: state == "ready" ? "ok" : state == "off" ? "off" : "warning"),
+                    ]),
+                    RemoteSettingsSection(id: "setup", footer: "Signing in and setup happen in the agent’s own window on your Mac.", rows: [
+                        RemoteSettingsRow(id: "provider.\(id).open", kind: .action, title: "Set Up on Your Mac", finishesOnMac: true)
+                    ]),
+                ]))
+        }
+        pages.append(
+            RemoteSettingsPage(id: "about", title: "About", symbol: "info.circle", color: "blue", group: .about, sections: [
+                RemoteSettingsSection(id: "version", rows: [
+                    RemoteSettingsRow(id: "about.version", kind: .info, title: "Coincide", detail: "0.1.0 (1)"),
+                    RemoteSettingsRow(id: "about.macos", kind: .info, title: "macOS", detail: "27.2.0"),
+                ]),
+            ]))
+        return RemoteSettingsSnapshot(pages: pages)
+    }
+
+    /// Two pictures waiting in the composer, for `-CoincideRemoteDemoAttachments`.
+    static var draftImages: [ComposerDraft.Image] {
+        (0..<2).compactMap { index in
+            picture(index, full: false).jpegData(compressionQuality: 0.8).map { ComposerDraft.Image(name: "IMG_20\(41 + index).jpg", data: $0) }
+        }
     }
 
     /// What the Mac would suggest for `@` and `/` words.
@@ -219,6 +407,49 @@ enum DemoData {
                     RemoteChangedFile(path: "Coincide/UI/Settings/GeneralSettingsView.swift", status: "modified", additions: 5, deletions: 0),
                 ]
             ])
+    }
+}
+#endif
+
+#if DEBUG
+import SwiftUI
+
+/// Window sizes for layout checks in a headless simulator, which can't drag a window or unfold a Duo.
+///
+/// - `-CoincideRemoteWindow 375x1000` asks iPadOS for a window of that size (its windowing honors the scene's size
+///   restrictions), as Split View or Slide Over would make it. The system picks the size class, as it would there.
+/// - `-CoincideRemoteEmulate 669x951 regular` lays the app out in a frame of that size with that horizontal size class,
+///   at the top left of the screen: the unfolded iPhone Duo, which the simulator can't switch to without its window.
+struct DebugWindowSizing: ViewModifier {
+    func body(content: Content) -> some View {
+        if let emulated = Self.size(DemoData.value(after: "-CoincideRemoteEmulate")) {
+            let arguments = ProcessInfo.processInfo.arguments
+            let regular = arguments.firstIndex(of: "-CoincideRemoteEmulate").map { index in
+                index + 2 < arguments.count && arguments[index + 2] == "regular"
+            } ?? false
+            ZStack(alignment: .topLeading) {
+                Color.gray.opacity(0.25).ignoresSafeArea()
+                content
+                    .environment(\.horizontalSizeClass, regular ? .regular : .compact)
+                    .frame(width: emulated.width, height: emulated.height)
+                    .clipped()
+            }
+            .ignoresSafeArea(edges: [.leading, .bottom, .trailing])
+        } else {
+            content.onAppear {
+                guard let size = Self.size(DemoData.value(after: "-CoincideRemoteWindow")) else { return }
+                for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+                    scene.sizeRestrictions?.minimumSize = size
+                    scene.sizeRestrictions?.maximumSize = size
+                }
+            }
+        }
+    }
+
+    static func size(_ text: String?) -> CGSize? {
+        guard let parts = text?.split(separator: "x"), parts.count == 2, let width = Double(parts[0]), let height = Double(parts[1])
+        else { return nil }
+        return CGSize(width: width, height: height)
     }
 }
 #endif
