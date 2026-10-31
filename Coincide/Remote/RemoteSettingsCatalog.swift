@@ -192,6 +192,9 @@ extension RemoteStoreAdapter {
                     value: .number(Double(settings.idleSessionTimeoutMinutes)), minimum: 5, maximum: 240, step: 5,
                     unit: String(localized: "min")),
                 toggle("general.commandLineControl", String(localized: "Command-line control"), nil, \.commandLineControl),
+                toggle(
+                    "general.approvesAgentSchedules", String(localized: "Approve schedules agents create"),
+                    String(localized: "What an agent schedules in its thread waits for you to allow it."), \.approvesAgentSchedules),
                 toggle("general.opensLinksInDefaultBrowser", String(localized: "Open links in the default browser"), nil, \.opensLinksInDefaultBrowser),
                 toggle("general.holdToQuit", String(localized: "Hold ⌘Q to quit"), nil, \.holdToQuit),
                 toggle("general.checksForAppUpdates", String(localized: "Check for updates"), nil, \.checksForAppUpdates),

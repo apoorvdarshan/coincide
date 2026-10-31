@@ -56,6 +56,8 @@ public final class ThreadRunner {
         /// The user asked for it to go into the running turn, which could not take it: it is sent when that turn
         /// ends however it ends, including when it is stopped, rather than waiting for the user.
         public var sendsAfterStop = false
+        /// The schedule that sent it (`TranscriptItem.schedule`).
+        public var schedule: TranscriptItem.ScheduleMark?
     }
 
     /// What became of a message the user sent (T3 Code's steer and queue).
@@ -141,6 +143,10 @@ public final class ThreadRunner {
     /// Additive per-thread capabilities valid only for this running app, keyed by their owning module. Never
     /// saved as user text or queue metadata. Removing one module leaves the other capabilities in place.
     public var ephemeralRuntimeContexts: [String: (UUID) -> String?] = [:]
+    /// Approvals Coincide asks the user for itself, such as a schedule an agent created (`ScheduleAgentAccess`), keyed by
+    /// the prefix of their request id. Such an approval has no provider: no agent session answers it, ending a turn or
+    /// relaunching doesn't close it, and `respond` hands the user's choice to its owner here.
+    public var localApprovals: [String: (_ threadID: UUID, _ itemID: UUID, _ optionID: String) -> Void] = [:]
     /// Variables added to every agent process Coincide starts, by who adds them, read at each launch: the unlocked
     /// password managers' sessions (`PasswordVault.agentEnvironment`) and the command-line tool's folder and socket
     /// (`CommandLineControl`). A `PATH` goes in front of the process's own instead of replacing it.
@@ -319,12 +325,18 @@ public final class ThreadRunner {
     // MARK: Turns
 
     /// Sends a user message on the thread's selected provider and model, with the images and context attached to it.
-    /// While a turn is running the message is queued and sent when that turn completes.
-    public func send(threadID: UUID, text: String, imagePaths: [String] = [], context: [MessageContext] = []) async {
+    /// While a turn is running the message is queued and sent when that turn completes. `schedule` marks a message a
+    /// schedule sent (`ScheduledTask`).
+    public func send(
+        threadID: UUID, text: String, imagePaths: [String] = [], context: [MessageContext] = [],
+        schedule: TranscriptItem.ScheduleMark? = nil
+    ) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !imagePaths.isEmpty || !context.isEmpty else { return }
         if isRunning(threadID) {
-            enqueue(threadID: threadID, text: trimmed, imagePaths: imagePaths, context: context)
+            var message = QueuedMessage(id: UUID(), text: trimmed, imagePaths: imagePaths, context: context, createdAt: Date())
+            message.schedule = schedule
+            enqueue(message, threadID: threadID, at: nil)
             return
         }
         guard let thread = store.thread(threadID), store.project(thread.projectID) != nil else { return }
@@ -347,7 +359,7 @@ public final class ThreadRunner {
         }
         let userItem = TranscriptItem(
             kind: .user, text: trimmed, provider: provider, modelID: selection.modelID,
-            attachments: imagePaths.isEmpty ? nil : imagePaths, context: context.isEmpty ? nil : context)
+            attachments: imagePaths.isEmpty ? nil : imagePaths, context: context.isEmpty ? nil : context, schedule: schedule)
         let turnID = userItem.id
         store.append(userItem, to: threadID)
         store.updateThread(threadID, touch: true) { $0.draft = nil; $0.draftContext = nil }
@@ -615,11 +627,15 @@ public final class ThreadRunner {
         }
     }
 
-    /// Answers an approval item. `text` is sent along when the approval asked for text input.
+    /// Answers an approval item. `text` is sent along when the approval asked for text input. An approval Coincide
+    /// asked for itself (`localApprovals`, no provider) goes to its owner instead of an agent session.
     public func respond(threadID: UUID, itemID: UUID, optionID: String, text: String? = nil) {
-        guard let item = store.item(itemID, in: threadID), let approval = item.approval, item.status == .waiting,
-            let provider = item.provider
-        else { return }
+        guard let item = store.item(itemID, in: threadID), let approval = item.approval, item.status == .waiting else { return }
+        if item.provider == nil, let owner = localApprovals.first(where: { approval.requestID.hasPrefix($0.key) })?.value {
+            owner(threadID, itemID, optionID)
+            return
+        }
+        guard let provider = item.provider else { return }
         guard let session = currentSession(threadID, provider) else {
             closeOrphanedPrompt(itemID, in: threadID)
             return
@@ -1254,7 +1270,9 @@ public final class ThreadRunner {
             || (outcome == .interrupted && queues[threadID]?.first?.sendsAfterStop == true)
         if proceed, let next = queues[threadID]?.first {
             removeQueued(threadID: threadID, id: next.id)
-            Task { await send(threadID: threadID, text: next.text, imagePaths: next.imagePaths, context: next.context) }
+            Task {
+                await send(threadID: threadID, text: next.text, imagePaths: next.imagePaths, context: next.context, schedule: next.schedule)
+            }
         }
     }
 

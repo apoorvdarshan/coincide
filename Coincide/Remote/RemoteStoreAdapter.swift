@@ -595,7 +595,8 @@ final class RemoteStoreAdapter {
     }
 
     private func declinePendingRequests(_ threadID: UUID) {
-        for item in runner.pendingApprovals(threadID) {
+        // As on the Mac, approvals Coincide asks for itself (a schedule an agent made) wait rather than being declined.
+        for item in runner.pendingApprovals(threadID) where item.provider != nil {
             let options = item.approval?.options ?? []
             guard let decline = options.first(where: { $0.kind == .deny }) ?? options.first(where: { $0.kind == .cancel })
             else { continue }

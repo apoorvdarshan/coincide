@@ -179,6 +179,7 @@ struct ThreadFile: Decodable {
                 // Every entry, including any of a kind added later that was left out.
                 case "context": readsContext(in: item, key, decoded: decoded.context)
                 case "steered": decoded.steered != nil
+                case "schedule": decoded.schedule != nil
                 case "completedAt": decoded.completedAt != nil
                 default: false
                 }

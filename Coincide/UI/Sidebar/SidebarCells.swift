@@ -72,6 +72,8 @@ struct ThreadRowModel: Equatable {
     /// The thread's Go to Thread shortcut ("⌘1"…) while the user holds its modifier keys, as in T3. Nil when the
     /// thread's command has no shortcut.
     var jumpHint: String?
+    /// The thread's active schedules, for the clock's tooltip; nil hides the clock.
+    var schedule: String?
 }
 
 /// A table cell that knows when the pointer is over it.
@@ -390,6 +392,8 @@ final class ThreadCell: HoverCellView {
     private let titleField = NSTextField(labelWithString: "")
     private let placeField = NSTextField(labelWithString: "")
     private let pin = NSImageView()
+    /// Shown while the thread has active schedules.
+    private let clock = NSImageView()
     private let badge = StatusBadge()
     private let unseenDot = StatusDot()
     private let timeField = NSTextField(labelWithString: "")
@@ -429,15 +433,18 @@ final class ThreadCell: HoverCellView {
         pin.image = Theme.symbol("pin.fill", size: 9)
         pin.contentTintColor = .tertiaryLabelColor
         pin.setAccessibilityLabel(String(localized: "Pinned"))
+        clock.image = Theme.symbol("clock", size: 9, weight: .semibold)
+        clock.contentTintColor = .tertiaryLabelColor
+        clock.isHidden = true
         unseenDot.isHidden = true
         timeField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         timeField.alignment = .right
         imageView = icon
         textField = titleField
 
-        for view: NSView in [pin, badge, unseenDot, timeField, archiveButton] { accessories.addArrangedSubview(view) }
+        for view: NSView in [pin, clock, badge, unseenDot, timeField, archiveButton] { accessories.addArrangedSubview(view) }
         accessories.spacing = 4
-        for view: NSView in [pin, badge, unseenDot, timeField] {
+        for view: NSView in [pin, clock, badge, unseenDot, timeField] {
             view.setContentHuggingPriority(.required, for: .horizontal)
             view.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
@@ -478,7 +485,10 @@ final class ThreadCell: HoverCellView {
         let unseen = model.status == .completed || model.status == .failed
         titleField.font = .systemFont(ofSize: 13, weight: unseen ? .semibold : .regular)
         pin.isHidden = !model.isPinned
-        toolTip = model.toolTip
+        clock.isHidden = model.schedule == nil
+        clock.toolTip = model.schedule
+        clock.setAccessibilityLabel(model.schedule)
+        toolTip = [model.toolTip, model.schedule].compactMap(\.self).joined(separator: "\n")
         setAccessibilityLabel(model.accessibilityLabel)
         var actions = [
             accessibilityAction(model.isPinned ? String(localized: "Unpin") : String(localized: "Pin"), .togglePin),
@@ -556,6 +566,7 @@ final class ThreadCell: HoverCellView {
         if spins { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         titleField.textColor = model.isArchived ? .secondaryLabelColor : .labelColor
         unseenDot.color = emphasized ? selectedText : .systemGreen
+        clock.contentTintColor = emphasized ? selectedText : .tertiaryLabelColor
         let timeColor: NSColor =
             model.jumpHint != nil ? .labelColor : model.status.isRunning ? Theme.color(for: model.provider) : .secondaryLabelColor
         timeField.textColor = emphasized ? selectedText : timeColor

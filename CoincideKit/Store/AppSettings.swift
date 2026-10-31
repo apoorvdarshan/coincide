@@ -126,6 +126,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Settings › Appshots: both ⌘ keys (or a shortcut) capture the frontmost window of another app into a chat. Off by
     /// default, and then no key is watched.
     public var appshots: AppshotSettings
+    /// What an agent schedules in its thread (`coincide_schedule`) waits for the user to allow it before it can run.
+    public var approvesAgentSchedules: Bool
     /// Keep Awake: the Mac never sleeps, closing the lid included (`AlwaysOnController`). The lid watcher reads it
     /// from settings.json too.
     public var alwaysOn: AlwaysOnSettings
@@ -228,6 +230,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         computerUseEnabled = false
         computerUseShowsAgentCursor = true
         appshots = AppshotSettings()
+        approvesAgentSchedules = true
         alwaysOn = AlwaysOnSettings()
         holdToQuit = true
         opensLinksInDefaultBrowser = false
@@ -293,6 +296,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         computerUseEnabled = value(.computerUseEnabled, defaults.computerUseEnabled)
         computerUseShowsAgentCursor = value(.computerUseShowsAgentCursor, defaults.computerUseShowsAgentCursor)
         appshots = value(.appshots, defaults.appshots)
+        approvesAgentSchedules = value(.approvesAgentSchedules, defaults.approvesAgentSchedules)
         alwaysOn = value(.alwaysOn, defaults.alwaysOn)
         holdToQuit = value(.holdToQuit, defaults.holdToQuit)
         opensLinksInDefaultBrowser = value(.opensLinksInDefaultBrowser, defaults.opensLinksInDefaultBrowser)
@@ -664,6 +668,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
     case toggleSidebar = "sidebar.toggle"
     case toggleTerminal = "terminal.toggle"
     case toggleDiff = "diff.toggle"
+    case showSchedules = "schedules.show"
     case commandPalette = "commandPalette.toggle"
     case increaseFontSize = "view.increaseFontSize"
     case decreaseFontSize = "view.decreaseFontSize"
@@ -726,8 +731,8 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .newThread, .newChat, .addProject, .openInEditor, .revealInFinder: .file
         case .addToComposer, .searchThreads: .edit
-        case .toggleSidebar, .toggleTerminal, .toggleDiff, .commandPalette, .increaseFontSize, .decreaseFontSize,
-            .resetFontSize, .showArchive:
+        case .toggleSidebar, .toggleTerminal, .toggleDiff, .showSchedules, .commandPalette, .increaseFontSize,
+            .decreaseFontSize, .resetFontSize, .showArchive:
             .view
         default: .thread
         }
@@ -748,6 +753,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
         case .toggleSidebar: return String(localized: "Show or Hide Sidebar")
         case .toggleTerminal: return String(localized: "Show or Hide Terminal")
         case .toggleDiff: return String(localized: "Show or Hide Diff")
+        case .showSchedules: return String(localized: "Show or Hide Scheduled Tasks")
         case .commandPalette: return String(localized: "Command Palette…")
         case .increaseFontSize: return String(localized: "Increase Font Size")
         case .decreaseFontSize: return String(localized: "Decrease Font Size")
@@ -787,6 +793,8 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
             // ⌘W puts the open thread away in the archive, where it can be brought back. File › Close Window moves to ⌘⇧W,
             // and other windows still close with ⌘W.
             .archiveThread: "mod+w", .showArchive: "mod+alt+a",
+            // Beside ⌥⌘A's Archived Threads in the View menu; free in macOS, the terminal and the browser panel.
+            .showSchedules: "mod+alt+s",
         ]
         for index in 1...9 {
             if let command = jumpToThread(index) { defaults[command] = "mod+\(index)" }

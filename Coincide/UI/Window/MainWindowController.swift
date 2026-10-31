@@ -17,6 +17,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var token: ObservationToken?
     private(set) var selectedThreadID: UUID?
     private var hasOpenedThread = false
+    /// Keeps the clock's next run ("9:00", "Tue 9:00") current as the day turns.
+    private var scheduleTimer: Timer?
 
     var sidebar: SidebarViewController { splitController.sidebar }
 
@@ -77,6 +79,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.toolbarItems[.runStatus]?.isHidden = !visible
         }
         token = store.observe { [weak self] change in self?.handle(change) }
+        panelButtons.scheduleButton.popupProvider = { [weak self] in
+            guard let id = self?.selectedThreadID else { return nil }
+            return ThreadSchedulesPopup(threadID: id)
+        }
+        ScheduledTasks.shared.onEditProposal = { task in ScheduleActions.editProposal(task) }
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateSchedules() }
+        }
+        timer.tolerance = 5
+        RunLoop.main.add(timer, forMode: .common)
+        scheduleTimer = timer
 
         let center = NotificationCenter.default
         let events: [(Notification.Name, Selector)] = [
@@ -88,6 +101,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             (.coincideThreadActivityChanged, #selector(activityChanged(_:))),
             (OpenTargets.preferredDidChange, #selector(updateOpenInItem)),
             (KeyBindingsController.didChangeNotification, #selector(updateToolbarShortcuts)),
+            (ScheduledTasks.didChange, #selector(updateSchedules)),
         ]
         for (name, selector) in events { center.addObserver(self, selector: selector, name: name, object: nil) }
 
@@ -133,6 +147,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         updateTitle()
         updateRunStatus()
         updateRail()
+        updateSchedules()
         if threadID != nil, !isFocusInSidePanel { splitController.content.chat.focusComposer() }
     }
 
@@ -312,7 +327,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         splitController.toggleDiffPanel()
     }
 
-    @objc func showScheduledTasks(_ sender: Any?) { ScheduledTasksWindowController.shared.show() }
+    /// View › Scheduled Tasks (⌥⌘S): every schedule, in the inspector.
+    @objc func toggleSchedulesPanel(_ sender: Any?) {
+        showWindow(nil)
+        splitController.toggleSchedulesPanel()
+    }
+
+    /// Opens the Scheduled panel, leaving it open if it already shows.
+    @objc func showScheduledTasks(_ sender: Any?) {
+        showWindow(nil)
+        splitController.showSchedulesPanel()
+    }
+
+    /// Thread › Schedule…: a new schedule that sends a message into the open thread.
+    @objc func scheduleInThread(_ sender: Any?) {
+        guard let id = selectedThreadID else { return }
+        ScheduleActions.newSchedule(inThread: id, in: window)
+    }
+
+    /// The clock in the top-right group: shown for a thread with schedules, with its next run.
+    @objc func updateSchedules() {
+        let service = ScheduledTasks.shared
+        guard let id = selectedThreadID else {
+            panelButtons.showSchedules(nextRun: nil, toolTip: nil, visible: false)
+            return
+        }
+        let tasks = service.tasks(inThread: id)
+        let next = service.nextRun(inThread: id)
+        let title = next.map { SchedulePresentation.compactTime($0.date) }
+        panelButtons.showSchedules(nextRun: title, toolTip: SchedulePresentation.threadToolTip(tasks), visible: !tasks.isEmpty)
+    }
 
     /// View › Archived Threads…: Settings › Archive.
     @objc func showArchive(_ sender: Any?) { SettingsWindowController.shared.show(section: .archive) }
@@ -582,6 +626,12 @@ extension MainWindowController: NSMenuItemValidation {
             menuItem.title =
                 splitController.isPullRequestsOpen
                 ? String(localized: "Hide Pull Requests") : String(localized: "Show Pull Requests")
+        case #selector(toggleSchedulesPanel(_:)):
+            menuItem.title =
+                splitController.isSchedulesOpen
+                ? String(localized: "Hide Scheduled Tasks") : String(localized: "Show Scheduled Tasks")
+        case #selector(scheduleInThread(_:)):
+            return thread != nil
         case #selector(importCLISession(_:)):
             return window?.attachedSheet == nil
         case #selector(revealImportedSource(_:)):

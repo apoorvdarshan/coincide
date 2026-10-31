@@ -24,6 +24,13 @@ final class TranscriptCardView: NSView {
 
 // MARK: - Approval
 
+extension TranscriptItem {
+    /// An approval Coincide asks for itself, for a schedule an agent created or changed (`ScheduleAgentAccess`).
+    var isScheduleApproval: Bool {
+        kind == .approval && provider == nil && approval?.requestID.hasPrefix(ScheduleAgentAccess.requestPrefix) == true
+    }
+}
+
 /// An agent asking permission: what it wants to do and, once answered, the answer. As in T3 Code the
 /// choices themselves are in the approval banner above the composer, so a waiting card only says so.
 final class TranscriptApprovalCell: TranscriptCell {
@@ -65,9 +72,9 @@ final class TranscriptApprovalCell: TranscriptCell {
         let isWaiting = item.status == .waiting
         let accent = isWaiting ? Theme.warning : NSColor.secondaryLabelColor
         card.strokeColor = isWaiting ? Theme.waitingStroke : .separatorColor
-        icon.image = Theme.symbol((item.category ?? .other).symbolName, size: 11, weight: .semibold)
+        icon.image = Theme.symbol(item.isScheduleApproval ? "clock" : (item.category ?? .other).symbolName, size: 11, weight: .semibold)
         icon.contentTintColor = accent
-        kindLabel.stringValue = Self.kindLabel(item.category)
+        kindLabel.stringValue = item.isScheduleApproval ? String(localized: "Schedule approval") : Self.kindLabel(item.category)
         kindLabel.textColor = accent
         titleView.setText(Self.title(item, cache: host.textCache).string)
         titleView.onOpenLink = { [weak host] link in host?.openLink(link) ?? false }

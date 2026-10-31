@@ -17,7 +17,7 @@ struct NavigationRailTests {
             view.subviews.forEach(collect)
         }
         collect(rail.view)
-        #expect(buttons.count == 9)
+        #expect(buttons.count == 10)
         // The panels that open on the right have their buttons on the right, in the toolbar (`InspectorPanelButtons`).
         let labels = Set(buttons.compactMap { $0.accessibilityLabel() })
         #expect(labels.isDisjoint(with: ["Diff", "Pull Requests", "Browser Preview"]))
@@ -103,17 +103,17 @@ struct InspectorPanelTests {
         }
         let below = MainSplitViewController(terminalPlacement: .bottom)
         below.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 800)
-        #expect(below.inspector.panels == [.diff, .pullRequests, .preview])
+        #expect(below.inspector.panels == [.diff, .pullRequests, .preview, .schedules])
         #expect(!below.inspector.hasTerminal)
 
         let split = MainSplitViewController(terminalPlacement: .right)
         split.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 800)
-        #expect(split.inspector.panels == [.diff, .pullRequests, .preview, .terminal])
+        #expect(split.inspector.panels == [.diff, .pullRequests, .preview, .schedules, .terminal])
         #expect(!split.isTerminalOpen)
 
         split.toggleTerminalPanel()
         #expect(split.isTerminalOpen && split.isInspectorOpen && !split.content.isTerminalOpen)
-        #expect(split.inspector.selectedTabViewItemIndex == 3)
+        #expect(split.inspector.selectedTabViewItemIndex == 4)
         #expect(UIState.shared.values.inspectorPanel == .terminal)
 
         // Another panel takes the open column over, and the terminal's toggle takes it back.

@@ -311,6 +311,12 @@ struct SettingsSearchResults: View {
                 title: String(localized: "Hold ⌘Q to quit"), pane: general, setting: .holdToQuit,
                 keywords: [String(localized: "Quit"), String(localized: "Keyboard")]),
             SettingsSearchEntry(
+                title: String(localized: "Approve schedules agents create"), pane: general, setting: .approveSchedules,
+                keywords: [
+                    String(localized: "Schedule"), String(localized: "Scheduled Tasks"), String(localized: "Recurring"),
+                    String(localized: "Cron"), String(localized: "Approval"), String(localized: "Reminder"),
+                ]),
+            SettingsSearchEntry(
                 title: String(localized: "Resume after usage limits"), pane: general, setting: .resumeAfterLimit,
                 keywords: [String(localized: "Rate limit"), String(localized: "Continue"), String(localized: "Auto-resume")]),
             SettingsSearchEntry(

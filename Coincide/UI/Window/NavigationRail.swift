@@ -39,7 +39,7 @@ final class MainRootViewController: NSViewController {
 }
 
 /// The slim column at the window's left edge with a button for each place in the app: the thread list, a new thread,
-/// search, the terminal (when it opens along the bottom), the project's editor, usage, instructions, the agents and
+/// search, every schedule, the terminal (when it opens along the bottom), the project's editor, usage, instructions, the agents and
 /// settings. The panels that open on the right (the diff, the pull requests and the browser preview) have their buttons
 /// on the right too, in the toolbar (`InspectorPanelButtons`). Buttons send their actions up the responder chain, the
 /// way menu items do, so they run whatever the menu bar would.
@@ -55,6 +55,10 @@ final class NavigationRailViewController: NSViewController {
     private lazy var searchButton = RailButton(
         symbol: "magnifyingglass", label: String(localized: "Search"), command: .commandPalette,
         action: #selector(MainWindowController.showCommandPalette(_:)))
+    /// Every schedule, in the inspector (`SchedulesPanelController`); lit while it shows.
+    private(set) lazy var schedulesButton = RailButton(
+        symbol: "clock", label: String(localized: "Scheduled"), command: .showSchedules,
+        action: #selector(MainWindowController.toggleSchedulesPanel(_:)))
     private lazy var terminalButton = RailButton(
         symbol: "terminal", label: String(localized: "Terminal"), command: .toggleTerminal,
         action: #selector(MainWindowController.toggleTerminalPanel(_:)))
@@ -86,7 +90,7 @@ final class NavigationRailViewController: NSViewController {
 
     override func loadView() {
         let root = RailBackgroundView()
-        let top = stack([threadsButton, newThreadButton, searchButton])
+        let top = stack([threadsButton, newThreadButton, searchButton, schedulesButton])
         let panels = stack([terminalButton, openInButton])
         let bottom = stack([usageButton, instructionsButton, agentsButton, settingsButton])
         let divider = RailDivider()
@@ -153,14 +157,15 @@ final class NavigationRailViewController: NSViewController {
 
     /// Lights the buttons of the panels that are open, and enables Open In only when there is a folder to open. Its
     /// right-click menu works either way, so the default app can be changed before a thread has a folder.
-    func update(threadsOpen: Bool, terminalOpen: Bool, canOpenFolder: Bool) {
+    func update(threadsOpen: Bool, terminalOpen: Bool, canOpenFolder: Bool, schedulesOpen: Bool = false) {
         threadsButton.isActive = threadsOpen
         terminalButton.isActive = terminalOpen
+        schedulesButton.isActive = schedulesOpen
         openInButton.isEnabled = canOpenFolder
     }
 
     @objc private func updateShortcuts() {
-        let buttons = [threadsButton, newThreadButton, searchButton, terminalButton, openInButton]
+        let buttons = [threadsButton, newThreadButton, searchButton, schedulesButton, terminalButton, openInButton]
         for button in buttons {
             button.updateToolTip()
         }

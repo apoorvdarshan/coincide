@@ -149,7 +149,7 @@ struct KeyShortcutMenuTests {
 struct KeyCommandTests {
     @Test func defaultsAreUsableDistinctAndFreeOfMacOSShortcuts() {
         let defaults = KeyCommand.allCases.compactMap(\.defaultShortcut)
-        #expect(defaults.count == 32)
+        #expect(defaults.count == 33)
         #expect(Set(defaults).count == defaults.count)
         #expect(defaults.allSatisfy { $0.isUsableInMenus })
         let reserved = Set(ReservedShortcut.macOS.map(\.shortcut))

@@ -140,6 +140,38 @@ import Testing
         }
     }
 
+    /// The Scheduled panel lists every thread's schedules: it stays while the window opens their threads, and showing or
+    /// closing it leaves what each thread remembers.
+    @Test func theScheduledPanelBelongsToTheWindow() {
+        let all: [UIState.InspectorPanel] = [.diff, .pullRequests, .preview, .schedules]
+        func change(_ isOpen: Bool, _ panel: UIState.InspectorPanel, saved: UIState.InspectorPanel?) -> InspectorFollow.Change {
+            InspectorFollow.change(isOpen: isOpen, panel: panel, saved: saved, available: all)
+        }
+        #expect(change(true, .schedules, saved: .diff) == .none)
+        #expect(change(true, .schedules, saved: nil) == .none)
+        #expect(change(false, .diff, saved: .schedules) == .none)
+        #expect(change(true, .diff, saved: .schedules) == .close)
+        withSharedPanel(.diff) {
+            let harness = Harness(width: 1600)
+            defer { harness.close() }
+            let split = harness.split
+            let diffThread = UUID(), other = UUID()
+            split.setThreadID(diffThread)
+            split.toggleDiffPanel()
+            split.toggleSchedulesPanel()
+            #expect(split.isSchedulesOpen)
+            split.setThreadID(other)
+            #expect(split.isSchedulesOpen)
+            split.setThreadID(diffThread)
+            #expect(split.isSchedulesOpen)
+            #expect(harness.state.values.threadPanels[diffThread.uuidString] == .diff)
+            #expect(harness.state.values.threadPanels[other.uuidString] == nil)
+            split.toggleSchedulesPanel()
+            #expect(!split.isInspectorOpen)
+            #expect(harness.state.values.threadPanels[diffThread.uuidString] == .diff)
+        }
+    }
+
     @Test func anAgentsBrowserOutOfSightDoesntOpenThePanel() {
         withSharedPanel(.diff) {
             let harness = Harness()

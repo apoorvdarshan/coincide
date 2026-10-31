@@ -200,6 +200,14 @@ struct GeneralSettingsView: View {
                     .settingsRevealable(.idleTimeout, highlighted: highlighted)
                     BackgroundAgentsRows()
                         .settingsRevealable(.backgroundAgents, highlighted: highlighted)
+                    Toggle(isOn: model.binding(\.approvesAgentSchedules)) {
+                        Text("Approve schedules agents create")
+                        Text(
+                            model.settings.approvesAgentSchedules
+                                ? String(localized: "When you ask an agent to do something later or on a schedule, it waits for you to allow it in the thread before it can run.")
+                                : String(localized: "Schedules agents create in their thread run without asking. You still see and change them in the thread and in Scheduled Tasks."))
+                    }
+                    .settingsRevealable(.approveSchedules, highlighted: highlighted)
                 }
 
                 Section("Keep Awake") {
@@ -309,6 +317,7 @@ struct GeneralSettingsView: View {
         settings.checkpointsEnabled = defaults.checkpointsEnabled
         settings.worktreeBranchPrefix = defaults.worktreeBranchPrefix
         settings.idleSessionTimeoutMinutes = defaults.idleSessionTimeoutMinutes
+        settings.approvesAgentSchedules = defaults.approvesAgentSchedules
     }
 }
 

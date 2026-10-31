@@ -165,6 +165,17 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         textView.onFiles = { [weak self] urls in self?.addFiles(urls) }
         textView.onKeyDown = { [weak self] event in self?.handleKeyDown(event) ?? false }
         textView.onDragHover = { [weak self] hovering in self?.setDropHighlight(hovering) }
+        // What's typed becomes the schedule's prompt; scheduling it takes it out of the composer.
+        textView.onSchedule = { [weak self] in
+            guard let self, let threadID else { return }
+            let text = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            ScheduleActions.newSchedule(inThread: threadID, prompt: text, in: view.window) { [weak self] in
+                guard let self, self.threadID == threadID, !text.isEmpty,
+                    self.textView.string.trimmingCharacters(in: .whitespacesAndNewlines) == text
+                else { return }
+                clearComposer()
+            }
+        }
         scrollView.documentView = textView
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
@@ -1652,7 +1663,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     /// As in T3 Code, a message sent while the agent waits on an approval or a question declines it,
     /// so the agent moves on and the message redirects it.
     private func declinePendingRequests(_ threadID: UUID) {
-        for item in runner.pendingApprovals(threadID) {
+        // Approvals Coincide asks for itself, such as a schedule an agent made, don't hold the agent up: they wait.
+        for item in runner.pendingApprovals(threadID) where item.provider != nil {
             let options = item.approval?.options ?? []
             guard let decline = options.first(where: { $0.kind == .deny }) ?? options.first(where: { $0.kind == .cancel })
             else { continue }
