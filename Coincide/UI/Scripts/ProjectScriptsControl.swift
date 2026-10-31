@@ -26,6 +26,12 @@ final class ProjectScriptsControl: NSView {
         layer?.cornerCurve = .continuous
         runButton.target = self
         runButton.action = #selector(runPrimary)
+        // In a narrow window the script's name truncates once the thread title has given way (its labels resist at
+        // priority 1), so the run status and the right panels' buttons keep their places rather than going to the
+        // toolbar's overflow menu.
+        runButton.setContentCompressionResistancePriority(.init(2), for: .horizontal)
+        runButton.cell?.lineBreakMode = .byTruncatingTail
+        runButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         menuButton.menuProvider = { [weak self] in self?.makeMenu() }
         stack.orientation = .horizontal
         stack.spacing = 0

@@ -79,10 +79,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.toolbarItems[.runStatus]?.isHidden = !visible
         }
         token = store.observe { [weak self] change in self?.handle(change) }
-        panelButtons.scheduleButton.popupProvider = { [weak self] in
-            guard let id = self?.selectedThreadID else { return nil }
-            return ThreadSchedulesPopup(threadID: id)
-        }
         ScheduledTasks.shared.onEditProposal = { task in ScheduleActions.editProposal(task) }
         let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateSchedules() }
@@ -345,17 +341,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         ScheduleActions.newSchedule(inThread: id, in: window)
     }
 
-    /// The clock in the top-right group: shown for a thread with schedules, with its next run.
+    /// The clock in the top-right group, which opens the Scheduled panel: for a thread with schedules, it reads their
+    /// next run.
     @objc func updateSchedules() {
         let service = ScheduledTasks.shared
         guard let id = selectedThreadID else {
-            panelButtons.showSchedules(nextRun: nil, toolTip: nil, visible: false)
+            panelButtons.showSchedules(nextRun: nil, detail: nil)
             return
         }
-        let tasks = service.tasks(inThread: id)
         let next = service.nextRun(inThread: id)
-        let title = next.map { SchedulePresentation.compactTime($0.date) }
-        panelButtons.showSchedules(nextRun: title, toolTip: SchedulePresentation.threadToolTip(tasks), visible: !tasks.isEmpty)
+        panelButtons.showSchedules(
+            nextRun: next.map { SchedulePresentation.compactTime($0.date) },
+            detail: SchedulePresentation.threadToolTip(service.tasks(inThread: id)))
     }
 
     /// View › Archived Threads…: Settings › Archive.

@@ -1,7 +1,7 @@
 import AppKit
 import CoincideKit
 
-/// How a schedule reads in the thread's clock popup, the Scheduled panel and the sidebar.
+/// How a schedule reads in the toolbar's clock, the Scheduled panel and the sidebar.
 enum SchedulePresentation {
     /// A schedule's state as a short label, with the badge color it shows in; nil for an active schedule waiting for
     /// its next run, which needs no badge.
@@ -146,22 +146,26 @@ enum SchedulePresentation {
     }
 }
 
-/// What the Scheduled panel lists.
+/// What the Scheduled panel lists. `thisThread` is the open thread's schedules: the panel starts on it when it opens
+/// from a thread that has some, and doesn't remember it, unlike the others.
 enum ScheduleFilter: String, CaseIterable {
-    case all, active, paused, attention
+    case all, thisThread, active, paused, attention
 
     var title: String {
         switch self {
         case .all: String(localized: "All Schedules")
+        case .thisThread: String(localized: "This Thread")
         case .active: String(localized: "Active")
         case .paused: String(localized: "Paused")
         case .attention: String(localized: "Needs Attention")
         }
     }
 
-    func includes(_ task: ScheduledTask) -> Bool {
+    /// `threadID` is the open thread, which `thisThread` lists.
+    func includes(_ task: ScheduledTask, threadID: UUID? = nil) -> Bool {
         switch self {
         case .all: true
+        case .thisThread: threadID != nil && task.threadID == threadID
         case .active: task.isActive
         case .paused: task.isPaused
         case .attention:

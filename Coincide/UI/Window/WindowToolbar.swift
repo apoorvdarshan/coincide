@@ -188,9 +188,7 @@ extension MainWindowController: NSToolbarDelegate, NSToolbarItemValidation, NSMe
     /// Lights the rail's and the toolbar's buttons for the open panels and enables Open In when there is a folder.
     func updateRail() {
         let terminalOpen = splitController.isTerminalOpen
-        rail.update(
-            threadsOpen: splitController.isSidebarOpen, terminalOpen: terminalOpen, canOpenFolder: openFolder != nil,
-            schedulesOpen: splitController.isSchedulesOpen)
+        rail.update(threadsOpen: splitController.isSidebarOpen, terminalOpen: terminalOpen, canOpenFolder: openFolder != nil)
         sidebar.setSchedulesOpen(splitController.isSchedulesOpen)
         panelButtons.update(open: splitController.isInspectorOpen ? splitController.inspector.panel : nil)
     }

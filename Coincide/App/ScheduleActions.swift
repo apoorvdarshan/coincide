@@ -1,7 +1,7 @@
 import AppKit
 import CoincideKit
 
-/// What the user does to schedules, from the thread's clock popup, the Scheduled panel, menus and approval cards.
+/// What the user does to schedules, from the Scheduled panel, menus and approval cards.
 enum ScheduleActions {
     private static var service: ScheduledTasks { .shared }
     private static var store: AppStore { .shared }
