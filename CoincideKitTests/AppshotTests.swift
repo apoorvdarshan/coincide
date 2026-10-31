@@ -14,7 +14,7 @@ struct AppshotSettingsTests {
         #expect(AppSettings().appshots == AppshotSettings())
         #expect(!AppSettings().appshots.enabled)
         #expect(AppSettings().appshots.trigger == .bothCommandKeys)
-        #expect(AppSettings().appshots.includesWindowText)
+        #expect(!AppSettings().appshots.includesWindowText)
         #expect(AppSettings().appshots.playsSound)
         // Settings written before Appshots existed decode with it off.
         let older = try decode(#"{"fontSize": 15, "computerUseEnabled": true}"#)
