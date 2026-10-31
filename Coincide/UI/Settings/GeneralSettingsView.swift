@@ -74,6 +74,11 @@ struct GeneralSettingsView: View {
                         Text("The terminal draws its text with Metal on the graphics processor. Turn this off to draw with the CPU instead.")
                     }
                     .settingsRevealable(.terminalGPURendering, highlighted: highlighted)
+                    Toggle(isOn: model.binding(\.terminalTranslucentBackground)) {
+                        Text("Translucent terminal")
+                        Text("The desktop shows through the terminal's background, blurred.")
+                    }
+                    .settingsRevealable(.terminalTranslucency, highlighted: highlighted)
                     OpenInSettingsRow(selection: model.binding(\.preferredOpenTarget))
                         .settingsRevealable(.openIn, highlighted: highlighted)
                 }
@@ -279,6 +284,7 @@ struct GeneralSettingsView: View {
         settings.lightTheme = defaults.lightTheme
         settings.terminalPlacement = defaults.terminalPlacement
         settings.terminalGPURendering = defaults.terminalGPURendering
+        settings.terminalTranslucentBackground = defaults.terminalTranslucentBackground
         settings.preferredOpenTarget = defaults.preferredOpenTarget
         settings.sendOnReturn = defaults.sendOnReturn
         settings.followUpBehavior = defaults.followUpBehavior

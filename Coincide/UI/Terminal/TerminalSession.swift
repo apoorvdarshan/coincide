@@ -50,6 +50,7 @@ final class TerminalSession {
         terminalView.linkDirectory = { [weak self] in self?.directory ?? FileManager.default.homeDirectoryForCurrentUser }
         terminalView.onOutput = { [weak self] in self?.scheduleRefresh() }
         terminalView.onExit = { [weak self] status in self?.shellExited(status: status) }
+        terminalView.onProgressChange = { [weak self] in self?.onChange?() }
         terminalView.onInputWhileStopped = { [weak self] data in self?.inputWhileStopped(data) }
         paneView.onRestart = { [weak self] in self?.restart() }
     }
@@ -60,6 +61,9 @@ final class TerminalSession {
 
     /// Running something that closing the terminal would stop.
     var isBusy: Bool { state == .running && foregroundCommand != nil }
+
+    /// The progress the running program reports (OSC 9;4), shown on its tab.
+    var progress: TerminalProgress? { terminalView.progress }
 
     // MARK: Lifecycle
 
@@ -229,6 +233,16 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
     private(set) var commands = TerminalCommandState()
     /// Sends the last command's output to the composer.
     var onSendLastCommand: (() -> Void)?
+    /// The newest progress report (OSC 9;4), until the program removes it or goes quiet for `TerminalProgress.timeout`.
+    private(set) var progress: TerminalProgress? {
+        didSet { if progress != oldValue { onProgressChange?() } }
+    }
+    var onProgressChange: (() -> Void)?
+    private var progressTimer: Timer?
+    /// Opacity of the terminal's background over a translucent pane (Settings › General › Translucent terminal).
+    static let translucentOpacity: CGFloat = 0.82
+    /// Whether the terminal's background lets the desktop show through, read when settings change. Tests replace it.
+    static var prefersTranslucency: () -> Bool = { AppStore.shared.settings.terminalTranslucentBackground }
 
     init(font: NSFont) {
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 320), font: font, options: TerminalOptions(scrollback: 10_000))
@@ -250,14 +264,38 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
         TerminalTheme.apply(to: self)
         setAccessibilityLabel(String(localized: "Terminal"))
         settingsObservation = AppStore.shared.observe { [weak self] change in
-            if change == .settings { self?.updateRenderer() }
+            guard change == .settings, let self else { return }
+            self.updateRenderer()
+            let opacity = Self.prefersTranslucency() ? Self.translucentOpacity : 1
+            if self.backgroundOpacity != opacity { self.backgroundOpacity = opacity }
         }
         // The shell integration's marks arrive as OSC sequences, copied to a private queue in order.
+        // OSC 9;4 progress goes to the tab as well as SwiftTerm's own bar.
         oscObservation = observeOscEvents { [weak self] event in
-            guard event.code == 133 || event.code == 1337 else { return }
+            guard event.code == 133 || event.code == 1337 || event.code == 9 else { return }
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { _ = self?.commands.apply(code: event.code, payload: event.payload) }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if event.code == 9 {
+                        if let report = TerminalProgress.parse(event.payload) { self.showProgress(report) }
+                    } else {
+                        _ = self.commands.apply(code: event.code, payload: event.payload)
+                    }
+                }
             }
+        }
+        progressBarColor = .controlAccentColor
+        backgroundOpacity = Self.prefersTranslucency() ? Self.translucentOpacity : 1
+    }
+
+    /// Shows `report` (nil removes it), clearing it if no other report follows within the timeout.
+    func showProgress(_ report: TerminalProgress?) {
+        progressTimer?.invalidate()
+        progressTimer = nil
+        progress = report
+        guard report != nil else { return }
+        progressTimer = Timer.scheduledTimer(withTimeInterval: TerminalProgress.timeout, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showProgress(nil) }
         }
     }
 
@@ -625,12 +663,40 @@ final class TerminalPaneView: NSView {
     var onRestart: (() -> Void)?
     private var exitBanner: (glass: FlatSurfaceView, content: NSView)?
 
+    /// The desktop, blurred, behind a translucent terminal; nil while it is opaque.
+    private(set) var material: NSVisualEffectView?
+    private var settingsObservation: ObservationToken?
+
     init(terminalView: ShellTerminalView) {
         self.terminalView = terminalView
         super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = true
         addSubview(terminalView)
+        updateTranslucency()
+        settingsObservation = AppStore.shared.observe { [weak self] change in
+            if change == .settings { self?.updateTranslucency() }
+        }
+    }
+
+    /// Puts the blurred desktop behind the terminal while Translucent terminal is on, and takes it away when off.
+    func updateTranslucency() {
+        let translucent = ShellTerminalView.prefersTranslucency()
+        guard translucent != (material != nil) else { return }
+        if translucent {
+            let view = NSVisualEffectView()
+            view.material = .underWindowBackground
+            view.blendingMode = .behindWindow
+            view.state = .followsWindowActiveState
+            view.frame = bounds
+            view.autoresizingMask = [.width, .height]
+            addSubview(view, positioned: .below, relativeTo: terminalView)
+            material = view
+        } else {
+            material?.removeFromSuperview()
+            material = nil
+        }
+        needsDisplay = true
     }
 
     required init?(coder: NSCoder) {
@@ -642,7 +708,7 @@ final class TerminalPaneView: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.backgroundColor = TerminalTheme.background.cgColor
+        layer?.backgroundColor = material == nil ? TerminalTheme.background.cgColor : NSColor.clear.cgColor
     }
 
     override func layout() {

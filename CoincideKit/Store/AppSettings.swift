@@ -163,6 +163,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// The terminal draws with Metal on the GPU (SwiftTerm's renderer) instead of Core Graphics, falling back to Core
     /// Graphics where Metal can't start. On by default; Settings › General › GPU rendering turns it off.
     public var terminalGPURendering: Bool
+    /// The terminal's background lets the blurred desktop show through. Off by default, as Coincide's surfaces are opaque.
+    public var terminalTranslucentBackground: Bool
     /// Bundle identifier of the app the "Open In" button opens project folders in, picked in Settings › General or from
     /// any Open In menu; nil for automatic, the first installed editor. (Earlier versions kept it in the interface
     /// state, `UIState`, from where it moves here once.)
@@ -235,6 +237,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         userMessageSide = .right
         terminalPlacement = .bottom
         terminalGPURendering = true
+        terminalTranslucentBackground = false
         preferredOpenTarget = nil
         darkTheme = "carbon"
         lightTheme = "carbon-light"
@@ -296,6 +299,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         userMessageSide = value(.userMessageSide, defaults.userMessageSide)
         terminalPlacement = value(.terminalPlacement, defaults.terminalPlacement)
         terminalGPURendering = value(.terminalGPURendering, defaults.terminalGPURendering)
+        terminalTranslucentBackground = value(.terminalTranslucentBackground, defaults.terminalTranslucentBackground)
         preferredOpenTarget = value(.preferredOpenTarget, defaults.preferredOpenTarget)
         darkTheme = value(.darkTheme, defaults.darkTheme)
         lightTheme = value(.lightTheme, defaults.lightTheme)

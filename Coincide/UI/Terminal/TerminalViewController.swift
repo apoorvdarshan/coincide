@@ -160,7 +160,10 @@ final class TerminalViewController: NSViewController {
         }.joined(separator: "\n")
         var hasExited = false
         if case .exited = tab.activeSession?.state { hasExited = true }
-        return TerminalHeaderView.Tab(id: tab.id, title: title, symbolName: symbol, toolTip: toolTip, hasExited: hasExited)
+        let progress = tab.activeSession?.progress
+        return TerminalHeaderView.Tab(
+            id: tab.id, title: title, symbolName: symbol,
+            toolTip: progress.map { toolTip + "\n" + $0.description } ?? toolTip, hasExited: hasExited, progress: progress)
     }
 
     /// The active terminal's directory, or where a new one would start.
