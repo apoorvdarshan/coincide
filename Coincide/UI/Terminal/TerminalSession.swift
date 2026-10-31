@@ -337,6 +337,38 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
         updateRenderer()
     }
 
+    // MARK: Focus
+
+    /// AppKit gives keyboard focus to the view under a click. With GPU rendering on, that is SwiftTerm's Metal surface,
+    /// a subview covering the whole terminal that refuses focus, so clicks never focused the terminal. Its points hit
+    /// the terminal itself, as they do with Core Graphics, the way SwiftTerm's caret already leaves them to it.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        if let hit, hit !== self, hit.superview === self, hit.layer is CAMetalLayer { return self }
+        return hit
+    }
+
+    /// A press focuses the terminal before SwiftTerm handles it, whichever of its subviews AppKit delivered it to.
+    override func mouseDown(with event: NSEvent) {
+        takeFocus()
+        super.mouseDown(with: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        takeFocus()
+        super.rightMouseDown(with: event)
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        takeFocus()
+        super.otherMouseDown(with: event)
+    }
+
+    func takeFocus() {
+        guard let window, window.firstResponder !== self else { return }
+        window.makeFirstResponder(self)
+    }
+
     /// Draws with SwiftTerm's Metal renderer while Settings › General › GPU rendering is on, and with Core Graphics
     /// when it is off or Metal can't start here (no device, or a pipeline that fails to build). Metal starts once the
     /// view is in a window, as SwiftTerm requires; leaving the window keeps the renderer for when it comes back.
@@ -644,10 +676,13 @@ enum TerminalKeyRouter {
 
     static func install() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard let terminal = event.window?.firstResponder as? ShellTerminalView else { return event }
-            return terminal.handleKeyDown(event) ? nil : event
-        }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: route)
+    }
+
+    /// What the monitor does with a key press: nil when the focused terminal used it, else the event, to go on as usual.
+    static func route(_ event: NSEvent) -> NSEvent? {
+        guard let terminal = event.window?.firstResponder as? ShellTerminalView else { return event }
+        return terminal.handleKeyDown(event) ? nil : event
     }
 }
 
@@ -711,6 +746,11 @@ final class TerminalPaneView: NSView {
         layer?.backgroundColor = material == nil ? TerminalTheme.background.cgColor : NSColor.clear.cgColor
     }
 
+    /// A click in the margins around the text, or on the exit banner beside its buttons, focuses the terminal too.
+    override func mouseDown(with event: NSEvent) {
+        terminalView.takeFocus()
+    }
+
     override func layout() {
         super.layout()
         layoutContent()
@@ -766,6 +806,7 @@ final class TerminalPaneView: NSView {
     }
 
     @objc private func restartShell() {
+        terminalView.takeFocus()
         onRestart?()
     }
 
