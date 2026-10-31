@@ -1,7 +1,10 @@
+import AVFoundation
 import AppKit
 import CoincideKit
 import CoincideRemoteKit
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 /// Coincide Remote's view of the app: turns the store, the runner and the registry into the remote protocol's models,
 /// and carries out what the phone asks through the same calls the Mac's own controls make. The Mac stays the only
@@ -313,7 +316,8 @@ final class RemoteStoreAdapter {
         guard let summary = store.summary(threadID), let thread = store.thread(threadID) else { return nil }
         let limit = max(1, min(limit, 1_000))
         let start = max(0, thread.items.count - limit)
-        let items = thread.items[start...].enumerated().map { offset, item in Self.item(item, index: start + offset) }
+        let directory = store.workingDirectory(for: threadID)
+        let items = thread.items[start...].enumerated().map { offset, item in remoteItem(item, index: start + offset, directory: directory) }
         return RemoteTranscript(
             thread: self.summary(summary), items: items, hasEarlier: start > 0, turn: turnState(threadID),
             turnChanges: services.turnChanges(threadID))
@@ -323,7 +327,8 @@ final class RemoteStoreAdapter {
         guard let thread = store.thread(threadID) else { return nil }
         let end = max(0, min(index, thread.items.count))
         let start = max(0, end - max(1, min(limit, 1_000)))
-        let items = thread.items[start..<end].enumerated().map { offset, item in Self.item(item, index: start + offset) }
+        let directory = store.workingDirectory(for: threadID)
+        let items = thread.items[start..<end].enumerated().map { offset, item in remoteItem(item, index: start + offset, directory: directory) }
         return RemoteItemPage(items: items, hasEarlier: start > 0)
     }
 
@@ -331,12 +336,81 @@ final class RemoteStoreAdapter {
     func items(_ threadID: UUID, ids: Set<UUID>) -> (items: [RemoteItem], count: Int)? {
         guard let thread = store.thread(threadID) else { return nil }
         var result: [RemoteItem] = []
+        let directory = store.workingDirectory(for: threadID)
         // Changed items are almost always among the newest.
         for index in thread.items.indices.reversed() where ids.contains(thread.items[index].id) {
-            result.append(Self.item(thread.items[index], index: index))
+            result.append(remoteItem(thread.items[index], index: index, directory: directory))
             if result.count == ids.count { break }
         }
         return (result.reversed(), thread.items.count)
+    }
+
+    /// An item with the previews the Mac's transcript shows for it: a message's attached images, and the images,
+    /// video, audio and interactive pages a reply references.
+    private func remoteItem(_ item: TranscriptItem, index: Int, directory: URL?) -> RemoteItem {
+        var remote = Self.item(item, index: index)
+        guard item.kind == .user || item.kind == .assistant else { return remote }
+        remote.media = Self.media(TranscriptMediaCache.media(item, directory: directory))
+        return remote
+    }
+
+    nonisolated static func media(_ media: [TranscriptMedia]) -> [RemoteMedia] {
+        media.enumerated().map { index, media in
+            let kind: RemoteMedia.Kind =
+                switch media.kind {
+                case .image: .image
+                case .video: .video
+                case .audio: .audio
+                case .interactive: .interactive
+                }
+            return RemoteMedia(index: index, kind: kind, label: String(media.label.prefix(300)))
+        }
+    }
+
+    /// A preview's pixels for the phone: only media the item itself references (its attachments, or what its reply
+    /// links), downsampled to a thumbnail or the full size and re-encoded, so the phone can't read any other file.
+    func media(_ threadID: UUID, itemID: UUID, index: Int, full: Bool) async throws -> RemoteMediaData {
+        guard let thread = store.thread(threadID) else {
+            throw RemoteError(.notFound, String(localized: "That thread no longer exists."))
+        }
+        guard let item = thread.items.first(where: { $0.id == itemID }), item.kind == .user || item.kind == .assistant else {
+            throw RemoteError(.notFound, String(localized: "That preview is no longer available."))
+        }
+        let media = TranscriptMediaCache.media(item, directory: store.workingDirectory(for: threadID))
+        guard media.indices.contains(index) else {
+            throw RemoteError(.notFound, String(localized: "That preview is no longer available."))
+        }
+        let pixels = full ? RemoteMediaData.fullPixels : RemoteMediaData.thumbnailPixels
+        let image: CGImage?
+        switch media[index].kind {
+        case .image: image = await MediaImageLoader.load(media[index].url, maxPixelSize: pixels)
+        case .video where !full: image = await Self.firstFrame(media[index].url, maxPixelSize: pixels)
+        case .video, .audio, .interactive:
+            throw RemoteError(.notAllowed, String(localized: "Open it on your Mac to see it."))
+        }
+        guard let image, let data = Self.encode(image), data.count <= RemoteMediaData.maxBytes else {
+            throw RemoteError(.failed, String(localized: "The preview couldn’t be loaded."))
+        }
+        return RemoteMediaData(data: data, width: image.width, height: image.height, isFull: full)
+    }
+
+    /// A video's first frame, for its thumbnail. Local files only.
+    @concurrent nonisolated static func firstFrame(_ url: URL?, maxPixelSize: Int) async -> CGImage? {
+        guard let url, url.isFileURL else { return nil }
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: maxPixelSize, height: maxPixelSize)
+        return try? await generator.image(at: .zero).image
+    }
+
+    /// JPEG, or PNG for a picture with transparency so its see-through parts don't turn black.
+    nonisolated static func encode(_ image: CGImage) -> Data? {
+        let hasAlpha = ![.none, .noneSkipFirst, .noneSkipLast].contains(image.alphaInfo)
+        let data = NSMutableData()
+        let type = (hasAlpha ? UTType.png : UTType.jpeg).identifier as CFString
+        guard let destination = CGImageDestinationCreateWithData(data, type, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary)
+        return CGImageDestinationFinalize(destination) ? data as Data : nil
     }
 
     nonisolated static func item(_ item: TranscriptItem, index: Int) -> RemoteItem {

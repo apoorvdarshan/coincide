@@ -418,14 +418,19 @@ public struct RemoteItem: Codable, Hashable, Sendable, Identifiable {
     public var isClipped: Bool
     public var createdAt: Date
     public var completedAt: Date?
+    /// What the Mac previews with the item: the user's attached images, and images, video, audio and interactive pages
+    /// an agent's reply shows. The phone asks for each one's pixels by its index (`RemoteRequest.media`). Nil from an
+    /// older Mac, which sends only attachment names.
+    public var media: [RemoteMedia]?
 
     public init(
         id: UUID, index: Int, kind: Kind, text: String = "", title: String? = nil, detail: String? = nil,
         category: String? = nil, status: String? = nil, provider: String? = nil, modelID: String? = nil,
         approval: RemoteApproval? = nil, questions: RemoteQuestionSet? = nil, answers: [String: [String]]? = nil,
         attachments: [String]? = nil, context: [String]? = nil, steered: Bool = false, isClipped: Bool = false,
-        createdAt: Date = Date(), completedAt: Date? = nil
+        createdAt: Date = Date(), completedAt: Date? = nil, media: [RemoteMedia]? = nil
     ) {
+        self.media = media
         self.id = id
         self.index = index
         self.kind = kind
@@ -555,6 +560,58 @@ public struct RemoteTurnState: Codable, Hashable, Sendable {
         self.resumesAt = resumesAt
         self.backgroundTasks = backgroundTasks
     }
+}
+
+/// A preview an item shows, as the Mac's transcript draws it (`TranscriptMedia`). Only what the item itself references
+/// is listed; the phone can ask for nothing else.
+public struct RemoteMedia: Codable, Hashable, Sendable, Identifiable {
+    public enum Kind: String, Codable, Sendable {
+        case image, video, audio, interactive
+        /// A kind a newer Mac added.
+        case unknown
+
+        public init(from decoder: Decoder) throws {
+            self = Kind(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+        }
+    }
+
+    /// Its place among the item's media, which a `media` request names.
+    public var index: Int
+    public var kind: Kind
+    /// Its alt text or file name.
+    public var label: String
+
+    public var id: Int { index }
+
+    public init(index: Int, kind: Kind, label: String) {
+        self.index = index
+        self.kind = kind
+        self.label = label
+    }
+}
+
+/// An image's pixels, as the Mac sends them for a preview: a small thumbnail first, the full picture on demand.
+public struct RemoteMediaData: Codable, Hashable, Sendable {
+    /// JPEG, or PNG when the picture has transparency.
+    public var data: Data
+    public var width: Int
+    public var height: Int
+    /// The full picture (at most `fullPixels` on its long edge) rather than a thumbnail.
+    public var isFull: Bool
+
+    public init(data: Data, width: Int, height: Int, isFull: Bool) {
+        self.data = data
+        self.width = width
+        self.height = height
+        self.isFull = isFull
+    }
+
+    /// Longest edge of a thumbnail, in pixels.
+    public static let thumbnailPixels = 480
+    /// Longest edge of a full picture, in pixels.
+    public static let fullPixels = 2560
+    /// Largest encoded picture the Mac sends.
+    public static let maxBytes = 12 * 1024 * 1024
 }
 
 /// One task an agent runs in the background, as the Mac's `BackgroundTask`: a subagent, a command or something else.

@@ -247,6 +247,10 @@ public enum RemoteRequest: Hashable, Sendable {
     /// Expands or collapses a project in the Mac's sidebar, so both show the same. Answers `ok`. An older Mac answers
     /// `unsupported`, and the phone keeps the choice to itself.
     case setProjectExpanded(projectID: UUID, expanded: Bool)
+    /// An image an item previews (`RemoteItem.media`, by its index): a thumbnail, or the full picture. Answers `media`.
+    /// The Mac reads only what that item references; video gets a thumbnail of its first frame, and audio and
+    /// interactive pages none. An older Mac answers `unsupported`.
+    case media(threadID: UUID, itemID: UUID, index: Int, full: Bool)
 
     /// The request's name on the wire.
     public var name: String {
@@ -281,6 +285,7 @@ public enum RemoteRequest: Hashable, Sendable {
         case .changeSetting: "changeSetting"
         case .settingsAction: "settingsAction"
         case .setProjectExpanded: "setProjectExpanded"
+        case .media: "media"
         }
     }
 }
@@ -305,6 +310,8 @@ private struct RequestBody: Codable {
     var key: String?
     var value: RemoteSettingValue?
     var expanded: Bool?
+    var index: Int?
+    var full: Bool?
 }
 
 public enum RemoteProtocolError: Error, Equatable, Sendable {
@@ -404,6 +411,11 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case "setProjectExpanded":
             let f = try fields()
             request = .setProjectExpanded(projectID: try need(f.projectID, "projectID"), expanded: try need(f.expanded, "expanded"))
+        case "media":
+            let f = try fields()
+            request = .media(
+                threadID: try need(f.threadID, "threadID"), itemID: try need(f.itemID, "itemID"), index: try need(f.index, "index"),
+                full: f.full ?? false)
         default: throw RemoteProtocolError.unsupported(type)
         }
     }
@@ -458,6 +470,11 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case .setProjectExpanded(let projectID, let expanded):
             f.projectID = projectID
             f.expanded = expanded
+        case .media(let threadID, let itemID, let index, let full):
+            f.threadID = threadID
+            f.itemID = itemID
+            f.index = index
+            f.full = full
         case .threadAction(let threadID, let action):
             f.threadID = threadID
             f.action = action
@@ -491,6 +508,8 @@ public enum RemoteResult: Hashable, Sendable {
     case bot(UUID)
     /// The Mac's Settings. Only a phone that asked (`settings`) ever gets it.
     case settings(RemoteSettingsSnapshot)
+    /// A preview's pixels. Only a phone that asked (`media`) ever gets it.
+    case media(RemoteMediaData)
 
     var name: String {
         switch self {
@@ -506,6 +525,7 @@ public enum RemoteResult: Hashable, Sendable {
         case .usage: "usage"
         case .bot: "bot"
         case .settings: "settings"
+        case .media: "media"
         }
     }
 }
@@ -625,6 +645,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case "usage": result = .usage(try body(ValueBody<[RemoteUsage]>.self).value)
             case "bot": result = .bot(try body(ValueBody<UUID>.self).value)
             case "settings": result = .settings(try body(RemoteSettingsSnapshot.self))
+            case "media": result = .media(try body(RemoteMediaData.self))
             default:
                 self = .unknown(type)
                 return
@@ -679,6 +700,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case .usage(let usage): try container.encode(ValueBody(value: usage), forKey: .body)
             case .bot(let id): try container.encode(ValueBody(value: id), forKey: .body)
             case .settings(let snapshot): try container.encode(snapshot, forKey: .body)
+            case .media(let media): try container.encode(media, forKey: .body)
             }
         case .event(let event):
             try container.encode("event", forKey: .kind)

@@ -45,6 +45,8 @@ final class RemoteClient {
     private var expansionInFlight: Set<UUID> = []
 
     let bonjour = BonjourBrowser()
+    /// Image previews the Mac sent, within a memory budget.
+    @ObservationIgnored let media = MediaCache()
     @ObservationIgnored private let saved = SavedMacs.shared
     @ObservationIgnored private var socket: RemoteSocket?
     @ObservationIgnored private var pending: [String: CheckedContinuation<RemoteResult, Error>] = [:]
@@ -108,6 +110,7 @@ final class RemoteClient {
             threads = [:]
             workspace = RemoteWorkspace()
             server = nil
+            media.clear()
         }
         self.mac = mac
         saved.lastUsedID = mac.serverID

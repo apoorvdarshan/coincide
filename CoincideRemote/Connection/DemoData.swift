@@ -1,6 +1,7 @@
 #if DEBUG
 import CoincideRemoteKit
 import Foundation
+import UIKit
 
 /// Sample threads for screenshots and layout checks in the simulator, with no Mac: launch with `-CoincideRemoteDemo`.
 /// Debug builds only.
@@ -112,16 +113,33 @@ enum DemoData {
             pinnedOrder: [])
     }
 
+    /// A stand-in picture for media previews: a soft gradient with a symbol, wide or tall by index.
+    static func picture(_ index: Int, full: Bool) -> UIImage {
+        let size = index % 2 == 0 ? CGSize(width: 640, height: 400) : CGSize(width: 360, height: 520)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            let colors = [UIColor.systemIndigo, .systemTeal, .systemOrange, .systemPink]
+            let gradient = CGGradient(
+                colorsSpace: nil, colors: [colors[index % 4].cgColor, colors[(index + 1) % 4].cgColor] as CFArray, locations: nil)!
+            context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: size.width, y: size.height), options: [])
+            let symbol = UIImage(
+                systemName: ["photo", "iphone", "play.rectangle", "paintpalette"][index % 4],
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 96, weight: .light))?
+                .withTintColor(.white.withAlphaComponent(0.85), renderingMode: .alwaysOriginal)
+            symbol?.draw(at: CGPoint(x: (size.width - (symbol?.size.width ?? 0)) / 2, y: (size.height - (symbol?.size.height ?? 0)) / 2))
+        }
+    }
+
     static func transcript(_ summary: RemoteThreadSummary) -> RemoteTranscript {
         let user = UUID()
         let earlier = UUID()
         var items: [RemoteItem] = []
         func add(_ kind: RemoteItem.Kind, _ text: String = "", title: String? = nil, detail: String? = nil, category: String? = nil,
-                 status: String? = nil, id: UUID = UUID(), approval: RemoteApproval? = nil) {
+                 status: String? = nil, id: UUID = UUID(), approval: RemoteApproval? = nil, media: [RemoteMedia]? = nil) {
             items.append(
                 RemoteItem(
                     id: id, index: items.count, kind: kind, text: text, title: title, detail: detail, category: category,
-                    status: status, provider: "claude", approval: approval))
+                    status: status, provider: "claude", approval: approval,
+                    attachments: media?.filter { $0.kind == .image }.map(\.label), media: media))
         }
         add(.user, "Add a Remote section to Settings with a pairing QR code.", id: earlier)
         add(.tool, title: "Read GeneralSettingsView.swift", category: "read", status: "completed")
@@ -149,6 +167,18 @@ enum DemoData {
                 .init(id: "allow", label: "Allow", kind: "allowOnce"), .init(id: "always", label: "Always Allow", kind: "allowAlways"),
                 .init(id: "deny", label: "Deny", kind: "deny"),
             ]))
+        // `-CoincideRemoteDemoMedia`: pictures the user attached and an agent's generated image, video and page.
+        if ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoMedia") {
+            add(.user, "Make the settings screen match these.", media: [
+                RemoteMedia(index: 0, kind: .image, label: "5025975E-88A1-4F2B-9C1D-2B7E5C3A9F10.png"),
+                RemoteMedia(index: 1, kind: .image, label: "IMG_2041.jpg"),
+            ])
+            add(.assistant, "Here's the new screen, and a short recording of the pairing flow:\n\n![Settings › Remote](remote.png)", media: [
+                RemoteMedia(index: 0, kind: .image, label: "Settings › Remote"),
+                RemoteMedia(index: 1, kind: .video, label: "pairing.mov"),
+                RemoteMedia(index: 2, kind: .interactive, label: "palette.html"),
+            ])
+        }
         // `-CoincideRemoteDemoBackground`: the turn ended, and a subagent and a command still run.
         let background = ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoBackground")
         let turn =

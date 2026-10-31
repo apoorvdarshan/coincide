@@ -216,7 +216,8 @@ nonisolated enum InteractiveOutput {
 }
 
 nonisolated enum MediaImageLoader {
-    @concurrent static func load(_ url: URL?) async -> CGImage? {
+    /// `maxPixelSize` caps the longest edge; Coincide Remote asks for its own thumbnail and full sizes.
+    @concurrent static func load(_ url: URL?, maxPixelSize: Int = 1600) async -> CGImage? {
         guard let url else { return nil }
         let source: CGImageSource?
         if url.isFileURL {
@@ -252,6 +253,6 @@ nonisolated enum MediaImageLoader {
         }
         guard let source else { return nil }
         return CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 1600] as CFDictionary)
+            kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: maxPixelSize] as CFDictionary)
     }
 }
