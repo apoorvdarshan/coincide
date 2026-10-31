@@ -1,6 +1,125 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "NSAppleEventsUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide ermöglicht den Agenten, die du unter Einstellungen › Computersteuerung erlaubst, andere Apps zu steuern."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincide lets the agents you allow in Settings › Computer Use control other apps."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide permite que los agentes que autorices en Ajustes › Uso del ordenador controlen otras apps."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide permite que los agentes que autorices en Ajustes › Uso de la computadora controlen otras apps."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide permet aux agents que vous autorisez dans Réglages › Contrôle de l’ordinateur de contrôler d’autres apps."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide उन एजेंट को दूसरे ऐप नियंत्रित करने देता है जिन्हें आप सेटिंग्स › कंप्यूटर नियंत्रण में अनुमति देते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide memungkinkan agen yang Anda izinkan di Pengaturan › Kontrol Komputer untuk mengontrol app lain."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide consente agli agenti che autorizzi in Impostazioni › Uso del computer di controllare altre app."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideは、設定 › コンピュータ操作で許可したエージェントがほかのアプリを操作できるようにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide는 설정 › 컴퓨터 사용에서 허용한 에이전트가 다른 앱을 제어할 수 있게 합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide laat de agents die je toestaat in Instellingen › Computerbediening andere apps bedienen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide pozwala agentom, którym zezwolisz w Ustawienia › Obsługa komputera, sterować innymi aplikacjami."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide permite que os agentes autorizados em Ajustes › Controle do computador controlem outros apps."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide позволяет агентам, которым вы разрешили это в «Настройки › Управление компьютером», управлять другими приложениями."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide, Ayarlar › Bilgisayar Kullanımı’nda izin verdiğiniz ajanların diğer uygulamaları denetlemesine olanak tanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide дає змогу агентам, яким ви дозволили це в «Параметри › Керування комп’ютером», керувати іншими програмами."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide cho phép các tác tử bạn cho phép trong Cài đặt › Điều khiển máy tính điều khiển ứng dụng khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 允许你在“设置 › 电脑控制”中允许的代理控制其他 App。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 允許你在「設定 › 電腦控制」中允許的代理程式控制其他 App。"
+          }
+        }
+      }
+    },
     "NSLocalNetworkUsageDescription" : {
       "extractionState" : "manual",
       "localizations" : {

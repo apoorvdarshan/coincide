@@ -6,6 +6,8 @@ options:
     iOS: "26.0"
   createIntermediateGroups: true
   developmentLanguage: en
+  # The Cua Driver release Computer Use bundles, checked against pinned checksums (cached after the first download).
+  preGenCommand: scripts/fetch-cua-driver.sh
 packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
@@ -162,6 +164,16 @@ targets:
           - $(BUILT_PRODUCTS_DIR)/coincide
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/coincide
+      # Computer Use's helper (Coincide/ComputerUse), fetched by scripts/fetch-cua-driver.sh. It keeps Cua AI's own
+      # Developer ID signature; Coincide starts it as a child, so macOS counts its permissions as Coincide's.
+      - name: Embed computer-use helper
+        script: |
+          /bin/mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
+          /usr/bin/install -m 755 "$SCRIPT_INPUT_FILE_0" "$SCRIPT_OUTPUT_FILE_0"
+        inputFiles:
+          - $(SRCROOT)/Vendor/CuaDriver/cua-driver
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/cua-driver
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide
@@ -175,6 +187,8 @@ targets:
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         # Coincide Remote (Settings › General › Remote) listens on the local network.
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Coincide lets Coincide Remote on your iPhone or iPad connect over the local network.
+        # Settings › Computer Use: the bundled helper runs as Coincide's child, so macOS asks on Coincide's behalf.
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: Coincide lets the agents you allow in Settings › Computer Use control other apps.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # Empty unless Local.xcconfig sets it, with a provisioning profile that grants what the file asks for:
         # Coincide/CoincideCloudKit.entitlements (the iCloud container) turns on lock-screen alerts for Coincide Remote,
