@@ -190,8 +190,10 @@ final class MainSplitViewController: NSSplitViewController {
         toggleInspector(.pullRequests)
     }
 
-    /// Opens or closes the Scheduled panel, which stays open across threads.
+    /// Opens or closes the Scheduled panel, which stays open across threads. It opens on the open thread's schedules
+    /// when it has any (`SchedulesPanelController.prepareToShow`).
     func toggleSchedulesPanel() {
+        if !isSchedulesOpen { schedules.prepareToShow() }
         toggleInspector(.schedules)
         guard isSchedulesOpen else { return }
         DispatchQueue.main.async { [weak self] in
@@ -200,7 +202,10 @@ final class MainSplitViewController: NSSplitViewController {
         }
     }
 
-    func showSchedulesPanel() { showInspector(.schedules) }
+    func showSchedulesPanel() {
+        if !isSchedulesOpen { schedules.prepareToShow() }
+        showInspector(.schedules)
+    }
 
     /// Opens or closes the terminal: its drawer below the chat, or its panel in the inspector, which another panel's
     /// button switches away from like a tab. Opening it focuses its terminal, so typing and ⌘T or ⌘W reach it at once.

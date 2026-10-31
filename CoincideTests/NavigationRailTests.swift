@@ -17,10 +17,12 @@ struct NavigationRailTests {
             view.subviews.forEach(collect)
         }
         collect(rail.view)
-        #expect(buttons.count == 10)
-        // The panels that open on the right have their buttons on the right, in the toolbar (`InspectorPanelButtons`).
+        #expect(buttons.count == 9)
+        // Whatever opens on the right has its button on the right, in the toolbar (`InspectorPanelButtons`): the
+        // schedules too, so the rail has no Scheduled clock.
         let labels = Set(buttons.compactMap { $0.accessibilityLabel() })
-        #expect(labels.isDisjoint(with: ["Diff", "Pull Requests", "Browser Preview"]))
+        #expect(labels.isDisjoint(with: ["Diff", "Pull Requests", "Browser Preview", "Scheduled", "Scheduled Tasks"]))
+        #expect(!buttons.contains { $0.action == #selector(MainWindowController.toggleSchedulesPanel(_:)) })
         #expect(labels.contains("Terminal"))
         // Open In names the app it opens ("Open in Xcode"), or reads "Open In" when none is installed.
         #expect(labels.contains { $0.lowercased().hasPrefix("open in") })

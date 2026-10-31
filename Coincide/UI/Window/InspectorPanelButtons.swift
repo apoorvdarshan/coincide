@@ -1,11 +1,12 @@
 import AppKit
 import CoincideKit
 
-/// The toolbar's buttons for the panels that open in the inspector column on the right: the diff, the pull requests,
-/// the browser preview and, when Settings › General puts the terminal on the right (`TerminalPlacement.right`), the
-/// terminal. They sit together in one pill drawn like the project scripts control beside them, and the open panel's
-/// button is lit. The panels share the column, so the buttons work like its tabs: another panel's button switches the
-/// column to that panel, the open panel's button closes it.
+/// The toolbar's buttons for the panels that open in the inspector column on the right: every schedule, the diff, the
+/// pull requests, the browser preview and, when Settings › General puts the terminal on the right
+/// (`TerminalPlacement.right`), the terminal. Whatever opens on the right has its button here, not in the navigation
+/// rail. They sit together in one pill drawn like the project scripts control beside them, and the open panel's button
+/// is lit. The panels share the column, so the buttons work like its tabs: another panel's button switches the column
+/// to that panel, the open panel's button closes it.
 ///
 /// The toolbar item comes after the inspector tracking separator (`toolbarDefaultItemIdentifiers`), so the pill stays at
 /// the window's top-right corner: over the column's top edge while the column is open, right after the scripts control
@@ -13,9 +14,9 @@ import CoincideKit
 final class InspectorPanelButtons: NSView {
     static let buttonWidth: CGFloat = 30
 
-    /// The open thread's schedules: a clock with the next run ("9:00"), shown while the thread has any. It opens their
-    /// popup (`ThreadSchedulesPopup`) rather than a panel.
-    let scheduleButton = ComposerControlButton()
+    /// The Scheduled panel (`SchedulesPanelController`), always shown. While the open thread has schedules it also
+    /// reads their next run ("9:00"), and the panel opens on them.
+    let scheduleButton: ComposerControlButton
     let diffButton: ComposerControlButton
     let pullRequestsButton: ComposerControlButton
     let previewButton: ComposerControlButton
@@ -44,6 +45,8 @@ final class InspectorPanelButtons: NSView {
     }
 
     private let entries: [(ComposerControlButton, Entry)]
+    /// The open thread's schedules for the clock's tooltip ("2 scheduled tasks", "Next: …"), nil when it has none.
+    private var scheduleDetail: String?
 
     override init(frame frameRect: NSRect) {
         func make(_ symbol: String, _ label: String, _ action: Selector) -> ComposerControlButton {
@@ -53,6 +56,10 @@ final class InspectorPanelButtons: NSView {
             button.setAccessibilityLabel(label)
             return button
         }
+        scheduleButton = make(
+            "clock", String(localized: "Scheduled Tasks"), #selector(MainWindowController.toggleSchedulesPanel(_:)))
+        // Below its minimum width (the constraint below), so the clock alone widens to a panel button's.
+        scheduleButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         diffButton = make("plus.forwardslash.minus", String(localized: "Diff"), #selector(MainWindowController.toggleDiffPanel(_:)))
         pullRequestsButton = make(
             "arrow.triangle.pull", String(localized: "Pull Requests"), #selector(MainWindowController.togglePullRequestsPanel(_:)))
@@ -60,6 +67,7 @@ final class InspectorPanelButtons: NSView {
         terminalButton = make("terminal", String(localized: "Terminal"), #selector(MainWindowController.toggleTerminalPanel(_:)))
         terminalButton.isHidden = true
         entries = [
+            (scheduleButton, Entry(panel: .schedules, label: String(localized: "Scheduled Tasks"), command: .showSchedules)),
             (diffButton, Entry(panel: .diff, label: String(localized: "Diff"), command: .toggleDiff)),
             (pullRequestsButton, Entry(panel: .pullRequests, label: String(localized: "Pull Requests"), command: nil)),
             (previewButton, Entry(panel: .preview, label: String(localized: "Browser Preview"), command: nil)),
@@ -69,10 +77,8 @@ final class InspectorPanelButtons: NSView {
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.cornerCurve = .continuous
-        scheduleButton.isHidden = true
-        scheduleButton.setAccessibilityLabel(String(localized: "Scheduled Tasks"))
         // The stack detaches the hidden terminal button, so the pill is only as wide as the buttons it shows.
-        let stack = NSStackView(views: [scheduleButton] + entries.map(\.0))
+        let stack = NSStackView(views: entries.map(\.0))
         stack.orientation = .horizontal
         stack.spacing = 0
         stack.edgeInsets = NSEdgeInsets(top: 1, left: 1, bottom: 1, right: 1)
@@ -85,7 +91,9 @@ final class InspectorPanelButtons: NSView {
                 stack.topAnchor.constraint(equalTo: topAnchor),
                 stack.bottomAnchor.constraint(equalTo: bottomAnchor),
                 heightAnchor.constraint(equalToConstant: 28),
-            ] + entries.map { $0.0.widthAnchor.constraint(equalToConstant: Self.buttonWidth) })
+                // As wide as the others with only its clock, wider with the next run beside it.
+                scheduleButton.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.buttonWidth),
+            ] + entries.dropFirst().map { $0.0.widthAnchor.constraint(equalToConstant: Self.buttonWidth) })
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
         setAccessibilityElement(true)
@@ -101,23 +109,29 @@ final class InspectorPanelButtons: NSView {
     }
 
     /// The buttons the pill shows, in order.
-    var shownButtons: [ComposerControlButton] { ([scheduleButton] + entries.map(\.0)).filter { !$0.isHidden } }
+    var shownButtons: [ComposerControlButton] { entries.map(\.0).filter { !$0.isHidden } }
+
+    /// The clock's width: a panel button's, or more with the next run beside it.
+    private var scheduleWidth: CGFloat { max(Self.buttonWidth, scheduleButton.intrinsicContentSize.width) }
 
     override var intrinsicContentSize: NSSize {
-        let panels = entries.map(\.0).filter { !$0.isHidden }.count
-        let schedule = scheduleButton.isHidden ? 0 : scheduleButton.intrinsicContentSize.width
-        return NSSize(width: Self.buttonWidth * CGFloat(panels) + schedule + 2, height: 28)
+        let panels = entries.dropFirst().map(\.0).filter { !$0.isHidden }.count
+        return NSSize(width: Self.buttonWidth * CGFloat(panels) + scheduleWidth + 2, height: 28)
     }
 
-    /// Shows the clock for a thread with schedules, titled with its next run, or hides it.
-    func showSchedules(nextRun: String?, toolTip: String?, visible: Bool) {
-        let changed = scheduleButton.isHidden == visible
-        scheduleButton.isHidden = !visible
+    /// Shows the open thread's next run beside the clock ("9:00") and its schedules in the clock's tooltip. Nil for a
+    /// thread without schedules (and `nextRun` nil while all of them are paused) leaves just the clock.
+    func showSchedules(nextRun: String?, detail: String?) {
+        let width = scheduleWidth
         scheduleButton.configure(title: nextRun ?? "", symbolName: "clock", chevron: false)
-        scheduleButton.toolTip = toolTip
-        scheduleButton.setAccessibilityValue(toolTip)
-        if changed || visible { invalidateIntrinsicContentSize() }
+        scheduleButton.setAccessibilityValue(detail)
+        scheduleDetail = detail
+        updateToolTips()
+        if scheduleWidth != width { invalidateIntrinsicContentSize() }
     }
+
+    /// The next run beside the clock, empty when it shows none.
+    var nextRunTitle: String { scheduleButton.attributedTitle.string }
 
     override var wantsUpdateLayer: Bool { true }
 
@@ -142,10 +156,12 @@ final class InspectorPanelButtons: NSView {
         entries.first { $0.0.isActive }?.1.panel
     }
 
-    /// The tooltips name the toggles' shortcuts, which the user can change.
+    /// The tooltips name the toggles' shortcuts, which the user can change. The clock's also sums up the open thread's
+    /// schedules.
     @objc func updateToolTips() {
         for (button, entry) in entries {
-            button.toolTip = entry.command.map { KeyBindingsController.shared.toolTip(entry.label, for: $0) } ?? entry.label
+            let title = entry.command.map { KeyBindingsController.shared.toolTip(entry.label, for: $0) } ?? entry.label
+            button.toolTip = button === scheduleButton ? [title, scheduleDetail].compactMap(\.self).joined(separator: "\n") : title
         }
     }
 }

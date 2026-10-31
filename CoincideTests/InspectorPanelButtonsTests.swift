@@ -4,9 +4,9 @@ import Testing
 
 @testable import Coincide
 
-/// The toolbar's buttons for the panels that open on the right: the diff, the pull requests and the browser preview.
-/// They toggle their panels like tabs of the inspector column, light the open one, and sit at the window's top-right
-/// corner whether the column is open or not, clear of the thread title.
+/// The toolbar's buttons for the panels that open on the right: every schedule, the diff, the pull requests and the
+/// browser preview. They toggle their panels like tabs of the inspector column, light the open one, and sit at the
+/// window's top-right corner whether the column is open or not, clear of the thread title.
 @MainActor @Suite(.serialized) struct InspectorPanelButtonsTests {
     /// Takes the buttons' actions in place of the window controller, whose actions also show the window: the tests
     /// never put a window on screen.
@@ -17,6 +17,7 @@ import Testing
         @objc func togglePullRequestsPanel(_ sender: Any?) { split.togglePullRequestsPanel() }
         @objc func togglePreviewPanel(_ sender: Any?) { split.togglePreviewPanel() }
         @objc func toggleTerminalPanel(_ sender: Any?) { split.toggleTerminalPanel() }
+        @objc func toggleSchedulesPanel(_ sender: Any?) { split.toggleSchedulesPanel() }
     }
 
     /// The main window on a thread of a project with a script, so the toolbar shows everything it can. The window is
@@ -146,11 +147,79 @@ import Testing
         #expect(buttons.openPanel == nil)
     }
 
+    /// The clock is always in the group and toggles the Scheduled panel like the other buttons. For a thread with
+    /// schedules it reads their next run, and the panel opens on that thread's schedules (This Thread).
+    @Test func theClockTogglesTheScheduledPanelAndReadsTheThreadsNextRun() async throws {
+        let harness = Harness(title: "Toolbar clock")
+        defer { harness.close() }
+        await harness.wait()
+        let buttons = harness.buttons
+        let split = harness.split
+        let service = ScheduledTasks.shared
+        #expect(harness.isShown(buttons.scheduleButton))
+        #expect(buttons.nextRunTitle.isEmpty)
+        #expect(buttons.scheduleButton.toolTip == KeyBindingsController.shared.toolTip(String(localized: "Scheduled Tasks"), for: .showSchedules))
+
+        // Without schedules in the thread, the panel opens on every schedule.
+        buttons.scheduleButton.performClick(nil)
+        await harness.wait()
+        #expect(split.isSchedulesOpen)
+        #expect(buttons.openPanel == .schedules)
+        #expect(buttons.scheduleButton.isActive && buttons.scheduleButton.isAccessibilitySelected())
+        #expect(!buttons.diffButton.isActive)
+        #expect(split.schedules.filter != .thisThread)
+        // Another panel's button switches the column away, and the clock goes dark.
+        buttons.diffButton.performClick(nil)
+        await harness.wait()
+        #expect(split.isDiffOpen && !buttons.scheduleButton.isActive)
+        buttons.diffButton.performClick(nil)
+        await harness.wait()
+        #expect(!split.isInspectorOpen)
+
+        // A schedule in the thread, hours away so it never runs during the test.
+        let hour = (Calendar.current.component(.hour, from: Date()) + 12) % 24
+        let task = ScheduledTask(
+            name: "Toolbar clock check", projectID: harness.projectID, prompt: "Check",
+            recurrence: TaskRecurrence(kind: .daily, timeZoneID: TimeZone.current.identifier, hour: hour, minute: 30),
+            threadID: harness.threadID)
+        try service.scheduler.save(task)
+        defer { try? service.delete(task.id) }
+        harness.controller.updateSchedules()
+        harness.settle()
+        let next = try #require(service.nextRun(inThread: harness.threadID))
+        #expect(buttons.nextRunTitle == SchedulePresentation.compactTime(next.date))
+        #expect(!buttons.nextRunTitle.isEmpty)
+        #expect(buttons.scheduleButton.toolTip?.contains("⌥⌘S") == true)
+        #expect(buttons.scheduleButton.toolTip?.contains(SchedulePresentation.threadToolTip([task]) ?? "-") == true)
+        #expect(abs(harness.frame(of: buttons).width - buttons.intrinsicContentSize.width) <= 0.5)
+        #expect(harness.window.frame.width - harness.frame(of: buttons).maxX < 24)
+
+        // Now the panel opens on the thread's schedules, and the filter menu still offers every schedule.
+        buttons.scheduleButton.performClick(nil)
+        await harness.wait()
+        #expect(split.isSchedulesOpen && buttons.openPanel == .schedules)
+        #expect(split.schedules.filter == .thisThread)
+        #expect(split.schedules.shownTasks.map(\.id) == [task.id])
+        buttons.scheduleButton.performClick(nil)
+        await harness.wait()
+        #expect(!split.isInspectorOpen && buttons.openPanel == nil && !buttons.scheduleButton.isActive)
+
+        try service.delete(task.id)
+        harness.controller.updateSchedules()
+        #expect(buttons.nextRunTitle.isEmpty)
+        #expect(harness.isShown(buttons.scheduleButton))
+    }
+
     @Test func theButtonsAreLabelledAndNameTheirShortcuts() {
         let buttons = InspectorPanelButtons()
         #expect(buttons.diffButton.accessibilityLabel() == String(localized: "Diff"))
         #expect(buttons.pullRequestsButton.accessibilityLabel() == String(localized: "Pull Requests"))
         #expect(buttons.previewButton.accessibilityLabel() == String(localized: "Browser Preview"))
+        #expect(buttons.scheduleButton.accessibilityLabel() == String(localized: "Scheduled Tasks"))
+        // The clock names ⌥⌘S, the shortcut of View › Show Scheduled Tasks.
+        #expect(buttons.scheduleButton.toolTip == KeyBindingsController.shared.toolTip(String(localized: "Scheduled Tasks"), for: .showSchedules))
+        #expect(KeyBindingsController.shared.displayString(for: .showSchedules) == "⌥⌘S")
+        #expect(buttons.scheduleButton.toolTip?.contains("⌥⌘S") == true)
         #expect(buttons.diffButton.toolTip == KeyBindingsController.shared.toolTip(String(localized: "Diff"), for: .toggleDiff))
         #expect(buttons.pullRequestsButton.toolTip == String(localized: "Pull Requests"))
         #expect(buttons.previewButton.toolTip == String(localized: "Browser Preview"))
@@ -159,6 +228,11 @@ import Testing
         #expect(buttons.diffButton.action == #selector(MainWindowController.toggleDiffPanel(_:)))
         #expect(buttons.pullRequestsButton.action == #selector(MainWindowController.togglePullRequestsPanel(_:)))
         #expect(buttons.previewButton.action == #selector(MainWindowController.togglePreviewPanel(_:)))
+        #expect(buttons.scheduleButton.action == #selector(MainWindowController.toggleSchedulesPanel(_:)))
+        // The clock comes first, before the diff, and shows even for a thread without schedules.
+        #expect(buttons.shownButtons == [buttons.scheduleButton, buttons.diffButton, buttons.pullRequestsButton, buttons.previewButton])
+        buttons.showsTerminal = true
+        #expect(buttons.shownButtons.last === buttons.terminalButton)
     }
 
     @Test func theGroupIsAPillAsTallAsTheScriptsControl() {
@@ -166,10 +240,22 @@ import Testing
         buttons.frame.size = buttons.fittingSize
         buttons.layoutSubtreeIfNeeded()
         #expect(buttons.frame.height == ProjectScriptsControl().fittingSize.height)
-        #expect(buttons.frame.width == InspectorPanelButtons.buttonWidth * 3 + 2)
-        for button in [buttons.diffButton, buttons.pullRequestsButton, buttons.previewButton] {
+        #expect(buttons.frame.width == InspectorPanelButtons.buttonWidth * 4 + 2)
+        for button in [buttons.scheduleButton, buttons.diffButton, buttons.pullRequestsButton, buttons.previewButton] {
             #expect(button.frame.width == InspectorPanelButtons.buttonWidth)
         }
+        // With a thread's next run beside it, the clock widens and the pill with it.
+        buttons.showSchedules(nextRun: "10:30", detail: "1 scheduled task")
+        buttons.frame.size = buttons.fittingSize
+        buttons.layoutSubtreeIfNeeded()
+        #expect(buttons.nextRunTitle == "10:30")
+        #expect(buttons.scheduleButton.frame.width > InspectorPanelButtons.buttonWidth)
+        #expect(abs(buttons.frame.width - buttons.intrinsicContentSize.width) <= 0.5)
+        #expect(buttons.diffButton.frame.width == InspectorPanelButtons.buttonWidth)
+        #expect(buttons.scheduleButton.toolTip?.hasSuffix("\n1 scheduled task") == true)
+        buttons.showSchedules(nextRun: nil, detail: nil)
+        #expect(buttons.nextRunTitle.isEmpty)
+        #expect(buttons.intrinsicContentSize.width == InspectorPanelButtons.buttonWidth * 4 + 2)
     }
 
     /// The group stays at the window's top-right corner: after the scripts control while the column is closed, over the
@@ -220,7 +306,7 @@ import Testing
         let harness = Harness(width: width, sidebarOpen: sidebarOpen, title: long, terminal: placement)
         defer { harness.close() }
         await harness.wait()
-        #expect(harness.buttons.shownButtons.count == (placement == .right ? 4 : 3))
+        #expect(harness.buttons.shownButtons.count == (placement == .right ? 5 : 4))
         for inspectorOpen in [false, true] {
             if inspectorOpen {
                 // The terminal is the widest-reaching case on the right: its panel opens in the column.

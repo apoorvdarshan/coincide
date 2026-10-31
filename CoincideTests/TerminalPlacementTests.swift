@@ -39,7 +39,7 @@ extension InspectorPanelButtonsTests {
         #expect(harness.split.terminalPlacement == .bottom)
         #expect(shownRailLabels(harness).contains(String(localized: "Terminal")))
         #expect(!harness.buttons.showsTerminal)
-        #expect(harness.buttons.shownButtons == [harness.buttons.diffButton, harness.buttons.pullRequestsButton, harness.buttons.previewButton])
+        #expect(harness.buttons.shownButtons == [harness.buttons.scheduleButton, harness.buttons.diffButton, harness.buttons.pullRequestsButton, harness.buttons.previewButton])
         #expect(!harness.split.inspector.hasTerminal)
 
         harness.split.toggleTerminalPanel()
@@ -199,14 +199,14 @@ extension InspectorPanelButtonsTests {
         #expect(!harness.split.isTerminalOpen)
     }
 
-    /// With four buttons the pill still sits at the top-right corner and keeps its place as the column opens.
+    /// With five buttons the pill still sits at the top-right corner and keeps its place as the column opens.
     @Test func theWiderGroupStaysAtTheTopRightCorner() async {
         let harness = Harness(terminal: .right)
         defer { harness.close() }
         await harness.wait()
         let buttons = harness.buttons
         let closed = harness.frame(of: buttons)
-        #expect(closed.width == InspectorPanelButtons.buttonWidth * 4 + 2)
+        #expect(closed.width == InspectorPanelButtons.buttonWidth * 5 + 2)
         #expect(harness.window.frame.width - closed.maxX < 24)
         #expect(harness.frame(of: harness.controller.projectScripts).maxX <= closed.minX)
         harness.split.toggleTerminalPanel()
@@ -216,7 +216,7 @@ extension InspectorPanelButtonsTests {
         // Switching back narrows it again, live.
         harness.store.updateSettings { $0.terminalPlacement = .bottom }
         await harness.wait()
-        #expect(harness.frame(of: buttons).width == InspectorPanelButtons.buttonWidth * 3 + 2)
+        #expect(harness.frame(of: buttons).width == InspectorPanelButtons.buttonWidth * 4 + 2)
         #expect(harness.window.frame.width - harness.frame(of: buttons).maxX < 24)
     }
 }

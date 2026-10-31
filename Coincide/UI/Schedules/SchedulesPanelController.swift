@@ -1,10 +1,12 @@
 import AppKit
 import CoincideKit
 
-/// Every schedule in one place, in the inspector beside the conversation (View › Scheduled Tasks, ⌥⌘S, the rail's
-/// clock and the sidebar's Scheduled row): grouped by the bot, thread or project its runs go to, the soonest first.
-/// Bots' groups show the bot's character, threads' their title and project. A row opens its thread; its actions pause
-/// or resume it, run it now, edit or delete it. The panel stays open while the window moves between threads.
+/// Every schedule in one place, in the inspector beside the conversation (View › Scheduled Tasks, ⌥⌘S, the clock in
+/// the toolbar's top-right group and the sidebar's Scheduled row): grouped by the bot, thread or project its runs go
+/// to, the soonest first. Bots' groups show the bot's character, threads' their title and project. A row opens its
+/// thread; its actions pause or resume it, run it now, edit or delete it, and Add schedules into the open thread or a
+/// project. Opened from a thread with schedules, it lists just those (This Thread) until the filter menu says
+/// otherwise. The panel stays open while the window moves between threads.
 final class SchedulesPanelController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     /// The open thread, which Add schedules into.
     var threadID: UUID? {
@@ -33,9 +35,24 @@ final class SchedulesPanelController: NSViewController, NSTableViewDataSource, N
     private var timer: Timer?
 
     private static let filterKey = "ScheduleFilter"
-    private var filter: ScheduleFilter {
-        get { UserDefaults.standard.string(forKey: Self.filterKey).flatMap(ScheduleFilter.init(rawValue:)) ?? .all }
+    /// The filter the user last chose other than This Thread, kept between launches.
+    private var savedFilter: ScheduleFilter {
+        get {
+            let saved = UserDefaults.standard.string(forKey: Self.filterKey).flatMap(ScheduleFilter.init(rawValue:)) ?? .all
+            return saved == .thisThread ? .all : saved
+        }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.filterKey) }
+    }
+    /// Whether the panel lists only the open thread's schedules (This Thread). It follows the window to other threads.
+    private var showsThisThread = false
+    /// What the panel lists.
+    private(set) var filter: ScheduleFilter {
+        get { showsThisThread ? .thisThread : savedFilter }
+        set {
+            showsThisThread = newValue == .thisThread
+            if newValue != .thisThread { savedFilter = newValue }
+            if isViewLoaded { reload() }
+        }
     }
 
     init(service: ScheduledTasks = .shared, store: AppStore = .shared) {
@@ -162,6 +179,13 @@ final class SchedulesPanelController: NSViewController, NSTableViewDataSource, N
         timer = nil
     }
 
+    /// As the panel opens: on the open thread's schedules (This Thread) when it has any, so they come first, otherwise
+    /// on the filter the user last chose. The filter menu switches to every schedule.
+    func prepareToShow() {
+        let thread = threadID.map { !service.tasks(inThread: $0).isEmpty } ?? false
+        filter = thread ? .thisThread : savedFilter
+    }
+
     /// Puts the cursor in the search field.
     func focusSearch() {
         view.window?.makeFirstResponder(searchField)
@@ -173,18 +197,23 @@ final class SchedulesPanelController: NSViewController, NSTableViewDataSource, N
         guard isViewLoaded else { return }
         let all = service.schedules.tasks
         let query = searchField.stringValue
-        let filter = filter
+        let filter = filter, threadID = threadID
         let groups = SchedulePresentation.groups(
             all, botOf: { [store] in store.summary($0)?.botID }, title: { [weak self] in self?.title(for: $0) ?? ("", nil) },
             matches: { [weak self] task in
                 guard let self else { return false }
-                return filter.includes(task) && SchedulePresentation.matches(task, query: query, place: placeName(of: task))
+                return filter.includes(task, threadID: threadID)
+                    && SchedulePresentation.matches(task, query: query, place: placeName(of: task))
             })
         rows = groups.flatMap { group in [Row.header(group)] + group.tasks.map(Row.task) }
         tableView.reloadData()
         countLabel.stringValue = all.isEmpty ? "" : "\(all.count)"
         filterButton.title = filter.title
         (filterButton.menu?.items.first)?.title = filter.title
+        // This Thread needs a thread open.
+        for item in filterButton.menu?.items ?? [] where item.representedObject as? String == ScheduleFilter.thisThread.rawValue {
+            item.isEnabled = threadID != nil
+        }
         let error = service.schedules.loadError ?? service.lastError
         errorLabel.stringValue = error ?? ""
         errorLabel.isHidden = error == nil
@@ -192,7 +221,9 @@ final class SchedulesPanelController: NSViewController, NSTableViewDataSource, N
         emptyLabel.stringValue =
             all.isEmpty
             ? String(localized: "Nothing is scheduled yet. Ask an agent in any thread to do something later or on a schedule, or choose Schedule… from a thread’s menu.")
-            : String(localized: "No schedules match.")
+            : filter == .thisThread && query.isEmpty
+                ? String(localized: "Nothing is scheduled here yet. Add a schedule, or ask the agent to do something later or on a schedule.")
+                : String(localized: "No schedules match.")
         addButton.isEnabled = service.schedules.loadError == nil
     }
 
@@ -216,6 +247,11 @@ final class SchedulesPanelController: NSViewController, NSTableViewDataSource, N
         let (title, subtitle) = self.title(for: owner)
         let thread = task.threadID.flatMap { store.summary($0)?.title } ?? ""
         return [title, subtitle ?? "", thread].joined(separator: " ")
+    }
+
+    /// The schedules the list shows, in order.
+    var shownTasks: [ScheduledTask] {
+        rows.compactMap { if case .task(let task) = $0 { task } else { nil } }
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
@@ -348,13 +384,13 @@ final class SchedulesPanelController: NSViewController, NSTableViewDataSource, N
             item.representedObject = option.rawValue
             menu.addItem(item)
         }
+        menu.autoenablesItems = false
         filterButton.menu = menu
     }
 
     @objc private func filterChanged(_ sender: NSPopUpButton) {
         guard let raw = sender.selectedItem?.representedObject as? String, let option = ScheduleFilter(rawValue: raw) else { return }
         filter = option
-        reload()
     }
 
     @objc private func searchChanged(_ sender: NSSearchField) { reload() }
