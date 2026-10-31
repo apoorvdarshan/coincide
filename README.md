@@ -75,6 +75,8 @@ Install and sign in to at least one:
 | OpenCode | `opencode serve` HTTP API | [Install](https://opencode.ai), then `opencode auth login` |
 | Antigravity | Antigravity's ACP runtime | Install Antigravity and sign in with Google |
 
+**Antigravity account risk.** Google's [Antigravity terms](https://antigravity.google/terms) call accessing the service with third-party software, tools or services a breach. Since February 2026 Google has suspended accounts for this, mostly personal Google AI Pro and Ultra sign-ins used through third-party tools, and a suspension also cuts off Gemini CLI and Code Assist. Coincide drives Google's own Antigravity agent, but Google staff have given conflicting answers about tools that do. Use it at your own risk, and consider a separate Google account. Gemini API keys from Google AI Studio or Gemini Enterprise aren't affected. Settings › Antigravity shows this notice, and Coincide asks you to acknowledge it once before you sign in or turn Antigravity on.
+
 **Full access** runs agents without asking first (for Claude Code that is `--permission-mode bypassPermissions`, the same as T3 Code's full-access mode). Choose **Ask for approval** in the composer to approve each command and file change.
 
 ## Requirements

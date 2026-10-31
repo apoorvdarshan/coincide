@@ -20,6 +20,9 @@ struct SettingsRootView: View {
         .buttonStyle(ThemedButtonStyle())
         .textFieldStyle(ThemedTextFieldStyle())
         .tint(Color(nsColor: Theme.ink))
+        .sheet(isPresented: antigravityRiskShown) {
+            AntigravityRiskSheet(gate: model.antigravityRisk)
+        }
         .toolbar(removing: .sidebarToggle)
         .searchable(text: $model.searchText, placement: .sidebar, prompt: Text("Search"))
         .searchFocused($isSearchFocused)
@@ -29,6 +32,13 @@ struct SettingsRootView: View {
                 .keyboardShortcut("f")
                 .hidden()
         }
+    }
+
+    /// The Antigravity acknowledgement; closing it any other way than I Understand cancels what asked.
+    private var antigravityRiskShown: Binding<Bool> {
+        Binding(
+            get: { model.antigravityRisk.isAsking },
+            set: { if !$0 { model.antigravityRisk.cancel() } })
     }
 
     @ViewBuilder private var detail: some View {

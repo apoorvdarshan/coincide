@@ -465,6 +465,7 @@ struct BotEditorView: View {
                             Text(option.name).tag(Optional(option.id))
                         }
                     }
+                    if AntigravityRisk.applies(toProvider: provider) { AntigravityRiskNotice(compact: true) }
                     if let models = client.provider(provider ?? "")?.models, !models.isEmpty {
                         Picker("Model", selection: $modelID) {
                             ForEach(models) { model in Text(model.name).tag(Optional(model.id)) }

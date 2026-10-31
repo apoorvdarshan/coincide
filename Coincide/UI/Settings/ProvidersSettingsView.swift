@@ -52,8 +52,11 @@ private struct ProviderSummaryRow: View {
             SettingsProviderIcon(kind: kind, size: 30)
                 .opacity(model.isEnabled(kind) ? 1 : 0.55)
             VStack(alignment: .leading, spacing: 2) {
-                Text(kind.displayName)
-                    .fontWeight(.medium)
+                HStack(spacing: 5) {
+                    Text(kind.displayName)
+                        .fontWeight(.medium)
+                    if kind == .antigravity { AntigravityRiskGlyph() }
+                }
                 HStack(spacing: 5) {
                     SettingsStatusDot(color: presentation.color, size: 7)
                     Text(details.joined(separator: " · "))
@@ -111,7 +114,15 @@ private struct LastCheckedLabel: View {
 private func enabledBinding(_ model: SettingsModel, _ kind: ProviderKind) -> Binding<Bool> {
     Binding(
         get: { model.isEnabled(kind) },
-        set: { isOn in model.updateProvider(kind) { $0.isEnabled = isOn } })
+        set: { isOn in
+            let apply = { model.updateProvider(kind) { $0.isEnabled = isOn } }
+            // Turning Antigravity on asks once about its account risk first.
+            if kind == .antigravity {
+                model.antigravityRisk.setEnabled(isOn, wasEnabled: model.isEnabled(kind), apply: apply)
+            } else {
+                apply()
+            }
+        })
 }
 
 // MARK: Provider page
@@ -126,6 +137,11 @@ struct ProviderSettingsView: View {
         Form {
             Section {
                 ProviderHeader(model: model, kind: kind)
+            }
+            if kind == .antigravity {
+                Section {
+                    AntigravityRiskNotice()
+                }
             }
             Section {
                 Toggle(isOn: enabledBinding(model, kind)) {

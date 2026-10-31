@@ -45,6 +45,9 @@ struct MacSettingsPageView: View {
     var body: some View {
         let page = client.macSettings?.page(pageID)
         Form {
+            if AntigravityRisk.applies(toPage: pageID) {
+                Section { AntigravityRiskNotice() }.themedCards(theme)
+            }
             ForEach(page?.sections ?? []) { section in
                 Section {
                     ForEach(section.rows) { row in MacSettingsRowView(row: row) }
@@ -164,6 +167,7 @@ struct MacSettingsRowView: View {
                 NavigationLink { MacSettingsPageView(pageID: target) } label: {
                     HStack {
                         Text(row.title)
+                        if AntigravityRisk.applies(toPage: target) { AntigravityRiskGlyph() }
                         Spacer()
                         if let detail = row.detail { Text(detail).foregroundStyle(theme.secondaryInk) }
                         if let state = row.state {

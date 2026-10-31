@@ -19,6 +19,8 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
     private let accessButton = ComposerControlButton()
     private let modeButton = ComposerControlButton()
     private let modelDetail = NSTextField(labelWithString: "")
+    /// Beside the agent line while the bot runs on Antigravity: its account risk, opening Settings › Antigravity.
+    private let modelRisk = AntigravityRiskBadge(size: 10)
     private let folderLabel = NSTextField(labelWithString: "")
     private lazy var homeButton = ThemedButton(
         title: String(localized: "Use Home Folder"), style: .plain, target: self, action: #selector(useHomeFolder))
@@ -123,6 +125,9 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
         modeButton.menuProvider = { [weak self] in self?.modeMenu() }
         let agentRow = NSStackView(views: [modelButton, accessButton, modeButton])
         agentRow.spacing = 6
+        let modelDetailRow = NSStackView(views: [modelDetail, modelRisk])
+        modelDetailRow.spacing = 4
+        modelDetailRow.detachesHiddenViews = true
 
         folderLabel.font = .systemFont(ofSize: 12)
         folderLabel.textColor = Theme.ink
@@ -144,7 +149,7 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
             heading, subtitle, identity,
             label(String(localized: "Look")), shapes, tints,
             label(String(localized: "Instructions")), personaScroll, personaHint,
-            label(String(localized: "Agent")), agentRow, modelDetail,
+            label(String(localized: "Agent")), agentRow, modelDetailRow,
             label(String(localized: "Folder")), folderRow, folderHint, buttons,
         ])
         stack.orientation = .vertical
@@ -156,7 +161,7 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
         stack.setCustomSpacing(10, after: shapes)
         stack.setCustomSpacing(16, after: tints)
         stack.setCustomSpacing(16, after: personaHint)
-        stack.setCustomSpacing(16, after: modelDetail)
+        stack.setCustomSpacing(16, after: modelDetailRow)
         stack.setCustomSpacing(20, after: folderHint)
         stack.widthAnchor.constraint(equalToConstant: 520).isActive = true
         for child in [subtitle, identity, personaScroll, personaHint, folderRow, folderHint, buttons] {
@@ -214,6 +219,7 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
             (draft.selection.effort ?? model?.defaultEffort).map(ComposerMenus.effortTitle),
             draft.selection.speed.map { model?.speed($0)?.name ?? $0 },
         ].compactMap { $0 }.joined(separator: " · ")
+        modelRisk.isHidden = draft.selection.provider != .antigravity
         accessButton.configure(
             title: draft.accessMode.displayName, symbolName: ComposerMenus.symbolName(for: draft.accessMode), chevron: true)
         accessButton.setAccessibilityLabel(String(localized: "Permissions"))

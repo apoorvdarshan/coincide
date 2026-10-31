@@ -441,9 +441,13 @@ struct ComposerControls: View {
                         ForEach(provider.accounts) { account in
                             Section(account.name) { modelButtons(provider, accountID: account.id) }
                         }
+                        riskLink(provider)
                     }
                 } else {
-                    Section(provider.name) { modelButtons(provider, accountID: nil) }
+                    Section(provider.name) {
+                        modelButtons(provider, accountID: nil)
+                        riskLink(provider)
+                    }
                 }
             }
         } label: {
@@ -531,6 +535,17 @@ struct ComposerControls: View {
         case "xhigh", "extra-high", "extra_high": String(localized: "Extra High")
         case "max", "maximum": String(localized: "Max")
         default: effort.prefix(1).uppercased() + effort.dropFirst()
+        }
+    }
+
+    /// Under Antigravity's models: its account risk, opening Google's terms.
+    @ViewBuilder
+    private func riskLink(_ provider: RemoteProvider) -> some View {
+        if AntigravityRisk.applies(toProvider: provider.id) {
+            Link(destination: AntigravityRisk.termsURL) {
+                Label(AntigravityRisk.short, systemImage: "exclamationmark.triangle.fill")
+            }
+            .accessibilityHint(Text(AntigravityRisk.notice))
         }
     }
 

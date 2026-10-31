@@ -157,6 +157,7 @@ struct SettingsTileLabel: View {
                 .font(.callout)
                 .foregroundStyle(theme.ink)
                 .lineLimit(1)
+            if AntigravityRisk.applies(toProvider: logo) { AntigravityRiskGlyph() }
             Spacer(minLength: 4)
             if let status {
                 StatusDot(color: MacSettingsLabel.statusColor(status))

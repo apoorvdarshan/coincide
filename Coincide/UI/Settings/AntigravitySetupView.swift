@@ -12,6 +12,8 @@ struct AntigravitySetupContext {
     var recheck: () -> Void
     /// The executable and environment a session would launch with.
     var launch: () async -> (executable: URL?, environment: [String: String])
+    /// Runs a Google sign-in once the user has acknowledged Antigravity's account risk (`AntigravityRiskGate`).
+    var confirmSignIn: (@escaping () -> Void) -> Void = { $0() }
 }
 
 /// Install Antigravity and sign in with Google, for the Antigravity provider page (T3 Code's
@@ -183,7 +185,7 @@ private struct AntigravityAccountSection: View {
                     if signIn.isActive {
                         Button("Cancel") { signIn.cancel() }
                     } else {
-                        Button(signInTitle, action: start)
+                        Button(signInTitle) { context.confirmSignIn(start) }
                             .disabled(!canSignIn)
                         if isSignedIn {
                             Button("Sign Out…") { confirmingSignOut = true }

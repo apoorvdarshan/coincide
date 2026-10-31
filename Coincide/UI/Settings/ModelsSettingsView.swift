@@ -143,6 +143,7 @@ struct ModelsSettingsView: View {
                 HStack(spacing: 6) {
                     SettingsProviderIcon(kind: row.option.provider, size: 16)
                     Text(row.option.provider.displayName)
+                    if row.option.provider == .antigravity { AntigravityRiskGlyph(size: 10) }
                 }
             }
             .width(min: 110, ideal: 130)
