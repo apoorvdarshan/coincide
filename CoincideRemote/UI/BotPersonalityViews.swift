@@ -21,6 +21,7 @@ struct BotPersonalitySection: View {
                 chip(.custom, symbol: "pencil.line", name: String(localized: "Custom", comment: "A bot personality the user wrote"))
             }
             .padding(.vertical, 6)
+            .listRowSeparator(.hidden)
             switch personality.choice {
             case .none:
                 Text("No personality of its own: it talks as its instructions say.")
@@ -82,10 +83,10 @@ struct BotPersonalitySection: View {
         return Button {
             personality.pick(choice)
         } label: {
-            Label {
-                Text(name).lineLimit(1)
-            } icon: {
+            // An explicit row rather than a Label, which a form row may reduce to its icon.
+            HStack(spacing: 6) {
                 Image(systemName: symbol).imageScale(.small)
+                Text(name).lineLimit(1).fixedSize(horizontal: true, vertical: false)
             }
             .font(.subheadline.weight(.medium))
             .foregroundStyle(isChosen ? theme.ink : theme.secondaryInk)
