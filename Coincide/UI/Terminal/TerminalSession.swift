@@ -105,12 +105,15 @@ final class TerminalSession {
     private func launch(environment: [String: String]) {
         guard !isClosed, state == .starting else { return }
         let shell = TerminalLaunch.shellPath
-        let loginName = "-" + (shell as NSString).lastPathComponent
+        // Prompt and command marks (ShellIntegration), for jumping between commands and sending one's output.
+        let integration = ShellIntegration.launch(
+            shell: shell, environment: environment, folder: ShellIntegration.folder(in: AppStore.shared.directory))
+        let extra = integration.environment.merging(extraEnvironment) { _, script in script }
         TerminalLaunch.withDefaultPipeSignal {
             terminalView.startProcess(
-                executable: shell, args: [],
-                environment: TerminalLaunch.environment(from: environment, directory: directory, extra: extraEnvironment),
-                execName: loginName, currentDirectory: directory.path)
+                executable: shell, args: integration.arguments,
+                environment: TerminalLaunch.environment(from: environment, directory: directory, extra: extra),
+                execName: integration.execName, currentDirectory: directory.path)
         }
         let process = terminalView.process!
         guard process.running else {
@@ -221,6 +224,11 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
 
     private var delegateProxy: ShellTerminalDelegate?
     private var settingsObservation: ObservationToken?
+    private var oscObservation: TerminalOscObservation?
+    /// What the shell integration reported: prompt marks, the last command line, whether one runs.
+    private(set) var commands = TerminalCommandState()
+    /// Sends the last command's output to the composer.
+    var onSendLastCommand: (() -> Void)?
 
     init(font: NSFont) {
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 320), font: font, options: TerminalOptions(scrollback: 10_000))
@@ -243,6 +251,34 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
         setAccessibilityLabel(String(localized: "Terminal"))
         settingsObservation = AppStore.shared.observe { [weak self] change in
             if change == .settings { self?.updateRenderer() }
+        }
+        // The shell integration's marks arrive as OSC sequences, copied to a private queue in order.
+        oscObservation = observeOscEvents { [weak self] event in
+            guard event.code == 133 || event.code == 1337 else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { _ = self?.commands.apply(code: event.code, payload: event.payload) }
+            }
+        }
+    }
+
+    /// The newest command line the shell integration reported, with what it printed, or nil when there is none or
+    /// it has left the scrollback.
+    func lastCommandOutput() -> String? {
+        guard let command = commands.command,
+            let snapshot = terminalContentSnapshot(region: .history(maximumScrollbackRows: 10_000), buffer: .normal)
+        else { return nil }
+        let lines = TerminalCommandOutput.lines(snapshot.rows.map { ($0.text, $0.absoluteRow, $0.isWrapped) })
+        return TerminalCommandOutput.lastOutput(
+            lines: lines, cursorRow: snapshot.cursorRow, promptLines: commands.promptLines, command: command,
+            isRunning: commands.isRunning)
+    }
+
+    /// Scrolls to the previous (`offset` -1) or next prompt the shell marked; past the last, to the bottom.
+    func jumpToCommand(offset: Int) {
+        if let row = offset < 0 ? previousSemanticPromptRow() : nextSemanticPromptRow() {
+            scrollTo(row: row)
+        } else if offset > 0 {
+            scrollToBottom()
         }
     }
 
@@ -364,6 +400,12 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
             return perform(.focusPane(offset: -1))
         case ([.command, .option], Self.rightArrow), ([.command, .option], Self.downArrow):
             return perform(.focusPane(offset: 1))
+        case ([.command], Self.upArrow) where commands.hasMarks:
+            jumpToCommand(offset: -1)
+            return true
+        case ([.command], Self.downArrow) where commands.hasMarks:
+            jumpToCommand(offset: 1)
+            return true
         case ([.command], Self.leftArrow) where editsLine:
             send(txt: "\u{01}")
             return true
@@ -402,6 +444,10 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
             return perform(.close)
         case ([.command], "k"):
             clear()
+            return true
+        case ([.command, .shift], "l"):
+            guard let onSendLastCommand, lastCommandOutput() != nil else { return false }
+            onSendLastCommand()
             return true
         case ([.command, .shift], "["), ([.command, .shift], "{"):
             return perform(.selectTab(offset: -1))

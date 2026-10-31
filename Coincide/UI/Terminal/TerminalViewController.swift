@@ -202,6 +202,24 @@ final class TerminalViewController: NSViewController {
             guard let self, let session else { return }
             self.addSelectionToComposer(from: session)
         }
+        terminal.onSendLastCommand = { [weak self, weak session] in
+            guard let self, let session else { return }
+            self.sendLastCommandToComposer(from: session)
+        }
+    }
+
+    /// Attaches the newest command and what it printed to the thread's message, found through the shell's prompt marks.
+    private func sendLastCommandToComposer(from session: TerminalSession) {
+        guard let threadID, let output = session.terminalView.lastCommandOutput() else { return }
+        let excerpt = MessageContext.TerminalExcerpt(
+            terminal: String(localized: "Terminal \(session.number)"), directory: session.directory.path,
+            lineStart: nil, lineEnd: nil, text: output)
+        AppEvents.addToComposer(MessageContext(.terminal(excerpt)), threadID: threadID)
+    }
+
+    @objc private func sendTerminalLastCommandToComposer(_ sender: NSMenuItem) {
+        guard let session = sender.representedObject as? TerminalSession else { return }
+        sendLastCommandToComposer(from: session)
     }
 
     /// Attaches the selected output to the thread's message, naming the terminal and the folder its shell is in, as
@@ -324,6 +342,13 @@ final class TerminalViewController: NSViewController {
             item(
                 terminal.addToComposerTitle, #selector(addTerminalSelectionToComposer(_:)), "", session: session,
                 enabled: threadID != nil && terminal.selectedText != nil))
+        if terminal.commands.hasMarks {
+            let send = item(
+                String(localized: "Send Last Command’s Output to Agent"), #selector(sendTerminalLastCommandToComposer(_:)), "l",
+                session: session, enabled: threadID != nil && terminal.lastCommandOutput() != nil)
+            send.keyEquivalentModifierMask = [.command, .shift]
+            menu.addItem(send)
+        }
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Clear"), #selector(clearTerminal(_:)), "k", session: session))
         if terminal.isScrolledUp {
