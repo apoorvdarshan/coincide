@@ -11468,7 +11468,9 @@
         }
       }
     },
-    "%@: %@" : {},
+    "%@: %@" : {
+
+    },
     "%@: %@, %@" : {
       "localizations" : {
         "de" : {
@@ -19925,7 +19927,9 @@
         }
       }
     },
-    "<%@" : {},
+    "<%@" : {
+
+    },
     "A %@ hook failed." : {
       "localizations" : {
         "de" : {
@@ -20930,6 +20934,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Coincide 已關閉或 Mac 處於睡眠狀態，因此略過了一次執行。"
+          }
+        }
+      }
+    },
+    "A screenshot could not be saved." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein Bildschirmfoto konnte nicht gesichert werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se ha podido guardar una captura de pantalla."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo guardar una captura de pantalla."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une capture d’écran n’a pas pu être enregistrée."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एक स्क्रीनशॉट सेव नहीं किया जा सका।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tangkapan layar tidak dapat disimpan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossibile salvare un’istantanea dello schermo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スクリーンショットを保存できませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "스크린샷을 저장할 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Een schermafbeelding kon niet worden bewaard."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie można zachować zrzutu ekranu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível salvar uma captura de tela."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не удалось сохранить снимок экрана."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir ekran görüntüsü kaydedilemedi."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не вдалося зберегти знімок екрана."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không thể lưu ảnh chụp màn hình."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法存储截屏。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法儲存螢幕截圖。"
           }
         }
       }
@@ -22558,6 +22674,118 @@
         }
       }
     },
+    "Accessibility" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bedienungshilfen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accesibilidad"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accesibilidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accessibilité"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सुलभता"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aksesibilitas"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accessibilità"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アクセシビリティ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "손쉬운 사용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegankelijkheid"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dostępność"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Acessibilidade"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Универсальный доступ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erişilebilirlik"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Спеціальні можливості"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trợ năng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "辅助功能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "輔助使用"
+          }
+        }
+      }
+    },
     "Access…" : {
       "localizations" : {
         "de" : {
@@ -23566,6 +23794,118 @@
         }
       }
     },
+    "Activity" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktivität"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actividad"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actividad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activité"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "गतिविधि"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktivitas"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Attività"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アクティビティ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "활동"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activiteit"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktywność"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Atividade"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Активность"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Etkinlik"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Активність"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hoạt động"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "活动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "活動"
+          }
+        }
+      }
+    },
     "Activity in Coincide" : {
       "localizations" : {
         "de" : {
@@ -23870,16 +24210,16 @@
             "value" : "Добавьте %@ в PATH вашей оболочки, чтобы использовать coincide в Терминале."
           }
         },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Додайте %@ до PATH вашої оболонки, щоб використовувати coincide у Терміналі."
-          }
-        },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Terminal’de coincide kullanmak için kabuğunuzun PATH değişkenine %@ ekleyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Додайте %@ до PATH вашої оболонки, щоб використовувати coincide у Терміналі."
           }
         },
         "vi" : {
@@ -29738,6 +30078,118 @@
         }
       }
     },
+    "Agents can view the screen and interact with apps while Computer Use is on. All providers use a private connection for each thread." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wenn die Computersteuerung eingeschaltet ist, können Agents den Bildschirm sehen und Apps bedienen. Jeder Anbieter verwendet für jeden Thread eine private Verbindung."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mientras el uso del ordenador esté activado, los agentes pueden ver la pantalla e interactuar con las apps. Todos los proveedores usan una conexión privada para cada hilo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mientras el uso de la computadora esté activado, los agentes pueden ver la pantalla e interactuar con las apps. Todos los proveedores usan una conexión privada para cada hilo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lorsque le contrôle de l’ordinateur est activé, les agents peuvent voir l’écran et utiliser les apps. Chaque fournisseur utilise une connexion privée pour chaque fil."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण चालू होने पर एजेंट स्क्रीन देख सकते हैं और ऐप इस्तेमाल कर सकते हैं। हर प्रदाता प्रत्येक थ्रेड के लिए निजी कनेक्शन का इस्तेमाल करता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saat Kontrol Komputer aktif, agen dapat melihat layar dan berinteraksi dengan app. Semua penyedia menggunakan koneksi privat untuk setiap utas."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando l’uso del computer è attivo, gli agenti possono vedere lo schermo e interagire con le app. Tutti i provider usano una connessione privata per ogni conversazione."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作がオンの間、エージェントは画面を確認してアプリを操作できます。すべてのプロバイダはスレッドごとに専用のプライベート接続を使用します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용이 켜져 있으면 에이전트가 화면을 보고 앱을 조작할 수 있습니다. 모든 제공업체는 스레드마다 비공개 연결을 사용합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Als computerbediening aanstaat, kunnen agents het scherm bekijken en apps bedienen. Elke aanbieder gebruikt een privéverbinding voor elke thread."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gdy obsługa komputera jest włączona, agenci mogą oglądać ekran i obsługiwać aplikacje. Wszyscy dostawcy używają osobnego prywatnego połączenia dla każdego wątku."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enquanto o controle do computador estiver ativado, os agentes podem ver a tela e interagir com os apps. Todos os provedores usam uma conexão privada para cada conversa."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Когда управление компьютером включено, агенты могут видеть экран и взаимодействовать с приложениями. Все провайдеры используют отдельное частное подключение для каждой ветки."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar Kullanımı açıkken ajanlar ekranı görebilir ve uygulamaları kullanabilir. Tüm sağlayıcılar her ileti dizisi için özel bir bağlantı kullanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Коли керування комп’ютером увімкнено, агенти можуть бачити екран і взаємодіяти з програмами. Усі провайдери використовують окреме приватне з’єднання для кожної гілки."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khi bật Điều khiển máy tính, tác nhân có thể xem màn hình và tương tác với ứng dụng. Mỗi nhà cung cấp dùng kết nối riêng cho từng luồng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "开启电脑控制时，智能体可以查看屏幕并操作 App。所有提供商均为每个对话线程使用独立的私密连接。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "開啟電腦控制時，代理可以查看螢幕並操作 App。所有供應商均為每個對話串使用獨立的私人連線。"
+          }
+        }
+      }
+    },
     "Agents can’t read cookies, site storage or what’s typed in password fields." : {
       "localizations" : {
         "de" : {
@@ -32656,6 +33108,118 @@
         }
       }
     },
+    "Allow agents to use this Mac" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agents dürfen diesen Mac bedienen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitir que los agentes usen este Mac"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitir que los agentes usen esta Mac"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autoriser les agents à utiliser ce Mac"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एजेंटों को इस Mac का इस्तेमाल करने दें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Izinkan agen menggunakan Mac ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consenti agli agenti di usare questo Mac"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントによるこのMacの操作を許可"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 이 Mac을 사용하도록 허용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sta agents toe deze Mac te bedienen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zezwalaj agentom na używanie tego Maca"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitir que os agentes usem este Mac"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешить агентам использовать этот Mac"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajanların bu Mac’i kullanmasına izin ver"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволити агентам використовувати цей Mac"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép tác nhân sử dụng máy Mac này"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许智能体使用这台 Mac"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允許代理使用這台 Mac"
+          }
+        }
+      }
+    },
     "Allow all edits this session" : {
       "localizations" : {
         "de" : {
@@ -33778,6 +34342,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "允許寫入 %@"
+          }
+        }
+      }
+    },
+    "Allowed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erlaubt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitido"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitido"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autorisé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अनुमति है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diizinkan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consentito"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "許可済み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "허용됨"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegestaan"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dozwolono"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitido"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешено"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İzin verildi"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволено"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Được phép"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已允许"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已允許"
           }
         }
       }
@@ -35794,6 +36470,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "此回合之後，另一個對話也曾在此檔案夾中工作，因此還原檔案也會復原其變更。請改為倒轉對話內容，但不還原檔案。"
+          }
+        }
+      }
+    },
+    "Another thread is using this Mac. Wait for it to finish, then try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein anderer Thread verwendet diesen Mac. Warte, bis er fertig ist, und versuche es dann erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otra conversación está usando este Mac. Espera a que termine y vuelve a intentarlo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otra conversación está usando esta Mac. Espera a que termine e inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une autre discussion utilise ce Mac. Attendez qu’elle ait terminé, puis réessayez."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कोई दूसरा थ्रेड इस Mac का इस्तेमाल कर रहा है। उसके पूरा होने तक इंतज़ार करें, फिर दोबारा कोशिश करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utas lain sedang menggunakan Mac ini. Tunggu hingga selesai, lalu coba lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un altro thread sta usando questo Mac. Attendi che finisca, poi riprova."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "別のスレッドがこのMacを使用しています。終了するまで待ってから、もう一度お試しください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "다른 스레드에서 이 Mac을 사용하고 있습니다. 끝날 때까지 기다린 후 다시 시도하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Een andere thread gebruikt deze Mac. Wacht tot die klaar is en probeer het dan opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inny wątek używa tego Maca. Poczekaj, aż skończy, a następnie spróbuj ponownie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Outra conversa está usando este Mac. Aguarde até ela terminar e tente novamente."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот Mac использует другой чат. Дождитесь его завершения и повторите попытку."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu Mac’i başka bir sohbet kullanıyor. Bitmesini bekleyip yeniden deneyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей Mac використовує інший чат. Дочекайтеся його завершення, а потім спробуйте ще раз."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Một luồng khác đang dùng máy Mac này. Hãy chờ luồng đó xong rồi thử lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "另一个对话正在使用这台 Mac。请等待其完成，然后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "另一個對話正在使用這部 Mac。請等它完成後再試一次。"
           }
         }
       }
@@ -68960,6 +69748,118 @@
         }
       }
     },
+    "Coincide doesn’t have Accessibility access yet. Ask the user to allow it in Settings › Computer Use." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide hat noch keinen Zugriff auf die Bedienungshilfen. Bitte den Benutzer, ihn unter Einstellungen › Computersteuerung zu erlauben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide todavía no tiene acceso a Accesibilidad. Pide al usuario que lo permita en Ajustes › Uso del ordenador."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide todavía no tiene acceso a Accesibilidad. Pide al usuario que lo permita en Ajustes › Uso de la computadora."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide n’a pas encore accès à l’Accessibilité. Demandez à l’utilisateur de l’autoriser dans Réglages › Contrôle de l’ordinateur."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide को अभी सुलभता की अनुमति नहीं मिली है। उपयोगकर्ता से सेटिंग्स › कंप्यूटर नियंत्रण में इसकी अनुमति देने को कहें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide belum memiliki akses Aksesibilitas. Minta pengguna untuk mengizinkannya di Pengaturan › Kontrol Komputer."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide non ha ancora l’accesso ad Accessibilità. Chiedi all’utente di consentirlo in Impostazioni › Uso del computer."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideにはまだアクセシビリティへのアクセス権がありません。設定 › コンピュータ操作で許可するようユーザに依頼してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide에 아직 손쉬운 사용 접근 권한이 없습니다. 사용자에게 설정 › 컴퓨터 사용에서 허용해 달라고 요청하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide heeft nog geen toegang tot Toegankelijkheid. Vraag de gebruiker die toe te staan in Instellingen › Computerbediening."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide nie ma jeszcze dostępu do funkcji Dostępność. Poproś użytkownika o zezwolenie w Ustawienia › Obsługa komputera."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide ainda não tem acesso à Acessibilidade. Peça ao usuário para permitir em Ajustes › Controle do computador."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "У Coincide пока нет доступа к универсальному доступу. Попросите пользователя разрешить его в «Настройки › Управление компьютером»."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide’ın henüz Erişilebilirlik erişimi yok. Kullanıcıdan Ayarlar › Bilgisayar Kullanımı’nda buna izin vermesini isteyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide ще не має доступу до спеціальних можливостей. Попросіть користувача дозволити його в «Параметри › Керування комп’ютером»."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide chưa có quyền truy cập Trợ năng. Hãy yêu cầu người dùng cho phép trong Cài đặt › Điều khiển máy tính."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 尚未获得辅助功能权限。请让用户在“设置 › 电脑控制”中允许。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 尚未取得輔助使用權限。請使用者在「設定 › 電腦控制」中允許。"
+          }
+        }
+      }
+    },
     "Coincide downloads Google’s Antigravity runtime from dl.google.com, checks it against the release Coincide expects (size, SHA-256 and Google’s signature), and keeps it in Coincide’s data folder." : {
       "localizations" : {
         "de" : {
@@ -70384,16 +71284,16 @@
             "value" : "Coincide автоматически настраивает команду Терминала. Агентам она уже доступна."
           }
         },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide автоматично налаштовує команду Термінала. Агенти вже мають до неї доступ."
-          }
-        },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Coincide, Terminal komutunu otomatik olarak ayarlar. Ajanlar zaten kullanabilir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide автоматично налаштовує команду Термінала. Агенти вже мають до неї доступ."
           }
         },
         "vi" : {
@@ -76354,6 +77254,678 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "輸入框 › %@"
+          }
+        }
+      }
+    },
+    "Computer Use" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computersteuerung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso del ordenador"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso de la computadora"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contrôle de l’ordinateur"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontrol Komputer"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso del computer"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computerbediening"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obsługa komputera"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Controle do computador"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управление компьютером"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar Kullanımı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Керування комп’ютером"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Điều khiển máy tính"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制"
+          }
+        }
+      }
+    },
+    "Computer Use did not finish the command in time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Computersteuerung hat den Befehl nicht rechtzeitig ausgeführt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso del ordenador no ha terminado el comando a tiempo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso de la computadora no terminó el comando a tiempo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le contrôle de l’ordinateur n’a pas terminé la commande à temps."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण समय पर कमांड पूरा नहीं कर सका।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontrol Komputer tidak menyelesaikan perintah tepat waktu."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso del computer non ha completato il comando in tempo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作が時間内にコマンドを完了しませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용에서 명령을 제시간에 완료하지 못했습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computerbediening heeft de opdracht niet op tijd voltooid."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obsługa komputera nie wykonała polecenia na czas."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Controle do computador não concluiu o comando a tempo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управление компьютером не выполнило команду вовремя."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar Kullanımı komutu zamanında tamamlamadı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Керування комп’ютером не виконало команду вчасно."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Điều khiển máy tính chưa hoàn tất lệnh kịp thời."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制未能及时完成命令。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制未能及時完成指令。"
+          }
+        }
+      }
+    },
+    "Computer Use is off for this thread." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Computersteuerung ist für diesen Thread aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso del ordenador está desactivado en esta conversación."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso de la computadora está desactivado en esta conversación."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le contrôle de l’ordinateur est désactivé pour cette discussion."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस थ्रेड के लिए कंप्यूटर नियंत्रण बंद है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontrol Komputer nonaktif untuk utas ini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso del computer è disattivato per questo thread."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このスレッドではコンピュータ操作がオフです。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 스레드에서는 컴퓨터 사용이 꺼져 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computerbediening staat uit voor deze thread."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obsługa komputera jest wyłączona dla tego wątku."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Controle do computador está desativado nesta conversa."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управление компьютером выключено для этого чата."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar Kullanımı bu sohbet için kapalı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Керування комп’ютером вимкнено для цього чату."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Điều khiển máy tính đang tắt cho luồng này."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此对话的电脑控制已关闭。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此對話的電腦控制已關閉。"
+          }
+        }
+      }
+    },
+    "Computer Use is stopped." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Computersteuerung ist gestoppt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso del ordenador está detenido."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso de la computadora está detenido."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le contrôle de l’ordinateur est arrêté."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण रुका हुआ है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontrol Komputer dihentikan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uso del computer è interrotto."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作は停止しています。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용이 중지되었습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computerbediening is gestopt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obsługa komputera jest zatrzymana."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Controle do computador está parado."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управление компьютером остановлено."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar Kullanımı durduruldu."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Керування комп’ютером зупинено."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Điều khiển máy tính đã dừng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制已停止。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制已停止。"
+          }
+        }
+      }
+    },
+    "Computer Use needs attention" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computersteuerung erfordert Aufmerksamkeit"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El uso del ordenador requiere atención"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El uso de la computadora requiere atención"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le contrôle de l’ordinateur nécessite votre attention"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण पर ध्यान देना ज़रूरी है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontrol Komputer memerlukan perhatian"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’uso del computer richiede attenzione"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作に対応が必要です"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용에 조치가 필요합니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computerbediening vereist aandacht"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obsługa komputera wymaga uwagi"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O controle do computador precisa de atenção"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управление компьютером требует внимания"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar Kullanımı ilgilenmenizi gerektiriyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Керування комп’ютером потребує уваги"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Điều khiển máy tính cần được xử lý"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制需要处理"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制需要處理"
+          }
+        }
+      }
+    },
+    "Computer Use uses Cua Driver by Cua AI under the MIT License." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Computersteuerung verwendet Cua Driver von Cua AI unter der MIT-Lizenz."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El uso del ordenador utiliza Cua Driver de Cua AI bajo la licencia MIT."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El uso de la computadora utiliza Cua Driver de Cua AI bajo la licencia MIT."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le contrôle de l’ordinateur utilise Cua Driver de Cua AI sous licence MIT."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण MIT लाइसेंस के तहत Cua AI के Cua Driver का इस्तेमाल करता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontrol Komputer menggunakan Cua Driver dari Cua AI dengan Lisensi MIT."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’uso del computer utilizza Cua Driver di Cua AI con licenza MIT."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作はMITライセンスのもとでCua AIのCua Driverを使用しています。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용은 MIT 라이선스에 따라 Cua AI의 Cua Driver를 사용합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computerbediening gebruikt Cua Driver van Cua AI onder de MIT-licentie."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obsługa komputera korzysta z Cua Driver firmy Cua AI na licencji MIT."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O controle do computador usa o Cua Driver da Cua AI sob a licença MIT."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Управление компьютером использует Cua Driver от Cua AI по лицензии MIT."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar Kullanımı, MIT Lisansı kapsamında Cua AI’ın Cua Driver yazılımını kullanır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Керування комп’ютером використовує Cua Driver від Cua AI за ліцензією MIT."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Điều khiển máy tính sử dụng Cua Driver của Cua AI theo Giấy phép MIT."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制使用 Cua AI 提供的 Cua Driver，遵循 MIT 许可证。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制使用 Cua AI 提供的 Cua Driver，遵循 MIT 授權條款。"
           }
         }
       }
@@ -93518,6 +95090,230 @@
         }
       }
     },
+    "Cua Driver License" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driver-Lizenz"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Licencia de Cua Driver"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Licencia de Cua Driver"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Licence de Cua Driver"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driver लाइसेंस"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lisensi Cua Driver"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Licenza di Cua Driver"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driverのライセンス"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driver 라이선스"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driver-licentie"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Licencja Cua Driver"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Licença do Cua Driver"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Лицензия Cua Driver"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driver Lisansı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ліцензія Cua Driver"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giấy phép Cua Driver"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driver 许可证"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driver 授權條款"
+          }
+        }
+      }
+    },
+    "Cua Driver license could not be loaded." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Cua Driver-Lizenz konnte nicht geladen werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se ha podido cargar la licencia de Cua Driver."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo cargar la licencia de Cua Driver."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La licence de Cua Driver n’a pas pu être chargée."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driver लाइसेंस लोड नहीं हो सका।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lisensi Cua Driver tidak dapat dimuat."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossibile caricare la licenza di Cua Driver."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driverのライセンスを読み込めませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driver 라이선스를 불러올 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De Cua Driver-licentie kon niet worden geladen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie udało się wczytać licencji Cua Driver."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível carregar a licença do Cua Driver."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не удалось загрузить лицензию Cua Driver."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cua Driver lisansı yüklenemedi."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не вдалося завантажити ліцензію Cua Driver."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không thể tải giấy phép Cua Driver."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法载入 Cua Driver 许可证。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法載入 Cua Driver 授權條款。"
+          }
+        }
+      }
+    },
     "Current" : {
       "localizations" : {
         "de" : {
@@ -103164,6 +104960,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "在此網路或你的 Tailscale 網路中，透過 iPhone 或 iPad 操控 Coincide。已配對的裝置會透過加密連線進行連線，不經過網際網路。"
+          }
+        }
+      }
+    },
+    "Driver version" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Treiberversion"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Versión del controlador"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Versión del controlador"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Version du pilote"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ड्राइवर संस्करण"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Versi driver"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Versione del driver"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ドライバのバージョン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "드라이버 버전"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stuurprogrammaversie"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wersja sterownika"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Versão do driver"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Версия драйвера"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sürücü sürümü"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Версія драйвера"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Phiên bản trình điều khiển"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "驱动程序版本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "驅動程式版本"
           }
         }
       }
@@ -122624,6 +124532,342 @@
         }
       }
     },
+    "Grant Access" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zugriff erlauben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conceder acceso"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conceder acceso"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autoriser l’accès"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पहुँच की अनुमति दें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berikan Akses"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consenti accesso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アクセスを許可"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "접근 허용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegang toestaan"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zezwól na dostęp"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conceder acesso"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешить доступ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erişim Ver"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Надати доступ"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cấp quyền truy cập"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "授予访问权限"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "授予存取權限"
+          }
+        }
+      }
+    },
+    "Grant Accessibility access" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zugriff auf Bedienungshilfen erlauben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conceder acceso a Accesibilidad"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conceder acceso a Accesibilidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autoriser l’accès à l’accessibilité"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सुलभता की अनुमति दें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berikan akses Aksesibilitas"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consenti l’accesso ad Accessibilità"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アクセシビリティへのアクセスを許可"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "손쉬운 사용 접근 허용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegang tot toegankelijkheid toestaan"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zezwól na dostęp do funkcji dostępności"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conceder acesso à Acessibilidade"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешить универсальный доступ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erişilebilirlik erişimi ver"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Надати доступ до спеціальних можливостей"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cấp quyền Trợ năng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "授予辅助功能权限"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "授予輔助使用權限"
+          }
+        }
+      }
+    },
+    "Grant Screen Recording access" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zugriff auf Bildschirmaufnahme erlauben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conceder acceso a Grabación de pantalla"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conceder acceso a Grabación de pantalla"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autoriser l’enregistrement de l’écran"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्क्रीन रिकॉर्डिंग की अनुमति दें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berikan akses Perekaman Layar"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consenti l’accesso alla registrazione schermo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "画面収録へのアクセスを許可"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "화면 기록 접근 허용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegang tot schermopname toestaan"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zezwól na nagrywanie ekranu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conceder acesso à Gravação da Tela"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешить запись экрана"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ekran Kaydı erişimi ver"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Надати доступ до запису екрана"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cấp quyền Ghi màn hình"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "授予屏幕录制权限"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "授予螢幕錄製權限"
+          }
+        }
+      }
+    },
     "Grant additional permissions" : {
       "localizations" : {
         "de" : {
@@ -122732,6 +124976,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "授予額外權限"
+          }
+        }
+      }
+    },
+    "Grant these permissions to Coincide in System Settings. Return here to refresh their status." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erteile Coincide diese Berechtigungen in den Systemeinstellungen. Kehre hierher zurück, um den Status zu aktualisieren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Concede estos permisos a Coincide en Ajustes del Sistema. Vuelve aquí para actualizar su estado."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Concede estos permisos a Coincide en Configuración del Sistema. Vuelve aquí para actualizar su estado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accordez ces autorisations à Coincide dans Réglages Système. Revenez ici pour actualiser leur état."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सिस्टम सेटिंग में Coincide को ये अनुमतियाँ दें। उनकी स्थिति रीफ़्रेश करने के लिए यहाँ वापस आएँ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Berikan izin ini kepada Coincide di Pengaturan Sistem. Kembali ke sini untuk menyegarkan statusnya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Concedi queste autorizzazioni a Coincide in Impostazioni di Sistema. Torna qui per aggiornarne lo stato."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "システム設定でCoincideにこれらの権限を許可してください。ここに戻ると状態が更新されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "시스템 설정에서 Coincide에 이 권한을 허용하세요. 여기로 돌아오면 상태가 새로 고쳐집니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geef Coincide deze toestemmingen in Systeeminstellingen. Keer hier terug om de status te vernieuwen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nadaj te uprawnienia Coincide w Ustawieniach systemowych. Wróć tutaj, aby odświeżyć ich stan."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conceda essas permissões ao Coincide nos Ajustes do Sistema. Volte aqui para atualizar o status."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Предоставьте Coincide эти разрешения в Системных настройках. Вернитесь сюда, чтобы обновить их статус."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sistem Ayarları’nda Coincide’a bu izinleri verin. Durumlarını yenilemek için buraya dönün."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Надайте Coincide ці дозволи в Системних параметрах. Поверніться сюди, щоб оновити їхній стан."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cấp các quyền này cho Coincide trong Cài đặt hệ thống. Quay lại đây để làm mới trạng thái."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请在“系统设置”中为 Coincide 授予这些权限。返回此处即可刷新权限状态。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "請在「系統設定」中為 Coincide 授予這些權限。返回此處即可重新整理權限狀態。"
           }
         }
       }
@@ -129160,6 +131516,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "與主檔案保持一致"
+          }
+        }
+      }
+    },
+    "In use by “%@”" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verwendet von „%@“"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En uso por “%@”"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En uso por “%@”"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utilisé par « %@ »"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” इस्तेमाल कर रहा है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Digunakan oleh “%@”"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In uso da “%@”"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@”が使用中"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@”에서 사용 중"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In gebruik door “%@”"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Używane przez „%@”"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Em uso por “%@”"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Используется: «%@»"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” tarafından kullanılıyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Використовує: «%@»"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” đang sử dụng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@”正在使用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "「%@」正在使用"
           }
         }
       }
@@ -138760,6 +141228,118 @@
         }
       }
     },
+    "Let agents see and interact with Mac apps through Coincide." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agents können Mac-Apps über Coincide sehen und bedienen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que los agentes vean e interactúen con las apps del Mac mediante Coincide."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que los agentes vean e interactúen con las apps de la Mac mediante Coincide."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permettez aux agents de voir et d’utiliser les apps du Mac via Coincide."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एजेंटों को Coincide के ज़रिए Mac ऐप देखने और इस्तेमाल करने दें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Izinkan agen melihat dan berinteraksi dengan app Mac melalui Coincide."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consenti agli agenti di vedere e usare le app del Mac tramite Coincide."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントがCoincideを通じてMacのアプリを確認し、操作できるようにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 Coincide를 통해 Mac 앱을 보고 조작하도록 허용합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laat agents Mac-apps bekijken en bedienen via Coincide."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zezwól agentom na oglądanie i obsługę aplikacji na Macu przez Coincide."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permita que os agentes vejam e interajam com os apps do Mac pelo Coincide."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешите агентам просматривать приложения Mac и взаимодействовать с ними через Coincide."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajanların Coincide üzerinden Mac uygulamalarını görmesine ve kullanmasına izin verin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозвольте агентам переглядати програми Mac і взаємодіяти з ними через Coincide."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép tác nhân xem và tương tác với ứng dụng Mac qua Coincide."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许智能体通过 Coincide 查看和操作 Mac App。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允許代理透過 Coincide 查看及操作 Mac App。"
+          }
+        }
+      }
+    },
     "Let agents use your unlocked password managers" : {
       "localizations" : {
         "de" : {
@@ -138868,6 +141448,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "允許代理使用已解鎖的密碼管理工具"
+          }
+        }
+      }
+    },
+    "Lets Coincide capture app windows and the screen for agents." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erlaubt Coincide, App-Fenster und den Bildschirm für Agents aufzunehmen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite a Coincide capturar las ventanas de las apps y la pantalla para los agentes."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite a Coincide capturar las ventanas de las apps y la pantalla para los agentes."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autorise Coincide à capturer les fenêtres des apps et l’écran pour les agents."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide को एजेंटों के लिए ऐप विंडो और स्क्रीन कैप्चर करने देता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mengizinkan Coincide mengambil gambar jendela app dan layar untuk agen."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consente a Coincide di acquisire le finestre delle app e lo schermo per gli agenti."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideがエージェント向けにアプリのウインドウと画面をキャプチャできるようにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide가 에이전트를 위해 앱 윈도우와 화면을 캡처하도록 허용합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hiermee mag Coincide appvensters en het scherm voor agents vastleggen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozwala Coincide przechwytywać okna aplikacji i ekran dla agentów."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que o Coincide capture janelas dos apps e a tela para os agentes."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Позволяет Coincide захватывать окна приложений и экран для агентов."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide’ın ajanlar için uygulama pencerelerini ve ekranı yakalamasına izin verir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволяє Coincide захоплювати вікна програм та екран для агентів."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép Coincide chụp cửa sổ ứng dụng và màn hình cho tác nhân."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许 Coincide 为智能体截取 App 窗口和屏幕。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允許 Coincide 為代理擷取 App 視窗及螢幕。"
+          }
+        }
+      }
+    },
+    "Lets Coincide read app controls, click and type." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erlaubt Coincide, App-Steuerelemente zu lesen, zu klicken und zu tippen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite a Coincide leer los controles de las apps, hacer clic y escribir."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite a Coincide leer los controles de las apps, hacer clic y escribir."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autorise Coincide à lire les commandes des apps, à cliquer et à saisir du texte."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide को ऐप के नियंत्रण पढ़ने, क्लिक करने और टाइप करने देता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mengizinkan Coincide membaca kontrol app, mengeklik, dan mengetik."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consente a Coincide di leggere i controlli delle app, fare clic e digitare."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideがアプリのコントロールを読み取り、クリックや文字入力を行えるようにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide가 앱의 컨트롤을 읽고 클릭하며 입력하도록 허용합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hiermee mag Coincide appbedieningselementen lezen, klikken en typen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozwala Coincide odczytywać elementy sterujące aplikacji, klikać i pisać."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que o Coincide leia os controles dos apps, clique e digite."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Позволяет Coincide читать элементы управления приложений, нажимать и вводить текст."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide’ın uygulama kontrollerini okumasına, tıklamasına ve yazmasına izin verir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволяє Coincide читати елементи керування програм, натискати й вводити текст."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép Coincide đọc các điều khiển trong ứng dụng, nhấp và nhập văn bản."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许 Coincide 读取 App 控件、点击和输入。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允許 Coincide 讀取 App 控制項、點按及輸入。"
           }
         }
       }
@@ -166463,6 +169267,118 @@
         }
       }
     },
+    "No threads are using this Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Threads verwenden diesen Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ningún hilo está usando este Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ningún hilo está usando esta Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun fil n’utilise ce Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कोई थ्रेड इस Mac का इस्तेमाल नहीं कर रहा है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidak ada utas yang menggunakan Mac ini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nessuna conversazione sta usando questo Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このMacを使用しているスレッドはありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 Mac을 사용 중인 스레드가 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geen threads gebruiken deze Mac."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Żaden wątek nie używa tego Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhuma conversa está usando este Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ни одна ветка не использует этот Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu Mac’i kullanan ileti dizisi yok."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Жодна гілка не використовує цей Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không có luồng nào đang sử dụng máy Mac này."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "没有对话线程正在使用这台 Mac。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "沒有對話串正在使用這台 Mac。"
+          }
+        }
+      }
+    },
     "No threads or projects match “%@”." : {
       "localizations" : {
         "de" : {
@@ -167467,6 +170383,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "不是 Git 儲存庫"
+          }
+        }
+      }
+    },
+    "Not allowed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht erlaubt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No permitido"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No permitido"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Non autorisé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अनुमति नहीं है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidak diizinkan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Non consentito"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未許可"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "허용되지 않음"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Niet toegestaan"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie dozwolono"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não permitido"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не разрешено"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İzin verilmedi"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не дозволено"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không được phép"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未允许"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未允許"
           }
         }
       }
@@ -172338,6 +175366,118 @@
         }
       }
     },
+    "Open Accessibility settings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einstellungen für Bedienungshilfen öffnen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir ajustes de Accesibilidad"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir configuración de Accesibilidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir les réglages d’accessibilité"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सुलभता सेटिंग खोलें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buka pengaturan Aksesibilitas"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apri le impostazioni di Accessibilità"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アクセシビリティ設定を開く"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "손쉬운 사용 설정 열기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegankelijkheidsinstellingen openen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otwórz ustawienia dostępności"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir ajustes de Acessibilidade"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Открыть настройки универсального доступа"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erişilebilirlik ayarlarını aç"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Відкрити параметри спеціальних можливостей"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mở cài đặt Trợ năng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打开辅助功能设置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "開啟輔助使用設定"
+          }
+        }
+      }
+    },
     "Open Coincide" : {
       "localizations" : {
         "de" : {
@@ -173571,6 +176711,118 @@
         }
       }
     },
+    "Open Screen Recording settings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einstellungen für Bildschirmaufnahme öffnen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir ajustes de Grabación de pantalla"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir configuración de Grabación de pantalla"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir les réglages d’enregistrement de l’écran"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्क्रीन रिकॉर्डिंग सेटिंग खोलें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buka pengaturan Perekaman Layar"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apri le impostazioni di registrazione schermo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "画面収録設定を開く"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "화면 기록 설정 열기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schermopname-instellingen openen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otwórz ustawienia nagrywania ekranu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir ajustes de Gravação da Tela"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Открыть настройки записи экрана"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ekran Kaydı ayarlarını aç"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Відкрити параметри запису екрана"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mở cài đặt Ghi màn hình"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打开屏幕录制设置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "開啟螢幕錄製設定"
+          }
+        }
+      }
+    },
     "Open Settings" : {
       "localizations" : {
         "de" : {
@@ -173679,6 +176931,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "打開設定"
+          }
+        }
+      }
+    },
+    "Open System Settings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Systemeinstellungen öffnen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir Ajustes del Sistema"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir Configuración del Sistema"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir Réglages Système"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सिस्टम सेटिंग खोलें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buka Pengaturan Sistem"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apri Impostazioni di Sistema"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "システム設定を開く"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "시스템 설정 열기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Systeeminstellingen openen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otwórz Ustawienia systemowe"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir Ajustes do Sistema"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Открыть Системные настройки"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sistem Ayarları’nı aç"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Відкрити Системні параметри"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mở Cài đặt hệ thống"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打开系统设置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "開啟系統設定"
           }
         }
       }
@@ -206693,6 +210057,118 @@
         }
       }
     },
+    "Restart Computer Use" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computersteuerung neu starten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reiniciar el uso del ordenador"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reiniciar el uso de la computadora"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Redémarrer le contrôle de l’ordinateur"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण फिर शुरू करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mulai ulang Kontrol Komputer"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Riavvia l’uso del computer"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作を再起動"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 다시 시작"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computerbediening herstarten"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uruchom ponownie obsługę komputera"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reiniciar o controle do computador"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перезапустить управление компьютером"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar Kullanımını yeniden başlat"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перезапустити керування комп’ютером"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khởi động lại Điều khiển máy tính"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "重新启动电脑控制"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "重新啟動電腦控制"
+          }
+        }
+      }
+    },
     "Restore Defaults" : {
       "localizations" : {
         "de" : {
@@ -214989,6 +218465,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "排程任務…"
+          }
+        }
+      }
+    },
+    "Screen Recording" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bildschirmaufnahme"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Grabación de pantalla"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Grabación de pantalla"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enregistrement de l’écran"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्क्रीन रिकॉर्डिंग"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Perekaman Layar"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Registrazione schermo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "画面収録"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "화면 기록"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schermopname"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nagrywanie ekranu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gravação da Tela"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запись экрана"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ekran Kaydı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запис екрана"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ghi màn hình"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "屏幕录制"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "螢幕錄製"
           }
         }
       }
@@ -238068,6 +241656,118 @@
         }
       }
     },
+    "Starts when an agent uses it" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Startet, wenn ein Agent sie verwendet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se inicia cuando un agente lo usa"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se inicia cuando un agente lo usa"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Démarre lorsqu’un agent l’utilise"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "किसी एजेंट के इस्तेमाल करने पर शुरू होता है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dimulai saat agen menggunakannya"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si avvia quando un agente lo usa"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントが使用すると起動します"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 사용하면 시작됩니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Start wanneer een agent het gebruikt"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uruchamia się, gdy agent z niej korzysta"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inicia quando um agente o usa"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запускается, когда агент обращается к нему"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir ajan kullandığında başlar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запускається, коли агент його використовує"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khởi động khi một tác tử sử dụng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理使用时启动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理程式使用時啟動"
+          }
+        }
+      }
+    },
     "Status" : {
       "localizations" : {
         "de" : {
@@ -239302,6 +243002,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "移除下載的執行環境前，請先停止 Antigravity 工作階段和登入程序。"
+          }
+        }
+      }
+    },
+    "Stop Computer Use" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computersteuerung stoppen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Detener el uso del ordenador"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Detener el uso de la computadora"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrêter le contrôle de l’ordinateur"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण रोकें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hentikan Kontrol Komputer"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Interrompi l’uso del computer"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作を停止"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 중지"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Computerbediening stoppen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zatrzymaj obsługę komputera"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Parar o controle do computador"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Остановить управление компьютером"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar Kullanımını durdur"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зупинити керування комп’ютером"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dừng Điều khiển máy tính"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "停止电脑控制"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "停止電腦控制"
           }
         }
       }
@@ -246481,6 +250293,118 @@
         }
       }
     },
+    "That computer-use action is unavailable." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Aktion der Computersteuerung ist nicht verfügbar."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esa acción de uso del ordenador no está disponible."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esa acción de uso de la computadora no está disponible."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette action de contrôle de l’ordinateur n’est pas disponible."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण की वह कार्रवाई उपलब्ध नहीं है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tindakan kontrol komputer tersebut tidak tersedia."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questa azione di uso del computer non è disponibile."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "そのコンピュータ操作のアクションは利用できません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "해당 컴퓨터 사용 동작을 사용할 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die actie voor computerbediening is niet beschikbaar."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ta czynność obsługi komputera jest niedostępna."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Essa ação de controle do computador não está disponível."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Это действие управления компьютером недоступно."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu bilgisayar kullanımı eylemi kullanılamıyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ця дія керування комп’ютером недоступна."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Thao tác điều khiển máy tính đó không khả dụng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "该电脑控制操作不可用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "該電腦控制動作無法使用。"
+          }
+        }
+      }
+    },
     "That custom model is already added." : {
       "localizations" : {
         "de" : {
@@ -253103,6 +257027,1238 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "coincide 指令透過這部 Mac 上的私密連線列出、開始並引導對話，並回答它們的批准要求與問題。Coincide 啟動的代理也能執行它，因此可以像你一樣啟動其他代理。"
+          }
+        }
+      }
+    },
+    "The computer-use arguments are invalid or contain a reserved option." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Argumente für die Computersteuerung sind ungültig oder enthalten eine reservierte Option."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los argumentos de uso del ordenador no son válidos o contienen una opción reservada."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los argumentos de uso de la computadora no son válidos o contienen una opción reservada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les arguments de contrôle de l’ordinateur ne sont pas valides ou contiennent une option réservée."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण के आर्ग्युमेंट अमान्य हैं या उनमें कोई आरक्षित विकल्प है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Argumen kontrol komputer tidak valid atau berisi opsi yang dicadangkan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gli argomenti di uso del computer non sono validi o contengono un’opzione riservata."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作の引数が無効か、予約済みのオプションが含まれています。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 인수가 유효하지 않거나 예약된 옵션이 포함되어 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De argumenten voor computerbediening zijn ongeldig of bevatten een gereserveerde optie."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Argumenty obsługi komputera są nieprawidłowe lub zawierają zastrzeżoną opcję."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os argumentos de controle do computador são inválidos ou contêm uma opção reservada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Аргументы управления компьютером недействительны или содержат зарезервированный параметр."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar kullanımı bağımsız değişkenleri geçersiz veya ayrılmış bir seçenek içeriyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Аргументи керування комп’ютером недійсні або містять зарезервований параметр."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đối số điều khiển máy tính không hợp lệ hoặc chứa tùy chọn dành riêng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制参数无效或包含保留选项。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制參數無效或包含保留選項。"
+          }
+        }
+      }
+    },
+    "The computer-use connection could not be started." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Verbindung zur Computersteuerung konnte nicht gestartet werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se ha podido iniciar la conexión de uso del ordenador."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo iniciar la conexión de uso de la computadora."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La connexion de contrôle de l’ordinateur n’a pas pu être établie."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण कनेक्शन शुरू नहीं किया जा सका।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Koneksi kontrol komputer tidak dapat dimulai."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossibile avviare la connessione di uso del computer."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作の接続を開始できませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 연결을 시작할 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De verbinding voor computerbediening kon niet worden gestart."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie można uruchomić połączenia obsługi komputera."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível iniciar a conexão de controle do computador."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не удалось установить соединение для управления компьютером."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar kullanımı bağlantısı başlatılamadı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не вдалося запустити з’єднання для керування комп’ютером."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không thể bắt đầu kết nối điều khiển máy tính."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法启动电脑控制连接。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法啟動電腦控制連線。"
+          }
+        }
+      }
+    },
+    "The computer-use helper did not start in time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das Hilfsprogramm der Computersteuerung wurde nicht rechtzeitig gestartet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de uso del ordenador no se ha iniciado a tiempo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de uso de la computadora no se inició a tiempo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’assistant de contrôle de l’ordinateur n’a pas démarré à temps."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण हेल्पर समय पर शुरू नहीं हुआ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Helper kontrol komputer tidak dimulai tepat waktu."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’helper di uso del computer non si è avviato in tempo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作のヘルパーが時間内に起動しませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 도우미가 제시간에 시작되지 않았습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het hulpprogramma voor computerbediening is niet op tijd gestart."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Program pomocniczy obsługi komputera nie uruchomił się na czas."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O assistente de controle do computador não iniciou a tempo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вспомогательная программа управления компьютером не запустилась вовремя."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar kullanımı yardımcısı zamanında başlamadı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Допоміжна програма керування комп’ютером не запустилася вчасно."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình trợ giúp điều khiển máy tính không khởi động kịp thời."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制辅助程序未能及时启动。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制輔助程式未能及時啟動。"
+          }
+        }
+      }
+    },
+    "The computer-use helper does not match this version of Coincide." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das Hilfsprogramm der Computersteuerung passt nicht zu dieser Version von Coincide."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de uso del ordenador no corresponde a esta versión de Coincide."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de uso de la computadora no corresponde a esta versión de Coincide."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’assistant de contrôle de l’ordinateur ne correspond pas à cette version de Coincide."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण हेल्पर Coincide के इस वर्शन से मेल नहीं खाता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Helper kontrol komputer tidak cocok dengan versi Coincide ini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’helper di uso del computer non corrisponde a questa versione di Coincide."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作のヘルパーがこのバージョンのCoincideと一致しません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 도우미가 이 버전의 Coincide와 일치하지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het hulpprogramma voor computerbediening past niet bij deze versie van Coincide."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Program pomocniczy obsługi komputera nie pasuje do tej wersji Coincide."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O assistente de controle do computador não corresponde a esta versão do Coincide."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вспомогательная программа управления компьютером не соответствует этой версии Coincide."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar kullanımı yardımcısı Coincide’ın bu sürümüyle eşleşmiyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Допоміжна програма керування комп’ютером не відповідає цій версії Coincide."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình trợ giúp điều khiển máy tính không khớp với phiên bản Coincide này."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制辅助程序与此版本的 Coincide 不匹配。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制輔助程式與此版本的 Coincide 不相符。"
+          }
+        }
+      }
+    },
+    "The computer-use helper exited with status %d." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das Hilfsprogramm der Computersteuerung wurde mit Status %d beendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de uso del ordenador ha terminado con el estado %d."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de uso de la computadora terminó con el estado %d."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’assistant de contrôle de l’ordinateur s’est arrêté avec le statut %d."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण हेल्पर स्थिति %d के साथ बंद हो गया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Helper kontrol komputer berhenti dengan status %d."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’helper di uso del computer è terminato con lo stato %d."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作のヘルパーがステータス%dで終了しました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 도우미가 상태 %d(으)로 종료되었습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het hulpprogramma voor computerbediening is gestopt met status %d."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Program pomocniczy obsługi komputera zakończył działanie ze stanem %d."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O assistente de controle do computador foi encerrado com o status %d."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вспомогательная программа управления компьютером завершилась с кодом %d."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar kullanımı yardımcısı %d durumuyla sonlandı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Допоміжна програма керування комп’ютером завершилася з кодом %d."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình trợ giúp điều khiển máy tính đã thoát với trạng thái %d."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制辅助程序已退出，状态为 %d。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制輔助程式已結束，狀態為 %d。"
+          }
+        }
+      }
+    },
+    "The computer-use helper returned an invalid response." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das Hilfsprogramm der Computersteuerung hat eine ungültige Antwort geliefert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de uso del ordenador ha devuelto una respuesta no válida."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de uso de la computadora devolvió una respuesta no válida."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’assistant de contrôle de l’ordinateur a renvoyé une réponse non valide."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण हेल्पर ने अमान्य जवाब दिया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Helper kontrol komputer mengembalikan respons yang tidak valid."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’helper di uso del computer ha restituito una risposta non valida."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作のヘルパーが無効な応答を返しました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 도우미가 유효하지 않은 응답을 반환했습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het hulpprogramma voor computerbediening gaf een ongeldig antwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Program pomocniczy obsługi komputera zwrócił nieprawidłową odpowiedź."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O assistente de controle do computador retornou uma resposta inválida."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вспомогательная программа управления компьютером вернула недопустимый ответ."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar kullanımı yardımcısı geçersiz bir yanıt döndürdü."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Допоміжна програма керування комп’ютером повернула недійсну відповідь."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình trợ giúp điều khiển máy tính trả về phản hồi không hợp lệ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制辅助程序返回了无效的响应。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制輔助程式傳回了無效的回應。"
+          }
+        }
+      }
+    },
+    "The computer-use helper stopped unexpectedly. It restarts on the next request." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das Hilfsprogramm der Computersteuerung wurde unerwartet beendet. Es startet bei der nächsten Anfrage neu."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de uso del ordenador se ha detenido inesperadamente. Se reiniciará con la próxima solicitud."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de uso de la computadora se detuvo inesperadamente. Se reiniciará con la próxima solicitud."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’assistant de contrôle de l’ordinateur s’est arrêté de manière inattendue. Il redémarrera à la prochaine requête."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण हेल्पर अचानक रुक गया। अगले अनुरोध पर यह फिर से शुरू होगा।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Helper kontrol komputer berhenti secara tak terduga. Helper akan dimulai ulang pada permintaan berikutnya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’helper di uso del computer si è interrotto inaspettatamente. Si riavvierà alla prossima richiesta."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作のヘルパーが予期せず停止しました。次のリクエストで再起動します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 도우미가 예기치 않게 중지되었습니다. 다음 요청 시 다시 시작됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het hulpprogramma voor computerbediening is onverwacht gestopt. Het start opnieuw bij het volgende verzoek."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Program pomocniczy obsługi komputera nieoczekiwanie się zatrzymał. Uruchomi się ponownie przy następnym żądaniu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O assistente de controle do computador parou inesperadamente. Ele será reiniciado na próxima solicitação."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вспомогательная программа управления компьютером неожиданно остановилась. Она перезапустится при следующем запросе."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar kullanımı yardımcısı beklenmedik şekilde durdu. Bir sonraki istekte yeniden başlayacak."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Допоміжна програма керування комп’ютером неочікувано зупинилася. Вона перезапуститься під час наступного запиту."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình trợ giúp điều khiển máy tính đã dừng đột ngột. Trình này sẽ khởi động lại ở yêu cầu tiếp theo."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制辅助程序意外停止。它会在下一次请求时重新启动。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制輔助程式意外停止。它會在下一次請求時重新啟動。"
+          }
+        }
+      }
+    },
+    "The computer-use helper’s private connection could not be verified." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die private Verbindung des Hilfsprogramms der Computersteuerung konnte nicht überprüft werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se ha podido verificar la conexión privada del asistente de uso del ordenador."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo verificar la conexión privada del asistente de uso de la computadora."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La connexion privée de l’assistant de contrôle de l’ordinateur n’a pas pu être vérifiée."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण हेल्पर के निजी कनेक्शन की पुष्टि नहीं की जा सकी।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Koneksi pribadi helper kontrol komputer tidak dapat diverifikasi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossibile verificare la connessione privata dell’helper di uso del computer."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作のヘルパーのプライベート接続を確認できませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 도우미의 비공개 연결을 확인할 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De privéverbinding van het hulpprogramma voor computerbediening kon niet worden gecontroleerd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie można zweryfikować prywatnego połączenia programu pomocniczego obsługi komputera."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível verificar a conexão privada do assistente de controle do computador."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не удалось проверить частное соединение вспомогательной программы управления компьютером."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar kullanımı yardımcısının özel bağlantısı doğrulanamadı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не вдалося перевірити приватне з’єднання допоміжної програми керування комп’ютером."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không thể xác minh kết nối riêng của trình trợ giúp điều khiển máy tính."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法验证电脑控制辅助程序的私有连接。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法驗證電腦控制輔助程式的私人連線。"
+          }
+        }
+      }
+    },
+    "The computer-use request is invalid or too large." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Anfrage an die Computersteuerung ist ungültig oder zu groß."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud de uso del ordenador no es válida o es demasiado grande."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud de uso de la computadora no es válida o es demasiado grande."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La requête de contrôle de l’ordinateur n’est pas valide ou est trop volumineuse."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण अनुरोध अमान्य है या बहुत बड़ा है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permintaan kontrol komputer tidak valid atau terlalu besar."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La richiesta di uso del computer non è valida o è troppo grande."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作のリクエストが無効か、大きすぎます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 요청이 유효하지 않거나 너무 큽니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het verzoek voor computerbediening is ongeldig of te groot."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Żądanie obsługi komputera jest nieprawidłowe lub zbyt duże."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A solicitação de controle do computador é inválida ou grande demais."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запрос управления компьютером недействителен или слишком велик."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar kullanımı isteği geçersiz veya çok büyük."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запит керування комп’ютером недійсний або завеликий."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yêu cầu điều khiển máy tính không hợp lệ hoặc quá lớn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制请求无效或过大。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制請求無效或過大。"
+          }
+        }
+      }
+    },
+    "The computer-use result is too large. Request a narrower snapshot." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das Ergebnis der Computersteuerung ist zu groß. Fordere einen kleineren Ausschnitt an."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El resultado de uso del ordenador es demasiado grande. Solicita una captura más reducida."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El resultado de uso de la computadora es demasiado grande. Solicita una captura más reducida."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le résultat du contrôle de l’ordinateur est trop volumineux. Demandez un instantané plus restreint."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण का नतीजा बहुत बड़ा है। छोटा स्नैपशॉट मांगें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hasil kontrol komputer terlalu besar. Minta cuplikan yang lebih sempit."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il risultato di uso del computer è troppo grande. Richiedi un’istantanea più ristretta."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作の結果が大きすぎます。範囲を絞ったスナップショットをリクエストしてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 결과가 너무 큽니다. 범위를 좁힌 스냅샷을 요청하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het resultaat van computerbediening is te groot. Vraag om een kleinere momentopname."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wynik obsługi komputera jest zbyt duży. Poproś o węższy zrzut."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O resultado do controle do computador é grande demais. Solicite uma captura mais restrita."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Результат управления компьютером слишком велик. Запросите снимок меньшей области."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar kullanımı sonucu çok büyük. Daha dar bir anlık görüntü isteyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Результат керування комп’ютером завеликий. Запросіть знімок меншої області."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kết quả điều khiển máy tính quá lớn. Hãy yêu cầu ảnh chụp nhanh hẹp hơn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制结果过大。请请求范围更小的快照。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制結果過大。請要求範圍較小的快照。"
+          }
+        }
+      }
+    },
+    "The computer-use tool %@ is not available through Coincide." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das Werkzeug %@ der Computersteuerung ist über Coincide nicht verfügbar."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La herramienta de uso del ordenador %@ no está disponible a través de Coincide."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La herramienta de uso de la computadora %@ no está disponible a través de Coincide."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’outil de contrôle de l’ordinateur %@ n’est pas disponible dans Coincide."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण टूल %@ Coincide के ज़रिए उपलब्ध नहीं है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alat kontrol komputer %@ tidak tersedia melalui Coincide."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lo strumento di uso del computer %@ non è disponibile tramite Coincide."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作のツール%@はCoincideでは利用できません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용 도구 %@은(는) Coincide에서 사용할 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het hulpmiddel %@ voor computerbediening is niet beschikbaar via Coincide."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Narzędzie obsługi komputera %@ nie jest dostępne w Coincide."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A ferramenta de controle do computador %@ não está disponível pelo Coincide."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Инструмент управления компьютером %@ недоступен через Coincide."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ bilgisayar kullanımı aracı Coincide üzerinden kullanılamıyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Інструмент керування комп’ютером %@ недоступний через Coincide."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Công cụ điều khiển máy tính %@ không khả dụng qua Coincide."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电脑控制工具 %@ 无法通过 Coincide 使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電腦控制工具 %@ 無法透過 Coincide 使用。"
           }
         }
       }
@@ -265216,6 +270372,118 @@
         }
       }
     },
+    "This copy of Coincide doesn’t include the computer-use helper." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Kopie von Coincide enthält das Hilfsprogramm der Computersteuerung nicht."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta copia de Coincide no incluye el asistente de uso del ordenador."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta copia de Coincide no incluye el asistente de uso de la computadora."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette copie de Coincide n’inclut pas l’assistant de contrôle de l’ordinateur."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide की इस कॉपी में कंप्यूटर नियंत्रण हेल्पर शामिल नहीं है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Salinan Coincide ini tidak menyertakan helper kontrol komputer."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questa copia di Coincide non include l’helper di uso del computer."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このCoincideにはコンピュータ操作のヘルパーが含まれていません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 Coincide 사본에는 컴퓨터 사용 도우미가 포함되어 있지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze kopie van Coincide bevat het hulpprogramma voor computerbediening niet."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ta kopia Coincide nie zawiera programu pomocniczego obsługi komputera."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta cópia do Coincide não inclui o assistente de controle do computador."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Эта копия Coincide не содержит вспомогательную программу управления компьютером."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide’ın bu kopyası bilgisayar kullanımı yardımcısını içermiyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ця копія Coincide не містить допоміжної програми керування комп’ютером."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bản sao Coincide này không có trình trợ giúp điều khiển máy tính."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 Coincide 副本未包含电脑控制辅助程序。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 Coincide 副本未包含電腦控制輔助程式。"
+          }
+        }
+      }
+    },
     "This file changed on disk, and you have unsaved edits." : {
       "localizations" : {
         "de" : {
@@ -266668,6 +271936,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "此工作階段包含僅保留在原始檔案中的內容。"
+          }
+        }
+      }
+    },
+    "This thread already has a computer-use command running." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In diesem Thread läuft bereits ein Befehl der Computersteuerung."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta conversación ya tiene un comando de uso del ordenador en curso."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta conversación ya tiene un comando de uso de la computadora en curso."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une commande de contrôle de l’ordinateur est déjà en cours dans cette discussion."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस थ्रेड में पहले से ही कंप्यूटर नियंत्रण का एक कमांड चल रहा है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utas ini sudah menjalankan perintah kontrol komputer."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In questo thread è già in esecuzione un comando di uso del computer."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このスレッドではすでにコンピュータ操作のコマンドが実行中です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 스레드에서 이미 컴퓨터 사용 명령이 실행 중입니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In deze thread loopt al een opdracht voor computerbediening."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "W tym wątku działa już polecenie obsługi komputera."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta conversa já tem um comando de controle do computador em execução."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "В этом чате уже выполняется команда управления компьютером."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu sohbette zaten çalışan bir bilgisayar kullanımı komutu var."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "У цьому чаті вже виконується команда керування комп’ютером."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Luồng này đã có một lệnh điều khiển máy tính đang chạy."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此对话已有一个电脑控制命令正在运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此對話已有一個電腦控制指令正在執行。"
           }
         }
       }
@@ -274111,6 +279491,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "在「設定 › Cursor」中開啟「顯示帳號用量」以讀取方案限額。"
+          }
+        }
+      }
+    },
+    "Turning Computer Use off ends agents’ access. Computer Use also stops when Coincide quits." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wenn du die Computersteuerung ausschaltest, endet der Zugriff der Agents. Sie endet auch, wenn Coincide beendet wird."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desactivar el uso del ordenador finaliza el acceso de los agentes. También se detiene cuando sales de Coincide."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desactivar el uso de la computadora finaliza el acceso de los agentes. También se detiene cuando sales de Coincide."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Désactiver le contrôle de l’ordinateur met fin à l’accès des agents. Il s’arrête aussi lorsque vous quittez Coincide."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कंप्यूटर नियंत्रण बंद करने पर एजेंटों की पहुँच समाप्त हो जाती है। Coincide बंद होने पर भी कंप्यूटर नियंत्रण रुक जाता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menonaktifkan Kontrol Komputer mengakhiri akses agen. Kontrol Komputer juga berhenti saat Coincide ditutup."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Disattivare l’uso del computer termina l’accesso degli agenti. Si interrompe anche quando chiudi Coincide."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "コンピュータ操作をオフにすると、エージェントのアクセスは終了します。Coincideの終了時にもコンピュータ操作は停止します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "컴퓨터 사용을 끄면 에이전트의 접근이 종료됩니다. Coincide를 종료할 때도 컴퓨터 사용이 중지됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Als je computerbediening uitzet, eindigt de toegang van agents. Het stopt ook wanneer Coincide wordt afgesloten."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wyłączenie obsługi komputera kończy dostęp agentów. Obsługa komputera zatrzymuje się również po zamknięciu Coincide."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desativar o controle do computador encerra o acesso dos agentes. Ele também para quando o Coincide é encerrado."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выключение управления компьютером прекращает доступ агентов. Оно также останавливается при выходе из Coincide."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgisayar Kullanımını kapatmak ajanların erişimini sonlandırır. Coincide’dan çıkıldığında da Bilgisayar Kullanımı durur."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вимкнення керування комп’ютером припиняє доступ агентів. Воно також зупиняється, коли ви виходите з Coincide."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tắt Điều khiển máy tính sẽ kết thúc quyền truy cập của tác nhân. Tính năng này cũng dừng khi thoát Coincide."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "关闭电脑控制会终止智能体的访问。退出 Coincide 时，电脑控制也会停止。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "關閉電腦控制會終止代理的存取。結束 Coincide 時，電腦控制也會停止。"
           }
         }
       }
@@ -283734,6 +289226,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "請等候 Google 登入連結出現後再貼上網址。"
+          }
+        }
+      }
+    },
+    "Waiting for Accessibility access" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Warte auf Zugriff auf die Bedienungshilfen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esperando acceso a Accesibilidad"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esperando acceso a Accesibilidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En attente de l’accès à l’Accessibilité"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सुलभता की अनुमति का इंतज़ार है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menunggu akses Aksesibilitas"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In attesa dell’accesso ad Accessibilità"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アクセシビリティへのアクセスを待っています"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "손쉬운 사용 접근 권한을 기다리는 중"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wachten op toegang tot Toegankelijkheid"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oczekiwanie na dostęp do funkcji Dostępność"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aguardando acesso à Acessibilidade"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ожидание доступа к универсальному доступу"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erişilebilirlik erişimi bekleniyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Очікування доступу до спеціальних можливостей"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đang chờ quyền truy cập Trợ năng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在等待辅助功能权限"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在等待輔助使用權限"
           }
         }
       }
@@ -298639,7 +304243,9 @@
         }
       }
     },
-    "≈ %@" : {},
+    "≈ %@" : {
+
+    },
     "≈ %@ at API list prices" : {
       "localizations" : {
         "de" : {

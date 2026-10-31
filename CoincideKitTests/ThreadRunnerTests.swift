@@ -211,6 +211,34 @@ struct ThreadRunnerTests {
         session.emit(.turnCompleted(.completed))
     }
 
+    @Test(arguments: ProviderKind.allCases)
+    func runtimeModulesComposeWithoutClobberingEachOtherOrSavingCapabilities(_ provider: ProviderKind) async throws {
+        let agent = ScriptedProvider(kind: provider)
+        let registry = ProviderRegistry(store: store, providers: [agent])
+        let capabilityRunner = ThreadRunner(store: store, registry: registry)
+        store.updateSettings { $0.generatesThreadTitles = false }
+        select(provider)
+        let browser = "<browser-test>private browser capability</browser-test>"
+        let computer = "<computer-test>private computer capability</computer-test>"
+        capabilityRunner.ephemeralRuntimeContext = { _ in "legacy capability" }
+        capabilityRunner.ephemeralRuntimeContexts["computer-use"] = { id in id == threadID ? computer : nil }
+        capabilityRunner.ephemeralRuntimeContexts["browser"] = { id in id == threadID ? browser : nil }
+        agent.configure = { $0.supportsSteering = true }
+        await capabilityRunner.send(threadID: threadID, text: "Inspect the native app and page")
+        let session = try #require(agent.last)
+        #expect(session.sent.last?.message.hasSuffix("legacy capability\n\n" + browser + "\n\n" + computer) == true)
+        capabilityRunner.ephemeralRuntimeContexts.removeValue(forKey: "browser")
+        _ = await capabilityRunner.steer(threadID: threadID, text: "Continue with the native app")
+        #expect(session.steered.last?.message.contains(computer) == true)
+        #expect(session.steered.last?.message.contains(browser) == false)
+        capabilityRunner.ephemeralRuntimeContexts.removeValue(forKey: "computer-use")
+        capabilityRunner.ephemeralRuntimeContext = nil
+        _ = await capabilityRunner.steer(threadID: threadID, text: "Both capabilities are off")
+        #expect(session.steered.last?.message == "Both capabilities are off")
+        #expect(!items.contains { $0.text.contains("capability") })
+        session.emit(.turnCompleted(.completed))
+    }
+
     @Test func startingATurnRecordsTheLastActiveAgent() async throws {
         await runner.send(threadID: threadID, text: "Hello")
         let last = try #require(runner.lastActiveAgent.value)

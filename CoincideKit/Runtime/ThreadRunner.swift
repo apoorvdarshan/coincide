@@ -136,8 +136,11 @@ public final class ThreadRunner {
     public var onApprovalRequested: ((UUID, ApprovalRequest) -> Void)?
     /// Called when an agent asks the user questions.
     public var onUserInputRequested: ((UUID, UserInputRequest) -> Void)?
-    /// Per-thread capabilities valid only for this running app. Never saved as user text or queue metadata.
+    /// Legacy single-source runtime context. New app modules register their own key in `ephemeralRuntimeContexts`.
     public var ephemeralRuntimeContext: ((UUID) -> String?)?
+    /// Additive per-thread capabilities valid only for this running app, keyed by their owning module. Never
+    /// saved as user text or queue metadata. Removing one module leaves the other capabilities in place.
+    public var ephemeralRuntimeContexts: [String: (UUID) -> String?] = [:]
     /// Variables added to every agent process Coincide starts, by who adds them, read at each launch: the unlocked
     /// password managers' sessions (`PasswordVault.agentEnvironment`) and the command-line tool's folder and socket
     /// (`CommandLineControl`). A `PATH` goes in front of the process's own instead of replacing it.
@@ -146,8 +149,10 @@ public final class ThreadRunner {
     private var generatedImageCopies: Set<UUID> = []
 
     private func runtimeMessage(_ message: String, threadID: UUID) -> String {
-        guard let context = ephemeralRuntimeContext?(threadID), !context.isEmpty else { return message }
-        return message + "\n\n" + context
+        let contexts = ([ephemeralRuntimeContext?(threadID)] + ephemeralRuntimeContexts.keys.sorted().map {
+            ephemeralRuntimeContexts[$0]?(threadID)
+        }).compactMap { $0 }.filter { !$0.isEmpty }
+        return contexts.isEmpty ? message : message + "\n\n" + contexts.joined(separator: "\n\n")
     }
 
     private func preserveGeneratedImage(toolID: UUID, output: String?, threadID: UUID, provider: ProviderKind, modelID: String?) {

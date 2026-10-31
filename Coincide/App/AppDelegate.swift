@@ -63,6 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ThreadSnooze.shared.start()
         PreviewSessions.shared.connectToApp { [weak self] in self?.mainWindow }
         PreviewSessions.shared.start()
+        // Settings › Computer Use: each thread's private connection to the bundled computer-use helper.
+        ComputerUseController.shared.start()
         // Settings › Usage may read sites the user turned on with their sign-in in the shared browser profile.
         BrowserUsageBridge.connect()
         AppUpdates.shared.start()
@@ -121,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RemoteServer.shared.stop()
         CommandLineControl.shared.stop()
         PreviewSessions.shared.stop()
+        ComputerUseController.shared.shutdown()
         ThreadRunner.shared.shutdownAll()
         AgentHostController.shared.prepareToQuit()
         AppStore.shared.flush()

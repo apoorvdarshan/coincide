@@ -41,6 +41,7 @@ struct SettingsRootView: View {
         case .section(.archive): ArchiveSettingsView()
         case .section(.keyboard): KeyboardSettingsView(model: model)
         case .section(.browser): BrowserSettingsView()
+        case .section(.computerUse): ComputerUseSettingsView()
         case .section(.about): AboutSettingsView()
         case .provider(let kind): ProviderSettingsView(model: model, kind: kind).id(kind)
         }
@@ -70,6 +71,7 @@ private struct SettingsSidebar: View {
                     row(.archive)
                     row(.keyboard)
                     row(.browser)
+                    row(.computerUse)
                 }
                 Section("Providers") {
                     Label {
@@ -142,6 +144,7 @@ extension SettingsSection {
         case .archive: .brown
         case .keyboard: Color(nsColor: .darkGray)
         case .browser: .cyan
+        case .computerUse: .blue
         case .about: .blue
         }
     }
@@ -323,6 +326,14 @@ struct SettingsSearchResults: View {
                     String(localized: "Import"), String(localized: "Private sessions"), String(localized: "Agent Control"),
                     "Chrome", "Safari", "Firefox", String(localized: "Passwords"), String(localized: "Saved Logins"),
                     "1Password", "Bitwarden", String(localized: "Keychain"),
+                ]),
+            SettingsSearchEntry(
+                title: String(localized: "Computer Use"), pane: .section(.computerUse),
+                keywords: [
+                    String(localized: "Accessibility"), String(localized: "Screen Recording"),
+                    String(localized: "Permissions"), String(localized: "Automation"),
+                    "computer use", "accessibility", "screen recording", "automation", "desktop", "screen", "control",
+                    "TryCua", "Cua Driver",
                 ]),
             SettingsSearchEntry(
                 title: String(localized: "About Coincide"), pane: .section(.about),

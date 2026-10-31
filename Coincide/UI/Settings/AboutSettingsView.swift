@@ -60,6 +60,18 @@ struct AboutSettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 6)
                 }
+                Text("Computer Use uses Cua Driver by Cua AI under the MIT License.")
+                AboutLink(
+                    symbol: "desktopcomputer", color: .blue, title: "Cua Driver", detail: "github.com/trycua/cua",
+                    url: "https://github.com/trycua/cua")
+                DisclosureGroup("Cua Driver License") {
+                    Text(verbatim: Self.cuaDriverLicense)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 6)
+                }
             }
 
             if let copyright = Bundle.main.object(forInfoDictionaryKey: "NSHumanReadableCopyright") as? String {
@@ -86,6 +98,13 @@ struct AboutSettingsView: View {
     private static var versionReport: String {
         let os = ProcessInfo.processInfo.operatingSystemVersion
         return "Coincide \(version) (\(build)), macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
+    }
+
+    private static var cuaDriverLicense: String {
+        guard let url = Bundle.main.url(forResource: "CuaDriver-LICENSE", withExtension: "txt"),
+            let text = try? String(contentsOf: url, encoding: .utf8)
+        else { return String(localized: "Cua Driver license could not be loaded.") }
+        return text
     }
 
     private static let t3CodeLicense = """

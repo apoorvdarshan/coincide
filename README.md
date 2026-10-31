@@ -33,6 +33,7 @@ T3 Code is an Electron app with a Node server behind a web UI. Coincide is built
 - **Scheduled tasks** create fresh threads once, daily or weekly using project defaults and a chosen time zone. They run while Coincide is open, skip missed runs after quitting or sleep, and never overlap a previous run of the same task.
 - **Integrated terminal** per thread, with tabs and splits.
 - **A browser in every thread**, a WebKit page beside the conversation with its own page and back/forward history. Threads share one persistent browser profile, so sign-ins last across threads and relaunches (Settings → Browser offers private, per-thread sessions instead, and clearing browsing data). Import cookies, history and bookmarks from Safari, Chrome, Arc, Brave, Edge, Firefox and other Chromium and Firefox browsers; nothing leaves your Mac. With Agent Control (on by default, per thread), an agent with local shell tools can navigate, read, click, fill inputs and take screenshots through a private local connection, in the background while the panel is closed. When it needs you, to sign in, pass a CAPTCHA or enter a code, it opens the panel and shows what to do, then waits for **Done**. Agents can't read cookies, site storage or password fields; control ends when Coincide quits. Sign-ins can fill from 1Password and Bitwarden (through their command-line tools) or from logins Coincide saves in your Keychain (including ones imported from a browser's or password manager's CSV export), from the key in the address bar; agents can ask Coincide to sign in on a page, which it does only after you allow that site, without ever showing them the password or one-time code. Web links you click in a conversation open there (⌘-click opens your default browser; Settings › General can swap the two).
+- **Computer Use** (Settings › Computer Use, off by default) lets agents see and operate other Mac apps: list apps and windows, read a window's controls, click, type, scroll and take screenshots. Coincide bundles [Cua Driver](https://github.com/trycua/cua) and runs it as its own helper, so the Accessibility and Screen Recording permissions you grant belong to Coincide, and every agent reaches it through a private connection for its thread, with no MCP setup per agent. Browser control and scripts aren't exposed, one thread acts on the desktop at a time, and access ends when you turn it off or quit Coincide.
 - **Usage dashboard** in Settings, with provider account limits and the extra figures each provider reports (Claude extra usage, Codex credit limits, OpenRouter key credits, Anthropic API-key rate limits on request), activity charts and local history of the latest 10,000 finished turns. Provider token snapshots and reported session costs are shown with their scope; they are not added together as billing totals.
 - **Custom keyboard shortcuts** for every menu command, with conflict warnings.
 - Fast with long histories: thread lists load from a small index and transcripts load only when opened.
@@ -90,6 +91,8 @@ xcodegen generate
 open Coincide.xcodeproj
 ```
 
+`xcodegen generate` first runs `scripts/fetch-cua-driver.sh`, which downloads the pinned Cua Driver release for Computer Use once (it is cached in `~/Library/Caches/Coincide`), checks its checksum and Cua AI's signature, and places it in the gitignored `Vendor/` folder.
+
 Run the unit tests:
 
 ```sh
@@ -122,7 +125,7 @@ For interactive charts or small tools, use a `coincide-html` or `coincide-svg` f
 
 ## Credits
 
-Coincide ports the design and behavior of [T3 Code](https://github.com/pingdotgg/t3code) by T3 Tools Inc., released under the MIT License. The terminal uses [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (MIT). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Coincide ports the design and behavior of [T3 Code](https://github.com/pingdotgg/t3code) by T3 Tools Inc., released under the MIT License. The terminal uses [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (MIT). Computer Use runs [Cua Driver](https://github.com/trycua/cua) by Cua AI (MIT). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 The agents' logos are trademarks of Anthropic, OpenAI, Anysphere, xAI, SST and Google. Browser names and icons belong to their owners (Apple, Google, Microsoft, Mozilla, Brave, The Browser Company, Opera, Vivaldi and others); The password managers' names and logos are trademarks of AgileBits (1Password) and Bitwarden, Inc. Coincide shows the icons of browsers installed on your Mac, and these logos, only to identify them. Coincide isn't affiliated with or endorsed by any of these owners.
 

@@ -12,6 +12,7 @@ nonisolated enum SettingsSection: String, CaseIterable, Sendable {
     case archive
     case keyboard
     case browser
+    case computerUse
     case about
 
     var title: String {
@@ -24,6 +25,7 @@ nonisolated enum SettingsSection: String, CaseIterable, Sendable {
         case .archive: String(localized: "settings.archive", defaultValue: "Archive", comment: "Settings pane listing archived threads (a noun)")
         case .keyboard: String(localized: "Keyboard")
         case .browser: String(localized: "Browser")
+        case .computerUse: String(localized: "Computer Use")
         case .about: String(localized: "About")
         }
     }
@@ -38,6 +40,7 @@ nonisolated enum SettingsSection: String, CaseIterable, Sendable {
         case .archive: "archivebox.fill"
         case .keyboard: "keyboard.fill"
         case .browser: "globe"
+        case .computerUse: "desktopcomputer"
         case .about: "info"
         }
     }

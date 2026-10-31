@@ -40,7 +40,7 @@ final class PreviewSessions {
     }
 
     func start() {
-        ThreadRunner.shared.ephemeralRuntimeContext = { [weak self] id in
+        ThreadRunner.shared.ephemeralRuntimeContexts["browser"] = { [weak self] id in
             [self?.runtimeContext(for: id), AgentOutputMedia.context].compactMap { $0 }.joined(separator: "\n\n")
         }
         // Agents use the password managers unlocked in Settings › Browser with their own command-line tools.
@@ -68,7 +68,7 @@ final class PreviewSessions {
         bridge.stop()
         for session in sessions.values { session.close() }
         sessions.removeAll()
-        ThreadRunner.shared.ephemeralRuntimeContext = nil
+        ThreadRunner.shared.ephemeralRuntimeContexts.removeValue(forKey: "browser")
         observation = nil
         if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
         settingsObserver = nil
