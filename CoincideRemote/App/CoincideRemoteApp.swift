@@ -51,18 +51,30 @@ final class RemoteAppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
-/// Where the app is: the open thread, sheets, and requests from keyboard shortcuts. Lives above the views, so a
-/// layout change (an iPad window resizing, a Duo folding) keeps it.
+/// The tabs along the bottom: what the Mac's sidebar holds, split the iPhone way, then Settings and Search.
+enum AppTab: String, Hashable, CaseIterable {
+    case bots, projects, chats, settings, search
+}
+
+/// A screen pushed inside a tab.
+enum Route: Hashable {
+    case thread(UUID)
+    case project(UUID)
+    /// A bot's past conversations.
+    case bot(UUID)
+}
+
+/// Where the app is: the tab, what each tab has pushed, sheets, and requests from keyboard shortcuts. Lives above the
+/// views, so a layout change (an iPad window resizing, a Duo folding) keeps it.
 @MainActor
 @Observable
 final class Navigator {
-    var selection: UUID? {
-        didSet { if selection != oldValue, let selection { recent.removeAll { $0 == selection }; recent.insert(selection, at: 0) } }
+    var tab: AppTab {
+        didSet { UserDefaults.standard.set(tab.rawValue, forKey: "navigation.tab") }
     }
-    var columnVisibility = NavigationSplitViewVisibility.all
+    /// Each tab's pushed screens.
+    var paths: [AppTab: [Route]] = [:]
     var searchText = ""
-    var isSearching = false
-    var showsSettings = false
     var showsConnect = false
     var newThreadRequests = 0
     var renaming: RemoteThreadSummary?
@@ -70,6 +82,8 @@ final class Navigator {
     var diff: DiffRequest?
     /// Threads opened lately, newest first. Their transcripts stay loaded so going back is instant.
     private(set) var recent: [UUID] = []
+    /// Which tab and screen a thread belongs under, from the workspace. Set by the tab view.
+    @ObservationIgnored var locate: (UUID) -> (tab: AppTab, parent: Route?) = { _ in (.chats, nil) }
 
     struct DiffRequest: Identifiable, Hashable {
         var threadID: UUID
@@ -78,25 +92,75 @@ final class Navigator {
     }
 
     init() {
+        tab = AppTab(rawValue: UserDefaults.standard.string(forKey: "navigation.tab") ?? "") ?? .projects
+        if tab == .search { tab = .projects }
         #if DEBUG
+        if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-CoincideRemoteTab"),
+            index + 1 < ProcessInfo.processInfo.arguments.count,
+            let requested = AppTab(rawValue: ProcessInfo.processInfo.arguments[index + 1])
+        {
+            tab = requested
+        }
         if DemoData.isEnabled, ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoThread") {
-            selection = DemoData.threadID
+            paths[tab] = [.thread(DemoData.threadID)]
         }
         #endif
     }
 
+    func path(_ tab: AppTab) -> Binding<[Route]> {
+        Binding(get: { self.paths[tab] ?? [] }, set: { self.paths[tab] = $0 })
+    }
+
+    /// The thread on screen in the current tab, if any. Setting a thread opens it where it belongs; nil goes back from
+    /// the open thread.
+    var selection: UUID? {
+        get {
+            if case .thread(let id)? = paths[tab]?.last { return id }
+            return nil
+        }
+        set {
+            if let newValue {
+                open(newValue)
+            } else if case .thread? = paths[tab]?.last {
+                paths[tab]?.removeLast()
+            }
+        }
+    }
+
+    /// Shows a thread under its tab (its project, a bot's conversations or Chats), or in place within Search.
+    func open(_ threadID: UUID) {
+        if tab == .search {
+            paths[.search, default: []].append(.thread(threadID))
+            return
+        }
+        let place = locate(threadID)
+        tab = place.tab
+        paths[place.tab] = (place.parent.map { [$0] } ?? []) + [.thread(threadID)]
+    }
+
+    /// Pushes a screen on the current tab.
+    func push(_ route: Route) {
+        paths[tab, default: []].append(route)
+    }
+
+    /// Back to the tabs' first screens, as after pairing another Mac.
+    func reset() {
+        paths = [:]
+    }
+
+    func noteOpened(_ threadID: UUID) {
+        recent.removeAll { $0 == threadID }
+        recent.insert(threadID, at: 0)
+    }
+
     func requestNewThread() { newThreadRequests += 1 }
 
-    func focusSearch() {
-        columnVisibility = .all
-        isSearching = true
-    }
+    func focusSearch() { tab = .search }
 }
 
 struct RootView: View {
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
-    @Environment(\.theme) private var theme
 
     var body: some View {
         @Bindable var navigator = navigator
@@ -104,67 +168,14 @@ struct RootView: View {
             if client.mac == nil {
                 NavigationStack { ConnectView(isOnboarding: true) }
             } else {
-                MainSplitView()
+                MainTabView()
             }
         }
-        .sheet(isPresented: $navigator.showsSettings) { SettingsView() }
         .sheet(isPresented: $navigator.showsConnect) {
             NavigationStack { ConnectView(isOnboarding: false) }
         }
         .sheet(item: $navigator.diff) { request in DiffView(request: request) }
         .overlay(alignment: .top) { NoticeBanner() }
-    }
-}
-
-struct MainSplitView: View {
-    @Environment(RemoteClient.self) private var client
-    @Environment(Navigator.self) private var navigator
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        @Bindable var navigator = navigator
-        NavigationSplitView(columnVisibility: $navigator.columnVisibility) {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
-        } detail: {
-            NavigationStack {
-                if let id = navigator.selection {
-                    ThreadContainer(threadID: id)
-                        .id(id)
-                } else {
-                    EmptyDetailView()
-                }
-            }
-        }
-        .navigationSplitViewStyle(.balanced)
-        .onChange(of: navigator.recent) { _, recent in
-            // Keep the last few threads following the Mac; stop the rest.
-            for id in client.threads.keys where !recent.prefix(4).contains(id) { client.close(id) }
-        }
-        .modifier(ThreadActionDialogs())
-        #if DEBUG
-        // Testing in the simulator without taps: open the first thread once the sidebar arrives.
-        .onChange(of: client.workspace.threads.first?.id) { _, id in
-            if ProcessInfo.processInfo.arguments.contains("-CoincideRemoteOpenFirstThread"), navigator.selection == nil {
-                navigator.selection = id
-            }
-        }
-        #endif
-    }
-}
-
-struct EmptyDetailView: View {
-    @Environment(RemoteClient.self) private var client
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        ContentUnavailableView {
-            Label(client.mac?.name ?? "Coincide", systemImage: "macbook.and.iphone")
-        } description: {
-            Text("Pick a thread, or start a new one.")
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.content)
     }
 }
 

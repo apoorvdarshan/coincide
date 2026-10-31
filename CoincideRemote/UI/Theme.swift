@@ -59,6 +59,11 @@ struct Theme: Equatable {
     var raised: Color { Color(hex: palette.raised) }
     var border: Color { Color(hex: palette.border) }
     var accent: Color { Color(hex: palette.accent) }
+    /// Buttons, toolbars and the tab bar: the theme's ink, as the Mac draws its chrome, so the accent stays for the
+    /// few marks it highlights (the text cursor, a plan in progress).
+    var control: Color { palette.ink.map { Color(hex: $0) } ?? (isDark ? .white : .black) }
+    /// Text and symbols on a control-colored fill.
+    var onControl: Color { isDark ? .black : .white }
     var ink: Color { palette.ink.map { Color(hex: $0) } ?? .primary }
     var secondaryInk: Color { ink.opacity(0.62) }
     var isDark: Bool { palette.isDark }
@@ -74,6 +79,19 @@ struct Theme: Equatable {
     }
 
     static let fallback = Theme(palette: RemotePalette.dark[0])
+}
+
+/// The glass prominent button in the theme's control color, with its label in the color that reads on it.
+private struct ProminentButton: ViewModifier {
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content.buttonStyle(.glassProminent).foregroundStyle(theme.onControl)
+    }
+}
+
+extension View {
+    func prominentButton() -> some View { modifier(ProminentButton()) }
 }
 
 extension Color {
@@ -107,7 +125,7 @@ struct ThemedRoot<Content: View>: View {
         let theme = Theme(palette: palette)
         content
             .environment(\.theme, theme)
-            .tint(theme.accent)
+            .tint(theme.control)
             .preferredColorScheme(resolved.mode == .system ? nil : (resolved.mode == .dark ? .dark : .light))
     }
 }

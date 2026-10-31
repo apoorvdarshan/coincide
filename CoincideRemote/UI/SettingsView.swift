@@ -5,7 +5,6 @@ struct SettingsView: View {
     @Environment(RemoteClient.self) private var client
     @Environment(AppearanceSettings.self) private var appearance
     @Environment(Navigator.self) private var navigator
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
     @State private var addingHostTo: SavedMac?
     @State private var newHost = ""
@@ -13,121 +12,115 @@ struct SettingsView: View {
 
     var body: some View {
         @Bindable var appearance = appearance
-        NavigationStack {
-            Form {
-                Section("Macs") {
-                    ForEach(client.savedMacs) { mac in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(mac.name)
-                                Text(status(mac)).font(.caption).foregroundStyle(theme.secondaryInk)
-                                Text(mac.hosts.map(\.host).joined(separator: ", "))
-                                    .font(.caption2.monospaced()).foregroundStyle(theme.secondaryInk).lineLimit(2)
-                            }
-                            Spacer()
-                            if client.mac?.serverID == mac.serverID, client.isConnected {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                                    .accessibilityLabel(Text("Connected"))
-                            }
+        Form {
+            Section("Macs") {
+                ForEach(client.savedMacs) { mac in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(mac.name)
+                            Text(status(mac)).font(.caption).foregroundStyle(theme.secondaryInk)
+                            Text(mac.hosts.map(\.host).joined(separator: ", "))
+                                .font(.caption2.monospaced()).foregroundStyle(theme.secondaryInk).lineLimit(2)
                         }
-                        .contentShape(Rectangle())
-                        .onTapGesture { client.connect(to: mac) }
-                        .contextMenu {
-                            Button("Connect") { client.connect(to: mac) }
-                            Button("Add Address…") { addingHostTo = mac }
-                            Button("Forget", role: .destructive) { forgetting = mac }
+                        Spacer()
+                        if client.mac?.serverID == mac.serverID, client.isConnected {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                                .accessibilityLabel(Text("Connected"))
                         }
-                        .swipeActions {
-                            Button("Forget", role: .destructive) { forgetting = mac }
-                            Button("Address") { addingHostTo = mac }.tint(.indigo)
-                        }
-                        .accessibilityAction(named: Text("Add Address")) { addingHostTo = mac }
-                        .accessibilityAction(named: Text("Forget")) { forgetting = mac }
                     }
-                    Button {
-                        dismiss()
-                        navigator.showsConnect = true
-                    } label: {
-                        Label("Pair Another Mac", systemImage: "plus")
+                    .contentShape(Rectangle())
+                    .onTapGesture { client.connect(to: mac) }
+                    .contextMenu {
+                        Button("Connect") { client.connect(to: mac) }
+                        Button("Add Address…") { addingHostTo = mac }
+                        Button("Forget", role: .destructive) { forgetting = mac }
+                    }
+                    .swipeActions {
+                        Button("Forget", role: .destructive) { forgetting = mac }
+                        Button("Address") { addingHostTo = mac }.tint(.indigo)
+                    }
+                    .accessibilityAction(named: Text("Add Address")) { addingHostTo = mac }
+                    .accessibilityAction(named: Text("Forget")) { forgetting = mac }
+                }
+                Button {
+                    navigator.showsConnect = true
+                } label: {
+                    Label("Pair Another Mac", systemImage: "plus")
+                }
+            }
+
+            Section {
+                Toggle("Use the Mac’s Theme", isOn: $appearance.followsMac)
+                if !appearance.followsMac {
+                    Picker("Appearance", selection: $appearance.mode) {
+                        ForEach(AppearanceSettings.Mode.allCases) { Text($0.title).tag($0) }
+                    }
+                    Picker("Dark Theme", selection: $appearance.darkThemeID) {
+                        ForEach(RemotePalette.dark) { palette in
+                            ThemeSwatchLabel(palette: palette).tag(palette.id)
+                        }
+                    }
+                    Picker("Light Theme", selection: $appearance.lightThemeID) {
+                        ForEach(RemotePalette.light) { palette in
+                            ThemeSwatchLabel(palette: palette).tag(palette.id)
+                        }
                     }
                 }
+            } header: {
+                Text("Appearance")
+            } footer: {
+                if appearance.followsMac, let server = client.server {
+                    Text("Following \(server.name): \(RemotePalette.dark(server.theme.darkThemeID).name) and \(RemotePalette.light(server.theme.lightThemeID).name).")
+                }
+            }
 
+            NotificationsSection()
+
+            if client.isConnected {
                 Section {
-                    Toggle("Use the Mac’s Theme", isOn: $appearance.followsMac)
-                    if !appearance.followsMac {
-                        Picker("Appearance", selection: $appearance.mode) {
-                            ForEach(AppearanceSettings.Mode.allCases) { Text($0.title).tag($0) }
-                        }
-                        Picker("Dark Theme", selection: $appearance.darkThemeID) {
-                            ForEach(RemotePalette.dark) { palette in
-                                ThemeSwatchLabel(palette: palette).tag(palette.id)
-                            }
-                        }
-                        Picker("Light Theme", selection: $appearance.lightThemeID) {
-                            ForEach(RemotePalette.light) { palette in
-                                ThemeSwatchLabel(palette: palette).tag(palette.id)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Appearance")
-                } footer: {
-                    if appearance.followsMac, let server = client.server {
-                        Text("Following \(server.name): \(RemotePalette.dark(server.theme.darkThemeID).name) and \(RemotePalette.light(server.theme.lightThemeID).name).")
+                    NavigationLink {
+                        UsageView()
+                    } label: {
+                        Label("Usage Limits", systemImage: "chart.bar")
                     }
                 }
+            }
 
-                NotificationsSection()
-
-                if client.isConnected {
-                    Section {
-                        NavigationLink {
-                            UsageView()
-                        } label: {
-                            Label("Usage Limits", systemImage: "chart.bar")
-                        }
-                    }
+            Section("About") {
+                LabeledContent("Coincide Remote", value: RemoteClient.appVersion)
+                if let server = client.server {
+                    LabeledContent("Coincide on \(server.name)", value: server.appVersion)
                 }
-
-                Section("About") {
-                    LabeledContent("Coincide Remote", value: RemoteClient.appVersion)
-                    if let server = client.server {
-                        LabeledContent("Coincide on \(server.name)", value: server.appVersion)
-                    }
-                    LabeledContent("Protocol", value: "\(RemoteProtocol.version)")
-                }
+                LabeledContent("Protocol", value: "\(RemoteProtocol.version)")
             }
-            .scrollContentBackground(.hidden)
-            .background(theme.content)
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+        }
+        .scrollContentBackground(.hidden)
+        .background(theme.content)
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.large)
+        .alert("Add an Address", isPresented: Binding(get: { addingHostTo != nil }, set: { if !$0 { addingHostTo = nil } })) {
+            TextField("192.168.1.20 or mac.tailnet.ts.net", text: $newHost)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Add") {
+                if let mac = addingHostTo { client.addHost(newHost, to: mac.serverID) }
+                newHost = ""
+                addingHostTo = nil
             }
-            .alert("Add an Address", isPresented: Binding(get: { addingHostTo != nil }, set: { if !$0 { addingHostTo = nil } })) {
-                TextField("192.168.1.20 or mac.tailnet.ts.net", text: $newHost)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button("Add") {
-                    if let mac = addingHostTo { client.addHost(newHost, to: mac.serverID) }
-                    newHost = ""
-                    addingHostTo = nil
-                }
-                Button("Cancel", role: .cancel) { addingHostTo = nil }
-            } message: {
-                Text("Coincide Remote tries it after the Mac’s own addresses.")
+            Button("Cancel", role: .cancel) { addingHostTo = nil }
+        } message: {
+            Text("Coincide Remote tries it after the Mac’s own addresses.")
+        }
+        .confirmationDialog(
+            "Forget “\(forgetting?.name ?? "")”?", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Forget", role: .destructive) {
+                if let mac = forgetting { client.forget(mac.serverID) }
+                forgetting = nil
             }
-            .confirmationDialog(
-                "Forget “\(forgetting?.name ?? "")”?", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
-                titleVisibility: .visible
-            ) {
-                Button("Forget", role: .destructive) {
-                    if let mac = forgetting { client.forget(mac.serverID) }
-                    forgetting = nil
-                }
-            } message: {
-                Text("To connect again, pair with the code the Mac shows. Revoke this device in the Mac’s Settings too.")
-            }
+        } message: {
+            Text("To connect again, pair with the code the Mac shows. Revoke this device in the Mac’s Settings too.")
         }
     }
 

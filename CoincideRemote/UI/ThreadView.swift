@@ -5,6 +5,7 @@ import SwiftUI
 struct ThreadContainer: View {
     let threadID: UUID
     @Environment(RemoteClient.self) private var client
+    @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -18,6 +19,9 @@ struct ThreadContainer: View {
             }
         }
         .task(id: threadID) { _ = client.thread(threadID) }
+        .onAppear { navigator.noteOpened(threadID) }
+        // The composer sits where the tab bar would, as in Messages.
+        .toolbarVisibility(.hidden, for: .tabBar)
     }
 }
 
