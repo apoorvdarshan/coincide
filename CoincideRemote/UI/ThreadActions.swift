@@ -12,6 +12,13 @@ struct ThreadActionsMenu: View {
             Label(thread.isPinned ? "Unpin" : "Pin", systemImage: thread.isPinned ? "pin.slash" : "pin")
         }
         Button { navigator.renaming = thread } label: { Label("Rename…", systemImage: "pencil") }
+        // A new thread with the conversation so far, opened here, as the Mac's Fork Thread.
+        Button {
+            Task { if let fork = await client.forkThread(thread.id) { navigator.push(.thread(fork)) } }
+        } label: {
+            Label("Fork Thread", systemImage: "arrow.triangle.branch")
+        }
+        .disabled(thread.itemCount == 0 || !client.isConnected)
         Button { act(.markUnread) } label: { Label("Mark as Unread", systemImage: "circlebadge") }
         Menu {
             if let until = thread.snoozedUntil, until > Date() {

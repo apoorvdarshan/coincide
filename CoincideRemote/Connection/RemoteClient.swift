@@ -29,7 +29,7 @@ final class RemoteClient {
     private(set) var macSettings: RemoteSettingsSnapshot?
     /// The Mac is too old to share its Settings.
     private(set) var macSettingsUnsupported = false
-    private(set) var workspace = RemoteWorkspace()
+    var workspace = RemoteWorkspace()
     var includesArchived = false {
         didSet { if includesArchived != oldValue { Task { await refreshWorkspace() } } }
     }
@@ -721,7 +721,7 @@ final class RemoteClient {
     }
 
     /// Runs a request an older Mac may not know, saying so plainly when it doesn't.
-    private func performNewer(_ request: RemoteRequest) async -> RemoteResult? {
+    func performNewer(_ request: RemoteRequest) async -> RemoteResult? {
         do {
             return try await self.request(request)
         } catch let error as RemoteError where error.code == .unsupported {

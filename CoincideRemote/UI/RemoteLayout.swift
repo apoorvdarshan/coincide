@@ -17,6 +17,16 @@ nonisolated enum RemoteLayout {
         isRegular && width >= listColumn.minimum + minimumThreadWidth
     }
 
+    /// How many threads a project lists before "Show more", nil for all, from the Mac's "Threads per Project": nil fits
+    /// the list to the window (`fitting` on the phone), 0 shows all, any other count is kept.
+    static func threadLimit(threadsPerProject: Int?, fitting: Int) -> Int? {
+        switch threadsPerProject {
+        case nil: fitting
+        case let count? where count <= 0: nil
+        case let count?: count
+        }
+    }
+
     /// The tallest a picture in the transcript gets, so a screenshot never takes over the screen.
     static let pictureMaximumHeight: CGFloat = 240
     /// The shapes a lone picture keeps, width over height; a panorama or a long screenshot is cropped to these.

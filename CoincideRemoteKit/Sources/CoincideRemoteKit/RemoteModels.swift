@@ -75,10 +75,13 @@ public struct RemoteWorkspace: Codable, Hashable, Sendable {
     public var sections: [String]
     /// The Pinned section's threads in the Mac's order.
     public var pinnedOrder: [UUID]
+    /// How the Mac's sidebar sorts and cuts its lists. Nil from an older Mac.
+    public var sidebar: RemoteSidebarOptions?
 
     public init(
         projects: [RemoteProject] = [], threads: [RemoteThreadSummary] = [], bots: [RemoteBot]? = nil,
-        providers: [RemoteProvider] = [], sections: [String] = ["pinned", "projects", "chats"], pinnedOrder: [UUID] = []
+        providers: [RemoteProvider] = [], sections: [String] = ["pinned", "projects", "chats"], pinnedOrder: [UUID] = [],
+        sidebar: RemoteSidebarOptions? = nil
     ) {
         self.projects = projects
         self.threads = threads
@@ -86,6 +89,7 @@ public struct RemoteWorkspace: Codable, Hashable, Sendable {
         self.providers = providers
         self.sections = sections
         self.pinnedOrder = pinnedOrder
+        self.sidebar = sidebar
     }
 }
 

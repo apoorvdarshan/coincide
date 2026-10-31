@@ -5,6 +5,8 @@ import SwiftUI
 /// (General through Computer Use, Providers), or About.
 enum SettingsPane: Hashable {
     case macs, appearance, notifications, keyboard, about
+    /// The Mac's scheduled tasks, which its Scheduled Tasks window lists.
+    case scheduledTasks
     /// A pane of the Mac's Settings, by its page id.
     case mac(String)
 
@@ -16,6 +18,7 @@ enum SettingsPane: Hashable {
         case "notifications": .notifications
         case "keyboard": .keyboard
         case "about": .about
+        case "scheduledTasks": .scheduledTasks
         default: .mac(name)
         }
     }
@@ -77,6 +80,8 @@ struct SettingsSidebar: View {
                 ForEach(snapshot.pages.filter { $0.group == .app && $0.id != "providers" }) { page in
                     row(.mac(page.id), title: page.title, symbol: page.symbol, color: page.color)
                 }
+                // The Mac's Scheduled Tasks window, with its panes.
+                row(.scheduledTasks, title: String(localized: "Scheduled Tasks"), symbol: "calendar.badge.clock", color: "orange")
                 SidebarHeader(Text("Providers")).sidebarRow()
                 if let overview = snapshot.page("providers") {
                     row(.mac(overview.id), title: overview.title, symbol: overview.symbol, color: overview.color)
@@ -238,6 +243,7 @@ struct SettingsPaneView: View {
         case .notifications: SettingsForm(title: String(localized: "Notifications")) { NotificationsSection() }
         case .keyboard: KeyboardSettingsPane()
         case .about: AboutSettingsPane()
+        case .scheduledTasks: ScheduledTasksView()
         case .mac(let id):
             #if DEBUG
             // Screenshots of the instruction editor: `-CoincideRemoteSettingsPane document`.

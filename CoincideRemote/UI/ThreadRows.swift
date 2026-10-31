@@ -15,11 +15,15 @@ struct ThreadFilter {
 struct ThreadFilterMenu: View {
     /// Projects the menu can expand or collapse together, as the Mac's sidebar options do.
     var projects: [RemoteProject] = []
+    /// The Mac's sort menus for this list.
+    var sorts: SidebarSortMenus.Kind = .chats
     @Environment(RemoteClient.self) private var client
     @AppStorage("sidebar.showsHidden") private var showsHidden = false
 
     var body: some View {
         Menu {
+            SidebarSortMenus(kind: sorts)
+            if client.workspace.sidebar != nil { Divider() }
             Toggle("Show Snoozed and Settled", isOn: $showsHidden)
             Toggle("Show Archived", isOn: Bindable(client).includesArchived)
             if !projects.isEmpty {

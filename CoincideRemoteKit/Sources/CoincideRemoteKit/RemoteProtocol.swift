@@ -267,6 +267,43 @@ public enum RemoteRequest: Hashable, Sendable {
     /// Settings › Usage as the Mac shows it, for a period and filters, reading the providers again first when asked.
     /// Answers `usageDashboard`. An older Mac answers `unsupported`, and the phone shows `usageLimits` instead.
     case usageDashboard(RemoteUsageQuery)
+    /// Forks a thread, whole or through a turn, as "Fork Thread" and "Fork from Here" do. Answers `thread` with the
+    /// fork. An older Mac answers `unsupported`.
+    case forkThread(RemoteForkRequest)
+    /// What "Edit from Here" can do with one of the user's messages. Answers `rewindOptions`.
+    case rewindOptions(RemoteItemReference)
+    /// Rewinds the conversation to before one of the user's messages, putting files back too when asked. Answers
+    /// `rewind` with the message, for the composer.
+    case rewind(RemoteRewindRequest)
+    /// The banner over a thread's composer. Answers `composerNotice`.
+    case composerNotice(threadID: UUID)
+    /// Dismisses the usage-limit banner or (un)schedules the thread to resume at the reset. Answers `composerNotice`.
+    case usageWarningAction(RemoteUsageWarningCommand)
+    /// Changes how the Mac's sidebar sorts its lists and how many threads a project shows. Answers `ok`; a `workspace`
+    /// event follows.
+    case setSidebarOptions(RemoteSidebarOptions)
+    /// What a project's new threads start with. Answers `projectDefaults`.
+    case projectDefaults(projectID: UUID)
+    /// Saves what a project's new threads start with. Answers the saved `projectDefaults`.
+    case saveProjectDefaults(RemoteProjectDefaults)
+    /// Removes a project from Coincide, deleting its threads; its folder stays. Answers `ok`.
+    case removeProject(projectID: UUID)
+    /// The Mac's scheduled tasks. Answers `scheduledTasks`.
+    case scheduledTasks
+    /// Creates or edits a scheduled task. Answers the updated `scheduledTasks`.
+    case saveScheduledTask(RemoteScheduledTaskDraft)
+    /// Pauses, resumes, runs or deletes a scheduled task. Answers the updated `scheduledTasks`.
+    case scheduledTaskAction(RemoteScheduledTaskCommand)
+    /// A thread's folder as git sees it, with the actions it allows. Answers `gitState`.
+    case gitState(threadID: UUID)
+    /// Commits, pushes, pulls or opens a pull request for a thread's folder. Answers `gitAction` once done.
+    case gitAction(RemoteGitActionRequest)
+    /// A project's pull requests. Answers `pullRequests`.
+    case pullRequests(RemotePullRequestQuery)
+    /// One pull request with its checks and reviews. Answers `pullRequest`.
+    case pullRequest(RemotePullRequestReference)
+    /// Merges, reviews, marks ready or checks out a pull request. Answers the updated `pullRequest`, or `thread`.
+    case pullRequestAction(RemotePullRequestCommand)
 
     /// The request's name on the wire.
     public var name: String {
@@ -308,6 +345,23 @@ public enum RemoteRequest: Hashable, Sendable {
         case .checkout: "checkout"
         case .changeCheckout: "changeCheckout"
         case .usageDashboard: "usageDashboard"
+        case .forkThread: "forkThread"
+        case .rewindOptions: "rewindOptions"
+        case .rewind: "rewind"
+        case .composerNotice: "composerNotice"
+        case .usageWarningAction: "usageWarningAction"
+        case .setSidebarOptions: "setSidebarOptions"
+        case .projectDefaults: "projectDefaults"
+        case .saveProjectDefaults: "saveProjectDefaults"
+        case .removeProject: "removeProject"
+        case .scheduledTasks: "scheduledTasks"
+        case .saveScheduledTask: "saveScheduledTask"
+        case .scheduledTaskAction: "scheduledTaskAction"
+        case .gitState: "gitState"
+        case .gitAction: "gitAction"
+        case .pullRequests: "pullRequests"
+        case .pullRequest: "pullRequest"
+        case .pullRequestAction: "pullRequestAction"
         }
     }
 }
@@ -451,6 +505,23 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case "completions":
             let f = try fields()
             request = .completions(threadID: try need(f.threadID, "threadID"), trigger: try need(f.trigger, "trigger"), query: f.query ?? "")
+        case "forkThread": request = .forkThread(try body(RemoteForkRequest.self))
+        case "rewindOptions": request = .rewindOptions(try body(RemoteItemReference.self))
+        case "rewind": request = .rewind(try body(RemoteRewindRequest.self))
+        case "composerNotice": request = .composerNotice(threadID: try need(try fields().threadID, "threadID"))
+        case "usageWarningAction": request = .usageWarningAction(try body(RemoteUsageWarningCommand.self))
+        case "setSidebarOptions": request = .setSidebarOptions(try body(RemoteSidebarOptions.self))
+        case "projectDefaults": request = .projectDefaults(projectID: try need(try fields().projectID, "projectID"))
+        case "saveProjectDefaults": request = .saveProjectDefaults(try body(RemoteProjectDefaults.self))
+        case "removeProject": request = .removeProject(projectID: try need(try fields().projectID, "projectID"))
+        case "scheduledTasks": request = .scheduledTasks
+        case "saveScheduledTask": request = .saveScheduledTask(try body(RemoteScheduledTaskDraft.self))
+        case "scheduledTaskAction": request = .scheduledTaskAction(try body(RemoteScheduledTaskCommand.self))
+        case "gitState": request = .gitState(threadID: try need(try fields().threadID, "threadID"))
+        case "gitAction": request = .gitAction(try body(RemoteGitActionRequest.self))
+        case "pullRequests": request = .pullRequests(try body(RemotePullRequestQuery.self))
+        case "pullRequest": request = .pullRequest(try body(RemotePullRequestReference.self))
+        case "pullRequestAction": request = .pullRequestAction(try body(RemotePullRequestCommand.self))
         default: throw RemoteProtocolError.unsupported(type)
         }
     }
@@ -470,7 +541,21 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case .saveBot(let draft): try container.encode(draft, forKey: .body); return
         case .saveSettingsDocument(let document): try container.encode(document, forKey: .body); return
         case .usageDashboard(let query): try container.encode(query, forKey: .body); return
-        case .ping, .usageLimits, .settings: return
+        case .forkThread(let fork): try container.encode(fork, forKey: .body); return
+        case .rewindOptions(let reference): try container.encode(reference, forKey: .body); return
+        case .rewind(let rewind): try container.encode(rewind, forKey: .body); return
+        case .usageWarningAction(let command): try container.encode(command, forKey: .body); return
+        case .setSidebarOptions(let options): try container.encode(options, forKey: .body); return
+        case .saveProjectDefaults(let defaults): try container.encode(defaults, forKey: .body); return
+        case .saveScheduledTask(let draft): try container.encode(draft, forKey: .body); return
+        case .scheduledTaskAction(let command): try container.encode(command, forKey: .body); return
+        case .gitAction(let action): try container.encode(action, forKey: .body); return
+        case .pullRequests(let query): try container.encode(query, forKey: .body); return
+        case .pullRequest(let reference): try container.encode(reference, forKey: .body); return
+        case .pullRequestAction(let command): try container.encode(command, forKey: .body); return
+        case .ping, .usageLimits, .settings, .scheduledTasks: return
+        case .composerNotice(let threadID), .gitState(let threadID): f.threadID = threadID
+        case .projectDefaults(let projectID), .removeProject(let projectID): f.projectID = projectID
         case .changeSetting(let key, let value):
             f.key = key
             f.value = value
@@ -564,10 +649,37 @@ public enum RemoteResult: Hashable, Sendable {
     case checkout(RemoteCheckout)
     /// Settings › Usage. Only a phone that asked (`usageDashboard`) ever gets it.
     case usageDashboard(RemoteUsageDashboard)
+    /// What "Edit from Here" can do. Only a phone that asked (`rewindOptions`) ever gets it.
+    case rewindOptions(RemoteRewindOptions)
+    /// The message a rewind removed. Only a phone that asked (`rewind`) ever gets it.
+    case rewind(RemoteRewind)
+    /// The banner over a composer. Only a phone that asked (`composerNotice`, `usageWarningAction`) ever gets it.
+    case composerNotice(RemoteComposerNotice)
+    /// A project's defaults. Only a phone that asked (`projectDefaults`, `saveProjectDefaults`) ever gets them.
+    case projectDefaults(RemoteProjectDefaults)
+    /// The scheduled tasks. Only a phone that asked (`scheduledTasks` and their changes) ever gets them.
+    case scheduledTasks(RemoteScheduledTasks)
+    /// A folder's git state. Only a phone that asked (`gitState`) ever gets it.
+    case gitState(RemoteGitState)
+    /// What a git action did. Only a phone that asked (`gitAction`) ever gets it.
+    case gitAction(RemoteGitActionResult)
+    /// A project's pull requests. Only a phone that asked (`pullRequests`) ever gets them.
+    case pullRequests(RemotePullRequestList)
+    /// One pull request. Only a phone that asked (`pullRequest`, `pullRequestAction`) ever gets it.
+    case pullRequest(RemotePullRequestDetail)
 
     var name: String {
         switch self {
         case .ok: "ok"
+        case .rewindOptions: "rewindOptions"
+        case .rewind: "rewind"
+        case .composerNotice: "composerNotice"
+        case .projectDefaults: "projectDefaults"
+        case .scheduledTasks: "scheduledTasks"
+        case .gitState: "gitState"
+        case .gitAction: "gitAction"
+        case .pullRequests: "pullRequests"
+        case .pullRequest: "pullRequest"
         case .server: "server"
         case .paired: "paired"
         case .workspace: "workspace"
@@ -715,6 +827,15 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case "settingsDocument": result = .settingsDocument(try body(RemoteSettingsDocument.self))
             case "checkout": result = .checkout(try body(RemoteCheckout.self))
             case "usageDashboard": result = .usageDashboard(try body(RemoteUsageDashboard.self))
+            case "rewindOptions": result = .rewindOptions(try body(RemoteRewindOptions.self))
+            case "rewind": result = .rewind(try body(RemoteRewind.self))
+            case "composerNotice": result = .composerNotice(try body(RemoteComposerNotice.self))
+            case "projectDefaults": result = .projectDefaults(try body(RemoteProjectDefaults.self))
+            case "scheduledTasks": result = .scheduledTasks(try body(RemoteScheduledTasks.self))
+            case "gitState": result = .gitState(try body(RemoteGitState.self))
+            case "gitAction": result = .gitAction(try body(RemoteGitActionResult.self))
+            case "pullRequests": result = .pullRequests(try body(RemotePullRequestList.self))
+            case "pullRequest": result = .pullRequest(try body(RemotePullRequestDetail.self))
             default:
                 self = .unknown(type)
                 return
@@ -775,6 +896,15 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case .settingsDocument(let document): try container.encode(document, forKey: .body)
             case .checkout(let checkout): try container.encode(checkout, forKey: .body)
             case .usageDashboard(let dashboard): try container.encode(dashboard, forKey: .body)
+            case .rewindOptions(let options): try container.encode(options, forKey: .body)
+            case .rewind(let rewind): try container.encode(rewind, forKey: .body)
+            case .composerNotice(let notice): try container.encode(notice, forKey: .body)
+            case .projectDefaults(let defaults): try container.encode(defaults, forKey: .body)
+            case .scheduledTasks(let tasks): try container.encode(tasks, forKey: .body)
+            case .gitState(let state): try container.encode(state, forKey: .body)
+            case .gitAction(let result): try container.encode(result, forKey: .body)
+            case .pullRequests(let list): try container.encode(list, forKey: .body)
+            case .pullRequest(let detail): try container.encode(detail, forKey: .body)
             }
         case .event(let event):
             try container.encode("event", forKey: .kind)

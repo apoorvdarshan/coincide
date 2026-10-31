@@ -28,6 +28,8 @@ extension Notification.Name {
     /// userInfo["section"]: String (SettingsSection raw value), optional;
     /// userInfo["provider"]: String (ProviderKind raw value), optional
     static let coincideShowSettings = Notification.Name("coincide.showSettings")
+    /// The sidebar's sorting or threads per project changed elsewhere (Coincide Remote). Handled by the sidebar.
+    static let coincideSidebarLayoutChanged = Notification.Name("coincide.sidebarLayoutChanged")
 }
 
 enum AppEvents {
