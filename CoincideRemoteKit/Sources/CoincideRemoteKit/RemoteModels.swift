@@ -116,13 +116,85 @@ public struct RemoteBot: Codable, Hashable, Sendable, Identifiable {
     public var name: String
     /// The project its threads live in, when it has one.
     public var projectID: UUID?
+    /// Its conversations, newest first.
     public var threadIDs: [UUID]
+    /// Its character and color. Nil from a Mac older than bot characters.
+    public var avatar: RemoteBotAvatar?
+    /// Its standing instructions, in the user's words. Nil from an older Mac.
+    public var persona: String?
+    /// The agent and model its new conversations start with. Nil from an older Mac.
+    public var selection: RemoteSelection?
+    /// `approval`, `full` or another mode a newer Mac adds; nil from an older Mac.
+    public var accessMode: String?
+    /// `build` or `plan`; nil from an older Mac.
+    public var interactionMode: String?
+    /// The folder its conversations run in, abbreviated with `~`; nil for the home folder.
+    public var folder: String?
 
-    public init(id: UUID, name: String, projectID: UUID? = nil, threadIDs: [UUID] = []) {
+    public init(
+        id: UUID, name: String, projectID: UUID? = nil, threadIDs: [UUID] = [], avatar: RemoteBotAvatar? = nil,
+        persona: String? = nil, selection: RemoteSelection? = nil, accessMode: String? = nil, interactionMode: String? = nil,
+        folder: String? = nil
+    ) {
         self.id = id
         self.name = name
         self.projectID = projectID
         self.threadIDs = threadIDs
+        self.avatar = avatar
+        self.persona = persona
+        self.selection = selection
+        self.accessMode = accessMode
+        self.interactionMode = interactionMode
+        self.folder = folder
+    }
+}
+
+/// A bot's look: a character and a body color, by the names the Mac saves (see `BotArtwork`).
+public struct RemoteBotAvatar: Codable, Hashable, Sendable {
+    public var character: String
+    public var tint: String
+
+    public init(character: String, tint: String) {
+        self.character = character
+        self.tint = tint
+    }
+
+    public init(_ character: BotArtwork.Character, _ tint: BotArtwork.Tint) {
+        self.init(character: character.rawValue, tint: tint.rawValue)
+    }
+
+    /// The character to draw; one this version doesn't know draws as the alien.
+    public var artCharacter: BotArtwork.Character { BotArtwork.Character(rawValue: character) ?? .alien }
+    /// The color to draw with; one this version doesn't know falls back to the character's own.
+    public var artTint: BotArtwork.Tint { BotArtwork.Tint(rawValue: tint) ?? artCharacter.defaultTint }
+}
+
+/// A bot the phone creates or edits. A nil `id` creates one.
+public struct RemoteBotDraft: Codable, Hashable, Sendable {
+    public var id: UUID?
+    public var name: String
+    public var avatar: RemoteBotAvatar
+    public var persona: String
+    /// The agent and model; nil keeps the bot's (or, for a new bot, the Mac's default agent).
+    public var provider: String?
+    public var modelID: String?
+    public var effort: String?
+    public var accessMode: String?
+    public var interactionMode: String?
+
+    public init(
+        id: UUID? = nil, name: String, avatar: RemoteBotAvatar, persona: String = "", provider: String? = nil,
+        modelID: String? = nil, effort: String? = nil, accessMode: String? = nil, interactionMode: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.avatar = avatar
+        self.persona = persona
+        self.provider = provider
+        self.modelID = modelID
+        self.effort = effort
+        self.accessMode = accessMode
+        self.interactionMode = interactionMode
     }
 }
 

@@ -261,6 +261,13 @@ final class RemoteSession {
             case .presence(let reported):
                 updatePresence(reported)
                 respond(id, .ok)
+            case .newBotConversation(let botID):
+                respond(id, .thread(try adapter.newBotConversation(botID)))
+            case .saveBot(let draft):
+                respond(id, .bot(try adapter.saveBot(draft)))
+            case .deleteBot(let botID, let deletesConversations):
+                try adapter.deleteBot(botID, deletingConversations: deletesConversations)
+                respond(id, .ok)
             case .showThread(let threadID):
                 guard isLocal else { throw RemoteError(.unsupported, "Unsupported request “showThread”.") }
                 guard adapter.hasThread(threadID) else { throw notFound }

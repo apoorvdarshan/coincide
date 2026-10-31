@@ -174,7 +174,7 @@ struct ConnectView: View {
             do {
                 try await client.pair(decoded)
                 pairing = false
-                navigator.selection = nil
+                navigator.reset()
                 close()
             } catch {
                 pairing = false

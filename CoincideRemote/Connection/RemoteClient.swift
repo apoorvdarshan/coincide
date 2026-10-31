@@ -561,6 +561,38 @@ final class RemoteClient {
         return id
     }
 
+    /// A conversation with a bot, reusing an untouched one waiting there.
+    func newBotConversation(_ botID: UUID) async -> UUID? {
+        guard case .thread(let id)? = await performNewer(.newBotConversation(botID: botID)) else { return nil }
+        await refreshWorkspace()
+        return id
+    }
+
+    /// Creates or edits a bot on the Mac; its id when the Mac saved it.
+    func saveBot(_ draft: RemoteBotDraft) async -> UUID? {
+        guard case .bot(let id)? = await performNewer(.saveBot(draft)) else { return nil }
+        await refreshWorkspace()
+        return id
+    }
+
+    func deleteBot(_ botID: UUID, deletingConversations: Bool) async {
+        guard await performNewer(.deleteBot(botID: botID, deletesConversations: deletingConversations)) != nil else { return }
+        await refreshWorkspace()
+    }
+
+    /// Runs a request an older Mac may not know, saying so plainly when it doesn't.
+    private func performNewer(_ request: RemoteRequest) async -> RemoteResult? {
+        do {
+            return try await self.request(request)
+        } catch let error as RemoteError where error.code == .unsupported {
+            notice = String(localized: "Update Coincide on your Mac to do this from here.")
+            return nil
+        } catch {
+            notice = (error as? RemoteError)?.message ?? error.localizedDescription
+            return nil
+        }
+    }
+
     func act(_ action: RemoteThreadAction, on threadID: UUID) async {
         await perform(.threadAction(threadID: threadID, action: action))
     }

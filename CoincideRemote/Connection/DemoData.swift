@@ -11,6 +11,8 @@ enum DemoData {
     static let otherProjectID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
     static let chatsID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
     static let threadID = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+    static let botsID = UUID(uuidString: "B0B5B0B5-C01C-4D1E-B075-000000000001")!
+    static let bruleeThreadID = UUID(uuidString: "55555555-5555-5555-5555-555555555555")!
 
     static var server: RemoteServerInfo {
         RemoteServerInfo(serverID: "demo", name: "Apoorv’s MacBook Pro", appVersion: "0.1.0")
@@ -47,6 +49,19 @@ enum DemoData {
                 thread("Sidebar sorting and pinned section", projectID, claude, minutes: 90),
                 thread("Paywall copy for annual plan", otherProjectID, codex, minutes: 60 * 26, unseen: "failed"),
                 thread("What’s a good name for a cat?", chatsID, claude, minutes: 60 * 4),
+                thread("Plan my Saturday", botsID, claude, minutes: 12, id: bruleeThreadID, unseen: "completed"),
+            ],
+            bots: [
+                RemoteBot(
+                    id: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!, name: "Brulee", projectID: botsID,
+                    threadIDs: [bruleeThreadID], avatar: RemoteBotAvatar(.brulee, .rose), persona: "Friendly and brief.",
+                    selection: claude, accessMode: "approval", interactionMode: "build"),
+                RemoteBot(
+                    id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!, name: "Teddy", projectID: botsID,
+                    avatar: RemoteBotAvatar(.teddy, .caramel), selection: codex, accessMode: "approval", interactionMode: "build"),
+                RemoteBot(
+                    id: UUID(uuidString: "88888888-8888-8888-8888-888888888888")!, name: "Alien", projectID: botsID,
+                    avatar: RemoteBotAvatar(.alien, .leaf), selection: claude, accessMode: "fullAccess", interactionMode: "build"),
             ],
             providers: [
                 RemoteProvider(

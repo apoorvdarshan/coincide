@@ -221,7 +221,11 @@ final class RemoteStoreAdapter {
             projects: projects, threads: threads.map(summary), bots: bots.map { bot in
                 RemoteBot(
                     id: bot.id, name: bot.name, projectID: store.botsProject.id,
-                    threadIDs: store.conversations(of: bot.id).map(\.id))
+                    threadIDs: store.conversations(of: bot.id).map(\.id),
+                    avatar: RemoteBotAvatar(character: bot.avatar.shape.rawValue, tint: bot.avatar.tint.rawValue),
+                    persona: bot.persona, selection: selection(bot.selection), accessMode: bot.accessMode.rawValue,
+                    interactionMode: bot.interactionMode.rawValue,
+                    folder: bot.folder.map { ($0 as NSString).abbreviatingWithTildeInPath })
             }, providers: providers(), sections: layout.sections,
             pinnedOrder: pinned)
     }
@@ -568,6 +572,110 @@ final class RemoteStoreAdapter {
             return empty.id
         }
         return store.createThread(in: project.id, selection: selection).id
+    }
+
+    // MARK: Bots
+
+    /// A conversation with the bot, reusing an untouched one waiting there, as the Mac's New Conversation does.
+    func newBotConversation(_ botID: UUID) throws -> UUID {
+        let bot = try requireBot(botID)
+        if let empty = store.conversations(of: botID).first(where: { $0.itemCount == 0 && !$0.hasDraft }) { return empty.id }
+        guard let thread = store.startConversation(with: botID, selection: registry.usableSelection(preferring: bot.selection))
+        else { throw RemoteError(.failed, String(localized: "Couldn’t start a conversation with \(bot.displayName).")) }
+        return thread.id
+    }
+
+    /// Creates a bot (a draft without an id) or edits one, as the Mac's bot editor does. Everything is checked before
+    /// anything changes, so a rejected draft leaves the bot as it was.
+    func saveBot(_ draft: RemoteBotDraft) throws -> UUID {
+        guard let shape = BotAvatar.Shape(rawValue: draft.avatar.character), let tint = BotAvatar.Tint(rawValue: draft.avatar.tint)
+        else { throw RemoteError(.badRequest, String(localized: "This Mac doesn’t know that character or color.")) }
+        let existing = try draft.id.map(requireBot)
+        let access = try draft.accessMode.map { raw -> AccessMode in
+            guard let mode = AccessMode(rawValue: raw) else { throw RemoteError(.badRequest, "Unknown access mode.") }
+            return mode
+        }
+        let interaction = try draft.interactionMode.map { raw -> InteractionMode in
+            guard let mode = InteractionMode(rawValue: raw) else { throw RemoteError(.badRequest, "Unknown mode.") }
+            return mode
+        }
+        var selection = existing?.selection ?? registry.usableSelection(preferring: store.settings.defaultSelection)
+        if draft.provider != nil || draft.modelID != nil {
+            let provider = try draft.provider.map { raw -> ProviderKind in
+                guard let kind = ProviderKind(rawValue: raw) else {
+                    throw RemoteError(.badRequest, String(localized: "This Mac doesn’t know that agent."))
+                }
+                return kind
+            } ?? selection.provider
+            let modelID: String
+            if let requested = draft.modelID, !requested.isEmpty {
+                modelID = requested
+            } else if provider == selection.provider {
+                modelID = selection.modelID
+            } else {
+                guard let first = registry.pickerModels(for: provider, account: nil, current: nil).first else {
+                    throw RemoteError(.notAllowed, String(localized: "\(provider.displayName) has no models to pick from."))
+                }
+                modelID = first.modelID
+            }
+            selection = ModelSelection(provider: provider, modelID: modelID, accountID: provider == selection.provider ? selection.accountID : nil)
+        }
+        if let effort = draft.effort {
+            let model = registry.model(for: selection)
+            guard model == nil || model?.efforts.contains(effort) == true else {
+                throw RemoteError(.badRequest, String(localized: "The model doesn’t offer that effort."))
+            }
+            selection.effort = effort
+        }
+        let trimmed = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmed.isEmpty ? shape.defaultName : String(trimmed.prefix(80))
+        let persona = String(draft.persona.prefix(20_000))
+        guard let original = existing else {
+            let bot = store.addBot(
+                Bot(
+                    name: name, avatar: BotAvatar(shape: shape, tint: tint), persona: persona, selection: selection,
+                    accessMode: access ?? .approval, interactionMode: interaction ?? .build))
+            return bot.id
+        }
+        var edited = original
+        edited.name = name
+        edited.avatar = BotAvatar(shape: shape, tint: tint)
+        edited.persona = persona
+        edited.selection = selection
+        if let access { edited.accessMode = access }
+        if let interaction { edited.interactionMode = interaction }
+        guard edited != original else { return original.id }
+        store.updateBot(original.id) { $0 = edited }
+        // As the Mac's editor: new instructions reach the agent at its next message, and an untouched conversation
+        // starts with the new agent, model and modes.
+        let conversations = store.conversations(of: original.id, includeArchived: true)
+        if edited.instructions != original.instructions { RelocatedSessions.end(threads: conversations.map(\.id)) }
+        if edited.selection != original.selection || edited.accessMode != original.accessMode
+            || edited.interactionMode != original.interactionMode
+        {
+            for thread in conversations where thread.itemCount == 0 && !runner.isRunning(thread.id) {
+                store.updateThread(thread.id) { thread in
+                    thread.selection = edited.selection
+                    thread.accessMode = edited.accessMode
+                    thread.interactionMode = edited.interactionMode
+                }
+            }
+        }
+        return original.id
+    }
+
+    /// Deletes a bot. Its conversations stop and stay as chats, or are deleted with it when asked, as on the Mac.
+    func deleteBot(_ botID: UUID, deletingConversations: Bool) throws {
+        _ = try requireBot(botID)
+        let conversations = store.conversations(of: botID, includeArchived: true).map(\.id)
+        for id in conversations { runner.shutdown(threadID: id) }
+        if deletingConversations, !conversations.isEmpty { try services.delete(conversations) }
+        store.deleteBot(botID, deletingConversations: false)
+    }
+
+    private func requireBot(_ id: UUID) throws -> Bot {
+        guard let bot = store.bot(id) else { throw RemoteError(.notFound, String(localized: "That bot no longer exists.")) }
+        return bot
     }
 
     func perform(_ action: RemoteThreadAction, on threadID: UUID) throws {

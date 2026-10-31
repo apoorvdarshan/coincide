@@ -46,6 +46,14 @@ struct RemoteProtocolTests {
             .diff(threadID: thread, turnID: nil),
             .runScript(threadID: thread, scriptID: item),
             .usageLimits,
+            .newBotConversation(botID: item),
+            .saveBot(RemoteBotDraft(name: "Brulee", avatar: RemoteBotAvatar(.brulee, .rose), persona: "Kind.")),
+            .saveBot(
+                RemoteBotDraft(
+                    id: item, name: "Teddy", avatar: RemoteBotAvatar(.teddy, .caramel), provider: "codex", modelID: "m", effort: "high",
+                    accessMode: "fullAccess", interactionMode: "plan")),
+            .deleteBot(botID: item, deletesConversations: true),
+            .deleteBot(botID: item, deletesConversations: false),
         ]
         for request in requests {
             let decoded = try roundTrip(RemoteClientMessage(id: "1", request: request))
@@ -91,6 +99,7 @@ struct RemoteProtocolTests {
             .response(id: "3", result: .thread(thread)),
             .response(id: "4", result: .transcript(RemoteTranscript(thread: summary, items: [item], hasEarlier: true))),
             .response(id: "5", result: .usage([RemoteUsage(provider: "codex", providerName: "Codex", accountID: "default", windows: [])])),
+            .response(id: "5b", result: .bot(thread)),
             .failure(id: "6", error: RemoteError(.notFound, "Gone")),
             .event(.items(threadID: thread, items: [item], count: 4)),
             .event(.turn(threadID: thread, state: RemoteTurnState(isRunning: true, canSteer: true))),
@@ -541,6 +550,80 @@ struct RemoteSessionTests {
         #expect(workspace.projects.map(\.id) == [alpha.id, zeta.id, chats.id])
         #expect(workspace.threads.filter { $0.projectID == alpha.id }.map(\.title) == ["Alpha", "Bravo", "Charlie"])
         #expect(workspace.pinnedOrder == [pinned])
+    }
+
+    @Test func aBotFromAnOlderMacDecodesWithoutItsLook() throws {
+        let old = #"{"id":"6E3A2B1C-0000-4000-8000-000000000001","name":"Sunny","threadIDs":[]}"#
+        let bot = try RemoteProtocol.makeDecoder().decode(RemoteBot.self, from: Data(old.utf8))
+        #expect(bot.name == "Sunny")
+        #expect(bot.avatar == nil)
+        #expect(bot.selection == nil)
+        // A look this version doesn't know still draws something.
+        let unknown = RemoteBotAvatar(character: "dragon", tint: "glitter")
+        #expect(unknown.artCharacter == .alien)
+        #expect(unknown.artTint == BotArtwork.Character.alien.defaultTint)
+        // The shared names match the ones the Mac saves.
+        #expect(BotArtwork.Character.allCases.map(\.rawValue) == BotAvatar.Shape.allCases.map(\.rawValue))
+        #expect(BotArtwork.Tint.allCases.map(\.rawValue) == BotAvatar.Tint.allCases.map(\.rawValue))
+    }
+
+    @Test func thePhoneCreatesEditsTalksToAndDeletesBots() throws {
+        let fixture = fixture("remote-bots")
+        let store = fixture.store
+        let (session, transport) = try authenticated(fixture)
+
+        try send(session, .saveBot(RemoteBotDraft(name: "  ", avatar: RemoteBotAvatar(.brulee, .rose), persona: "Kind.")), id: "new")
+        guard case .bot(let botID)? = transport.result("new"), let created = store.bot(botID) else {
+            Issue.record("No bot")
+            return
+        }
+        // An empty name takes the character's own.
+        #expect(created.name == "Brulee")
+        #expect(created.avatar == BotAvatar(shape: .brulee, tint: .rose))
+        #expect(created.persona == "Kind.")
+        #expect(created.accessMode == .approval)
+
+        let workspace = fixture.adapter.workspace()
+        let remote = try #require(workspace.bots?.first { $0.id == botID })
+        #expect(remote.avatar == RemoteBotAvatar(.brulee, .rose))
+        #expect(remote.persona == "Kind.")
+        #expect(remote.accessMode == "approval")
+
+        try send(session, .newBotConversation(botID: botID), id: "talk")
+        guard case .thread(let conversation)? = transport.result("talk") else {
+            Issue.record("No conversation")
+            return
+        }
+        #expect(store.bot(forThread: conversation)?.id == botID)
+        // An untouched conversation is reused, as on the Mac.
+        try send(session, .newBotConversation(botID: botID), id: "talk2")
+        #expect(transport.result("talk2") == .thread(conversation))
+
+        try send(
+            session,
+            .saveBot(RemoteBotDraft(id: botID, name: "Brulee B", avatar: RemoteBotAvatar(.teddy, .sky), persona: "Brief.", accessMode: "fullAccess")),
+            id: "edit")
+        #expect(transport.result("edit") == .bot(botID))
+        #expect(store.bot(botID)?.name == "Brulee B")
+        #expect(store.bot(botID)?.avatar == BotAvatar(shape: .teddy, tint: .sky))
+        #expect(store.bot(botID)?.accessMode == .fullAccess)
+        // The untouched conversation follows the new access, as the Mac's editor does.
+        #expect(store.summary(conversation)?.accessMode == .fullAccess)
+
+        // A draft this Mac can't honor changes nothing.
+        try send(session, .saveBot(RemoteBotDraft(id: botID, name: "X", avatar: RemoteBotAvatar(character: "dragon", tint: "rose"))), id: "bad")
+        #expect(transport.error("bad")?.code == .badRequest)
+        try send(session, .saveBot(RemoteBotDraft(id: botID, name: "X", avatar: RemoteBotAvatar(.star, .sky), accessMode: "root")), id: "bad2")
+        #expect(transport.error("bad2")?.code == .badRequest)
+        #expect(store.bot(botID)?.name == "Brulee B")
+
+        try send(session, .deleteBot(botID: botID, deletesConversations: false), id: "delete")
+        #expect(transport.result("delete") == .ok)
+        #expect(store.bot(botID) == nil)
+        // Its conversation stays, as a chat.
+        #expect(store.summary(conversation) != nil)
+        try send(session, .newBotConversation(botID: botID), id: "gone")
+        #expect(transport.error("gone")?.code == .notFound)
     }
 
     @Test func secretAnswersAndLongToolOutputStayOnTheMac() {

@@ -230,6 +230,13 @@ public enum RemoteRequest: Hashable, Sendable {
     case presence(RemotePresence)
     /// Opens the thread in the Mac's window. Only the Mac's own command-line tool may ask; a phone gets `unsupported`.
     case showThread(threadID: UUID)
+    /// A conversation with a bot: an untouched one waiting is reused, as on the Mac. Answers `thread`. An older Mac
+    /// answers `unsupported`.
+    case newBotConversation(botID: UUID)
+    /// Creates a bot (no `id`) or edits one. Answers `bot` with its id. An older Mac answers `unsupported`.
+    case saveBot(RemoteBotDraft)
+    /// Deletes a bot; its conversations stay as chats unless `deletesConversations`. An older Mac answers `unsupported`.
+    case deleteBot(botID: UUID, deletesConversations: Bool)
 
     /// The request's name on the wire.
     public var name: String {
@@ -257,6 +264,9 @@ public enum RemoteRequest: Hashable, Sendable {
         case .usageLimits: "usageLimits"
         case .presence: "presence"
         case .showThread: "showThread"
+        case .newBotConversation: "newBotConversation"
+        case .saveBot: "saveBot"
+        case .deleteBot: "deleteBot"
         }
     }
 }
@@ -276,6 +286,8 @@ private struct RequestBody: Codable {
     var answers: [String: [String]]?
     var includeArchived: Bool?
     var action: RemoteThreadAction?
+    var botID: UUID?
+    var deletesConversations: Bool?
 }
 
 public enum RemoteProtocolError: Error, Equatable, Sendable {
@@ -362,6 +374,11 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case "usageLimits": request = .usageLimits
         case "presence": request = .presence(try body(RemotePresence.self))
         case "showThread": request = .showThread(threadID: try need(try fields().threadID, "threadID"))
+        case "newBotConversation": request = .newBotConversation(botID: try need(try fields().botID, "botID"))
+        case "saveBot": request = .saveBot(try body(RemoteBotDraft.self))
+        case "deleteBot":
+            let f = try fields()
+            request = .deleteBot(botID: try need(f.botID, "botID"), deletesConversations: f.deletesConversations ?? false)
         default: throw RemoteProtocolError.unsupported(type)
         }
     }
@@ -378,7 +395,12 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case .send(let send): try container.encode(send, forKey: .body); return
         case .updateSettings(let settings): try container.encode(settings, forKey: .body); return
         case .presence(let presence): try container.encode(presence, forKey: .body); return
+        case .saveBot(let draft): try container.encode(draft, forKey: .body); return
         case .ping, .usageLimits: return
+        case .newBotConversation(let botID): f.botID = botID
+        case .deleteBot(let botID, let deletesConversations):
+            f.botID = botID
+            f.deletesConversations = deletesConversations
         case .workspace(let includeArchived): f.includeArchived = includeArchived
         case .openThread(let threadID, let limit):
             f.threadID = threadID
@@ -433,6 +455,8 @@ public enum RemoteResult: Hashable, Sendable {
     case thread(UUID)
     case diff(RemoteDiff)
     case usage([RemoteUsage])
+    /// A bot the phone saved. Only a phone that asked (`saveBot`) ever gets it.
+    case bot(UUID)
 
     var name: String {
         switch self {
@@ -446,6 +470,7 @@ public enum RemoteResult: Hashable, Sendable {
         case .thread: "thread"
         case .diff: "diff"
         case .usage: "usage"
+        case .bot: "bot"
         }
     }
 }
@@ -560,6 +585,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case "thread": result = .thread(try body(ValueBody<UUID>.self).value)
             case "diff": result = .diff(try body(RemoteDiff.self))
             case "usage": result = .usage(try body(ValueBody<[RemoteUsage]>.self).value)
+            case "bot": result = .bot(try body(ValueBody<UUID>.self).value)
             default:
                 self = .unknown(type)
                 return
@@ -611,6 +637,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case .thread(let id): try container.encode(ValueBody(value: id), forKey: .body)
             case .diff(let diff): try container.encode(diff, forKey: .body)
             case .usage(let usage): try container.encode(ValueBody(value: usage), forKey: .body)
+            case .bot(let id): try container.encode(ValueBody(value: id), forKey: .body)
             }
         case .event(let event):
             try container.encode("event", forKey: .kind)
