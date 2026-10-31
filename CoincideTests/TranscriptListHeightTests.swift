@@ -4,22 +4,24 @@ import Testing
 
 @testable import Coincide
 
-/// A transcript host with fixed items and nothing to act on.
+/// A transcript host with fixed items that only records the rewinds it is asked for.
 @MainActor
 final class StubTranscriptHost: TranscriptHost {
     var items: [UUID: TranscriptItem] = [:]
     var files: [UUID: [ChangedFile]] = [:]
     var rails: [TranscriptRowID: TranscriptRail] = [:]
     var expanded: Set<TranscriptRowID> = []
+    var rewound: [UUID] = []
+    var isRunning = false
     let textCache = TranscriptTextCache()
     var threadID: UUID? { nil }
-    var isThreadRunning: Bool { false }
+    var isThreadRunning: Bool { isRunning }
 
     func item(_ id: UUID) -> TranscriptItem? { items[id] }
     func isExpanded(_ id: TranscriptRowID) -> Bool { expanded.contains(id) }
     func toggle(_ id: TranscriptRowID) {}
     func copyToPasteboard(_ text: String) {}
-    func rewindTurn(_ itemID: UUID) {}
+    func rewindTurn(_ itemID: UUID) { rewound.append(itemID) }
     func forkTurn(_ itemID: UUID) {}
     func canFork(_ itemID: UUID) -> Bool { false }
     func openThread(_ threadID: UUID) {}

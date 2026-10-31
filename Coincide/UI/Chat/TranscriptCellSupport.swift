@@ -323,7 +323,7 @@ enum TranscriptText {
 /// Small borderless symbol button used for row actions (copy, edit, revert, view diff).
 final class TranscriptIconButton: NSButton {
     private var restoreTask: Task<Void, Never>?
-    private var symbolName = ""
+    private(set) var symbolName = ""
 
     convenience init(symbol: String, label: String, action: Selector?, target: AnyObject?) {
         self.init(frame: NSRect(x: 0, y: 0, width: 22, height: 20))
