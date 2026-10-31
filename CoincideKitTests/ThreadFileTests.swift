@@ -246,6 +246,8 @@ struct ThreadFileTests {
             $0.importedSession = ImportedSession(provider: .codex, sessionID: "native", sourcePath: "/tmp/session.jsonl")
             $0.titledByUser = true
             $0.titleRefreshes = TitleRefresh.allCases
+            $0.titleCheckTurns = 1
+            $0.titleCheckedAt = Date()
             $0.botID = bot.id
         }
         store.flush()

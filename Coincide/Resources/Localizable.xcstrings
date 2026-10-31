@@ -43820,6 +43820,118 @@
         }
       }
     },
+    "Automatic" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automatisch"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automático"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automático"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automatique"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्वचालित"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otomatis"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automatico"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自動"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "자동"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automatisch"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automatycznie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Automático"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Автоматически"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otomatik"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Автоматично"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tự động"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自動"
+          }
+        }
+      }
+    },
     "Automatic (first installed editor)" : {
       "localizations" : {
         "de" : {
@@ -140446,6 +140558,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "讓這部 Mac 全天候保持喚醒"
+          }
+        }
+      }
+    },
+    "Keep titles up to date" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Titel aktuell halten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener los títulos al día"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener los títulos al día"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder les titres à jour"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "शीर्षक अप-टू-डेट रखें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jaga judul tetap terbaru"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantieni aggiornati i titoli"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "タイトルを最新に保つ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "제목을 최신 상태로 유지"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Titels actueel houden"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utrzymuj aktualne tytuły"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter os títulos atualizados"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поддерживать заголовки актуальными"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Başlıkları güncel tut"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Підтримувати актуальні заголовки"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Luôn cập nhật tiêu đề"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持标题最新"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持標題最新"
           }
         }
       }
@@ -269817,114 +270041,114 @@
         }
       }
     },
-    "The thread's agent titles it from your first message with its quickest model, and may refresh the title as the thread develops. Threads you rename keep your name." : {
+    "The thread's agent titles it from your first message and its first reply, with its quickest model. Threads you rename keep your name." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Der Agent der Unterhaltung erstellt den Titel anhand deiner ersten Nachricht mit seinem schnellsten Modell und kann ihn im Verlauf der Unterhaltung aktualisieren. Unterhaltungen, die du umbenennst, behalten deinen Namen."
+            "value" : "Der Agent der Unterhaltung erstellt den Titel anhand deiner ersten Nachricht und seiner ersten Antwort, mit seinem schnellsten Modell. Unterhaltungen, die du umbenennst, behalten deinen Namen."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El agente del hilo crea el título a partir de tu primer mensaje con su modelo más rápido y puede actualizarlo a medida que avanza el hilo. Los hilos que renombras conservan tu nombre."
+            "value" : "El agente del hilo crea el título a partir de tu primer mensaje y su primera respuesta, con su modelo más rápido. Los hilos que renombras conservan tu nombre."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El agente del hilo crea el título a partir de tu primer mensaje con su modelo más rápido y puede actualizarlo a medida que avanza el hilo. Los hilos a los que les cambias el nombre conservan tu nombre."
+            "value" : "El agente del hilo crea el título a partir de tu primer mensaje y su primera respuesta, con su modelo más rápido. Los hilos a los que les cambias el nombre conservan tu nombre."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "L’agent de la conversation crée son titre à partir de votre premier message, avec son modèle le plus rapide, et peut l’actualiser au fil de la conversation. Les conversations que vous renommez gardent votre nom."
+            "value" : "L’agent de la conversation crée son titre à partir de votre premier message et de sa première réponse, avec son modèle le plus rapide. Les conversations que vous renommez gardent votre nom."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "बातचीत का एजेंट अपने सबसे तेज़ मॉडल से आपके पहले संदेश के आधार पर शीर्षक बनाता है, और बातचीत आगे बढ़ने पर उसे अपडेट कर सकता है। जिन बातचीतों का नाम आप बदलते हैं, उनका नाम वही रहता है।"
+            "value" : "बातचीत का एजेंट अपने सबसे तेज़ मॉडल से आपके पहले संदेश और अपने पहले जवाब के आधार पर शीर्षक बनाता है। जिन बातचीतों का नाम आप बदलते हैं, उनका नाम वही रहता है।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Agen percakapan membuat judul dari pesan pertama Anda menggunakan model tercepatnya, dan dapat memperbaruinya seiring percakapan berkembang. Percakapan yang Anda ganti namanya tetap memakai nama Anda."
+            "value" : "Agen percakapan membuat judul dari pesan pertama Anda dan balasan pertamanya, menggunakan model tercepatnya. Percakapan yang Anda ganti namanya tetap memakai nama Anda."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "L’agente della conversazione crea il titolo dal tuo primo messaggio, con il suo modello più veloce, e può aggiornarlo man mano che la conversazione procede. Le conversazioni che rinomini mantengono il tuo nome."
+            "value" : "L’agente della conversazione crea il titolo dal tuo primo messaggio e dalla sua prima risposta, con il suo modello più veloce. Le conversazioni che rinomini mantengono il tuo nome."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "スレッドのエージェントが最も高速なモデルを使い、最初のメッセージからタイトルを付け、スレッドの進行に合わせて更新することがあります。名前を変更したスレッドはその名前のままです。"
+            "value" : "スレッドのエージェントが最も高速なモデルを使い、最初のメッセージと最初の返信からタイトルを付けます。名前を変更したスレッドはその名前のままです。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "스레드의 에이전트가 가장 빠른 모델로 첫 메시지를 바탕으로 제목을 지정하며, 스레드가 진행됨에 따라 제목을 새로 고칠 수 있습니다. 이름을 변경한 스레드는 그 이름을 유지합니다."
+            "value" : "스레드의 에이전트가 가장 빠른 모델로 첫 메시지와 첫 응답을 바탕으로 제목을 지정합니다. 이름을 변경한 스레드는 그 이름을 유지합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "De agent van het gesprek maakt de titel op basis van je eerste bericht, met zijn snelste model, en kan die bijwerken naarmate het gesprek vordert. Gesprekken die je hernoemt, houden jouw naam."
+            "value" : "De agent van het gesprek maakt de titel op basis van je eerste bericht en zijn eerste antwoord, met zijn snelste model. Gesprekken die je hernoemt, houden jouw naam."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Agent wątku tworzy tytuł na podstawie pierwszej wiadomości, używając swojego najszybszego modelu, i może go odświeżyć w miarę rozwoju wątku. Wątki, których nazwę zmienisz, zachowują Twoją nazwę."
+            "value" : "Agent wątku tworzy tytuł na podstawie pierwszej wiadomości i swojej pierwszej odpowiedzi, używając swojego najszybszego modelu. Wątki, których nazwę zmienisz, zachowują Twoją nazwę."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O agente da conversa cria o título a partir da sua primeira mensagem, com seu modelo mais rápido, e pode atualizá-lo conforme a conversa avança. Conversas que você renomeia mantêm o seu nome."
+            "value" : "O agente da conversa cria o título a partir da sua primeira mensagem e da primeira resposta dele, com seu modelo mais rápido. Conversas que você renomeia mantêm o seu nome."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Агент обсуждения создаёт заголовок по первому сообщению с помощью своей самой быстрой модели и может обновлять его по ходу обсуждения. Обсуждения, которые вы переименовали, сохраняют ваше название."
+            "value" : "Агент обсуждения создаёт заголовок по вашему первому сообщению и своему первому ответу с помощью своей самой быстрой модели. Обсуждения, которые вы переименовали, сохраняют ваше название."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Konuşmanın aracısı, en hızlı modelini kullanarak ilk mesajınızdan bir başlık oluşturur ve konuşma ilerledikçe başlığı yenileyebilir. Yeniden adlandırdığınız konuşmalar verdiğiniz adı korur."
+            "value" : "Konuşmanın aracısı, en hızlı modelini kullanarak ilk mesajınızdan ve kendi ilk yanıtından bir başlık oluşturur. Yeniden adlandırdığınız konuşmalar verdiğiniz adı korur."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Агент обговорення створює заголовок із першого повідомлення, використовуючи свою найшвидшу модель, і може оновлювати його в міру розвитку обговорення. Обговорення, які ви перейменували, зберігають вашу назву."
+            "value" : "Агент обговорення створює заголовок із вашого першого повідомлення та своєї першої відповіді, використовуючи свою найшвидшу модель. Обговорення, які ви перейменували, зберігають вашу назву."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tác nhân của cuộc trò chuyện đặt tiêu đề từ tin nhắn đầu tiên của bạn bằng mô hình nhanh nhất của nó và có thể làm mới tiêu đề khi cuộc trò chuyện tiếp diễn. Cuộc trò chuyện bạn đã đổi tên sẽ giữ tên của bạn."
+            "value" : "Tác nhân của cuộc trò chuyện đặt tiêu đề từ tin nhắn đầu tiên của bạn và câu trả lời đầu tiên của nó bằng mô hình nhanh nhất. Cuộc trò chuyện bạn đã đổi tên sẽ giữ tên của bạn."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "会话的代理使用最快的模型，根据你的第一条消息生成标题，并可能随着会话的进展更新标题。你重命名过的会话会保留你的名称。"
+            "value" : "会话的代理使用最快的模型，根据你的第一条消息和它的第一条回复生成标题。你重命名过的会话会保留你的名称。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "對話的代理程式使用最快的模型，根據你的第一則訊息產生標題，並可能隨著對話進展更新標題。你重新命名過的對話會保留你的名稱。"
+            "value" : "對話的代理程式使用最快的模型，根據你的第一則訊息和它的第一則回覆產生標題。你重新命名過的對話會保留你的名稱。"
           }
         }
       }
@@ -296406,6 +296630,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "代理工作時：%@"
+          }
+        }
+      }
+    },
+    "While you use a thread, the agent checks its title every few turns and updates it if the thread has moved on. Each check is a small request; idle threads are never checked." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Während du eine Unterhaltung nutzt, prüft der Agent ihren Titel alle paar Durchgänge und aktualisiert ihn, wenn sich die Unterhaltung weiterentwickelt hat. Jede Prüfung ist eine kleine Anfrage; ruhende Unterhaltungen werden nie geprüft."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mientras usas un hilo, el agente revisa su título cada pocos turnos y lo actualiza si el hilo ha cambiado de tema. Cada revisión es una pequeña solicitud; los hilos inactivos nunca se revisan."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mientras usas un hilo, el agente revisa su título cada pocos turnos y lo actualiza si el hilo cambió de tema. Cada revisión es una pequeña solicitud; los hilos inactivos nunca se revisan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pendant que vous utilisez une conversation, l’agent vérifie son titre tous les quelques tours et l’actualise si la conversation a évolué. Chaque vérification est une petite requête ; les conversations inactives ne sont jamais vérifiées."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जब आप किसी बातचीत का उपयोग करते हैं, तो एजेंट हर कुछ टर्न में उसका शीर्षक जाँचता है और बातचीत का विषय बदल जाने पर उसे अपडेट करता है। हर जाँच एक छोटा अनुरोध है; निष्क्रिय बातचीतें कभी नहीं जाँची जातीं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Selama Anda menggunakan percakapan, agen memeriksa judulnya setiap beberapa giliran dan memperbaruinya jika topik percakapan sudah berubah. Setiap pemeriksaan adalah permintaan kecil; percakapan yang tidak aktif tidak pernah diperiksa."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mentre usi una conversazione, l’agente controlla il titolo ogni pochi turni e lo aggiorna se la conversazione è andata avanti. Ogni controllo è una piccola richiesta; le conversazioni inattive non vengono mai controllate."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スレッドを使用している間、エージェントは数ターンごとにタイトルを確認し、話題が移っていれば更新します。確認のたびに小さなリクエストが発生します。使われていないスレッドは確認されません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "스레드를 사용하는 동안 에이전트가 몇 턴마다 제목을 확인하고, 스레드의 주제가 바뀌었으면 제목을 업데이트합니다. 확인할 때마다 작은 요청이 발생하며, 사용하지 않는 스레드는 확인하지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Terwijl je een gesprek gebruikt, controleert de agent de titel om de paar beurten en werkt die bij als het gesprek een andere kant op is gegaan. Elke controle is een klein verzoek; inactieve gesprekken worden nooit gecontroleerd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gdy korzystasz z wątku, agent co kilka tur sprawdza jego tytuł i aktualizuje go, jeśli wątek zmienił temat. Każde sprawdzenie to małe żądanie; nieaktywne wątki nigdy nie są sprawdzane."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enquanto você usa uma conversa, o agente verifica o título a cada poucos turnos e o atualiza se a conversa mudou de rumo. Cada verificação é uma pequena solicitação; conversas inativas nunca são verificadas."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пока вы пользуетесь обсуждением, агент каждые несколько ходов проверяет его заголовок и обновляет его, если тема сменилась. Каждая проверка — это небольшой запрос; неактивные обсуждения никогда не проверяются."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir konuşmayı kullanırken aracı, birkaç turda bir başlığını kontrol eder ve konuşmanın konusu değiştiyse başlığı günceller. Her kontrol küçük bir istektir; boşta kalan konuşmalar hiçbir zaman kontrol edilmez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поки ви користуєтеся обговоренням, агент кожні кілька ходів перевіряє його заголовок і оновлює його, якщо тема змінилася. Кожна перевірка — це невеликий запит; неактивні обговорення ніколи не перевіряються."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khi bạn sử dụng một cuộc trò chuyện, tác nhân kiểm tra tiêu đề sau mỗi vài lượt và cập nhật nếu chủ đề đã thay đổi. Mỗi lần kiểm tra là một yêu cầu nhỏ; các cuộc trò chuyện không hoạt động sẽ không bao giờ được kiểm tra."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在你使用会话期间，代理每隔几轮检查一次标题，如果话题已经改变就更新标题。每次检查都是一个小请求；闲置的会话从不检查。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在你使用對話期間，代理程式每隔幾輪檢查一次標題，如果話題已經改變就更新標題。每次檢查都是一個小請求；閒置的對話從不檢查。"
           }
         }
       }

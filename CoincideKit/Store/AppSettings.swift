@@ -132,8 +132,11 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// A plain click on a web link opens it in the default browser, and a ⌘-click in Coincide's browser preview. Off
     /// by default: links open in the preview, and ⌘-click opens the default browser (`LinkRouting`).
     public var opensLinksInDefaultBrowser: Bool
-    /// Have the thread's agent name a new thread from its first message (T3 Code's generated titles).
+    /// Have the thread's agent name a new thread from its first message and first reply (T3 Code's generated titles).
     public var generatesThreadTitles: Bool
+    /// With `generatesThreadTitles`, also have the agent look at the title again every few turns of a thread in use
+    /// (`ThreadTitles.dueRefresh`). Off by default: each look costs a small request.
+    public var updatesThreadTitles: Bool
     /// App update checks are opt-in and run at most daily, including across launches.
     public var lastAppUpdateCheck: Date?
     public var checksForAppUpdates: Bool
@@ -215,6 +218,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         holdToQuit = true
         opensLinksInDefaultBrowser = false
         generatesThreadTitles = true
+        updatesThreadTitles = false
         lastAppUpdateCheck = nil
         checksForAppUpdates = false
         resumesAfterUsageLimit = false
@@ -274,6 +278,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         holdToQuit = value(.holdToQuit, defaults.holdToQuit)
         opensLinksInDefaultBrowser = value(.opensLinksInDefaultBrowser, defaults.opensLinksInDefaultBrowser)
         generatesThreadTitles = value(.generatesThreadTitles, defaults.generatesThreadTitles)
+        updatesThreadTitles = value(.updatesThreadTitles, defaults.updatesThreadTitles)
         lastAppUpdateCheck = value(.lastAppUpdateCheck, defaults.lastAppUpdateCheck)
         checksForAppUpdates = value(.checksForAppUpdates, defaults.checksForAppUpdates)
         resumesAfterUsageLimit = value(.resumesAfterUsageLimit, defaults.resumesAfterUsageLimit)

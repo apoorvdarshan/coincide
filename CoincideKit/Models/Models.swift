@@ -601,12 +601,16 @@ public struct ImportedSession: Codable, Hashable, Sendable {
     }
 }
 
-/// A point in a thread's life where the agent looks at its title again (`ThreadTitles`), once each.
+/// A look the agent took at a thread's title after naming it (`ThreadTitles`).
 public enum TitleRefresh: String, Codable, Hashable, Sendable, CaseIterable {
-    /// After the first turn that completes: the reply shows what a short first message was about.
+    /// After the first turn that completes, once: the reply shows what a short first message was about. Part of
+    /// naming the thread.
     case firstReply
-    /// After the fifth turn, when the thread may have moved on from where it started.
+    /// After the fifth turn, once. Written by versions that looked again there; no longer asked for.
     case fifthTurn
+    /// While titles are kept up to date (`AppSettings.updatesThreadTitles`): every few turns of a thread in use, up to
+    /// `ThreadTitles.maximumUpdates` in all.
+    case update
 }
 
 public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
@@ -643,10 +647,14 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
     /// True once the user named the thread, so the agent never titles it again. Nil rather than false, so threads
     /// the user never renamed are written as before.
     public var titledByUser: Bool?
-    /// The follow-up titles the agent has had a look at, so none runs twice. Nil for a thread whose first message
-    /// was sent before follow-up titles existed, which joins them at its next completed turn, or that came with its
-    /// messages (an import, a fork), which keeps its title.
+    /// The looks the agent has taken at the title after naming it, counted when asked so none runs twice. Nil for a
+    /// thread whose first message was sent before looks were counted, which joins them at its next completed turn, or
+    /// that came with its messages (an import, a fork), which keeps its title.
     public var titleRefreshes: [TitleRefresh]?
+    /// The user turns the thread had, and when, at the agent's last look at its title, so titles kept up to date wait
+    /// a few turns and minutes between looks. Nil before the first look, so threads are written as before.
+    public var titleCheckTurns: Int?
+    public var titleCheckedAt: Date?
     /// The bot whose conversation this is (`Bot.id`), in the Bots container. Nil for every other thread, so their
     /// files are written as before.
     public var botID: UUID?
@@ -795,6 +803,8 @@ public struct ChatThread: Codable, Hashable, Sendable, Identifiable {
         titleRefreshes =
             container.contains(.titleRefreshes) && !((try? container.decodeNil(forKey: .titleRefreshes)) ?? true)
             ? container.lenientArray(TitleRefresh.self, forKey: .titleRefreshes) : nil
+        titleCheckTurns = container.lenient(Int.self, forKey: .titleCheckTurns)
+        titleCheckedAt = container.lenient(Date.self, forKey: .titleCheckedAt)
         botID = container.lenient(UUID.self, forKey: .botID)
         followUpBehavior = container.lenient(FollowUpBehavior.self, forKey: .followUpBehavior)
     }

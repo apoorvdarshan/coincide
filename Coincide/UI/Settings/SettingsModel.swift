@@ -30,6 +30,7 @@ nonisolated enum SettingsRowID: String, Hashable, Sendable {
     case confirmArchive
     case holdToQuit
     case threadTitles
+    case threadTitleUpdates
     case newThreadChat
     case resumeAfterLimit
     case notifications
