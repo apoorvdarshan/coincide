@@ -50,8 +50,9 @@ final class TranscriptUserCell: TranscriptCell {
     private let timeLabel = NSTextField(labelWithString: "")
     private let steerIcon = NSImageView()
     private let steerLabel = NSTextField(labelWithString: String(localized: "Steer"))
+    // A pencil, as edit buttons are everywhere else: the curved arrow this had read as Reply.
     private lazy var rewindButton = TranscriptIconButton(
-        symbol: "arrow.uturn.backward", label: String(localized: "Edit from here"), action: #selector(rewind), target: self)
+        symbol: "pencil", label: String(localized: "Edit from here"), action: #selector(rewind), target: self)
     private lazy var copyButton = TranscriptIconButton(
         symbol: "doc.on.doc", label: String(localized: "Copy message"), action: #selector(copyMessage), target: self)
     private var isHovered = false

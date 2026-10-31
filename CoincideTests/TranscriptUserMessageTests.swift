@@ -231,6 +231,28 @@ func withUserMessageSide<T>(_ side: UserMessageSide, _ body: () throws -> T) ret
             #expect(cell.showsRailNode)
         }
     }
+
+    /// The row's first action is a pencil that does what the message's "Edit from Here…" menu item does, under the
+    /// same rule: not while a turn runs.
+    @Test func thePencilEditsFromTheMessageLikeTheMenuItem() throws {
+        let message = message("Rename the setting")
+        let buttons = withUserMessageSide(.right) { cell(for: message, width: wide).subviews.compactMap { $0 as? TranscriptIconButton } }
+        #expect(buttons.map(\.symbolName) == ["pencil", "doc.on.doc"])
+        let edit = try #require(buttons.first)
+        #expect(edit.accessibilityLabel() == String(localized: "Edit from here"))
+        #expect(edit.toolTip == String(localized: "Edit from here"))
+        #expect(edit.isEnabled)
+        edit.performClick(nil)
+        #expect(host.rewound == [message.0.id])
+
+        host.isRunning = true
+        defer { host.isRunning = false }
+        let running = withUserMessageSide(.right) { cell(for: message, width: wide).subviews.compactMap { $0 as? TranscriptIconButton } }
+        let disabled = try #require(running.first)
+        #expect(!disabled.isEnabled)
+        disabled.performClick(nil)
+        #expect(host.rewound == [message.0.id])
+    }
 }
 
 /// Changing Settings › General › Your messages moves the open thread's messages at once. The main window is laid out
