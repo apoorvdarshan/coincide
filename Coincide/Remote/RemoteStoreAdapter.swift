@@ -198,7 +198,8 @@ final class RemoteStoreAdapter {
             theme: RemoteThemeInfo(
                 appearance: settings.appearance.rawValue, darkThemeID: settings.darkTheme, lightThemeID: settings.lightTheme),
             showsReasoning: settings.showReasoning, followUpBehavior: settings.followUpBehavior.rawValue,
-            notifies: settings.notifyWhenInBackground)
+            notifies: settings.notifyWhenInBackground, replyTypeface: settings.replyTypeface.rawValue,
+            userMessageSide: settings.userMessageSide.rawValue)
     }
 
     /// The sidebar in the Mac's order: its sections, its project and bot sorts (Chats last), and each list's thread sort.
@@ -211,7 +212,8 @@ final class RemoteStoreAdapter {
             RemoteProject(
                 id: project.id, name: project.isChats ? String(localized: "Chats") : project.name,
                 path: (project.path as NSString).abbreviatingWithTildeInPath, isChats: project.isChats,
-                scripts: project.scripts.map { RemoteScript(id: $0.id, name: $0.name, command: $0.command, icon: $0.icon.rawValue) })
+                scripts: project.scripts.map { RemoteScript(id: $0.id, name: $0.name, command: $0.command, icon: $0.icon.rawValue) },
+                isExpanded: project.isChats ? nil : project.isExpanded)
         }
         let byProject = Dictionary(grouping: all.filter { includeArchived || !$0.isArchived }, by: \.projectID)
         let threads = sortedProjects.flatMap { project in
@@ -242,7 +244,8 @@ final class RemoteStoreAdapter {
             branch: thread.branch, hasWorktree: thread.worktreePath != nil, isRunning: runner.isRunning(thread.id),
             isStarting: runner.isStarting(thread.id), pendingApprovals: pending.approvals, pendingQuestions: pending.questions,
             unseen: services.unseen(thread.id), queuedMessages: runner.queuedMessages(thread.id).count, hasDraft: thread.hasDraft,
-            itemCount: thread.itemCount)
+            itemCount: thread.itemCount, runningSince: runner.turn(thread.id)?.startedAt,
+            hasBackgroundWork: !runner.backgroundTasks(thread.id).isEmpty)
     }
 
     func selection(_ selection: ModelSelection) -> RemoteSelection {
@@ -725,6 +728,15 @@ final class RemoteStoreAdapter {
     }
 
     func hasThread(_ threadID: UUID) -> Bool { store.summary(threadID) != nil }
+
+    /// Expands or collapses a project in the sidebar, as its disclosure triangle does.
+    func setProjectExpanded(_ projectID: UUID, expanded: Bool) throws {
+        guard let project = store.project(projectID), !project.isChats else {
+            throw RemoteError(.notFound, String(localized: "That project no longer exists."))
+        }
+        guard project.isExpanded != expanded else { return }
+        store.updateProject(projectID) { $0.isExpanded = expanded }
+    }
 
     func markSeen(_ threadID: UUID) throws {
         _ = try requireThread(threadID)

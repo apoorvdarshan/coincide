@@ -20,8 +20,24 @@ struct ThreadContainer: View {
         }
         .task(id: threadID) { _ = client.thread(threadID) }
         .onAppear { navigator.noteOpened(threadID) }
-        // The composer sits where the tab bar would, as in Messages.
-        .toolbarVisibility(.hidden, for: .tabBar)
+        // The composer sits where the tab bar would, as in Messages. Side by side, the tabs stay for the list.
+        .toolbarVisibility(navigator.isSplit ? .automatic : .hidden, for: .tabBar)
+    }
+}
+
+/// The detail column before a thread is picked, side by side with the list.
+struct NoThreadSelected: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("No Thread Selected", systemImage: "bubble.left.and.text.bubble.right")
+        } description: {
+            Text("Pick a thread from the list, or start a new one.")
+        }
+        .foregroundStyle(theme.secondaryInk)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.content)
     }
 }
 
@@ -30,12 +46,15 @@ enum TranscriptBlock: Identifiable {
     case item(RemoteItem)
     case work([RemoteItem])
     case changes(turnID: UUID, files: [RemoteChangedFile])
+    /// Under a finished turn's last reply, as on the Mac: the agent, its model and the time.
+    case footer(RemoteItem)
 
     var id: String {
         switch self {
         case .item(let item): item.id.uuidString
         case .work(let items): "work-" + (items.first?.id.uuidString ?? "")
         case .changes(let turnID, _): "changes-" + turnID.uuidString
+        case .footer(let item): "footer-" + item.id.uuidString
         }
     }
 
@@ -47,12 +66,15 @@ enum TranscriptBlock: Identifiable {
         var blocks: [TranscriptBlock] = []
         var work: [RemoteItem] = []
         var turnID: UUID?
+        var lastReply: RemoteItem?
 
         func flushWork() {
             if !work.isEmpty { blocks.append(.work(work)) }
             work = []
         }
         func closeTurn() {
+            if let reply = lastReply { blocks.append(.footer(reply)) }
+            lastReply = nil
             guard let id = turnID else { return }
             let files = changes(id)
             if !files.isEmpty { blocks.append(.changes(turnID: id, files: files)) }
@@ -71,6 +93,7 @@ enum TranscriptBlock: Identifiable {
                 blocks.append(.item(item))
             default:
                 flushWork()
+                if item.kind == .assistant { lastReply = item }
                 blocks.append(.item(item))
             }
         }

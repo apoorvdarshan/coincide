@@ -59,6 +59,8 @@ struct RemoteProtocolTests {
             .changeSetting(key: "general.fontSize", value: .number(15)),
             .changeSetting(key: "general.appearance", value: .string("dark")),
             .settingsAction(key: "computerUse.open"),
+            .setProjectExpanded(projectID: item, expanded: false),
+            .setProjectExpanded(projectID: item, expanded: true),
         ]
         for request in requests {
             let decoded = try roundTrip(RemoteClientMessage(id: "1", request: request))
@@ -569,6 +571,75 @@ struct RemoteSessionTests {
         #expect(workspace.projects.map(\.id) == [alpha.id, zeta.id, chats.id])
         #expect(workspace.threads.filter { $0.projectID == alpha.id }.map(\.title) == ["Alpha", "Bravo", "Charlie"])
         #expect(workspace.pinnedOrder == [pinned])
+    }
+
+    @Test func projectsExpandAndCollapseTogetherWithTheMacsSidebar() throws {
+        let fixture = fixture("remote-expansion")
+        let store = fixture.store
+        let chats = store.ensureChatsProject()
+        let (session, transport) = try authenticated(fixture)
+
+        try send(session, .workspace(includeArchived: false), id: "w")
+        guard case .workspace(let before)? = transport.result("w") else {
+            Issue.record("No workspace")
+            return
+        }
+        #expect(before.projects.first { $0.id == fixture.project.id }?.isExpanded == true)
+        // Chats has no disclosure triangle on the Mac.
+        #expect(before.projects.first { $0.id == chats.id }?.isExpanded == nil)
+
+        try send(session, .setProjectExpanded(projectID: fixture.project.id, expanded: false), id: "collapse")
+        #expect(transport.result("collapse") == .ok)
+        #expect(store.project(fixture.project.id)?.isExpanded == false)
+        #expect(fixture.adapter.workspace().projects.first { $0.id == fixture.project.id }?.isExpanded == false)
+
+        // The Mac collapsing or expanding it reaches the phone the same way.
+        store.updateProject(fixture.project.id) { $0.isExpanded = true }
+        #expect(fixture.adapter.workspace().projects.first { $0.id == fixture.project.id }?.isExpanded == true)
+
+        try send(session, .setProjectExpanded(projectID: chats.id, expanded: false), id: "chats")
+        #expect(transport.error("chats")?.code == .notFound)
+        try send(session, .setProjectExpanded(projectID: UUID(), expanded: false), id: "missing")
+        #expect(transport.error("missing")?.code == .notFound)
+    }
+
+    @Test func aSidebarFromAnOlderMacDecodesWithoutTimersOrExpansion() throws {
+        let project = #"{"id":"6E3A2B1C-0000-4000-8000-000000000002","name":"coincide","path":"~/coincide","isChats":false,"scripts":[]}"#
+        let decodedProject = try RemoteProtocol.makeDecoder().decode(RemoteProject.self, from: Data(project.utf8))
+        #expect(decodedProject.isExpanded == nil)
+
+        let summary = RemoteThreadSummary(
+            id: UUID(), projectID: UUID(), title: "Old", selection: RemoteSelection(provider: "claude", modelID: "m", modelName: "M"),
+            isRunning: true)
+        var json = try #require(
+            try JSONSerialization.jsonObject(with: RemoteProtocol.makeEncoder().encode(summary)) as? [String: Any])
+        json["runningSince"] = nil
+        json["hasBackgroundWork"] = nil
+        let decoded = try RemoteProtocol.makeDecoder().decode(
+            RemoteThreadSummary.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.isRunning)
+        #expect(decoded.runningSince == nil)
+        #expect(decoded.hasBackgroundWork == nil)
+
+        let server = #"{"serverID":"s","name":"Mac","appVersion":"1","protocolVersion":1,"theme":{"appearance":"dark","darkThemeID":"carbon","lightThemeID":"carbon-light"},"showsReasoning":true,"followUpBehavior":"steer"}"#
+        let info = try RemoteProtocol.makeDecoder().decode(RemoteServerInfo.self, from: Data(server.utf8))
+        // An older Mac replies in New York, its default, with the user's messages on the right.
+        #expect(info.usesSerifReplies)
+        #expect(info.userMessageSide == nil)
+    }
+
+    @Test func theSidebarSaysHowLongATurnRunsAndHowRepliesLook() throws {
+        let fixture = fixture("remote-running")
+        let thread = fixture.store.createThread(in: fixture.project.id)
+        let idle = fixture.adapter.summary(try #require(fixture.store.summary(thread.id)))
+        #expect(idle.runningSince == nil)
+        #expect(idle.hasBackgroundWork == false)
+
+        fixture.store.updateSettings { $0.replyTypeface = .system }
+        let info = fixture.adapter.serverInfo(serverID: "s", name: "Mac")
+        #expect(info.replyTypeface == "system")
+        #expect(!info.usesSerifReplies)
+        #expect(info.userMessageSide == "right")
     }
 
     @Test func aBotFromAnOlderMacDecodesWithoutItsLook() throws {

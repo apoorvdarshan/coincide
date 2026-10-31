@@ -59,9 +59,13 @@ enum AppTab: String, Hashable, CaseIterable {
 /// A screen pushed inside a tab.
 enum Route: Hashable {
     case thread(UUID)
-    case project(UUID)
     /// A bot's past conversations.
     case bot(UUID)
+
+    var isThread: Bool {
+        if case .thread = self { return true }
+        return false
+    }
 }
 
 /// Where the app is: the tab, what each tab has pushed, sheets, and requests from keyboard shortcuts. Lives above the
@@ -107,8 +111,28 @@ final class Navigator {
         #endif
     }
 
+    /// Whether the window is wide enough to show the list and the open thread side by side (an iPad, an unfolded Duo).
+    /// Set by the tab view from its size class. Each tab's path keeps its thread last, so the same path reads both ways.
+    var isSplit = false
+
     func path(_ tab: AppTab) -> Binding<[Route]> {
         Binding(get: { self.paths[tab] ?? [] }, set: { self.paths[tab] = $0 })
+    }
+
+    /// Side by side: what the list column has pushed (a bot's past conversations), without the thread.
+    func listPath(_ tab: AppTab) -> Binding<[Route]> {
+        Binding(
+            get: { (self.paths[tab] ?? []).filter { !$0.isThread } },
+            set: { routes in
+                let thread = self.paths[tab]?.last.flatMap { $0.isThread ? $0 : nil }
+                self.paths[tab] = routes + (thread.map { [$0] } ?? [])
+            })
+    }
+
+    /// Side by side: the thread the detail column shows.
+    func detailThread(_ tab: AppTab) -> UUID? {
+        if case .thread(let id)? = paths[tab]?.last { return id }
+        return nil
     }
 
     /// The thread on screen in the current tab, if any. Setting a thread opens it where it belongs; nil goes back from
@@ -138,8 +162,19 @@ final class Navigator {
         paths[place.tab] = (place.parent.map { [$0] } ?? []) + [.thread(threadID)]
     }
 
-    /// Pushes a screen on the current tab.
+    /// Pushes a screen on the current tab. Side by side, a thread takes the detail column's place instead of stacking.
     func push(_ route: Route) {
+        if isSplit, case .thread? = paths[tab]?.last {
+            paths[tab]?.removeLast()
+        }
+        if isSplit, !route.isThread {
+            // A list screen goes under the open thread, which stays in the detail column.
+            let thread = paths[tab]?.last.flatMap { $0.isThread ? $0 : nil }
+            if thread != nil { paths[tab]?.removeLast() }
+            paths[tab, default: []].append(route)
+            if let thread { paths[tab, default: []].append(thread) }
+            return
+        }
         paths[tab, default: []].append(route)
     }
 

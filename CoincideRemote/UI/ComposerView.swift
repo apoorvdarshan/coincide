@@ -20,40 +20,47 @@ struct ComposerView: View {
     private var summary: RemoteThreadSummary? { model.summary }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
             if !draft.wrappedValue.images.isEmpty { attachmentStrip }
             TextField(placeholder, text: draft.text, axis: .vertical)
                 .lineLimit(1...8)
                 .focused($focused)
                 .foregroundStyle(theme.ink)
+                .tint(theme.accent)
                 .submitLabel(.return)
                 .padding(.horizontal, 6)
+                .padding(.top, 6)
                 .accessibilityLabel(Text("Message"))
-            HStack(spacing: 8) {
-                // Glass shapes closer than the container's spacing melt together, so it stays below the buttons' gap.
-                GlassEffectContainer(spacing: 2) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            PhotosPicker(selection: $photos, maxSelectionCount: 10, matching: .images) {
-                                Image(systemName: "photo.on.rectangle.angled")
-                                    .frame(minWidth: 22, minHeight: 22)
-                            }
-                            .buttonStyle(.glass)
-                            .accessibilityLabel(Text("Attach Photos"))
-                            if let summary { ComposerControls(thread: summary) }
-                        }
-                        .padding(.vertical, 2)
+            // The Mac composer's footer: its menus scroll sideways under a fade, so they never run under the buttons.
+            HStack(spacing: 2) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        if let summary { ComposerControls(thread: summary) }
                     }
                 }
+                .mask {
+                    HStack(spacing: 0) {
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 18)
+                    }
+                }
+                PhotosPicker(selection: $photos, maxSelectionCount: 10, matching: .images) {
+                    Image(systemName: "paperclip")
+                        .font(.body.weight(.medium))
+                        .frame(width: 40, height: 44)
+                        .contentShape(.rect)
+                }
+                .foregroundStyle(theme.secondaryInk)
+                .accessibilityLabel(Text("Attach Photos"))
                 sendButton
             }
         }
-        .padding(10)
-        .glassEffect(.regular.tint(theme.surface.opacity(0.35)), in: .rect(cornerRadius: 24))
+        .padding(.horizontal, 8)
+        .padding(.bottom, 4)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay {
-            if isDropTargeted {
-                RoundedRectangle(cornerRadius: 24).strokeBorder(theme.accent, lineWidth: 2)
-            }
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(isDropTargeted ? theme.accent : theme.border, lineWidth: isDropTargeted ? 2 : theme.borderWidth)
         }
         .onDrop(of: [.image], isTargeted: $isDropTargeted) { providers in
             for provider in providers { load(provider) }
@@ -76,24 +83,39 @@ struct ComposerView: View {
             Button {
                 Task { await client.perform(.stop(threadID: model.id)) }
             } label: {
-                Image(systemName: "stop.fill").frame(minWidth: 22, minHeight: 22)
+                // Fixed sizes: the symbol has to stay inside its circle at every text size.
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(theme.onControl)
+                    .frame(width: 32, height: 32)
+                    .background(theme.control, in: .circle)
+                    .frame(width: 44, height: 44)
+                    .contentShape(.rect)
             }
-            .buttonStyle(.glassProminent)
-            .tint(.red)
             .keyboardShortcut(".", modifiers: .command)
             .accessibilityLabel(Text("Stop"))
         } else {
+            let enabled = !draft.wrappedValue.isEmpty && !isSending
             Button {
                 send(alternate: false)
             } label: {
-                if isSending {
-                    ProgressView().controlSize(.small).frame(minWidth: 22, minHeight: 22)
-                } else {
-                    Image(systemName: "arrow.up").fontWeight(.semibold).frame(minWidth: 22, minHeight: 22)
+                Group {
+                    if isSending {
+                        ProgressView().controlSize(.small).tint(theme.onControl)
+                    } else {
+                        // While a turn runs, the button says where the message goes: into the turn, or after it.
+                        Image(systemName: !model.turn.isRunning ? "arrow.up"
+                            : client.server?.followUpBehavior == "queue" ? "text.append" : "arrow.turn.down.right")
+                            .font(.system(size: 15, weight: .bold))
+                    }
                 }
+                .foregroundStyle(enabled ? theme.onControl : theme.tertiaryInk)
+                .frame(width: 32, height: 32)
+                .background(enabled || isSending ? theme.control : theme.selection, in: .circle)
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
             }
-            .prominentButton()
-            .disabled(draft.wrappedValue.isEmpty || isSending)
+            .disabled(!enabled)
             .keyboardShortcut(.return, modifiers: .command)
             .accessibilityLabel(model.turn.isRunning ? Text("Send to the running turn") : Text("Send"))
             .contextMenu {
@@ -220,14 +242,12 @@ struct ComposerControls: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
+            ComposerChip(menu: true) {
                 AgentLogo(provider: thread.selection.provider, size: 14)
                 Text(thread.selection.modelName).lineLimit(1)
                 if let account = thread.selection.accountName { Text("· \(account)").foregroundStyle(theme.secondaryInk) }
             }
-            .font(.callout)
         }
-        .buttonStyle(.glass)
         .accessibilityLabel(Text("Model: \(thread.selection.modelName)"))
 
         if let efforts = currentModel?.efforts, !efforts.isEmpty {
@@ -236,10 +256,11 @@ struct ComposerControls: View {
                     ForEach(efforts, id: \.self) { Text(Self.effortTitle($0)).tag($0) }
                 }
             } label: {
-                Label(Self.effortTitle(thread.selection.effort ?? currentModel?.defaultEffort ?? ""), systemImage: "gauge.with.dots.needle.50percent")
-                    .font(.callout)
+                ComposerChip(menu: true) {
+                    Image(systemName: "brain")
+                    Text(Self.effortTitle(thread.selection.effort ?? currentModel?.defaultEffort ?? ""))
+                }
             }
-            .buttonStyle(.glass)
             .accessibilityLabel(Text("Effort: \(Self.effortTitle(thread.selection.effort ?? currentModel?.defaultEffort ?? ""))"))
         }
 
@@ -255,10 +276,11 @@ struct ComposerControls: View {
                     ForEach(speeds) { speed in Text(speed.name).tag(speed.id) }
                 }
             } label: {
-                Label(speeds.first { $0.id == thread.selection.speed }?.name ?? String(localized: "Standard"), systemImage: "hare")
-                    .font(.callout)
+                ComposerChip(menu: true) {
+                    Image(systemName: "gauge.with.needle")
+                    Text(speeds.first { $0.id == thread.selection.speed }?.name ?? String(localized: "Standard"))
+                }
             }
-            .buttonStyle(.glass)
         }
 
         Menu {
@@ -267,20 +289,22 @@ struct ComposerControls: View {
                 Label("Ask for approval", systemImage: "lock").tag("approval")
             }
         } label: {
-            Image(systemName: thread.accessMode == "fullAccess" ? "lock.open" : "lock")
-                .frame(minWidth: 22, minHeight: 22)
+            ComposerChip(menu: true) {
+                Image(systemName: thread.accessMode == "fullAccess" ? "lock.open" : "lock")
+                Text(thread.accessMode == "fullAccess" ? "Full access" : "Ask for approval")
+            }
         }
-        .buttonStyle(.glass)
         .accessibilityLabel(thread.accessMode == "fullAccess" ? Text("Access: Full access") : Text("Access: Ask for approval"))
 
         Button {
             let next = thread.interactionMode == "plan" ? "build" : "plan"
             Task { await client.perform(.updateSettings(RemoteThreadSettings(threadID: thread.id, interactionMode: next))) }
         } label: {
-            Text(thread.interactionMode == "plan" ? "Plan" : "Build").font(.callout)
+            ComposerChip(menu: false, color: thread.interactionMode == "plan" ? theme.accent : nil) {
+                Image(systemName: thread.interactionMode == "plan" ? "list.bullet.clipboard" : "hammer")
+                Text(thread.interactionMode == "plan" ? "Plan" : "Build")
+            }
         }
-        .buttonStyle(.glass)
-        .tint(thread.interactionMode == "plan" ? theme.accent : nil)
         .accessibilityLabel(Text("Mode: \(thread.interactionMode == "plan" ? String(localized: "Plan") : String(localized: "Build"))"))
         .accessibilityHint(Text("Switches between building and planning"))
     }
@@ -326,5 +350,32 @@ struct ComposerControls: View {
                 guard value != current else { return }
                 Task { await client.perform(.updateSettings(make(value))) }
             })
+    }
+}
+
+/// One of the composer's menus as the Mac's footer draws it: borderless, an icon and the current choice, and a small
+/// chevron when it opens a menu. A full-height touch target without a capsule around it.
+struct ComposerChip<Content: View>: View {
+    var menu: Bool
+    /// The label's color when it marks something on (Plan mode); the theme's text otherwise.
+    var color: Color?
+    @ViewBuilder var content: Content
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 5) {
+            content
+            if menu {
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(theme.tertiaryInk)
+            }
+        }
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(color ?? theme.ink)
+        .lineLimit(1)
+        .padding(.horizontal, 8)
+        .frame(minHeight: 44)
+        .contentShape(.rect)
     }
 }
