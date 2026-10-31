@@ -318,6 +318,7 @@ private final class ProviderChip: NSControl, PointerCursorControl {
             case .unknown: status.message ?? String(localized: "checking")
             }
         toolTip = [status.version, status.account, status.message].compactMap { $0 }.joined(separator: "\n").nonEmpty
+        if kind == .antigravity { addRiskBadge() }
         setAccessibilityElement(true)
         setAccessibilityRole(isReady ? .button : .staticText)
         setAccessibilityLabel("\(kind.displayName), \(state)")
@@ -327,6 +328,19 @@ private final class ProviderChip: NSControl, PointerCursorControl {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Antigravity's account-risk glyph on its tile's corner; a click opens Settings › Antigravity.
+    private func addRiskBadge() {
+        let badge = AntigravityRiskBadge(size: 10)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(badge)
+        NSLayoutConstraint.activate([
+            badge.centerXAnchor.constraint(equalTo: tile.trailingAnchor, constant: -6),
+            badge.centerYAnchor.constraint(equalTo: tile.topAnchor, constant: 6),
+        ])
+        toolTip = [toolTip, AntigravityRiskText.glyphHelp].compactMap { $0 }.joined(separator: "\n")
+        setAccessibilityHelp(AntigravityRiskText.glyphHelp)
     }
 
     override func updateTrackingAreas() {

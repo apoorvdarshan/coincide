@@ -81,6 +81,9 @@ final class SettingsModel {
 
     /// Lets the window controller keep the window title in sync.
     @ObservationIgnored var onPaneChange: ((SettingsPane) -> Void)?
+    /// Asks once about Antigravity's account risk before its Google sign-in starts or it's turned on.
+    let antigravityRisk: AntigravityRiskGate
+
     @ObservationIgnored private let store: AppStore
     @ObservationIgnored private let registry: ProviderRegistry
     @ObservationIgnored private var token: ObservationToken?
@@ -89,6 +92,7 @@ final class SettingsModel {
     init(store: AppStore = .shared, registry: ProviderRegistry = .shared) {
         self.store = store
         self.registry = registry
+        antigravityRisk = AntigravityRiskGate(store: store)
         settings = store.settings
         syncProviders()
         token = store.observe { [weak self] change in

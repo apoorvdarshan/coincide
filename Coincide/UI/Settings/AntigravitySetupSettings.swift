@@ -13,6 +13,7 @@ extension AntigravitySetupSections {
                 recheck: { model.check(.antigravity) },
                 launch: {
                     (await registry.executable(for: .antigravity), await registry.environment(for: .antigravity))
-                }))
+                },
+                confirmSignIn: { model.antigravityRisk.signIn($0) }))
     }
 }

@@ -38,6 +38,11 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
     private let accountRow = NSStackView()
     private let accountLabel = NSTextField(labelWithString: String(localized: "Account"))
     private let accountChips = NSStackView()
+    /// Antigravity's account risk, under the tabs while its tab is shown; a click opens Settings › Antigravity.
+    private lazy var riskRow = PickerRiskRow { [weak self] in
+        self?.close?()
+        AppEvents.showSettings(provider: .antigravity)
+    }
     private var tabButtons: [Tab: PickerTabButton] = [:]
     private let tableView = ThemedPopupTableView()
     private let scrollView = NSScrollView()
@@ -108,7 +113,7 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
         accountRow.orientation = .horizontal
         accountRow.spacing = 8
         accountRow.setViews([accountLabel, accountChips], in: .leading)
-        let header = NSStackView(views: [tabs, accountRow])
+        let header = NSStackView(views: [tabs, accountRow, riskRow])
         header.orientation = .vertical
         header.alignment = .leading
         header.spacing = 8
@@ -273,7 +278,14 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
             }
         }
         for (tab, button) in tabButtons { button.isSelected = !isSearching && tab == shownTab }
+        let headerRows = (accountRow.isHidden, riskRow.isHidden)
         updateAccounts(isSearching: isSearching)
+        riskRow.isHidden = isSearching || shownTab != .agent(.antigravity)
+        if headerRows != (accountRow.isHidden, riskRow.isHidden), isViewLoaded, view.window != nil {
+            view.layoutSubtreeIfNeeded()
+            preferredContentSize = view.fittingSize
+            onSizeChange?()
+        }
         let status: String? =
             if let unavailable {
                 unavailableText(unavailable)
@@ -325,7 +337,6 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
             let accounts = registry.accounts(for: kind)
             if accounts.count > 1 { shown = accounts }
         }
-        let wasHidden = accountRow.isHidden
         accountRow.isHidden = shown.isEmpty
         accountChips.setViews(
             shown.map { account in
@@ -340,11 +351,6 @@ final class ModelPickerViewController: NSViewController, ThemedPopupContent, NST
                 chip.toolTip = ready ? nil : ComposerMenus.statusText(kind, account: account.id, registry: registry)
                 return chip
             }, in: .leading)
-        if wasHidden != accountRow.isHidden, isViewLoaded, view.window != nil {
-            view.layoutSubtreeIfNeeded()
-            preferredContentSize = view.fittingSize
-            onSizeChange?()
-        }
     }
 
     private func unavailableText(_ kind: ProviderKind) -> String {
@@ -715,6 +721,7 @@ final class PickerTabButton: NSControl, PointerCursorControl {
 
     convenience init(kind: ProviderKind, isReady: Bool, action: @escaping () -> Void) {
         self.init(image: Theme.logo(for: kind), label: kind.displayName, isDimmed: !isReady, action: action)
+        if kind == .antigravity { addRiskBadge() }
     }
 
     init(image: NSImage, label: String, isDimmed: Bool = false, action: @escaping () -> Void) {
@@ -740,6 +747,21 @@ final class PickerTabButton: NSControl, PointerCursorControl {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Antigravity's tab carries the account-risk glyph at the logo's corner, with the risk in its tooltip.
+    private func addRiskBadge() {
+        let badge = NSImageView(image: Theme.symbol("exclamationmark.triangle.fill", size: 8, weight: .bold) ?? NSImage())
+        badge.contentTintColor = Theme.warning
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.setAccessibilityElement(false)
+        addSubview(badge)
+        NSLayoutConstraint.activate([
+            badge.centerXAnchor.constraint(equalTo: logo.trailingAnchor, constant: 1),
+            badge.centerYAnchor.constraint(equalTo: logo.topAnchor, constant: 1),
+        ])
+        toolTip = [toolTip, AntigravityRiskText.glyphHelp].compactMap { $0 }.joined(separator: "\n")
+        setAccessibilityHelp(AntigravityRiskText.glyphHelp)
     }
 
     override func updateTrackingAreas() {
@@ -849,16 +871,39 @@ final class PickerChip: NSControl, PointerCursorControl {
     }
 }
 
+/// Antigravity's account risk under the picker's tabs: the warning glyph and a short line, both opening Settings ›
+/// Antigravity, where the notice and Google's terms are.
+final class PickerRiskRow: NSStackView {
+    init(openSettings: @escaping () -> Void) {
+        super.init(frame: .zero)
+        let badge = AntigravityRiskBadge()
+        badge.onOpenSettings = openSettings
+        badge.setAccessibilityElement(false)
+        let text = PickerTextButton(title: String(localized: "May break Google’s terms. See Settings."), symbol: nil, action: openSettings)
+        text.toolTip = AntigravityRiskText.glyphHelp
+        text.setAccessibilityLabel(AntigravityRiskText.glyphLabel)
+        text.setAccessibilityHelp(AntigravityRiskText.glyphHelp)
+        orientation = .horizontal
+        spacing = 4
+        // In line with the account row's label above it.
+        edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        setViews([badge, text], in: .leading)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+}
+
 /// A small borderless text button with a symbol, for the picker's footer.
 final class PickerTextButton: NSButton {
     private let run: () -> Void
 
-    init(title: String, symbol: String, action: @escaping () -> Void) {
+    init(title: String, symbol: String?, action: @escaping () -> Void) {
         run = action
         super.init(frame: .zero)
         self.title = title
-        image = Theme.symbol(symbol, size: 11)
-        imagePosition = .imageLeading
+        image = symbol.flatMap { Theme.symbol($0, size: 11) }
+        imagePosition = symbol == nil ? .noImage : .imageLeading
         isBordered = false
         font = .systemFont(ofSize: 11)
         contentTintColor = .secondaryLabelColor

@@ -4874,6 +4874,230 @@
         }
       }
     },
+    "Antigravity Account Risk" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontorisiko bei Antigravity"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Riesgo para la cuenta con Antigravity"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Riesgo para la cuenta con Antigravity"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Risque pour le compte avec Antigravity"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity से खाते का जोखिम"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Risiko Akun Antigravity"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rischio per l’account con Antigravity"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity のアカウントのリスク"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity 계정 위험"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accountrisico van Antigravity"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ryzyko dla konta w Antigravity"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Risco para a conta no Antigravity"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Риск для аккаунта в Antigravity"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity Hesap Riski"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ризик для облікового запису в Antigravity"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rủi ro tài khoản khi dùng Antigravity"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity 账号风险"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity 帳號風險"
+          }
+        }
+      }
+    },
+    "Antigravity account risk" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontorisiko bei Antigravity"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Riesgo para la cuenta con Antigravity"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Riesgo para la cuenta con Antigravity"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Risque pour le compte avec Antigravity"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity से खाते का जोखिम"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Risiko akun Antigravity"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rischio per l’account con Antigravity"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity のアカウントのリスク"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity 계정 위험"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accountrisico van Antigravity"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ryzyko dla konta w Antigravity"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Risco para a conta no Antigravity"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Риск для аккаунта в Antigravity"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity hesap riski"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ризик для облікового запису в Antigravity"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rủi ro tài khoản khi dùng Antigravity"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity 账号风险"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity 帳號風險"
+          }
+        }
+      }
+    },
     "Appearance" : {
       "localizations" : {
         "de" : {
@@ -15792,6 +16016,118 @@
         }
       }
     },
+    "Gemini API keys from Google AI Studio or Gemini Enterprise aren’t affected." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gemini-API-Schlüssel aus Google AI Studio oder Gemini Enterprise sind nicht betroffen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las claves de API de Gemini de Google AI Studio o Gemini Enterprise no se ven afectadas."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las claves de API de Gemini de Google AI Studio o Gemini Enterprise no se ven afectadas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les clés d’API Gemini de Google AI Studio ou de Gemini Enterprise ne sont pas concernées."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google AI Studio या Gemini Enterprise की Gemini API कुंजियाँ प्रभावित नहीं होतीं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci API Gemini dari Google AI Studio atau Gemini Enterprise tidak terpengaruh."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le chiavi API di Gemini di Google AI Studio o Gemini Enterprise non sono interessate."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google AI Studio や Gemini Enterprise の Gemini API キーは対象外です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google AI Studio 또는 Gemini Enterprise의 Gemini API 키는 해당되지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gemini-API-sleutels van Google AI Studio of Gemini Enterprise vallen hier niet onder."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie dotyczy to kluczy API Gemini z Google AI Studio ani Gemini Enterprise."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chaves de API do Gemini do Google AI Studio ou do Gemini Enterprise não são afetadas."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Это не касается ключей Gemini API из Google AI Studio или Gemini Enterprise."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google AI Studio veya Gemini Enterprise’dan alınan Gemini API anahtarları etkilenmez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Це не стосується ключів Gemini API з Google AI Studio або Gemini Enterprise."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khóa API Gemini từ Google AI Studio hoặc Gemini Enterprise không bị ảnh hưởng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "来自 Google AI Studio 或 Gemini Enterprise 的 Gemini API 密钥不受影响。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "來自 Google AI Studio 或 Gemini Enterprise 的 Gemini API 金鑰不受影響。"
+          }
+        }
+      }
+    },
     "Hardware Keyboard" : {
       "localizations" : {
         "de" : {
@@ -18476,6 +18812,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "最大"
+          }
+        }
+      }
+    },
+    "May break Google’s Antigravity terms" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kann gegen Googles Antigravity-Bedingungen verstoßen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Puede incumplir los términos de Antigravity de Google"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Puede incumplir los términos de Antigravity de Google"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Peut enfreindre les conditions d’Antigravity de Google"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google की Antigravity शर्तों का उल्लंघन हो सकता है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dapat melanggar ketentuan Antigravity dari Google"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Potrebbe violare i termini di Antigravity di Google"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google の Antigravity 利用規約に違反する可能性があります"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google의 Antigravity 약관을 위반할 수 있습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kan in strijd zijn met de Antigravity-voorwaarden van Google"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Może naruszać warunki Antigravity Google"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pode violar os termos do Antigravity do Google"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Может нарушать условия Antigravity от Google"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google’ın Antigravity koşullarını ihlal edebilir"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Може порушувати умови Antigravity від Google"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Có thể vi phạm điều khoản Antigravity của Google"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "可能违反 Google 的 Antigravity 条款"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "可能違反 Google 的 Antigravity 條款"
           }
         }
       }
@@ -27436,6 +27884,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "已排入佇列：%@"
+          }
+        }
+      }
+    },
+    "Read Google’s terms" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Googles Nutzungsbedingungen lesen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leer los términos de Google"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leer los términos de Google"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lire les conditions de Google"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google की शर्तें पढ़ें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baca ketentuan Google"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leggi i termini di Google"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google の利用規約を読む"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google 약관 읽기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lees de voorwaarden van Google"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przeczytaj warunki Google"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ler os termos do Google"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Прочитать условия Google"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google’ın koşullarını okuyun"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Прочитати умови Google"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đọc điều khoản của Google"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "阅读 Google 的条款"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "閱讀 Google 的條款"
           }
         }
       }
@@ -40442,6 +41002,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "使用 Mac 的主題"
+          }
+        }
+      }
+    },
+    "Using Antigravity through Coincide may break Google’s Antigravity terms, which forbid accessing it with third-party tools. Google has suspended accounts for this, including access to Gemini CLI and Code Assist. Use at your own risk; consider a separate Google account." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity über Coincide zu nutzen, kann gegen Googles Antigravity-Nutzungsbedingungen verstoßen, die den Zugriff mit Tools von Drittanbietern untersagen. Google hat deswegen bereits Konten gesperrt, einschließlich des Zugriffs auf Gemini CLI und Code Assist. Die Nutzung erfolgt auf eigenes Risiko; erwäge ein separates Google-Konto."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usar Antigravity a través de Coincide puede incumplir los términos de Antigravity de Google, que prohíben acceder con herramientas de terceros. Google ha suspendido cuentas por ello, incluido el acceso a Gemini CLI y Code Assist. Úsalo bajo tu propia responsabilidad; considera usar una cuenta de Google aparte."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usar Antigravity a través de Coincide puede incumplir los términos de Antigravity de Google, que prohíben acceder con herramientas de terceros. Google suspendió cuentas por esto, incluido el acceso a Gemini CLI y Code Assist. Úsalo bajo tu propio riesgo; considera usar una cuenta de Google aparte."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utiliser Antigravity via Coincide peut enfreindre les conditions d’Antigravity de Google, qui interdisent d’y accéder avec des outils tiers. Google a suspendu des comptes pour cette raison, y compris l’accès à Gemini CLI et Code Assist. Utilisez-le à vos risques ; envisagez un compte Google distinct."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide के ज़रिए Antigravity इस्तेमाल करने से Google की Antigravity शर्तों का उल्लंघन हो सकता है, जो तृतीय-पक्ष टूल से इसे एक्सेस करने की मनाही करती हैं। Google ने इसके लिए खाते निलंबित किए हैं, जिनमें Gemini CLI और Code Assist की पहुँच भी शामिल है। अपने जोखिम पर इस्तेमाल करें; अलग Google खाता इस्तेमाल करने पर विचार करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menggunakan Antigravity melalui Coincide dapat melanggar ketentuan Antigravity dari Google, yang melarang aksesnya dengan alat pihak ketiga. Google telah menangguhkan akun karena hal ini, termasuk akses ke Gemini CLI dan Code Assist. Gunakan dengan risiko Anda sendiri; pertimbangkan akun Google terpisah."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usare Antigravity tramite Coincide potrebbe violare i termini di Antigravity di Google, che vietano di accedervi con strumenti di terze parti. Google ha sospeso alcuni account per questo motivo, incluso l’accesso a Gemini CLI e Code Assist. Usalo a tuo rischio; valuta di usare un account Google separato."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide を通じて Antigravity を使うと、サードパーティ製ツールによるアクセスを禁じる Google の Antigravity 利用規約に違反する可能性があります。Google はこれを理由にアカウントを停止しており、停止は Gemini CLI や Code Assist へのアクセスにも及びます。ご利用は自己責任でお願いします。別の Google アカウントの使用もご検討ください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide를 통해 Antigravity를 사용하면 서드파티 도구로 접근하는 것을 금지하는 Google의 Antigravity 약관을 위반할 수 있습니다. Google은 이를 이유로 계정을 정지했으며, 여기에는 Gemini CLI 및 Code Assist 접근도 포함됩니다. 사용에 따른 책임은 본인에게 있으며, 별도의 Google 계정 사용을 고려하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity gebruiken via Coincide kan in strijd zijn met de Antigravity-voorwaarden van Google, die toegang met tools van derden verbieden. Google heeft hiervoor accounts opgeschort, inclusief de toegang tot Gemini CLI en Code Assist. Gebruik op eigen risico; overweeg een apart Google-account."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Korzystanie z Antigravity przez Coincide może naruszać warunki Antigravity Google, które zabraniają dostępu za pomocą narzędzi innych firm. Google zawieszał z tego powodu konta, łącznie z dostępem do Gemini CLI i Code Assist. Korzystasz na własne ryzyko; rozważ osobne konto Google."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usar o Antigravity pelo Coincide pode violar os termos do Antigravity do Google, que proíbem o acesso com ferramentas de terceiros. O Google já suspendeu contas por isso, inclusive o acesso ao Gemini CLI e ao Code Assist. Use por sua conta e risco; considere usar uma conta do Google separada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Использование Antigravity через Coincide может нарушать условия Antigravity от Google, которые запрещают доступ к сервису через сторонние инструменты. Google уже блокировал за это аккаунты, включая доступ к Gemini CLI и Code Assist. Используйте на свой риск; рассмотрите отдельный аккаунт Google."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antigravity’yi Coincide üzerinden kullanmak, üçüncü taraf araçlarla erişimi yasaklayan Google’ın Antigravity koşullarını ihlal edebilir. Google bu nedenle hesapları askıya aldı; buna Gemini CLI ve Code Assist erişimi de dahil. Kullanım riski size aittir; ayrı bir Google hesabı kullanmayı düşünün."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Використання Antigravity через Coincide може порушувати умови Antigravity від Google, які забороняють доступ за допомогою сторонніх інструментів. Google уже блокував через це облікові записи, зокрема доступ до Gemini CLI і Code Assist. Використовуйте на власний ризик; розгляньте окремий обліковий запис Google."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dùng Antigravity qua Coincide có thể vi phạm điều khoản Antigravity của Google, vốn cấm truy cập bằng công cụ của bên thứ ba. Google đã tạm ngưng các tài khoản vì lý do này, bao gồm cả quyền truy cập Gemini CLI và Code Assist. Bạn tự chịu rủi ro khi sử dụng; hãy cân nhắc dùng một tài khoản Google riêng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "通过 Coincide 使用 Antigravity 可能违反 Google 的 Antigravity 条款，该条款禁止使用第三方工具访问其服务。Google 已因此暂停过一些账号，连同 Gemini CLI 和 Code Assist 的访问权限。使用风险自负；建议使用单独的 Google 账号。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "透過 Coincide 使用 Antigravity 可能違反 Google 的 Antigravity 條款，該條款禁止以第三方工具存取其服務。Google 已因此停權部分帳號，連同 Gemini CLI 和 Code Assist 的存取權。使用風險自負；建議使用另一個 Google 帳號。"
           }
         }
       }
