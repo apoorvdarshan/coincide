@@ -2,7 +2,7 @@ import AppKit
 import CoincideKit
 
 /// Draws a bot's avatar: one of seven characters, after the hand-drawn illustrations they come from (an alien, a star,
-/// a croissant cat, a pudding pup called Bomboloni, a dizzy cherry, a teddy and Brûlée, a girl wearing a melting
+/// a croissant cat, a pudding pup called Bomboloni, a dizzy cherry, a teddy and Brulee, a girl wearing a melting
 /// ice cream). Each is laid out on a
 /// 100-point grid, top down, and scaled to the rect. The body takes the bot's color, with its outline and shading
 /// mixed from it; eyes, blush and props keep their own colors, switching to dark ink where one would vanish into the

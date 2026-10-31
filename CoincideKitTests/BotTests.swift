@@ -111,6 +111,27 @@ struct BotStoreTests {
         #expect(Set(BotStarter.all.map(\.avatar.shape)).count == BotStarter.all.count)
     }
 
+    @Test func characterNamesArePlainASCIIProperNames() {
+        #expect(BotAvatar.Shape.allCases.map(\.defaultName) == ["Alien", "Star", "Croissant", "Bomboloni", "Cherry", "Teddy", "Brulee"])
+        for name in BotAvatar.Shape.allCases.map(\.defaultName) + BotStarter.all.map(\.name) {
+            #expect(name.unicodeScalars.allSatisfy { $0.isASCII && $0.properties.isAlphabetic }, "Not plain ASCII: \(name)")
+        }
+    }
+
+    @Test func aFormerDefaultNameBecomesThePlainOneButAWrittenNameStays() throws {
+        func decode(name: String, shape: String) throws -> Bot {
+            let json = #"{"id":"\#(UUID().uuidString)","name":"\#(name)","avatar":{"shape":"\#(shape)","tint":"rose"}}"#
+            return try JSONDecoder().decode(Bot.self, from: Data(json.utf8))
+        }
+        #expect(try decode(name: "Br\u{FB}l\u{E9}e", shape: "brulee").name == "Brulee")
+        // From before the characters, the drop is now Brulee; the old default goes with it.
+        #expect(try decode(name: "Br\u{FB}l\u{E9}e", shape: "drop").name == "Brulee")
+        // On another character, or spelled differently, the name is the user's own.
+        #expect(try decode(name: "Br\u{FB}l\u{E9}e", shape: "star").name == "Br\u{FB}l\u{E9}e")
+        #expect(try decode(name: "Br\u{FB}l\u{E9}e Jr", shape: "brulee").name == "Br\u{FB}l\u{E9}e Jr")
+        #expect(try decode(name: "Wren", shape: "brulee").name == "Wren")
+    }
+
     @Test func anUnreadableBotIsSkippedAndTheFileCopiedAside() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let good = UUID()
