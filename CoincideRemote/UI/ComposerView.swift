@@ -427,6 +427,9 @@ struct ComposerControls: View {
     @Environment(RemoteClient.self) private var client
     @Environment(\.theme) private var theme
 
+    /// The agent's mark grows with the text beside it.
+    @ScaledMetric(relativeTo: .subheadline) private var logoSize: CGFloat = 14
+
     private var provider: RemoteProvider? { client.provider(thread.selection.provider) }
     private var currentModel: RemoteModel? { provider?.models.first { $0.id == thread.selection.modelID } }
 
@@ -445,7 +448,7 @@ struct ComposerControls: View {
             }
         } label: {
             ComposerChip(menu: true) {
-                AgentLogo(provider: thread.selection.provider, size: 14)
+                AgentLogo(provider: thread.selection.provider, size: logoSize)
             } label: {
                 Text(thread.selection.modelName)
                 if let account = thread.selection.accountName { Text("· \(account)").foregroundStyle(theme.secondaryInk) }
@@ -644,8 +647,11 @@ struct ComposerFooterLayout: Layout {
 
     private func footer(width: CGFloat, _ subviews: Subviews) -> RemoteLayout.Footer {
         func chip(_ subview: LayoutSubview) -> RemoteLayout.Chip {
-            RemoteLayout.Chip(
-                full: subview.sizeThatFits(.unspecified).width, compact: subview.sizeThatFits(ProposedViewSize(width: 0, height: nil)).width)
+            // Offered a little less than its label needs, a menu shows its symbol alone (`ComposerChip`): that's its
+            // narrowest form. (Offered no width at all, a menu doesn't report its symbol's real width at large sizes.)
+            let full = subview.sizeThatFits(.unspecified).width
+            let compact = subview.sizeThatFits(ProposedViewSize(width: max(0, full - 1), height: nil)).width
+            return RemoteLayout.Chip(full: full, compact: min(full, compact))
         }
         let fixed = subviews.filter { $0[ComposerFooterRole.self] == .fixed }.map { $0.sizeThatFits(.unspecified).width }
         let height = subviews.map { $0.sizeThatFits(.unspecified).height }.max() ?? 44
