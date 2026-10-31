@@ -156,12 +156,17 @@ class TranscriptCell: NSTableCellView {
         return TranscriptFindTarget(rect: convert(rect, from: textView), textView: textView, range: range)
     }
 
-    /// Toggled by the table's row selection, for rows that reveal actions on hover.
+    /// Toggled by the table's row selection while it shows (after keyboard use, not a click), for rows that reveal
+    /// actions on hover.
     var isRowSelected = false {
         didSet { if isRowSelected != oldValue { selectionChanged() } }
     }
 
     func selectionChanged() {}
+
+    /// What the keyboard selection's focus ring goes around, in the cell's coordinates, with the content's corner
+    /// radius. nil puts it around the transcript column.
+    var selectionHighlight: (rect: NSRect, cornerRadius: CGFloat)? { nil }
 
     static func bottomSpacing(for row: TranscriptRow) -> CGFloat {
         row.isWorkLog && row.continuesWork ? 0 : row.isWorkLog ? TranscriptMetrics.workSpacing : TranscriptMetrics.messageSpacing
@@ -323,7 +328,16 @@ enum TranscriptText {
 /// Small borderless symbol button used for row actions (copy, edit, revert, view diff).
 final class TranscriptIconButton: NSButton {
     private var restoreTask: Task<Void, Never>?
+    private var isConfirming = false
     private(set) var symbolName = ""
+    /// While the pointer is over an enabled button: its symbol darkens on a soft rounded backing, as toolbar buttons do.
+    private(set) var isHovered = false {
+        didSet {
+            guard isHovered != oldValue else { return }
+            updateTint()
+            needsDisplay = true
+        }
+    }
 
     convenience init(symbol: String, label: String, action: Selector?, target: AnyObject?) {
         self.init(frame: NSRect(x: 0, y: 0, width: 22, height: 20))
@@ -333,28 +347,72 @@ final class TranscriptIconButton: NSButton {
         setSymbol(symbol)
         toolTip = label
         setAccessibilityLabel(label)
-        contentTintColor = .secondaryLabelColor
+        updateTint()
         self.action = action
         self.target = target
+    }
+
+    /// The point size a symbol draws at. A pencil is a thin diagonal stroke, so it draws a little larger to match the
+    /// boxier symbols beside it.
+    static func pointSize(for symbol: String) -> CGFloat {
+        symbol == "pencil" ? 12.5 : 11
     }
 
     func setSymbol(_ name: String) {
         guard name != symbolName else { return }
         symbolName = name
-        image = Theme.symbol(name, size: 11, weight: .medium)
+        image = Theme.symbol(name, size: Self.pointSize(for: name), weight: .medium)
+    }
+
+    override var isEnabled: Bool {
+        didSet {
+            if !isEnabled { isHovered = false }
+            updateTint()
+        }
+    }
+
+    private func updateTint() {
+        guard !isConfirming else { return }
+        contentTintColor = isHovered ? .labelColor : .secondaryLabelColor
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = isEnabled
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if isHovered {
+            // Pressed, or with Increase Contrast, the backing is a step darker.
+            let strong = isHighlighted || NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            (strong ? Theme.sidebarSelection : Theme.sidebarHover).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 0), xRadius: 5, yRadius: 5).fill()
+        }
+        super.draw(dirtyRect)
     }
 
     /// Shows a checkmark briefly after a successful copy.
     func flashConfirmation() {
         let original = symbolName
         setSymbol("checkmark")
+        isConfirming = true
         contentTintColor = Theme.success
         restoreTask?.cancel()
         restoreTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.2))
             guard !Task.isCancelled, let self else { return }
             self.setSymbol(original)
-            self.contentTintColor = .secondaryLabelColor
+            self.isConfirming = false
+            self.updateTint()
         }
     }
 }

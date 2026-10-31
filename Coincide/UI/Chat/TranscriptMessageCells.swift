@@ -396,16 +396,25 @@ final class TranscriptUserCell: TranscriptCell {
         updateActionsVisibility(animated: true)
     }
 
+    /// The keyboard selection rings the card itself, not the whole row.
+    override var selectionHighlight: (rect: NSRect, cornerRadius: CGFloat)? { (bubble.frame, 12) }
+
+    /// Whether the actions under the card show: while the pointer is over the message or the keyboard selects it.
+    /// They keep their place either way, so nothing moves as they fade in.
+    var showsActions: Bool { isHovered || isRowSelected }
+
     private func updateActionsVisibility(animated: Bool) {
-        let alpha: CGFloat = isHovered || isRowSelected ? 1 : 0
+        let alpha: CGFloat = showsActions ? 1 : 0
         let views = [timeLabel, rewindButton, copyButton] as [NSView]
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.15
-                for view in views { view.animator().alphaValue = alpha }
-            }
-        } else {
+        guard animated, window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             for view in views { view.alphaValue = alpha }
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            // Quick to appear, a touch slower to leave, so passing over a message doesn't flicker.
+            context.duration = alpha > 0 ? 0.12 : 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            for view in views { view.animator().alphaValue = alpha }
         }
     }
 
