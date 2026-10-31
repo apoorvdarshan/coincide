@@ -57,6 +57,17 @@ struct DictationComposerTests {
         #expect(composer.isDictating == false)
     }
 
+    @Test func partialDictationUsesTheComposersInkAndFont() {
+        let (composer, _, _, folder) = composer()
+        _ = folder
+        let textView = composer.textView
+        textView.string = ""
+        let text = ComposerViewController.dictated("Testing, how are you", in: textView)
+        let attributes = text.attributes(at: 0, effectiveRange: nil)
+        #expect(attributes[.foregroundColor] as? NSColor == textView.textColor)
+        #expect(attributes[.font] as? NSFont == textView.font)
+    }
+
     @Test func theSearchFindsVoiceSettings() {
         let entries = SettingsSearchResults.entries(kinds: [])
         for query in ["dictation", "microphone", "Whisper", "Groq", "OpenAI", "push to talk", "Fn", "send when I stop"] {

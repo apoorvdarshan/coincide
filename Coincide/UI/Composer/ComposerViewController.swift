@@ -50,7 +50,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private let surfaceStack = ComposerDropStack()
     private let attachmentStrip = ComposerAttachmentStrip()
     private let scrollView = NSScrollView()
-    private let textView = ComposerTextView(usingTextLayoutManager: true)
+    let textView = ComposerTextView(usingTextLayoutManager: true)
     /// Internal so tests can read the controls.
     let footer = ComposerFooterView()
     private let branchToolbar = BranchToolbarView(frame: .zero)
@@ -2083,8 +2083,14 @@ extension ComposerViewController {
         editUndoManager.disableUndoRegistration()
         defer { editUndoManager.enableUndoRegistration() }
         guard textView.shouldChangeText(in: range, replacementString: text) else { return }
-        textView.textStorage?.replaceCharacters(in: range, with: text)
+        textView.textStorage?.replaceCharacters(in: range, with: Self.dictated(text, in: textView))
         textView.didChangeText()
+    }
+
+    /// A plain String takes its neighbours' attributes, so into an empty composer partial dictation came out in the
+    /// default black system font; the composer's typing attributes keep the theme's ink and font.
+    static func dictated(_ text: String, in textView: NSTextView) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: textView.typingAttributes)
     }
 
     fileprivate func showDictationError(_ error: DictationError) {
