@@ -642,6 +642,35 @@ struct RemoteSessionTests {
         #expect(info.userMessageSide == "right")
     }
 
+    @Test func backgroundTasksReachThePhoneWithTheTurnAndStayShort() throws {
+        let script = String(repeating: "echo building && ", count: 100)
+        let command = RemoteStoreAdapter.backgroundTask(
+            BackgroundTask(id: "c", title: script, kind: .command, startedAt: Date(timeIntervalSince1970: 100)), provider: .codex)
+        #expect(command.kind == .command)
+        #expect(command.provider == "codex")
+        #expect(command.title.count == RemoteStoreAdapter.maxBackgroundText)
+        let agent = RemoteStoreAdapter.backgroundTask(
+            BackgroundTask(id: "a", title: "Review", kind: .agent, agentType: "fork", progress: "Running Read"), provider: .claude)
+        #expect(agent.kind == .agent)
+        #expect(agent.agentType == "fork")
+        #expect(agent.progress == "Running Read")
+
+        // The turn event carries them; a turn from an older Mac has none, and a kind a newer Mac adds reads as other.
+        let state = RemoteTurnState(provider: "claude", backgroundTasks: [agent, command])
+        let event = RemoteServerMessage.event(.turn(threadID: UUID(), state: state))
+        let decoded = try RemoteProtocol.makeDecoder().decode(
+            RemoteServerMessage.self, from: RemoteProtocol.makeEncoder().encode(event))
+        #expect(decoded == event)
+        let old = #"{"isRunning":false,"isStarting":false,"canSteer":false,"queued":[]}"#
+        #expect(try RemoteProtocol.makeDecoder().decode(RemoteTurnState.self, from: Data(old.utf8)).backgroundTasks == nil)
+        let newer = #"{"id":"x","provider":"claude","title":"Watch","kind":"monitor"}"#
+        #expect(try RemoteProtocol.makeDecoder().decode(RemoteBackgroundTask.self, from: Data(newer.utf8)).kind == .other)
+
+        let fixture = fixture("remote-background")
+        let thread = fixture.store.createThread(in: fixture.project.id)
+        #expect(fixture.adapter.turnState(thread.id).backgroundTasks == [])
+    }
+
     @Test func aBotFromAnOlderMacDecodesWithoutItsLook() throws {
         let old = #"{"id":"6E3A2B1C-0000-4000-8000-000000000001","name":"Sunny","threadIDs":[]}"#
         let bot = try RemoteProtocol.makeDecoder().decode(RemoteBot.self, from: Data(old.utf8))

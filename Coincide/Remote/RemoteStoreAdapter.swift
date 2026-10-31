@@ -288,8 +288,25 @@ final class RemoteStoreAdapter {
             queued: runner.queuedMessages(threadID).map {
                 RemoteQueuedMessage(id: $0.id, text: $0.text, imageCount: $0.imagePaths.count)
             },
-            resumesAt: runner.scheduledResumes[threadID])
+            resumesAt: runner.scheduledResumes[threadID],
+            backgroundTasks: runner.backgroundTasks(threadID).map { Self.backgroundTask($0.task, provider: $0.provider) })
     }
+
+    /// A background task as the phone lists it. Titles and progress are clipped like tool text; a background
+    /// command's title can be a whole script.
+    nonisolated static func backgroundTask(_ task: BackgroundTask, provider: ProviderKind) -> RemoteBackgroundTask {
+        let kind: RemoteBackgroundTask.Kind =
+            switch task.kind {
+            case .agent: .agent
+            case .command: .command
+            case .other: .other
+            }
+        return RemoteBackgroundTask(
+            id: task.id, provider: provider.rawValue, title: String(task.title.prefix(maxBackgroundText)), kind: kind,
+            startedAt: task.startedAt, agentType: task.agentType, progress: task.progress.map { String($0.prefix(maxBackgroundText)) })
+    }
+
+    nonisolated static let maxBackgroundText = 500
 
     /// The thread's newest `limit` items with its turn state, or nil when there's no such thread.
     func transcript(_ threadID: UUID, limit: Int) -> RemoteTranscript? {
