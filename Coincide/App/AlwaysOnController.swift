@@ -9,6 +9,10 @@ import Observation
 /// password once to run `pmset` (`AlwaysOnScript`), then starts the lid watcher (`coincide-always-on`), which launchd
 /// runs at login until Keep Awake turns off. Turning it off puts back exactly the saved values. A cancelled prompt or
 /// a failed step leaves the Mac as it was: the script undoes its own changes, and the setting is saved only after it.
+///
+/// With "Sleep normally on battery" the battery helper (`coincide-power-helper`) also runs, a launchd daemon that
+/// switches `disablesleep` with the power source, so the Mac sleeps on battery and stays awake on the charger. It is
+/// registered only while that option and Keep Awake are both on, and gone otherwise.
 @MainActor
 @Observable
 final class AlwaysOnController {
@@ -20,6 +24,7 @@ final class AlwaysOnController {
     /// The live sleep settings, re-read on every refresh so they show changes made outside Coincide.
     private(set) var power: PowerSettings?
     private(set) var service: AlwaysOnServiceState = .notRegistered
+    private(set) var batteryHelper: AlwaysOnServiceState = .notRegistered
     private(set) var standalone: StandaloneAlwaysOn?
     private(set) var hasLid = true
     private(set) var isWorking = false
@@ -35,26 +40,40 @@ final class AlwaysOnController {
     private var restorePointFile: URL { AlwaysOnIdentity.restorePointFile(in: store.directory) }
     private var audioStateFile: URL { AlwaysOnIdentity.audioStateFile(in: store.directory) }
 
-    /// On but the Mac's settings no longer keep it awake, for example after `pmset` was run by hand.
+    var hasBattery: Bool { power?.hasBattery ?? true }
+    /// The battery helper switches sleep only while Keep Awake and "Sleep normally on battery" are on, on a laptop.
+    private var wantsBatteryHelper: Bool { settings.enabled && settings.sleepsOnBattery && hasBattery }
+    private var batteryHelperIsRegistered: Bool { batteryHelper == .running || batteryHelper == .needsApproval }
+
+    /// On but the Mac's settings no longer keep it awake, for example after `pmset` was run by hand. While the battery
+    /// helper waits for approval sleep stays disabled on battery, which its own row explains.
     var isOutOfStep: Bool {
         guard settings.enabled, let power else { return false }
-        return !power.isAwake(onlyWhileCharging: settings.onlyWhileCharging)
+        if wantsBatteryHelper, batteryHelper != .running { return power.chargerSleep != 0 }
+        return !power.isAwake(sleepsOnBattery: wantsBatteryHelper)
     }
 
     // MARK: Launch and refresh
 
-    /// Starts the lid watcher again if Keep Awake is on and launchd lost it, for example after Coincide moved. Never
-    /// asks for a password.
+    /// Starts the lid watcher and battery helper again if launchd lost them, for example after Coincide moved, and
+    /// removes a battery helper nothing needs. Never asks for a password.
     func startAtLaunch() {
         Task {
             await refresh()
             if settings.enabled, hasLid, service == .notRegistered { registerWatcher() }
+            if wantsBatteryHelper, batteryHelper == .notRegistered {
+                registerBatteryHelper()
+            } else if !wantsBatteryHelper, batteryHelperIsRegistered {
+                try? await system.unregisterBatteryHelper()
+                batteryHelper = system.batteryHelperState
+            }
         }
     }
 
     func refresh() async {
         hasLid = system.hasLid
         service = system.serviceState
+        batteryHelper = system.batteryHelperState
         standalone = system.findStandalone()
         power = await system.readPower()
     }
@@ -81,13 +100,11 @@ final class AlwaysOnController {
             problem = String(localized: "Coincide couldn’t read this Mac’s sleep settings.")
             return
         }
-        let onlyCharging = settings.onlyWhileCharging
         let earlier = AlwaysOnRestorePoint.load(from: restorePointFile)
-        let point = (earlier ?? AlwaysOnRestorePoint()).adding(AlwaysOnRestorePoint(
-            sleepDisabled: power.sleepDisabled, chargerSleep: power.chargerSleep,
-            batterySleep: onlyCharging ? nil : power.batterySleep))
+        let point = (earlier ?? AlwaysOnRestorePoint())
+            .adding(AlwaysOnRestorePoint(sleepDisabled: power.sleepDisabled, chargerSleep: power.chargerSleep))
         do {
-            let script = try AlwaysOnScript.apply(onlyWhileCharging: onlyCharging, current: power)
+            let script = try AlwaysOnScript.apply(current: power)
             // Saved before anything changes, so the values survive a crash between here and turning it off.
             try point.save(to: restorePointFile)
             let result = await system.runAsAdministrator(script, prompt: Self.turnOnPrompt)
@@ -103,9 +120,19 @@ final class AlwaysOnController {
         }
         store.updateSettings { $0.alwaysOn.enabled = true }
         registerWatcher()
+        if wantsBatteryHelper { registerBatteryHelper() }
     }
 
     private func turnOff() async {
+        // First, so it can't switch sleep again after the saved values are back.
+        if batteryHelperIsRegistered {
+            do {
+                try await system.unregisterBatteryHelper()
+            } catch {
+                problem = String(localized: "Keep Awake is still on: \(error.localizedDescription)")
+                return
+            }
+        }
         let point = AlwaysOnRestorePoint.load(from: restorePointFile)
             // Lost: put back macOS's own defaults rather than leave sleep disabled.
             ?? (power?.sleepDisabled == true ? .macOSDefaults(hasBattery: power?.hasBattery ?? true) : AlwaysOnRestorePoint())
@@ -115,13 +142,16 @@ final class AlwaysOnController {
                 case .succeeded: break
                 case .cancelled:
                     problem = String(localized: "Keep Awake is still on. macOS needs your password to turn sleep back on.")
+                    if wantsBatteryHelper { registerBatteryHelper() }
                     return
                 case .failed(let reason):
                     problem = String(localized: "Keep Awake is still on: \(reason)")
+                    if wantsBatteryHelper { registerBatteryHelper() }
                     return
                 }
             } catch {
                 problem = String(localized: "Keep Awake is still on: \(error.localizedDescription)")
+                if wantsBatteryHelper { registerBatteryHelper() }
                 return
             }
         }
@@ -145,23 +175,37 @@ final class AlwaysOnController {
         service = system.serviceState
     }
 
-    /// Asks for the password again to put the settings back in step (see `isOutOfStep`), and starts the watcher.
+    /// macOS asks the user to allow it in Login Items; until then sleep stays disabled on battery too.
+    private func registerBatteryHelper() {
+        do {
+            try system.registerBatteryHelper()
+        } catch {
+            problem = String(localized: "The battery helper didn’t start: \(error.localizedDescription)")
+        }
+        batteryHelper = system.batteryHelperState
+    }
+
+    /// Asks for the password again to put the settings back in step (see `isOutOfStep`), and starts what isn't running.
     func applyAgain() async {
         guard settings.enabled, !isWorking else { return }
         isWorking = true
         defer { isWorking = false }
         problem = nil
-        if let power = await system.readPower(), !power.isAwake(onlyWhileCharging: settings.onlyWhileCharging) {
-            do {
-                let script = try AlwaysOnScript.apply(onlyWhileCharging: settings.onlyWhileCharging, current: power)
-                if case .failed(let reason) = await system.runAsAdministrator(script, prompt: Self.turnOnPrompt) {
-                    problem = String(localized: "Keep Awake didn’t turn on: \(reason)")
+        if let power = await system.readPower(), !power.isAwake(sleepsOnBattery: wantsBatteryHelper) {
+            // With the battery helper, it sets disablesleep itself; only the charger's idle sleep is Coincide's.
+            if !wantsBatteryHelper || power.chargerSleep != 0 {
+                do {
+                    let script = try AlwaysOnScript.apply(current: power)
+                    if case .failed(let reason) = await system.runAsAdministrator(script, prompt: Self.turnOnPrompt) {
+                        problem = String(localized: "Keep Awake didn’t turn on: \(reason)")
+                    }
+                } catch {
+                    problem = String(localized: "Keep Awake didn’t turn on: \(error.localizedDescription)")
                 }
-            } catch {
-                problem = String(localized: "Keep Awake didn’t turn on: \(error.localizedDescription)")
             }
         }
         if system.serviceState == .notRegistered { registerWatcher() }
+        if wantsBatteryHelper, system.batteryHelperState == .notRegistered { registerBatteryHelper() }
         await refresh()
     }
 
@@ -172,50 +216,34 @@ final class AlwaysOnController {
         store.updateSettings { $0.alwaysOn[keyPath: option] = value }
     }
 
-    /// While on, switching changes idle sleep on battery, which asks for the password.
-    func setOnlyWhileCharging(_ value: Bool) async {
-        guard !isWorking, value != settings.onlyWhileCharging else { return }
-        guard settings.enabled else {
-            store.updateSettings { $0.alwaysOn.onlyWhileCharging = value }
-            return
-        }
+    /// While Keep Awake is on, turning it on starts the battery helper (which macOS asks the user to allow once);
+    /// turning it off removes the helper, and asks for the password only if the Mac is on battery with sleep enabled.
+    func setSleepsOnBattery(_ value: Bool) async {
+        guard !isWorking, value != settings.sleepsOnBattery else { return }
+        store.updateSettings { $0.alwaysOn.sleepsOnBattery = value }
+        guard settings.enabled, hasBattery else { return }
         isWorking = true
         defer { isWorking = false }
         problem = nil
-        guard let power = await system.readPower() else {
-            problem = String(localized: "Coincide couldn’t read this Mac’s sleep settings.")
-            return
-        }
-        // A Mac without a battery has only charger settings.
-        guard let battery = power.batterySleep else {
-            store.updateSettings { $0.alwaysOn.onlyWhileCharging = value }
-            return
-        }
-        let earlier = AlwaysOnRestorePoint.load(from: restorePointFile) ?? AlwaysOnRestorePoint()
-        do {
-            let script: String
-            var point = earlier
-            if value {
-                // Back to the battery timer from before Keep Awake.
-                script = try AlwaysOnScript.batterySleep(earlier.batterySleep ?? battery, undo: battery)
-                point.batterySleep = nil
-            } else {
-                script = try AlwaysOnScript.batterySleep(0, undo: battery)
-                point = point.adding(AlwaysOnRestorePoint(batterySleep: battery))
-                try point.save(to: restorePointFile)
+        if value {
+            registerBatteryHelper()
+        } else {
+            do {
+                try await system.unregisterBatteryHelper()
+            } catch {
+                problem = String(localized: "The battery helper couldn’t be removed: \(error.localizedDescription)")
             }
-            switch await system.runAsAdministrator(script, prompt: Self.turnOnPrompt) {
-            case .succeeded:
-                try point.save(to: restorePointFile)
-                store.updateSettings { $0.alwaysOn.onlyWhileCharging = value }
-            case .cancelled:
-                try earlier.save(to: restorePointFile)
-            case .failed(let reason):
-                try earlier.save(to: restorePointFile)
-                problem = String(localized: "The battery setting didn’t change: \(reason)")
+            // It left sleep enabled if the Mac is on battery: disable it again, as Keep Awake does everywhere else.
+            if let power = await system.readPower(), !power.sleepDisabled {
+                let script = AlwaysOnScript.sleepDisabled(true, undo: false)
+                switch await system.runAsAdministrator(script, prompt: Self.turnOnPrompt) {
+                case .succeeded: break
+                case .cancelled:
+                    problem = String(localized: "The Mac still sleeps on battery until you apply Keep Awake again.")
+                case .failed(let reason):
+                    problem = String(localized: "The Mac still sleeps on battery: \(reason)")
+                }
             }
-        } catch {
-            problem = String(localized: "The battery setting didn’t change: \(error.localizedDescription)")
         }
         await refresh()
     }
@@ -250,16 +278,15 @@ final class AlwaysOnController {
             $0.alwaysOn.keepDisplaysOff = install.keepsDisplaysOff
             $0.alwaysOn.muteWhileClosed = install.mutesWhileClosed
             $0.alwaysOn.displayOffOnLidClose = true
-            // Its install.sh turned idle sleep off on battery too.
-            $0.alwaysOn.onlyWhileCharging = power.map { $0.hasBattery && $0.batterySleep != 0 } ?? false
+            // Its install.sh keeps the Mac awake on battery too.
+            $0.alwaysOn.sleepsOnBattery = false
         }
         standalone = nil
         isWorking = false
-        if let power, power.isAwake(onlyWhileCharging: settings.onlyWhileCharging) {
-            var point = AlwaysOnRestorePoint.macOSDefaults(hasBattery: power.hasBattery)
-            if settings.onlyWhileCharging { point.batterySleep = nil }
+        if let power, power.isAwake(sleepsOnBattery: false) {
+            // Its install.sh also turned idle sleep off on battery, which its uninstall.sh puts back.
             do {
-                try point.save(to: restorePointFile)
+                try AlwaysOnRestorePoint.macOSDefaults(hasBattery: power.hasBattery).save(to: restorePointFile)
             } catch {
                 problem = String(localized: "Keep Awake didn’t turn on: \(error.localizedDescription)")
                 await refresh()

@@ -8,11 +8,14 @@ public struct PowerSettings: Codable, Hashable, Sendable {
     public var chargerSleep: Int
     /// Idle sleep on battery; nil on Macs without one.
     public var batterySleep: Int?
+    /// Running on battery now (`PowerSource`), not read from pmset.
+    public var onBattery: Bool
 
-    public init(sleepDisabled: Bool, chargerSleep: Int, batterySleep: Int?) {
+    public init(sleepDisabled: Bool, chargerSleep: Int, batterySleep: Int?, onBattery: Bool = false) {
         self.sleepDisabled = sleepDisabled
         self.chargerSleep = chargerSleep
         self.batterySleep = batterySleep
+        self.onBattery = onBattery
     }
 
     public var hasBattery: Bool { batterySleep != nil }
@@ -41,9 +44,10 @@ public struct PowerSettings: Codable, Hashable, Sendable {
         return PowerSettings(sleepDisabled: disabled, chargerSleep: charger, batterySleep: battery)
     }
 
-    /// What Keep Awake needs: sleep disabled, and no idle sleep on the charger (and on battery unless only charging).
-    public func isAwake(onlyWhileCharging: Bool) -> Bool {
-        sleepDisabled && chargerSleep == 0 && (onlyWhileCharging || batterySleep == nil || batterySleep == 0)
+    /// What Keep Awake needs now: no idle sleep on the charger, and sleep disabled, except on battery when the Mac
+    /// should sleep there (the battery helper turns it back on).
+    public func isAwake(sleepsOnBattery: Bool) -> Bool {
+        chargerSleep == 0 && sleepDisabled == !(sleepsOnBattery && onBattery)
     }
 }
 
@@ -96,21 +100,17 @@ public enum AlwaysOnScript {
 
     public enum Failure: Error, Equatable { case invalidValue }
 
-    /// Turns sleep off: `disablesleep 1`, and idle sleep never on the charger, and on battery unless only charging.
-    public static func apply(onlyWhileCharging: Bool, current: PowerSettings) throws -> String {
-        var steps = ["\(pmset) -c sleep 0"]
-        if !onlyWhileCharging, current.hasBattery { steps.append("\(pmset) -b sleep 0") }
-        steps.append("\(pmset) -a disablesleep 1")
-        let undo = try restore(AlwaysOnRestorePoint(
-            sleepDisabled: current.sleepDisabled, chargerSleep: current.chargerSleep,
-            batterySleep: onlyWhileCharging ? nil : current.batterySleep))
+    /// Turns sleep off: idle sleep never on the charger, and `disablesleep 1`. The battery's idle timer is left alone:
+    /// with sleep disabled it never fires, and the battery helper relies on it when the Mac should sleep on battery.
+    public static func apply(current: PowerSettings) throws -> String {
+        let steps = ["\(pmset) -c sleep 0", "\(pmset) -a disablesleep 1"]
+        let undo = try restore(AlwaysOnRestorePoint(sleepDisabled: current.sleepDisabled, chargerSleep: current.chargerSleep))
         return guarded(steps, undo: undo)
     }
 
-    /// Idle sleep on battery off (`never`) or back to `minutes`, for switching "Only while charging" while on.
-    public static func batterySleep(_ minutes: Int, undo previous: Int) throws -> String {
-        guard Self.minutes.contains(minutes), Self.minutes.contains(previous) else { throw Failure.invalidValue }
-        return guarded(["\(pmset) -b sleep \(minutes)"], undo: "\(pmset) -b sleep \(previous)")
+    /// `disablesleep` alone, for turning sleeping on battery off while Keep Awake stays on.
+    public static func sleepDisabled(_ disabled: Bool, undo previous: Bool) -> String {
+        guarded(["\(pmset) -a disablesleep \(disabled ? 1 : 0)"], undo: "\(pmset) -a disablesleep \(previous ? 1 : 0)")
     }
 
     /// Puts back the saved values; sleep is enabled again last, once idle sleep has its timers back. Every step runs

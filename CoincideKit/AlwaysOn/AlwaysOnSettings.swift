@@ -8,9 +8,10 @@ import Foundation
 public struct AlwaysOnSettings: Codable, Hashable, Sendable {
     /// The Mac's sleep settings are changed and the lid watcher runs. Set only once both happened.
     public var enabled = false
-    /// Idle sleep is changed only for the charger (`pmset -c sleep 0` rather than `-a`). `disablesleep` covers every
-    /// power source, so the Mac doesn't sleep on battery either while Keep Awake is on.
-    public var onlyWhileCharging = true
+    /// On battery the Mac sleeps as usual, closing the lid included; on the charger it stays awake. `pmset disablesleep`
+    /// covers every power source, so the battery helper (`coincide-power-helper`, a launchd daemon) switches it as the
+    /// Mac is plugged in and unplugged. Off, the Mac stays awake on battery too.
+    public var sleepsOnBattery = false
     /// The display goes to sleep when the lid closes, which macOS stops doing once sleep is disabled.
     public var displayOffOnLidClose = true
     /// While the lid is closed, displays that keyboard or mouse input woke go back to sleep.
@@ -28,7 +29,7 @@ public struct AlwaysOnSettings: Codable, Hashable, Sendable {
             (try? container.decodeIfPresent(Bool.self, forKey: key)) ?? fallback
         }
         enabled = value(.enabled, defaults.enabled)
-        onlyWhileCharging = value(.onlyWhileCharging, defaults.onlyWhileCharging)
+        sleepsOnBattery = value(.sleepsOnBattery, defaults.sleepsOnBattery)
         displayOffOnLidClose = value(.displayOffOnLidClose, defaults.displayOffOnLidClose)
         keepDisplaysOff = value(.keepDisplaysOff, defaults.keepDisplaysOff)
         muteWhileClosed = value(.muteWhileClosed, defaults.muteWhileClosed)
@@ -51,6 +52,10 @@ public enum AlwaysOnIdentity {
     /// The plist in `Contents/Library/LaunchAgents`, registered with `SMAppService.agent(plistName:)`.
     public static let plistName = "com.apoorvdarshan.coincide.always-on.plist"
     public static let label = "com.apoorvdarshan.coincide.always-on"
+    /// The battery helper's plist in `Contents/Library/LaunchDaemons`, registered with `SMAppService.daemon(plistName:)`.
+    public static let batteryHelperPlistName = "com.apoorvdarshan.coincide.power-helper.plist"
+    /// Where the helper's BundleProgram points, inside Coincide.app.
+    public static let batteryHelperPath = "Contents/Helpers/coincide-power-helper"
 
     /// Coincide's data folder, as `AppStore.defaultDirectory` without the testing override: launchd starts the
     /// watcher without the app's environment.

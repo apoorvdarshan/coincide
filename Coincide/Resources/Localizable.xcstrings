@@ -34806,6 +34806,118 @@
         }
       }
     },
+    "Allow the battery helper in Login Items. Until then the Mac stays awake on battery." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erlaube den Batterie-Helfer in den Anmeldeobjekten. Bis dahin bleibt der Mac auch mit Batterie wach."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite el asistente de batería en Ítems de inicio. Hasta entonces, el Mac se mantiene activo también con batería."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite el asistente de batería en Ítems de inicio. Hasta entonces, el Mac se mantiene activo también con batería."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autorisez l’assistant batterie dans Ouverture. D’ici là, le Mac reste éveillé sur batterie aussi."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "लॉगिन आइटम में बैटरी हेल्पर को अनुमति दें। तब तक बैटरी पर भी Mac जागृत रहता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Izinkan pembantu baterai di Item Masuk. Sampai saat itu, Mac tetap terjaga juga saat memakai baterai."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consenti l’assistente batteria in Elementi login. Fino ad allora il Mac resta attivo anche a batteria."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ログイン項目でバッテリーヘルパーを許可してください。それまではバッテリー使用時もMacはスリープしません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로그인 항목에서 배터리 도우미를 허용하세요. 그 전까지는 배터리 사용 시에도 Mac이 깨어 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sta de batterijhulp toe in Inlogonderdelen. Tot dan blijft de Mac ook op de batterij wakker."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zezwól na pomocnika baterii w Rzeczach otwieranych podczas logowania. Do tego czasu Mac nie usypia się także na baterii."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permita o assistente de bateria em Itens de Início. Até lá, o Mac continua ativo também na bateria."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешите помощника аккумулятора в «Объектах входа». До этого Mac не уходит в сон и от аккумулятора."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pil yardımcısına Giriş Öğeleri'nde izin verin. O zamana kadar Mac pildeyken de uyanık kalır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозвольте помічника акумулятора в «Елементах входу». Доти Mac не засинає й від акумулятора."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy cho phép trình trợ giúp pin trong Mục đăng nhập. Cho đến lúc đó, máy Mac vẫn thức khi dùng pin."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请在登录项中允许电池助手。在此之前，使用电池时 Mac 也会保持唤醒。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "請在登入項目中允許電池輔助程式。在此之前，使用電池時 Mac 也會保持喚醒。"
+          }
+        }
+      }
+    },
     "Allow writing to %@" : {
       "localizations" : {
         "de" : {
@@ -45724,6 +45836,118 @@
         }
       }
     },
+    "Battery helper" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batterie-Helfer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Asistente de batería"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Asistente de batería"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Assistant batterie"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बैटरी हेल्पर"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pembantu baterai"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Assistente batteria"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "バッテリーヘルパー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "배터리 도우미"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batterijhulp"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pomocnik baterii"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Assistente de bateria"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Помощник аккумулятора"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pil yardımcısı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Помічник акумулятора"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình trợ giúp pin"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电池助手"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電池輔助程式"
+          }
+        }
+      }
+    },
     "Before Change" : {
       "localizations" : {
         "de" : {
@@ -53116,118 +53340,6 @@
         }
       }
     },
-    "Changes idle sleep only for the charger. While Keep Awake is on, the Mac doesn’t sleep on battery either, lid closed included." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ändert den Ruhezustand bei Inaktivität nur am Netzteil. Solange „Wach halten“ an ist, geht der Mac auch mit Batterie nicht in den Ruhezustand, auch nicht bei geschlossenem Deckel."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Solo cambia el reposo por inactividad con el cargador. Mientras Mantener activo esté activado, el Mac tampoco entra en reposo con batería, ni con la tapa cerrada."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Solo cambia el reposo por inactividad con el cargador. Mientras Mantener activo esté activado, el Mac tampoco entra en reposo con batería, ni con la tapa cerrada."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ne modifie la suspension d’inactivité que sur secteur. Tant que Garder éveillé est activé, le Mac ne se suspend pas non plus sur batterie, écran rabattu compris."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "निष्क्रिय स्लीप केवल चार्जर पर बदलता है। जब तक जागृत रखें चालू है, Mac बैटरी पर भी स्लीप नहीं करता, ढक्कन बंद होने पर भी नहीं।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Hanya mengubah tidur saat diam di pengisi daya. Selama Tetap Terjaga aktif, Mac juga tidak tidur saat memakai baterai, termasuk dengan penutup tertutup."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Cambia lo stop per inattività solo con l’alimentatore. Finché Mantieni attivo è attivo, il Mac non va in stop nemmeno a batteria, anche con il coperchio chiuso."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "電源アダプタ使用時のアイドルスリープだけを変更します。「スリープさせない」がオンの間は、バッテリー使用時も蓋を閉じてもMacはスリープしません。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "전원 어댑터 사용 시의 유휴 잠자기만 변경합니다. 깨어 있기가 켜져 있는 동안에는 배터리 사용 시에도, 덮개를 닫아도 Mac이 잠자기에 들어가지 않습니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Wijzigt sluimer bij inactiviteit alleen op de lader. Zolang Wakker houden aan staat, gaat de Mac ook op de batterij niet in sluimer, ook niet met de klep dicht."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Zmienia uśpienie przy bezczynności tylko na zasilaczu. Gdy Nie usypiaj jest włączone, Mac nie usypia się też na baterii, również przy zamkniętej pokrywie."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Muda o repouso por inatividade só no carregador. Enquanto Manter Ativo estiver ligado, o Mac também não entra em repouso na bateria, nem com a tampa fechada."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Меняет сон при бездействии только при работе от сети. Пока включено «Не спать», Mac не уходит в сон и от аккумулятора, в том числе с закрытой крышкой."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Boşta uykuyu yalnızca şarj aletindeyken değiştirir. Uyanık Tut açıkken Mac pildeyken de uyumaz, kapak kapalıyken bile."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Змінює сон у разі бездіяльності лише від мережі. Поки увімкнено «Не спати», Mac не засинає й від акумулятора, зокрема з закритою кришкою."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Chỉ thay đổi chế độ ngủ khi không dùng lúc cắm sạc. Khi Giữ thức đang bật, máy Mac cũng không ngủ khi dùng pin, kể cả khi gập nắp."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "仅更改使用电源适配器时的闲置睡眠。保持唤醒开启时，Mac 使用电池时也不会睡眠，合上盖子也一样。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "僅變更使用電源轉換器時的閒置睡眠。保持喚醒開啟時，Mac 使用電池時也不會睡眠，闔上螢幕也一樣。"
-          }
-        }
-      }
-    },
     "Changes requested" : {
       "localizations" : {
         "de" : {
@@ -53672,6 +53784,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "變更…"
+          }
+        }
+      }
+    },
+    "Charger" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Netzteil"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cargador"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cargador"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Secteur"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "चार्जर"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pengisi daya"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alimentatore"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電源アダプタ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "전원 어댑터"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lader"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zasilacz"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Carregador"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сеть"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Şarj aleti"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Мережа"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bộ sạc"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电源适配器"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電源轉換器"
           }
         }
       }
@@ -139890,114 +140114,114 @@
         }
       }
     },
-    "Keep it plugged in: on battery the Mac runs until the battery is empty. With the lid closed, give it airflow. While this is on, Apple menu › Sleep does nothing. Turn it off here before you delete Coincide." : {
+    "Keep it plugged in: on battery the Mac runs until the battery is empty." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Lass ihn am Netzteil: Mit Batterie läuft der Mac, bis sie leer ist. Sorge bei geschlossenem Deckel für Luftzufuhr. Solange dies an ist, bewirkt Apple-Menü › Ruhezustand nichts. Schalte es hier aus, bevor du Coincide löschst."
+            "value" : "Lass ihn am Netzteil: Mit Batterie läuft der Mac, bis sie leer ist."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Mantenlo enchufado: con batería, el Mac funciona hasta que se agota. Con la tapa cerrada, déjale ventilación. Mientras esté activado, menú Apple › Reposo no hace nada. Desactívalo aquí antes de eliminar Coincide."
+            "value" : "Mantenlo enchufado: con batería, el Mac funciona hasta que se agota."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Mantenlo enchufado: con batería, el Mac funciona hasta que se agota. Con la tapa cerrada, déjale ventilación. Mientras esté activado, menú Apple › Reposo no hace nada. Desactívalo aquí antes de eliminar Coincide."
+            "value" : "Mantenlo enchufado: con batería, el Mac funciona hasta que se agota."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Laissez-le branché : sur batterie, le Mac fonctionne jusqu’à ce qu’elle soit vide. Écran rabattu, laissez-le respirer. Tant que c’est activé, menu Pomme › Suspendre n’a aucun effet. Désactivez-le ici avant de supprimer Coincide."
+            "value" : "Laissez-le branché : sur batterie, le Mac fonctionne jusqu’à ce qu’elle soit vide."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "इसे प्लग इन रखें: बैटरी पर Mac तब तक चलता है जब तक बैटरी खत्म न हो जाए। ढक्कन बंद होने पर हवा आने-जाने दें। जब तक यह चालू है, Apple मेनू › स्लीप कुछ नहीं करता। Coincide हटाने से पहले इसे यहाँ बंद करें।"
+            "value" : "इसे प्लग इन रखें: बैटरी पर Mac तब तक चलता है जब तक बैटरी खत्म न हो जाए।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Biarkan tercolok: dengan baterai, Mac berjalan sampai baterai habis. Saat penutup tertutup, beri aliran udara. Selama ini aktif, menu Apple › Tidur tidak berfungsi. Matikan di sini sebelum Anda menghapus Coincide."
+            "value" : "Biarkan tercolok: dengan baterai, Mac berjalan sampai baterai habis."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tienilo collegato: a batteria il Mac funziona finché non si scarica. Con il coperchio chiuso, lascialo arieggiare. Finché è attivo, menu Apple › Stop non fa nulla. Disattivalo qui prima di eliminare Coincide."
+            "value" : "Tienilo collegato: a batteria il Mac funziona finché non si scarica."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "電源につないでおいてください。バッテリーでは空になるまで動き続けます。蓋を閉じたら通気を確保してください。オンの間はアップルメニュー › スリープは何もしません。Coincideを削除する前にここでオフにしてください。"
+            "value" : "電源につないでおいてください。バッテリーでは空になるまで動き続けます。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "전원에 연결해 두세요. 배터리로는 다 떨어질 때까지 작동합니다. 덮개를 닫았을 때는 통풍이 되게 하세요. 켜져 있는 동안 Apple 메뉴 › 잠자기는 작동하지 않습니다. Coincide를 삭제하기 전에 여기에서 끄세요."
+            "value" : "전원에 연결해 두세요. 배터리로는 다 떨어질 때까지 작동합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Houd hem aan de lader: op de batterij draait de Mac tot die leeg is. Geef hem met de klep dicht ventilatie. Zolang dit aan staat, doet Apple-menu › Sluimer niets. Zet het hier uit voordat je Coincide verwijdert."
+            "value" : "Houd hem aan de lader: op de batterij draait de Mac tot die leeg is."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Trzymaj go podłączonego: na baterii Mac działa, aż się rozładuje. Przy zamkniętej pokrywie zapewnij mu przepływ powietrza. Gdy to jest włączone, menu Apple › Uśpij nic nie robi. Wyłącz to tutaj przed usunięciem Coincide."
+            "value" : "Trzymaj go podłączonego: na baterii Mac działa, aż się rozładuje."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Deixe na tomada: na bateria, o Mac funciona até ela acabar. Com a tampa fechada, deixe-o ventilado. Enquanto isto estiver ligado, menu Apple › Repouso não faz nada. Desligue aqui antes de apagar o Coincide."
+            "value" : "Deixe na tomada: na bateria, o Mac funciona até ela acabar."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Держите его подключённым: от аккумулятора Mac работает, пока тот не разрядится. С закрытой крышкой обеспечьте ему вентиляцию. Пока это включено, меню Apple › Режим сна ничего не делает. Выключите это здесь перед удалением Coincide."
+            "value" : "Держите его подключённым: от аккумулятора Mac работает, пока тот не разрядится."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Prize takılı tutun: pildeyken Mac pil bitene kadar çalışır. Kapak kapalıyken hava almasını sağlayın. Bu açıkken Apple menüsü › Uyu hiçbir şey yapmaz. Coincide'ı silmeden önce burada kapatın."
+            "value" : "Prize takılı tutun: pildeyken Mac pil bitene kadar çalışır."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Тримайте його підключеним: від акумулятора Mac працює, доки той не розрядиться. З закритою кришкою забезпечте вентиляцію. Поки це ввімкнено, меню Apple › Сон нічого не робить. Вимкніть це тут, перш ніж видаляти Coincide."
+            "value" : "Тримайте його підключеним: від акумулятора Mac працює, доки той не розрядиться."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Hãy cắm sạc: khi dùng pin, máy Mac chạy đến khi hết pin. Khi gập nắp, hãy để máy thông thoáng. Khi tính năng này bật, menu Apple › Ngủ không có tác dụng. Hãy tắt nó tại đây trước khi xóa Coincide."
+            "value" : "Hãy cắm sạc: khi dùng pin, máy Mac chạy đến khi hết pin."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "请保持接通电源：使用电池时，Mac 会一直运行到电量耗尽。合上盖子时，请保持通风。开启期间，苹果菜单 › 睡眠不起作用。删除 Coincide 前请在这里将其关闭。"
+            "value" : "请保持接通电源：使用电池时，Mac 会一直运行到电量耗尽。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "請保持接上電源：使用電池時，Mac 會一直執行到電量耗盡。闔上螢幕時，請保持通風。開啟期間，蘋果選單 › 睡眠不會有作用。刪除 Coincide 前請在這裡將其關閉。"
+            "value" : "請保持接上電源：使用電池時，Mac 會一直執行到電量耗盡。"
           }
         }
       }
@@ -176672,6 +176896,230 @@
         }
       }
     },
+    "On battery the Mac sleeps as usual, closing the lid included; on the charger it stays awake. macOS can only switch this as administrator, so Coincide adds a small battery helper that runs as root only while this and Keep Awake are on. It takes no input and only switches sleep when you plug in or unplug. You allow it once in Login Items. Off, the Mac stays awake on battery too, without the helper." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit Batterie geht der Mac wie gewohnt in den Ruhezustand, auch beim Schließen des Deckels; am Netzteil bleibt er wach. macOS lässt das nur als Administrator umschalten, daher fügt Coincide einen kleinen Batterie-Helfer hinzu, der nur als root läuft, solange diese Option und „Wach halten“ an sind. Er nimmt keine Eingaben an und schaltet den Ruhezustand nur um, wenn du das Netzteil ansteckst oder abziehst. Du erlaubst ihn einmal in den Anmeldeobjekten. Aus bleibt der Mac auch mit Batterie wach, ohne den Helfer."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Con batería el Mac entra en reposo como siempre, también al cerrar la tapa; con el cargador se mantiene activo. macOS solo permite cambiarlo como administrador, así que Coincide añade un pequeño asistente de batería que se ejecuta como root solo mientras esta opción y Mantener activo estén activadas. No acepta ninguna entrada y solo cambia el reposo al enchufar o desenchufar. Lo permites una vez en Ítems de inicio. Desactivado, el Mac se mantiene activo también con batería, sin el asistente."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Con batería el Mac entra en reposo como siempre, también al cerrar la tapa; con el cargador se mantiene activo. macOS solo permite cambiarlo como administrador, así que Coincide añade un pequeño asistente de batería que se ejecuta como root solo mientras esta opción y Mantener activo estén activadas. No acepta ninguna entrada y solo cambia el reposo al enchufar o desenchufar. Lo permites una vez en Ítems de inicio. Desactivado, el Mac se mantiene activo también con batería, sin el asistente."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sur batterie, le Mac se suspend normalement, écran rabattu compris ; sur secteur, il reste éveillé. macOS ne permet de changer cela qu’en administrateur, donc Coincide ajoute un petit assistant batterie qui s’exécute en root uniquement tant que cette option et Garder éveillé sont activées. Il n’accepte aucune entrée et ne change la suspension que lorsque vous branchez ou débranchez le Mac. Vous l’autorisez une fois dans Ouverture. Désactivé, le Mac reste éveillé sur batterie aussi, sans l’assistant."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बैटरी पर Mac सामान्य रूप से स्लीप करता है, ढक्कन बंद करने पर भी; चार्जर पर यह जागृत रहता है। macOS इसे केवल एडमिनिस्ट्रेटर के रूप में बदलने देता है, इसलिए Coincide एक छोटा बैटरी हेल्पर जोड़ता है जो केवल तब root के रूप में चलता है जब यह विकल्प और जागृत रखें चालू हों। यह कोई इनपुट नहीं लेता और केवल चार्जर लगाने या निकालने पर स्लीप बदलता है। आप इसे लॉगिन आइटम में एक बार अनुमति देते हैं। बंद होने पर, हेल्पर के बिना Mac बैटरी पर भी जागृत रहता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saat memakai baterai, Mac tidur seperti biasa, termasuk saat penutup ditutup; di pengisi daya, Mac tetap terjaga. macOS hanya mengizinkan perubahan ini sebagai administrator, jadi Coincide menambahkan pembantu baterai kecil yang berjalan sebagai root hanya selama opsi ini dan Tetap Terjaga aktif. Pembantu ini tidak menerima masukan apa pun dan hanya mengubah tidur saat Anda mencolokkan atau mencabut pengisi daya. Anda mengizinkannya sekali di Item Masuk. Jika mati, Mac tetap terjaga juga saat memakai baterai, tanpa pembantu."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A batteria il Mac va in stop come sempre, anche chiudendo il coperchio; con l’alimentatore resta attivo. macOS consente di cambiarlo solo come amministratore, quindi Coincide aggiunge un piccolo assistente batteria eseguito come root solo finché questa opzione e Mantieni attivo sono attive. Non accetta input e cambia lo stop solo quando colleghi o scolleghi l’alimentatore. Lo consenti una volta in Elementi login. Disattivato, il Mac resta attivo anche a batteria, senza l’assistente."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "バッテリー使用時、Macは蓋を閉じた場合も含めて通常どおりスリープし、電源アダプタ使用時はスリープしません。macOSでは管理者しかこれを切り替えられないため、Coincideはこのオプションと「スリープさせない」がオンの間だけrootで動く小さなバッテリーヘルパーを追加します。入力は一切受け付けず、電源の接続や取り外しのときにスリープを切り替えるだけです。ログイン項目で一度許可します。オフの場合、Macはヘルパーなしでバッテリー使用時もスリープしません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "배터리 사용 시 Mac은 덮개를 닫을 때를 포함해 평소처럼 잠자기에 들어가고, 전원 어댑터에 연결되어 있으면 깨어 있습니다. macOS는 관리자만 이를 전환할 수 있으므로, Coincide는 이 옵션과 깨어 있기가 켜져 있는 동안에만 root로 실행되는 작은 배터리 도우미를 추가합니다. 어떤 입력도 받지 않으며 전원을 연결하거나 분리할 때만 잠자기를 전환합니다. 로그인 항목에서 한 번 허용하면 됩니다. 끄면 도우미 없이 배터리 사용 시에도 Mac이 깨어 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Op de batterij gaat de Mac gewoon in sluimer, ook als de klep dichtgaat; aan de lader blijft hij wakker. macOS laat dit alleen als beheerder wijzigen, dus Coincide voegt een kleine batterijhulp toe die alleen als root draait zolang deze optie en Wakker houden aan staan. Hij neemt geen invoer aan en wisselt sluimer alleen als je de lader aansluit of loskoppelt. Je staat hem één keer toe in Inlogonderdelen. Uit blijft de Mac ook op de batterij wakker, zonder de hulp."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Na baterii Mac usypia się jak zwykle, także po zamknięciu pokrywy; na zasilaczu się nie usypia. macOS pozwala to zmieniać tylko jako administrator, dlatego Coincide dodaje małego pomocnika baterii, który działa jako root tylko wtedy, gdy ta opcja i Nie usypiaj są włączone. Nie przyjmuje żadnych danych i zmienia usypianie tylko przy podłączaniu lub odłączaniu zasilacza. Zezwalasz na niego raz w Rzeczach otwieranych podczas logowania. Wyłączone: Mac nie usypia się także na baterii, bez pomocnika."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Na bateria o Mac entra em repouso normalmente, inclusive ao fechar a tampa; no carregador ele continua ativo. O macOS só permite mudar isso como administrador, então o Coincide adiciona um pequeno assistente de bateria que roda como root só enquanto esta opção e Manter Ativo estiverem ligados. Ele não recebe nenhuma entrada e só muda o repouso quando você conecta ou desconecta o carregador. Você o permite uma vez em Itens de Início. Desligado, o Mac continua ativo também na bateria, sem o assistente."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "От аккумулятора Mac уходит в сон как обычно, в том числе при закрытии крышки; от сети он не спит. macOS позволяет менять это только администратору, поэтому Coincide добавляет небольшого помощника аккумулятора, который работает от root только пока включены этот параметр и «Не спать». Он не принимает никаких данных и переключает сон только при подключении или отключении питания. Вы разрешаете его один раз в «Объектах входа». Если выключено, Mac не спит и от аккумулятора, без помощника."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pildeyken Mac her zamanki gibi uyur, kapak kapanınca da; şarj aletindeyken uyanık kalır. macOS bunu yalnızca yönetici olarak değiştirmeye izin verir, bu yüzden Coincide yalnızca bu seçenek ve Uyanık Tut açıkken root olarak çalışan küçük bir pil yardımcısı ekler. Hiçbir girdi almaz ve uykuyu yalnızca şarj aletini takıp çıkardığınızda değiştirir. Giriş Öğeleri'nde bir kez izin verirsiniz. Kapalıyken Mac pildeyken de uyanık kalır, yardımcı olmadan."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Від акумулятора Mac засинає як зазвичай, зокрема коли кришка закривається; від мережі він не засинає. macOS дозволяє змінювати це лише адміністратору, тож Coincide додає невеликого помічника акумулятора, який працює від root лише поки ввімкнено цей параметр і «Не спати». Він не приймає жодних даних і перемикає сон лише під час під’єднання чи від’єднання живлення. Ви дозволяєте його один раз в «Елементах входу». Якщо вимкнено, Mac не засинає й від акумулятора, без помічника."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khi dùng pin, máy Mac ngủ như bình thường, kể cả khi gập nắp; khi cắm sạc, máy luôn thức. macOS chỉ cho phép thay đổi điều này với quyền quản trị viên, nên Coincide thêm một trình trợ giúp pin nhỏ chạy với quyền root chỉ khi tùy chọn này và Giữ thức đang bật. Nó không nhận bất kỳ dữ liệu nào và chỉ chuyển chế độ ngủ khi bạn cắm hoặc rút sạc. Bạn cho phép nó một lần trong Mục đăng nhập. Khi tắt, máy Mac vẫn thức khi dùng pin, không cần trình trợ giúp."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用电池时，Mac 照常睡眠，合上盖子也一样；接通电源适配器时则保持唤醒。macOS 只允许管理员切换这一设置，因此 Coincide 会添加一个小型电池助手，仅在此选项和保持唤醒都开启时以 root 身份运行。它不接收任何输入，只在你接通或断开电源时切换睡眠。你只需在登录项中允许一次。关闭后，使用电池时 Mac 也会保持唤醒，不需要助手。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用電池時，Mac 照常睡眠，闔上螢幕也一樣；接上電源轉換器時則保持喚醒。macOS 只允許管理者切換這項設定，因此 Coincide 會加入一個小型電池輔助程式，僅在此選項和保持喚醒都開啟時以 root 身分執行。它不接收任何輸入，只在你接上或拔除電源時切換睡眠。你只需在登入項目中允許一次。關閉後，使用電池時 Mac 也會保持喚醒，不需要輔助程式。"
+          }
+        }
+      }
+    },
+    "On battery this Mac sleeps as usual; plugged in, it stays awake" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit Batterie geht dieser Mac wie gewohnt in den Ruhezustand; am Netzteil bleibt er wach"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Con batería este Mac entra en reposo como siempre; enchufado, se mantiene activo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Con batería este Mac entra en reposo como siempre; enchufado, se mantiene activo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sur batterie, ce Mac se suspend normalement ; branché, il reste éveillé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बैटरी पर यह Mac सामान्य रूप से स्लीप करता है; प्लग इन होने पर जागृत रहता है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saat memakai baterai Mac ini tidur seperti biasa; saat tercolok, tetap terjaga"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A batteria questo Mac va in stop come sempre; collegato, resta attivo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "バッテリー使用時、このMacは通常どおりスリープし、電源接続時はスリープしません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "배터리 사용 시 이 Mac은 평소처럼 잠자기에 들어가고, 전원에 연결되면 깨어 있습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Op de batterij gaat deze Mac gewoon in sluimer; aan de lader blijft hij wakker"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Na baterii ten Mac usypia się jak zwykle; podłączony nie usypia się"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Na bateria este Mac entra em repouso normalmente; na tomada, continua ativo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "От аккумулятора этот Mac уходит в сон как обычно; от сети не спит"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pildeyken bu Mac her zamanki gibi uyur; prize takılıyken uyanık kalır"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Від акумулятора цей Mac засинає як зазвичай; від мережі не засинає"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khi dùng pin máy Mac này ngủ như bình thường; khi cắm sạc, máy luôn thức"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用电池时这台 Mac 照常睡眠；接通电源时保持唤醒"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用電池時這部 Mac 照常睡眠；接上電源時保持喚醒"
+          }
+        }
+      }
+    },
     "On pace" : {
       "localizations" : {
         "de" : {
@@ -178174,118 +178622,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "只能儲存網頁的登入資訊。"
-          }
-        }
-      }
-    },
-    "Only while charging" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Nur beim Laden"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Solo mientras se carga"
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Solo mientras se carga"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Seulement en charge"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "केवल चार्ज होते समय"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Hanya saat mengisi daya"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Solo in carica"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "充電中のみ"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "충전 중에만"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Alleen tijdens opladen"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Tylko podczas ładowania"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Só enquanto carrega"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Только при зарядке"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Yalnızca şarj olurken"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Лише під час заряджання"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Chỉ khi đang sạc"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "仅在充电时"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "僅在充電時"
           }
         }
       }
@@ -240086,6 +240422,118 @@
         }
       }
     },
+    "Sleep normally on battery" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit Batterie normal in den Ruhezustand"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reposo normal con batería"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reposo normal con batería"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Suspension normale sur batterie"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बैटरी पर सामान्य स्लीप"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidur normal saat memakai baterai"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stop normale a batteria"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "バッテリー使用時は通常どおりスリープ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "배터리 사용 시 평소처럼 잠자기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gewoon sluimeren op de batterij"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Normalne usypianie na baterii"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Repouso normal na bateria"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Обычный сон от аккумулятора"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pildeyken normal uyu"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Звичайний сон від акумулятора"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ngủ bình thường khi dùng pin"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用电池时正常睡眠"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用電池時正常睡眠"
+          }
+        }
+      }
+    },
     "Sleep settings unavailable" : {
       "localizations" : {
         "de" : {
@@ -256925,6 +257373,230 @@
         }
       }
     },
+    "The Mac still sleeps on battery until you apply Keep Awake again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Mac geht mit Batterie weiter in den Ruhezustand, bis du „Wach halten“ erneut anwendest."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El Mac sigue entrando en reposo con batería hasta que vuelvas a aplicar Mantener activo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El Mac sigue entrando en reposo con batería hasta que vuelvas a aplicar Mantener activo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le Mac se suspend toujours sur batterie tant que vous n’appliquez pas à nouveau Garder éveillé."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जब तक आप जागृत रखें फिर से लागू नहीं करते, Mac बैटरी पर स्लीप करता रहेगा।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac masih tidur saat memakai baterai sampai Anda menerapkan Tetap Terjaga lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il Mac continua ad andare in stop a batteria finché non applichi di nuovo Mantieni attivo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "「スリープさせない」をもう一度適用するまで、Macはバッテリー使用時にスリープします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "깨어 있기를 다시 적용할 때까지 배터리 사용 시 Mac이 잠자기에 들어갑니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De Mac gaat op de batterij nog in sluimer tot je Wakker houden opnieuw toepast."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac nadal usypia się na baterii, dopóki ponownie nie zastosujesz Nie usypiaj."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Mac continua entrando em repouso na bateria até você aplicar Manter Ativo de novo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac по-прежнему уходит в сон от аккумулятора, пока вы снова не примените «Не спать»."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyanık Tut'u yeniden uygulayana kadar Mac pildeyken uyumaya devam eder."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac і далі засинає від акумулятора, доки ви знову не застосуєте «Не спати»."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Máy Mac vẫn ngủ khi dùng pin cho đến khi bạn áp dụng lại Giữ thức."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在你再次应用保持唤醒之前，Mac 使用电池时仍会睡眠。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在你再次套用保持喚醒之前，Mac 使用電池時仍會睡眠。"
+          }
+        }
+      }
+    },
+    "The Mac still sleeps on battery: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Mac geht mit Batterie weiter in den Ruhezustand: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El Mac sigue entrando en reposo con batería: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El Mac sigue entrando en reposo con batería: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le Mac se suspend toujours sur batterie : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac बैटरी पर अभी भी स्लीप करता है: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac masih tidur saat memakai baterai: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il Mac continua ad andare in stop a batteria: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Macはバッテリー使用時にスリープしたままです：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "배터리 사용 시 Mac이 계속 잠자기에 들어갑니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De Mac gaat op de batterij nog in sluimer: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac nadal usypia się na baterii: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Mac continua entrando em repouso na bateria: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac по-прежнему уходит в сон от аккумулятора: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac pildeyken uyumaya devam ediyor: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac і далі засинає від акумулятора: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Máy Mac vẫn ngủ khi dùng pin: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac 使用电池时仍会睡眠：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac 使用電池時仍會睡眠：%@"
+          }
+        }
+      }
+    },
     "The Open In button in the rail opens the thread’s folder in this app. Right-click the button to pick another." : {
       "localizations" : {
         "de" : {
@@ -260179,114 +260851,450 @@
         }
       }
     },
-    "The battery setting didn’t change: %@" : {
+    "The battery helper couldn’t be removed: %@" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Die Batterie-Einstellung wurde nicht geändert: %@"
+            "value" : "Der Batterie-Helfer konnte nicht entfernt werden: %@"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El ajuste de la batería no cambió: %@"
+            "value" : "No se pudo eliminar el asistente de batería: %@"
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El ajuste de la batería no cambió: %@"
+            "value" : "No se pudo eliminar el asistente de batería: %@"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Le réglage de la batterie n’a pas changé : %@"
+            "value" : "Impossible de supprimer l’assistant batterie : %@"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "बैटरी सेटिंग नहीं बदली: %@"
+            "value" : "बैटरी हेल्पर हटाया नहीं जा सका: %@"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Pengaturan baterai tidak berubah: %@"
+            "value" : "Pembantu baterai tidak dapat dihapus: %@"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "L’impostazione della batteria non è cambiata: %@"
+            "value" : "Impossibile rimuovere l’assistente batteria: %@"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "バッテリーの設定は変更されませんでした：%@"
+            "value" : "バッテリーヘルパーを削除できませんでした：%@"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "배터리 설정이 변경되지 않았습니다: %@"
+            "value" : "배터리 도우미를 제거할 수 없습니다: %@"
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "De batterij-instelling is niet gewijzigd: %@"
+            "value" : "De batterijhulp kon niet worden verwijderd: %@"
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ustawienie baterii nie zostało zmienione: %@"
+            "value" : "Nie można usunąć pomocnika baterii: %@"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O ajuste da bateria não mudou: %@"
+            "value" : "Não foi possível remover o assistente de bateria: %@"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Настройка аккумулятора не изменилась: %@"
+            "value" : "Не удалось удалить помощника аккумулятора: %@"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Pil ayarı değişmedi: %@"
+            "value" : "Pil yardımcısı kaldırılamadı: %@"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Налаштування акумулятора не змінилося: %@"
+            "value" : "Не вдалося видалити помічника акумулятора: %@"
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Cài đặt pin không thay đổi: %@"
+            "value" : "Không thể xóa trình trợ giúp pin: %@"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "电池设置未更改：%@"
+            "value" : "无法移除电池助手：%@"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "電池設定未變更：%@"
+            "value" : "無法移除電池輔助程式：%@"
+          }
+        }
+      }
+    },
+    "The battery helper didn’t start: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Batterie-Helfer ist nicht gestartet: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de batería no se inició: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de batería no se inició: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’assistant batterie n’a pas démarré : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बैटरी हेल्पर शुरू नहीं हुआ: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pembantu baterai tidak berjalan: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’assistente batteria non è partito: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "バッテリーヘルパーが起動しませんでした：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "배터리 도우미가 시작되지 않았습니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De batterijhulp is niet gestart: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pomocnik baterii się nie uruchomił: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O assistente de bateria não iniciou: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Помощник аккумулятора не запустился: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pil yardımcısı başlamadı: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Помічник акумулятора не запустився: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình trợ giúp pin chưa khởi động: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电池助手未启动：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電池輔助程式未啟動：%@"
+          }
+        }
+      }
+    },
+    "The battery helper is running" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Batterie-Helfer läuft"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de batería está en ejecución"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de batería está en ejecución"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’assistant batterie fonctionne"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बैटरी हेल्पर चल रहा है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pembantu baterai sedang berjalan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’assistente batteria è in esecuzione"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "バッテリーヘルパーは実行中です"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "배터리 도우미가 실행 중입니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De batterijhulp draait"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pomocnik baterii działa"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O assistente de bateria está rodando"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Помощник аккумулятора работает"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pil yardımcısı çalışıyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Помічник акумулятора працює"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình trợ giúp pin đang chạy"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电池助手正在运行"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電池輔助程式正在執行"
+          }
+        }
+      }
+    },
+    "The battery helper isn’t running" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Batterie-Helfer läuft nicht"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de batería no se está ejecutando"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El asistente de batería no se está ejecutando"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’assistant batterie ne fonctionne pas"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बैटरी हेल्पर नहीं चल रहा"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pembantu baterai tidak berjalan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’assistente batteria non è in esecuzione"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "バッテリーヘルパーが実行されていません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "배터리 도우미가 실행되고 있지 않습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De batterijhulp draait niet"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pomocnik baterii nie działa"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O assistente de bateria não está rodando"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Помощник аккумулятора не работает"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pil yardımcısı çalışmıyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Помічник акумулятора не працює"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình trợ giúp pin không chạy"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电池助手未在运行"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電池輔助程式未在執行"
           }
         }
       }
@@ -274752,6 +275760,118 @@
         }
       }
     },
+    "This copy of Coincide doesn’t include the battery helper." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Coincide-Kopie enthält den Batterie-Helfer nicht."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta copia de Coincide no incluye el asistente de batería."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta copia de Coincide no incluye el asistente de batería."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette copie de Coincide n’inclut pas l’assistant batterie."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide की इस कॉपी में बैटरी हेल्पर शामिल नहीं है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Salinan Coincide ini tidak menyertakan pembantu baterai."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questa copia di Coincide non include l’assistente batteria."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このCoincideにはバッテリーヘルパーが含まれていません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 Coincide 사본에는 배터리 도우미가 포함되어 있지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze kopie van Coincide bevat de batterijhulp niet."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ta kopia Coincide nie zawiera pomocnika baterii."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta cópia do Coincide não inclui o assistente de bateria."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Эта копия Coincide не содержит помощника аккумулятора."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide'ın bu kopyası pil yardımcısını içermiyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ця копія Coincide не містить помічника акумулятора."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bản Coincide này không có trình trợ giúp pin."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 Coincide 副本不包含电池助手。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 Coincide 拷貝不包含電池輔助程式。"
+          }
+        }
+      }
+    },
     "This copy of Coincide doesn’t include the command-line tool." : {
       "localizations" : {
         "de" : {
@@ -287348,6 +288468,118 @@
         }
       }
     },
+    "Unplugged" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abgesteckt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desenchufado"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desenchufado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Débranché"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "चार्जर से अलग"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidak tercolok"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Scollegato"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電源未接続"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "전원 분리됨"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Losgekoppeld"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Odłączony"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desconectado"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Отключён от сети"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prizden çıkarılmış"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Від’єднано від мережі"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã rút sạc"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未接通电源"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未接上電源"
+          }
+        }
+      }
+    },
     "Unsettle" : {
       "localizations" : {
         "de" : {
@@ -296518,6 +297750,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "視窗"
+          }
+        }
+      }
+    },
+    "With the lid closed, give it airflow. While sleep is disabled, Apple menu › Sleep does nothing. Turn Keep Awake off here before you delete Coincide." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sorge bei geschlossenem Deckel für Luftzufuhr. Solange der Ruhezustand deaktiviert ist, bewirkt Apple-Menü › Ruhezustand nichts. Schalte „Wach halten“ hier aus, bevor du Coincide löschst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Con la tapa cerrada, déjale ventilación. Mientras el reposo esté desactivado, menú Apple › Reposo no hace nada. Desactiva Mantener activo aquí antes de eliminar Coincide."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Con la tapa cerrada, déjale ventilación. Mientras el reposo esté desactivado, menú Apple › Reposo no hace nada. Desactiva Mantener activo aquí antes de eliminar Coincide."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Écran rabattu, laissez-le respirer. Tant que la suspension est désactivée, menu Pomme › Suspendre n’a aucun effet. Désactivez Garder éveillé ici avant de supprimer Coincide."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ढक्कन बंद होने पर हवा आने-जाने दें। जब तक स्लीप अक्षम है, Apple मेनू › स्लीप कुछ नहीं करता। Coincide हटाने से पहले यहाँ जागृत रखें बंद करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saat penutup tertutup, beri aliran udara. Selama tidur dinonaktifkan, menu Apple › Tidur tidak berfungsi. Matikan Tetap Terjaga di sini sebelum Anda menghapus Coincide."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Con il coperchio chiuso, lascialo arieggiare. Finché lo stop è disattivato, menu Apple › Stop non fa nulla. Disattiva Mantieni attivo qui prima di eliminare Coincide."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "蓋を閉じたら通気を確保してください。スリープが無効の間はアップルメニュー › スリープは何もしません。Coincideを削除する前にここで「スリープさせない」をオフにしてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "덮개를 닫았을 때는 통풍이 되게 하세요. 잠자기가 비활성화된 동안 Apple 메뉴 › 잠자기는 작동하지 않습니다. Coincide를 삭제하기 전에 여기에서 깨어 있기를 끄세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geef hem met de klep dicht ventilatie. Zolang sluimer is uitgeschakeld, doet Apple-menu › Sluimer niets. Zet Wakker houden hier uit voordat je Coincide verwijdert."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przy zamkniętej pokrywie zapewnij mu przepływ powietrza. Gdy usypianie jest wyłączone, menu Apple › Uśpij nic nie robi. Wyłącz tutaj Nie usypiaj przed usunięciem Coincide."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Com a tampa fechada, deixe-o ventilado. Enquanto o repouso estiver desativado, menu Apple › Repouso não faz nada. Desligue Manter Ativo aqui antes de apagar o Coincide."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "С закрытой крышкой обеспечьте ему вентиляцию. Пока сон отключён, меню Apple › Режим сна ничего не делает. Выключите «Не спать» здесь перед удалением Coincide."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kapak kapalıyken hava almasını sağlayın. Uyku devre dışıyken Apple menüsü › Uyu hiçbir şey yapmaz. Coincide'ı silmeden önce Uyanık Tut'u burada kapatın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "З закритою кришкою забезпечте вентиляцію. Поки сон вимкнено, меню Apple › Сон нічого не робить. Вимкніть «Не спати» тут, перш ніж видаляти Coincide."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khi gập nắp, hãy để máy thông thoáng. Khi chế độ ngủ bị tắt, menu Apple › Ngủ không có tác dụng. Hãy tắt Giữ thức tại đây trước khi xóa Coincide."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "合上盖子时，请保持通风。睡眠停用期间，苹果菜单 › 睡眠不起作用。删除 Coincide 前请在这里关闭保持唤醒。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "闔上螢幕時，請保持通風。睡眠停用期間，蘋果選單 › 睡眠不會有作用。刪除 Coincide 前請在這裡關閉保持喚醒。"
           }
         }
       }
