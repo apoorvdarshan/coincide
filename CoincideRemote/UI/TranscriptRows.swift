@@ -148,6 +148,11 @@ struct UserMessage: View {
                 }
                 if !item.text.isEmpty || !extras.isEmpty || item.steered || !hasPictures {
                     VStack(alignment: alignment, spacing: 6) {
+                        // As the Mac marks a message a schedule sent.
+                        if let schedule = item.scheduleName {
+                            Label(String(localized: "Scheduled · \(schedule)"), systemImage: "clock")
+                                .font(.caption2).foregroundStyle(theme.secondaryInk).lineLimit(1)
+                        }
                         // Copied from the message's menu, which also edits from here.
                         if !item.text.isEmpty {
                             Text(item.text)

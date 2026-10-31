@@ -83,12 +83,25 @@ public struct RemoteScheduledTask: Codable, Hashable, Sendable, Identifiable {
     public var lastThreadID: UUID?
     /// Whether "Run Now" can start it: not running, and its project free.
     public var canRunNow: Bool
+    /// The thread each run sends its prompt into, for a thread schedule; nil for a project task (or from an older Mac).
+    public var threadID: UUID?
+    /// The bot whose conversation that thread is, for its artwork.
+    public var botID: UUID?
+    /// An agent created it and it waits for the user to allow it, in the thread's approval card.
+    public var needsApproval: Bool?
+    /// An agent created it.
+    public var createdByAgent: Bool?
 
     public init(
         id: UUID, name: String, projectID: UUID, prompt: String, recurrence: RemoteTaskRecurrence, isPaused: Bool = false,
         state: State = .scheduled, stateText: String = "", scheduleText: String = "", nextRunAt: Date? = nil,
-        lastRunAt: Date? = nil, lastMessage: String? = nil, lastThreadID: UUID? = nil, canRunNow: Bool = true
+        lastRunAt: Date? = nil, lastMessage: String? = nil, lastThreadID: UUID? = nil, canRunNow: Bool = true,
+        threadID: UUID? = nil, botID: UUID? = nil, needsApproval: Bool? = nil, createdByAgent: Bool? = nil
     ) {
+        self.threadID = threadID
+        self.botID = botID
+        self.needsApproval = needsApproval
+        self.createdByAgent = createdByAgent
         self.id = id
         self.name = name
         self.projectID = projectID
@@ -107,7 +120,7 @@ public struct RemoteScheduledTask: Codable, Hashable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, projectID, prompt, recurrence, isPaused, state, stateText, scheduleText, nextRunAt, lastRunAt,
-            lastMessage, lastThreadID, canRunNow
+            lastMessage, lastThreadID, canRunNow, threadID, botID, needsApproval, createdByAgent
     }
 
     public init(from decoder: Decoder) throws {
@@ -126,7 +139,13 @@ public struct RemoteScheduledTask: Codable, Hashable, Sendable, Identifiable {
         lastMessage = try? container.decodeIfPresent(String.self, forKey: .lastMessage)
         lastThreadID = try? container.decodeIfPresent(UUID.self, forKey: .lastThreadID)
         canRunNow = (try? container.decode(Bool.self, forKey: .canRunNow)) ?? false
+        threadID = try? container.decodeIfPresent(UUID.self, forKey: .threadID)
+        botID = try? container.decodeIfPresent(UUID.self, forKey: .botID)
+        needsApproval = try? container.decodeIfPresent(Bool.self, forKey: .needsApproval)
+        createdByAgent = try? container.decodeIfPresent(Bool.self, forKey: .createdByAgent)
     }
+
+    public var isThreadSchedule: Bool { threadID != nil }
 }
 
 /// The Mac's scheduled tasks, and why they couldn't be read or the last run couldn't start, if so.
@@ -164,10 +183,14 @@ public struct RemoteScheduledTaskDraft: Codable, Hashable, Sendable {
     public var prompt: String
     public var recurrence: RemoteTaskRecurrence?
     public var isPaused: Bool
+    /// A new thread schedule's thread: each run sends the prompt into it. Ignored when editing, and by an older Mac.
+    public var threadID: UUID?
 
     public init(
-        id: UUID? = nil, name: String, projectID: UUID, prompt: String, recurrence: RemoteTaskRecurrence?, isPaused: Bool = false
+        id: UUID? = nil, name: String, projectID: UUID, prompt: String, recurrence: RemoteTaskRecurrence?, isPaused: Bool = false,
+        threadID: UUID? = nil
     ) {
+        self.threadID = threadID
         self.id = id
         self.name = name
         self.projectID = projectID
@@ -195,4 +218,63 @@ public struct RemoteScheduledTaskCommand: Codable, Hashable, Sendable {
         self.taskID = taskID
         self.action = action
     }
+}
+
+// MARK: - Grouping
+
+/// Where a scheduled task's runs go, which the phone's list groups by, as the Mac's Scheduled panel does.
+public enum RemoteScheduleOwner: Hashable, Sendable {
+    case bot(UUID)
+    case thread(UUID)
+    /// A project task: each run starts a new thread there.
+    case project(UUID)
+
+    public init(_ task: RemoteScheduledTask) {
+        if let bot = task.botID {
+            self = .bot(bot)
+        } else if let thread = task.threadID {
+            self = .thread(thread)
+        } else {
+            self = .project(task.projectID)
+        }
+    }
+
+    /// Tasks grouped by owner: the group with the soonest run first, and in each group the soonest task first. Paused
+    /// tasks and tasks without a next run sort after the others, by name.
+    public static func groups(_ tasks: [RemoteScheduledTask]) -> [(owner: RemoteScheduleOwner, tasks: [RemoteScheduledTask])] {
+        func next(_ task: RemoteScheduledTask) -> Date { task.isPaused ? .distantFuture : task.nextRunAt ?? .distantFuture }
+        var order: [RemoteScheduleOwner] = []
+        var byOwner: [RemoteScheduleOwner: [RemoteScheduledTask]] = [:]
+        for task in tasks {
+            let owner = RemoteScheduleOwner(task)
+            if byOwner[owner] == nil { order.append(owner) }
+            byOwner[owner, default: []].append(task)
+        }
+        let grouped = order.map { owner in
+            (owner: owner, tasks: byOwner[owner, default: []].sorted {
+                next($0) == next($1) ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : next($0) < next($1)
+            })
+        }
+        return grouped.enumerated().sorted { lhs, rhs in
+            let left = lhs.element.tasks.first.map(next) ?? .distantFuture
+            let right = rhs.element.tasks.first.map(next) ?? .distantFuture
+            return left == right ? lhs.offset < rhs.offset : left < right
+        }.map(\.element)
+    }
+}
+
+extension RemoteThreadSummary {
+    /// The next run, as short as the thread's clock can say it: "9:00" today, "Tue 9:00" within the week, a date further
+    /// out. Nil when the thread has no active schedule.
+    public func compactNextRun(now: Date = Date(), calendar: Calendar = .current) -> String? {
+        guard let date = nextScheduledRun else { return nil }
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if calendar.isDate(date, inSameDayAs: now) { return time }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0
+        if (1...6).contains(days) { return date.formatted(.dateTime.weekday(.abbreviated)) + " " + time }
+        return date.formatted(.dateTime.month(.abbreviated).day())
+    }
+
+    /// Whether the thread has schedules, for the clock in its header.
+    public var hasSchedules: Bool { (scheduleCount ?? 0) > 0 }
 }
