@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var addingHostTo: SavedMac?
     @State private var newHost = ""
     @State private var forgetting: SavedMac?
+    @AppStorage("composer.returnSends") private var returnSends = true
 
     var body: some View {
         Form {
@@ -107,6 +108,12 @@ struct SettingsView: View {
                 if appearance.followsMac, let server = client.server {
                     Text("Following \(server.name): \(RemotePalette.dark(server.theme.darkThemeID).name) and \(RemotePalette.light(server.theme.lightThemeID).name).")
                 }
+            }
+
+            Section {
+                Toggle("Send with Return", isOn: $returnSends)
+            } footer: {
+                Text("With a hardware keyboard. Shift-Return starts a new line.")
             }
 
             NotificationsSection()

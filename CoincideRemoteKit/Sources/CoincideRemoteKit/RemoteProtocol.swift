@@ -251,6 +251,9 @@ public enum RemoteRequest: Hashable, Sendable {
     /// The Mac reads only what that item references; video gets a thumbnail of its first frame, and audio and
     /// interactive pages none. An older Mac answers `unsupported`.
     case media(threadID: UUID, itemID: UUID, index: Int, full: Bool)
+    /// Suggestions for the word being typed: `@` and a query for files in the thread's folder, `/` for the commands
+    /// and skills its agent offers there. Answers `completions`. An older Mac answers `unsupported`.
+    case completions(threadID: UUID, trigger: String, query: String)
 
     /// The request's name on the wire.
     public var name: String {
@@ -286,6 +289,7 @@ public enum RemoteRequest: Hashable, Sendable {
         case .settingsAction: "settingsAction"
         case .setProjectExpanded: "setProjectExpanded"
         case .media: "media"
+        case .completions: "completions"
         }
     }
 }
@@ -312,6 +316,8 @@ private struct RequestBody: Codable {
     var expanded: Bool?
     var index: Int?
     var full: Bool?
+    var trigger: String?
+    var query: String?
 }
 
 public enum RemoteProtocolError: Error, Equatable, Sendable {
@@ -416,6 +422,9 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
             request = .media(
                 threadID: try need(f.threadID, "threadID"), itemID: try need(f.itemID, "itemID"), index: try need(f.index, "index"),
                 full: f.full ?? false)
+        case "completions":
+            let f = try fields()
+            request = .completions(threadID: try need(f.threadID, "threadID"), trigger: try need(f.trigger, "trigger"), query: f.query ?? "")
         default: throw RemoteProtocolError.unsupported(type)
         }
     }
@@ -475,6 +484,10 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
             f.itemID = itemID
             f.index = index
             f.full = full
+        case .completions(let threadID, let trigger, let query):
+            f.threadID = threadID
+            f.trigger = trigger
+            f.query = query
         case .threadAction(let threadID, let action):
             f.threadID = threadID
             f.action = action
@@ -510,6 +523,8 @@ public enum RemoteResult: Hashable, Sendable {
     case settings(RemoteSettingsSnapshot)
     /// A preview's pixels. Only a phone that asked (`media`) ever gets it.
     case media(RemoteMediaData)
+    /// Suggestions for the composer. Only a phone that asked (`completions`) ever gets them.
+    case completions([RemoteCompletion])
 
     var name: String {
         switch self {
@@ -526,6 +541,7 @@ public enum RemoteResult: Hashable, Sendable {
         case .bot: "bot"
         case .settings: "settings"
         case .media: "media"
+        case .completions: "completions"
         }
     }
 }
@@ -646,6 +662,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case "bot": result = .bot(try body(ValueBody<UUID>.self).value)
             case "settings": result = .settings(try body(RemoteSettingsSnapshot.self))
             case "media": result = .media(try body(RemoteMediaData.self))
+            case "completions": result = .completions(try body(ValueBody<[RemoteCompletion]>.self).value)
             default:
                 self = .unknown(type)
                 return
@@ -701,6 +718,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case .bot(let id): try container.encode(ValueBody(value: id), forKey: .body)
             case .settings(let snapshot): try container.encode(snapshot, forKey: .body)
             case .media(let media): try container.encode(media, forKey: .body)
+            case .completions(let completions): try container.encode(ValueBody(value: completions), forKey: .body)
             }
         case .event(let event):
             try container.encode("event", forKey: .kind)

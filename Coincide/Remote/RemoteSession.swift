@@ -294,6 +294,13 @@ final class RemoteSession {
                         self.respond(id, .media(try await self.adapter.media(threadID, itemID: itemID, index: index, full: full)))
                     } catch { self.fail(id, Self.remote(error)) }
                 }
+            case .completions(let threadID, let trigger, let query):
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        self.respond(id, .completions(try await self.adapter.completions(threadID, trigger: trigger, query: query)))
+                    } catch { self.fail(id, Self.remote(error)) }
+                }
             case .setProjectExpanded(let projectID, let expanded):
                 try adapter.setProjectExpanded(projectID, expanded: expanded)
                 respond(id, .ok)

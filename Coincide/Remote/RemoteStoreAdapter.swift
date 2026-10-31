@@ -394,6 +394,40 @@ final class RemoteStoreAdapter {
         return RemoteMediaData(data: data, width: image.width, height: image.height, isFull: full)
     }
 
+    /// Suggestions for the composer's word, as the Mac's composer offers them: files in the thread's folder for `@`
+    /// (`ComposerFileIndex`, which honors .gitignore), and the commands and skills its agent offers there for `/`.
+    func completions(_ threadID: UUID, trigger: String, query: String) async throws -> [RemoteCompletion] {
+        guard let thread = store.summary(threadID) else {
+            throw RemoteError(.notFound, String(localized: "That thread no longer exists."))
+        }
+        let query = String(query.prefix(200))
+        switch trigger {
+        case "@":
+            guard let root = store.workingDirectory(for: threadID) else { return [] }
+            let files = await ComposerFileIndex.shared.search(query, in: root, limit: RemoteCompletion.maxResults)
+            return files.map { file in
+                RemoteCompletion(
+                    kind: file.isDirectory ? .folder : .file, insert: ComposerTrigger.mention(file.path) + " ", title: file.name,
+                    detail: file.parent.isEmpty ? nil : file.parent)
+            }
+        case "/":
+            let commands = runner.commands(threadID, provider: thread.selection.provider)
+            let matches = commands.filter { query.isEmpty || $0.name.localizedStandardContains(query) }
+                .sorted { lhs, rhs in
+                    let left = lhs.name.lowercased().hasPrefix(query.lowercased())
+                    let right = rhs.name.lowercased().hasPrefix(query.lowercased())
+                    return left != right ? left : lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+                }
+            return matches.prefix(RemoteCompletion.maxResults).map { command in
+                RemoteCompletion(
+                    kind: command.kind == .skill ? .skill : .command, insert: "/\(command.name) ", title: "/\(command.name)",
+                    detail: command.description ?? command.argumentHint)
+            }
+        default:
+            throw RemoteError(.badRequest, "Unknown completion trigger.")
+        }
+    }
+
     /// A video's first frame, for its thumbnail. Local files only.
     @concurrent nonisolated static func firstFrame(_ url: URL?, maxPixelSize: Int) async -> CGImage? {
         guard let url, url.isFileURL else { return nil }

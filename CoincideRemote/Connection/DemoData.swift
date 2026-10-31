@@ -113,6 +113,24 @@ enum DemoData {
             pinnedOrder: [])
     }
 
+    /// What the Mac would suggest for `@` and `/` words.
+    static func completions(_ word: String) -> [RemoteCompletion] {
+        if word.hasPrefix("/") {
+            return [
+                RemoteCompletion(kind: .command, insert: "/review ", title: "/review", detail: "Review the current changes"),
+                RemoteCompletion(kind: .command, insert: "/compact ", title: "/compact", detail: "Summarize the conversation to save context"),
+                RemoteCompletion(kind: .skill, insert: "/simplify ", title: "/simplify", detail: "Simplify the changed code"),
+                RemoteCompletion(kind: .command, insert: "/init ", title: "/init", detail: "Write a CLAUDE.md for this project"),
+            ]
+        }
+        return [
+            RemoteCompletion(kind: .file, insert: "@CoincideRemote/UI/ComposerView.swift ", title: "ComposerView.swift", detail: "CoincideRemote/UI"),
+            RemoteCompletion(kind: .file, insert: "@CoincideRemote/UI/ThreadView.swift ", title: "ThreadView.swift", detail: "CoincideRemote/UI"),
+            RemoteCompletion(kind: .folder, insert: "@CoincideRemote/Connection ", title: "Connection", detail: "CoincideRemote"),
+            RemoteCompletion(kind: .file, insert: "@Coincide/UI/Composer/ComposerViewController.swift ", title: "ComposerViewController.swift", detail: "Coincide/UI/Composer"),
+        ]
+    }
+
     /// A stand-in picture for media previews: a soft gradient with a symbol, wide or tall by index.
     static func picture(_ index: Int, full: Bool) -> UIImage {
         let size = index % 2 == 0 ? CGSize(width: 640, height: 400) : CGSize(width: 360, height: 520)

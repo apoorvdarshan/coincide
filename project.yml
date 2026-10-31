@@ -296,7 +296,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Coincide Remote
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
-        INFOPLIST_KEY_NSCameraUsageDescription: Coincide Remote uses the camera to scan the pairing code your Mac shows.
+        INFOPLIST_KEY_NSCameraUsageDescription: Coincide Remote uses the camera to scan the pairing code your Mac shows and to take photos you attach.
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Coincide Remote finds and connects to Coincide on your Macs over the local network.
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Coincide Remote attaches the photos you pick to your messages.
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Coincide Remote saves the pictures you choose to your photo library.

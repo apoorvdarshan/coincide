@@ -11,6 +11,14 @@ struct ComposerView: View {
     @State private var photos: [PhotosPickerItem] = []
     @State private var isSending = false
     @State private var isDropTargeted = false
+    @State private var showsPhotos = false
+    @State private var showsCamera = false
+    @State private var showsFiles = false
+    /// Suggestions for the `@` or `/` word being typed, from the Mac.
+    @State private var suggestions: [RemoteCompletion] = []
+    /// Where a message sent while the turn runs goes, when the user picked other than the Mac's setting.
+    @State private var delivery: String?
+    @AppStorage("composer.returnSends") private var returnSends = true
     @FocusState private var focused: Bool
 
     private var draft: Binding<ComposerDraft> {
@@ -19,8 +27,12 @@ struct ComposerView: View {
 
     private var summary: RemoteThreadSummary? { model.summary }
 
+    /// The Mac's follow-up setting, `steer` or `queue`, unless the user picked the other one for this message.
+    private var followUp: String { delivery ?? client.server?.followUpBehavior ?? "steer" }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if !suggestions.isEmpty, completionWord != nil { suggestionList }
             if !draft.wrappedValue.images.isEmpty { attachmentStrip }
             TextField(placeholder, text: draft.text, axis: .vertical)
                 .lineLimit(1...8)
@@ -31,11 +43,22 @@ struct ComposerView: View {
                 .padding(.horizontal, 6)
                 .padding(.top, 6)
                 .accessibilityLabel(Text("Message"))
+                // A hardware keyboard sends with Return, as on the Mac; Shift-Return adds a line.
+                .onKeyPress(.return, phases: .down) { press in
+                    guard returnSends, !press.modifiers.contains(.shift), !press.modifiers.contains(.option) else { return .ignored }
+                    if let first = suggestions.first, completionWord != nil {
+                        complete(first)
+                    } else {
+                        send(alternate: followUp != (client.server?.followUpBehavior ?? "steer"))
+                    }
+                    return .handled
+                }
             // The Mac composer's footer: its menus scroll sideways under a fade, so they never run under the buttons.
             HStack(spacing: 2) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
                         if let summary { ComposerControls(thread: summary) }
+                        if model.turn.isRunning { followUpMenu }
                     }
                 }
                 .mask {
@@ -44,16 +67,27 @@ struct ComposerView: View {
                         LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 18)
                     }
                 }
-                PhotosPicker(selection: $photos, maxSelectionCount: 10, matching: .images) {
-                    Image(systemName: "paperclip")
-                        .font(.body.weight(.medium))
-                        .frame(width: 40, height: 44)
-                        .contentShape(.rect)
-                }
-                .foregroundStyle(theme.secondaryInk)
-                .accessibilityLabel(Text("Attach Photos"))
+                attachMenu
                 sendButton
             }
+        }
+        .task(id: completionWord) { await loadSuggestions() }
+        #if DEBUG
+        // Screenshots of completions without typing: `-CoincideRemoteDemoDraft "@Sour"`.
+        .onAppear {
+            let arguments = ProcessInfo.processInfo.arguments
+            if DemoData.isEnabled, let index = arguments.firstIndex(of: "-CoincideRemoteDemoDraft"), index + 1 < arguments.count {
+                draft.wrappedValue.text = arguments[index + 1]
+            }
+        }
+        #endif
+        .photosPicker(isPresented: $showsPhotos, selection: $photos, maxSelectionCount: 10, matching: .images)
+        .fileImporter(isPresented: $showsFiles, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { importFiles(urls) }
+        }
+        .fullScreenCover(isPresented: $showsCamera) {
+            CameraPicker { data in add(data, name: String(localized: "Photo \(draft.wrappedValue.images.count + 1)")) }
+                .ignoresSafeArea()
         }
         .padding(.horizontal, 8)
         .padding(.bottom, 4)
@@ -74,8 +108,127 @@ struct ComposerView: View {
 
     private var placeholder: String {
         model.turn.isRunning
-            ? (client.server?.followUpBehavior == "queue" ? String(localized: "Queue a follow-up") : String(localized: "Steer the agent"))
-            : summary.map { String(localized: "Ask \(AgentLogo.name($0.selection.provider))") } ?? String(localized: "Ask the agent")
+            ? (followUp == "queue" ? String(localized: "Queue a follow-up") : String(localized: "Steer the agent"))
+            : String(localized: "Ask anything. @ files, / commands")
+    }
+
+    // MARK: Completions
+
+    /// The `@file` or `/command` word at the end of the message, which the Mac completes.
+    private var completionWord: String? {
+        let text = draft.wrappedValue.text
+        guard let last = text.split(separator: " ", omittingEmptySubsequences: false).last.map(String.init),
+            let first = last.first, first == "@" || (first == "/" && !text.dropLast(last.count).contains(where: { !$0.isWhitespace })),
+            !last.contains("\n")
+        else { return nil }
+        return last
+    }
+
+    private func loadSuggestions() async {
+        guard let word = completionWord else {
+            suggestions = []
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(150))
+        guard !Task.isCancelled else { return }
+        #if DEBUG
+        if DemoData.isEnabled {
+            suggestions = DemoData.completions(word)
+            return
+        }
+        #endif
+        let request = RemoteRequest.completions(threadID: model.id, trigger: String(word.prefix(1)), query: String(word.dropFirst()))
+        if case .completions(let found)? = try? await client.request(request, timeout: .seconds(10)), !Task.isCancelled {
+            suggestions = Array(found.prefix(RemoteCompletion.maxResults))
+        } else if !Task.isCancelled {
+            suggestions = []
+        }
+    }
+
+    private func complete(_ completion: RemoteCompletion) {
+        guard let word = completionWord else { return }
+        draft.wrappedValue.text = String(draft.wrappedValue.text.dropLast(word.count)) + completion.insert
+        suggestions = []
+    }
+
+    /// The Mac's suggestion panel: files with their folders, commands with what they do.
+    private var suggestionList: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(suggestions) { completion in
+                    Button { complete(completion) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: Self.symbol(completion.kind))
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(theme.secondaryInk)
+                                .frame(width: 20)
+                            Text(completion.title).font(.subheadline).foregroundStyle(theme.ink).lineLimit(1)
+                            if let detail = completion.detail {
+                                // A folder path keeps its end; a description its start.
+                                Text(detail).font(.caption).foregroundStyle(theme.tertiaryInk).lineLimit(1)
+                                    .truncationMode(completion.kind == .file || completion.kind == .folder ? .head : .tail)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: 44)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(SidebarRowButtonStyle())
+                }
+            }
+        }
+        .frame(maxHeight: 44 * 4.5)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.top, 6)
+        .overlay(alignment: .bottom) { Rectangle().fill(theme.border).frame(height: theme.borderWidth) }
+        .accessibilityLabel(Text("Suggestions"))
+    }
+
+    static func symbol(_ kind: RemoteCompletion.Kind) -> String {
+        switch kind {
+        case .file: "doc"
+        case .folder: "folder"
+        case .command: "command"
+        case .skill: "sparkles"
+        case .unknown: "circle"
+        }
+    }
+
+    // MARK: Attachments and delivery
+
+    /// Photos, the camera and Files, as the Mac's composer takes pictures from anywhere.
+    private var attachMenu: some View {
+        Menu {
+            Button { showsPhotos = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button { showsCamera = true } label: { Label("Take Photo", systemImage: "camera") }
+            }
+            Button { showsFiles = true } label: { Label("Files", systemImage: "folder") }
+        } label: {
+            Image(systemName: "paperclip")
+                .font(.body.weight(.medium))
+                .frame(width: 40, height: 44)
+                .contentShape(.rect)
+        }
+        .foregroundStyle(theme.secondaryInk)
+        .accessibilityLabel(Text("Attach"))
+    }
+
+    /// While a turn runs: whether the message goes into it (steer) or waits for it (queue), as the Mac's footer offers.
+    private var followUpMenu: some View {
+        Menu {
+            Picker("Follow-up", selection: Binding(get: { followUp }, set: { delivery = $0 })) {
+                Label("Steer", systemImage: "arrow.turn.down.right").tag("steer")
+                Label("Queue", systemImage: "text.append").tag("queue")
+            }
+        } label: {
+            ComposerChip(menu: true) {
+                Image(systemName: followUp == "queue" ? "text.append" : "arrow.turn.down.right")
+                Text(followUp == "queue" ? "Queue" : "Steer")
+            }
+        }
+        .disabled(!model.turn.canSteer && followUp != "queue")
     }
 
     @ViewBuilder private var sendButton: some View {
@@ -97,7 +250,7 @@ struct ComposerView: View {
         } else {
             let enabled = !draft.wrappedValue.isEmpty && !isSending
             Button {
-                send(alternate: false)
+                send(alternate: model.turn.isRunning && followUp != (client.server?.followUpBehavior ?? "steer"))
             } label: {
                 Group {
                     if isSending {
@@ -105,7 +258,7 @@ struct ComposerView: View {
                     } else {
                         // While a turn runs, the button says where the message goes: into the turn, or after it.
                         Image(systemName: !model.turn.isRunning ? "arrow.up"
-                            : client.server?.followUpBehavior == "queue" ? "text.append" : "arrow.turn.down.right")
+                            : followUp == "queue" ? "text.append" : "arrow.turn.down.right")
                             .font(.system(size: 15, weight: .bold))
                     }
                 }
@@ -174,9 +327,31 @@ struct ComposerView: View {
             if await client.send(model.id, draft: current, alternate: alternate) {
                 client.drafts[model.id] = nil
                 photos = []
+                delivery = nil
+                suggestions = []
                 model.followsBottom = true
             }
             isSending = false
+        }
+    }
+
+    /// Adds a picture as the Mac takes it: JPEG, at most 2000 pixels, ten at most.
+    private func add(_ data: Data, name: String) {
+        guard let jpeg = ImageShrinker.jpeg(data) else { return }
+        var current = client.drafts[model.id] ?? ComposerDraft()
+        guard current.images.count < 10 else { return }
+        current.images.append(ComposerDraft.Image(name: name, data: jpeg))
+        client.drafts[model.id] = current
+    }
+
+    private func importFiles(_ urls: [URL]) {
+        for url in urls.prefix(10) {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            guard (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map({ $0 <= 64 * 1024 * 1024 }) ?? true,
+                let data = try? Data(contentsOf: url)
+            else { continue }
+            add(data, name: url.lastPathComponent)
         }
     }
 
@@ -200,6 +375,38 @@ struct ComposerView: View {
                 client.drafts[model.id] = current
             }
         }
+    }
+}
+
+/// The camera, for a photo to attach.
+struct CameraPicker: UIViewControllerRepresentable {
+    let take: (Data) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraPicker
+
+        init(_ parent: CameraPicker) { self.parent = parent }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            if let image = info[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.9) { parent.take(data) }
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { parent.dismiss() }
     }
 }
 

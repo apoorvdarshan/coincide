@@ -704,6 +704,38 @@ struct RemoteSessionTests {
         #expect(try RemoteProtocol.makeDecoder().decode(RemoteMedia.self, from: Data(newer.utf8)).kind == .unknown)
     }
 
+    @Test func theComposerCompletesFilesInTheThreadsFolder() async throws {
+        let fixture = fixture("remote-completions")
+        let thread = fixture.store.createThread(in: fixture.project.id)
+        let sources = fixture.folder.url.appendingPathComponent("Sources", isDirectory: true)
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try Data("let a = 1".utf8).write(to: sources.appendingPathComponent("ComposerView.swift"))
+        try Data("let b = 2".utf8).write(to: sources.appendingPathComponent("My Notes.md"))
+
+        let files = try await fixture.adapter.completions(thread.id, trigger: "@", query: "compo")
+        let composer = try #require(files.first { $0.title == "ComposerView.swift" })
+        #expect(composer.kind == .file)
+        #expect(composer.insert == "@Sources/ComposerView.swift ")
+        #expect(composer.detail == "Sources")
+        // Paths with spaces are quoted, as the Mac's composer mentions them.
+        let notes = try await fixture.adapter.completions(thread.id, trigger: "@", query: "notes")
+        #expect(notes.first?.insert == "@\"Sources/My Notes.md\" ")
+        #expect(try await fixture.adapter.completions(thread.id, trigger: "@", query: "").count <= RemoteCompletion.maxResults)
+        // Commands come from the agent; with none installed there are none to offer.
+        #expect(try await fixture.adapter.completions(thread.id, trigger: "/", query: "").allSatisfy { $0.insert.hasPrefix("/") })
+
+        await #expect(throws: RemoteError.self) { try await fixture.adapter.completions(thread.id, trigger: "#", query: "") }
+        await #expect(throws: RemoteError.self) { try await fixture.adapter.completions(UUID(), trigger: "@", query: "") }
+
+        let request = RemoteClientMessage(id: "c", request: .completions(threadID: thread.id, trigger: "@", query: "compo"))
+        let decoded = try RemoteProtocol.makeDecoder().decode(
+            RemoteClientMessage.self, from: RemoteProtocol.makeEncoder().encode(request))
+        #expect(decoded.request == request.request)
+        let result = RemoteServerMessage.response(id: "c", result: .completions(files))
+        #expect(
+            try RemoteProtocol.makeDecoder().decode(RemoteServerMessage.self, from: RemoteProtocol.makeEncoder().encode(result)) == result)
+    }
+
     @Test func backgroundTasksReachThePhoneWithTheTurnAndStayShort() throws {
         let script = String(repeating: "echo building && ", count: 100)
         let command = RemoteStoreAdapter.backgroundTask(
