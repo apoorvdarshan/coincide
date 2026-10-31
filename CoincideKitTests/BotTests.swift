@@ -87,7 +87,7 @@ struct BotStoreTests {
             let json = #"{"id":"\#(UUID().uuidString)","name":"Kept","avatar":{"shape":"\#(shape)","tint":"\#(tint)"}\#(starterField)}"#
             return try JSONDecoder().decode(Bot.self, from: Data(json.utf8))
         }
-        for starter in BotStarter.all {
+        for starter in BotStarter.retired {
             let original = try #require(BotStarter.originalLooks[starter.id])
             let untouched = try decode(starter: starter.id, shape: original.shape, tint: original.tint)
             #expect(untouched.avatar == starter.avatar)
@@ -102,13 +102,19 @@ struct BotStoreTests {
         #expect(try decode(starter: "sunny", shape: "teddy", tint: "sky").avatar == BotAvatar(shape: .teddy, tint: .sky))
     }
 
-    @Test func startersAreCharactersInTheirOwnColorsUnderTheirNames() {
-        #expect(BotStarter.all.map(\.id) == ["sunny", "tuck", "fetch", "quill", "patch"])
-        for starter in BotStarter.all {
+    @Test func theOneStarterIsBruleeTheEverydayHelper() throws {
+        let brulee = try #require(BotStarter.all.first)
+        #expect(BotStarter.all.count == 1)
+        #expect(brulee.id == "brulee" && brulee.name == "Brulee")
+        #expect(brulee.avatar == BotAvatar(character: .brulee) && brulee.avatar.tint == .rose)
+        #expect(brulee.persona == BotStarter.everydayHelper && !brulee.asksForApproval)
+        // The first lineup stays known, by id, for bots made from it.
+        #expect(BotStarter.retired.map(\.id) == ["sunny", "tuck", "fetch", "quill", "patch"])
+        for starter in BotStarter.all + BotStarter.retired {
             #expect(starter.avatar == BotAvatar(character: starter.avatar.shape))
             #expect(starter.name == starter.avatar.shape.defaultName)
         }
-        #expect(Set(BotStarter.all.map(\.avatar.shape)).count == BotStarter.all.count)
+        #expect(Set(BotStarter.retired.map(\.id)).isDisjoint(with: BotStarter.all.map(\.id)))
     }
 
     @Test func characterNamesArePlainASCIIProperNames() {
@@ -135,7 +141,7 @@ struct BotStoreTests {
     @Test func anUnreadableBotIsSkippedAndTheFileCopiedAside() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let good = UUID()
-        let json = #"{"addedStarters":true,"bots":[{"name":"broken"},{"id":"\#(good.uuidString)","name":"Kept"}]}"#
+        let json = #"{"addedStarters":true,"starterLineup":\#(BotStarter.lineup),"bots":[{"name":"broken"},{"id":"\#(good.uuidString)","name":"Kept"}]}"#
         try Data(json.utf8).write(to: directory.appendingPathComponent("bots.json"))
         let store = AppStore(directory: directory)
         #expect(store.bots.map(\.id) == [good])
@@ -149,13 +155,11 @@ struct BotStoreTests {
         store.updateSettings { $0.defaultAccessMode = .fullAccess }
         let selection = ModelSelection(provider: .codex, modelID: "gpt", effort: "medium")
         #expect(store.addStarterBotsIfNeeded(selection: selection))
-        #expect(store.bots.count == BotStarter.all.count)
-        #expect(Set(store.bots.compactMap(\.starterID)) == Set(BotStarter.all.map(\.id)))
-        #expect(store.bots.allSatisfy { $0.selection == selection && !$0.persona.isEmpty })
-        // Starters that change files ask first; the others follow the user's default.
-        #expect(store.bots.first { $0.starterID == "tuck" }?.accessMode == .approval)
-        #expect(store.bots.first { $0.starterID == "sunny" }?.accessMode == .fullAccess)
-        #expect(Set(store.bots.map(\.name)).count == store.bots.count)
+        #expect(store.bots.map(\.name) == ["Brulee"])
+        #expect(store.bots.map(\.starterID) == ["brulee"])
+        #expect(store.bots.allSatisfy { $0.selection == selection && $0.persona == BotStarter.everydayHelper })
+        // The everyday helper follows the user's default access.
+        #expect(store.bots.first?.accessMode == .fullAccess)
 
         let removed = store.bots[0].id
         store.deleteBot(removed, deletingConversations: true)
@@ -163,8 +167,114 @@ struct BotStoreTests {
         store.flush()
         let reopened = AppStore(directory: directory)
         #expect(!reopened.addStarterBotsIfNeeded())
-        #expect(reopened.bots.count == BotStarter.all.count - 1)
+        #expect(reopened.bots.isEmpty)
         #expect(reopened.bot(removed) == nil)
+    }
+
+    // MARK: Starter lineups
+
+    /// Bots as an earlier version saved them: from before starter lineups, in the looks they were saved in.
+    private func writeFirstLineupFile(_ bots: [[String: Any]], addedStarters: Bool = true) throws {
+        let file: [String: Any] = ["addedStarters": addedStarters, "bots": bots]
+        try JSONSerialization.data(withJSONObject: file).write(to: directory.appendingPathComponent("bots.json"))
+    }
+
+    /// A first-lineup starter as it was saved: its first name, its shape and color from before the characters.
+    private func firstLineupStarter(
+        _ starterID: String, id: UUID, name: String? = nil, persona: String? = nil, look: (String, String)? = nil,
+        folder: String? = nil
+    ) throws -> [String: Any] {
+        let starter = try #require(BotStarter.retired.first { $0.id == starterID })
+        let original = try #require(BotStarter.originalLooks[starterID])
+        let look = look ?? original
+        var bot: [String: Any] = [
+            "id": id.uuidString, "name": name ?? starter.formerNames[0], "persona": persona ?? starter.persona,
+            "avatar": ["shape": look.0, "tint": look.1], "selection": ["provider": "claude", "modelID": "default"],
+            "accessMode": starter.asksForApproval ? "approval" : "fullAccess", "interactionMode": "build",
+            "starterID": starterID,
+        ]
+        if let folder { bot["folder"] = folder }
+        return bot
+    }
+
+    /// A conversation for each bot, as opening a bot leaves one; `fill` decides what it holds.
+    private func startConversations(for ids: [UUID], fill: (AppStore, UUID, UUID) -> Void = { _, _, _ in }) throws -> [UUID: UUID] {
+        let store = AppStore(directory: directory)
+        var threads: [UUID: UUID] = [:]
+        for id in ids {
+            store.addBot(Bot(id: id, name: "x", avatar: BotAvatar(character: .alien), persona: "", selection: ModelSelection(provider: .claude, modelID: "default")))
+            let thread = try #require(store.startConversation(with: id))
+            threads[id] = thread.id
+            fill(store, id, thread.id)
+        }
+        store.flush()
+        return threads
+    }
+
+    @Test func untouchedStartersFromTheFirstLineupGiveWayToBrulee() throws {
+        let ids = BotStarter.retired.map { _ in UUID() }
+        let threads = try startConversations(for: ids)
+        try writeFirstLineupFile(try zip(BotStarter.retired, ids).map { try firstLineupStarter($0.id, id: $1) })
+
+        let store = AppStore(directory: directory)
+        #expect(store.bots.isEmpty)
+        // Their conversations were empty, as opening a bot leaves one, so they go too rather than becoming chats.
+        #expect(threads.values.allSatisfy { !store.hasThread($0) })
+        #expect(store.addStarterBotsIfNeeded(selection: ModelSelection(provider: .codex, modelID: "gpt")))
+        #expect(store.bots.map(\.name) == ["Brulee"] && store.bots.first?.avatar == BotAvatar(character: .brulee))
+        store.flush()
+
+        // Once moved, the lineup stays: nothing more goes or comes back.
+        let reopened = AppStore(directory: directory)
+        #expect(reopened.bots.map(\.starterID) == ["brulee"])
+        #expect(!reopened.addStarterBotsIfNeeded())
+        let brulee = try #require(reopened.bots.first)
+        reopened.deleteBot(brulee.id, deletingConversations: true)
+        reopened.flush()
+        let afterDeleting = AppStore(directory: directory)
+        #expect(!afterDeleting.addStarterBotsIfNeeded())
+        #expect(afterDeleting.bots.isEmpty)
+    }
+
+    @Test func startersTheUserUsedOrChangedStayBesideBrulee() throws {
+        let used = UUID(), drafted = UUID(), renamed = UUID(), recolored = UUID(), rewritten = UUID(), moved = UUID()
+        let own = UUID()
+        let threads = try startConversations(for: [used, drafted, renamed, recolored, rewritten, moved]) { store, bot, thread in
+            if bot == used { store.append(TranscriptItem(kind: .user, text: "find me a flight"), to: thread) }
+            if bot == drafted { store.updateThread(thread) { $0.draft = "half a thought" } }
+        }
+        let mine: [String: Any] = [
+            "id": own.uuidString, "name": "Juniper", "persona": "Speak in haiku.", "avatar": ["shape": "teddy", "tint": "mint"],
+        ]
+        try writeFirstLineupFile([
+            try firstLineupStarter("fetch", id: used),
+            try firstLineupStarter("quill", id: drafted),
+            try firstLineupStarter("tuck", id: renamed, name: "Tidy"),
+            try firstLineupStarter("patch", id: recolored, look: ("pebble", "sky")),
+            try firstLineupStarter("sunny", id: rewritten, persona: BotStarter.everydayHelper + " Reply in French."),
+            try firstLineupStarter("sunny", id: moved, folder: "/tmp"),
+            mine,
+        ])
+
+        let store = AppStore(directory: directory)
+        #expect(store.bots.map(\.id) == [used, drafted, renamed, recolored, rewritten, moved, own])
+        #expect(store.bot(renamed)?.name == "Tidy")
+        // A recolored starter keeps its color, on the character its old shape maps to.
+        #expect(store.bot(recolored)?.avatar == BotAvatar(shape: .croissant, tint: .sky))
+        #expect(threads.values.allSatisfy { store.hasThread($0) && store.summary($0)?.botID != nil })
+        #expect(store.addStarterBotsIfNeeded())
+        #expect(store.bots.map(\.name).last == "Brulee" && store.bots.count == 8)
+    }
+
+    @Test func aFileAlreadyOnThisLineupIsLeftAsItIs() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sunny = UUID()
+        var file: [String: Any] = ["addedStarters": true, "bots": [try firstLineupStarter("sunny", id: sunny)]]
+        file["starterLineup"] = BotStarter.lineup
+        try JSONSerialization.data(withJSONObject: file).write(to: directory.appendingPathComponent("bots.json"))
+        let store = AppStore(directory: directory)
+        #expect(store.bots.map(\.id) == [sunny])
+        #expect(!store.addStarterBotsIfNeeded())
     }
 
     @Test func conversationsLiveInTheBotsContainerAndRunInTheBotsFolder() throws {

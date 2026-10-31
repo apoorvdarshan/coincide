@@ -60,7 +60,7 @@ public struct Bot: Codable, Hashable, Sendable, Identifiable {
             let saved = try? container.nestedContainer(keyedBy: LookKeys.self, forKey: .avatar),
             (try? saved.decode(String.self, forKey: .shape)) == original.shape,
             (try? saved.decode(String.self, forKey: .tint)) == original.tint,
-            let starter = BotStarter.all.first(where: { $0.id == starterID })
+            let starter = (BotStarter.all + BotStarter.retired).first(where: { $0.id == starterID })
         {
             avatar = starter.avatar
         }
@@ -206,6 +206,12 @@ public struct BotStarter: Sendable {
     public var persona: String
     /// Starters that change files or settings ask first, whatever the user's default.
     public var asksForApproval: Bool
+    /// Names it was offered under before, so a bot still carrying one counts as untouched (`isUntouched`).
+    var formerNames: [String] = []
+
+    /// The starter lineup this version offers. Bots saved under an earlier one move to it once
+    /// (`AppStore.adoptCurrentStarterLineup`).
+    public nonisolated static let lineup = 2
 
     /// The look each starter had before the characters, as saved (shape, tint), so `Bot` can tell an untouched one.
     nonisolated static let originalLooks: [String: (shape: String, tint: String)] = [
@@ -213,16 +219,29 @@ public struct BotStarter: Sendable {
         "patch": ("pebble", "coral"),
     ]
 
+    /// The everyday helper's standing instructions: Brulee's now, Sunny's in the first lineup.
+    nonisolated static let everydayHelper = """
+        You are a cheerful everyday helper. Answer quick questions, explain things plainly, do small tasks \
+        on this Mac (convert a file, rename a batch of photos, work out a command) and suggest a better \
+        bot or a project thread when a job grows big. Prefer short answers with the key point first.
+        """
+
+    /// One bot to start with; the other characters are there for the bots the user makes.
     public nonisolated static var all: [BotStarter] {
         [
             BotStarter(
+                id: "brulee", name: BotAvatar.Shape.brulee.defaultName, avatar: BotAvatar(character: .brulee),
+                persona: everydayHelper, asksForApproval: false)
+        ]
+    }
+
+    /// The first lineup, no longer offered. Kept so a bot made from one keeps its look, and so one the user never used
+    /// or changed can go when the lineup changes (`isUntouched`).
+    nonisolated static var retired: [BotStarter] {
+        [
+            BotStarter(
                 id: "sunny", name: BotAvatar.Shape.star.defaultName, avatar: BotAvatar(character: .star),
-                persona: """
-                    You are a cheerful everyday helper. Answer quick questions, explain things plainly, do small tasks \
-                    on this Mac (convert a file, rename a batch of photos, work out a command) and suggest a better \
-                    bot or a project thread when a job grows big. Prefer short answers with the key point first.
-                    """,
-                asksForApproval: false),
+                persona: everydayHelper, asksForApproval: false, formerNames: ["Sunny"]),
             BotStarter(
                 id: "tuck", name: BotAvatar.Shape.teddy.defaultName, avatar: BotAvatar(character: .teddy),
                 persona: """
@@ -232,7 +251,7 @@ public struct BotStarter: Sendable {
                     move files to the Trash rather than deleting them for good. Leave app data, Photos, Mail and \
                     hidden folders alone unless asked.
                     """,
-                asksForApproval: true),
+                asksForApproval: true, formerNames: ["Tuck"]),
             BotStarter(
                 id: "fetch", name: BotAvatar.Shape.alien.defaultName, avatar: BotAvatar(character: .alien),
                 persona: """
@@ -240,7 +259,7 @@ public struct BotStarter: Sendable {
                     summarize what you found in a few bullet points with links to the sources. Say how sure you are \
                     and what you could not verify. Do not change files unless asked.
                     """,
-                asksForApproval: false),
+                asksForApproval: false, formerNames: ["Fetch"]),
             BotStarter(
                 id: "quill", name: BotAvatar.Shape.croissant.defaultName, avatar: BotAvatar(character: .croissant),
                 persona: """
@@ -249,7 +268,7 @@ public struct BotStarter: Sendable {
                     Put text meant to be pasted elsewhere in a fenced code block. Never send anything on the user's \
                     behalf.
                     """,
-                asksForApproval: false),
+                asksForApproval: false, formerNames: ["Quill"]),
             BotStarter(
                 id: "patch", name: BotAvatar.Shape.cherry.defaultName, avatar: BotAvatar(character: .cherry),
                 persona: """
@@ -258,8 +277,14 @@ public struct BotStarter: Sendable {
                     explain the cause, show the commands you plan to run, and prefer reversible fixes. Ask before using \
                     sudo, removing packages or editing shell profiles.
                     """,
-                asksForApproval: true),
+                asksForApproval: true, formerNames: ["Patch"]),
         ]
+    }
+
+    /// Whether a bot is still just as this starter made it: its name, instructions, look and folder unchanged.
+    nonisolated func isUntouched(_ bot: Bot) -> Bool {
+        bot.starterID == id && (bot.name == name || formerNames.contains(bot.name)) && bot.persona == persona
+            && bot.avatar == avatar && (bot.folder ?? "").isEmpty
     }
 
     /// A bot made from this starter, running on the user's default agent.
