@@ -12,14 +12,16 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
 
     private let preview = BotAvatarView(size: 56)
     let nameField = ThemedTextField(placeholder: String(localized: "Name"))
-    private let persona = NSTextView()
+    let persona = NSTextView()
     /// The width of the sheet's content, inside its margins.
     private static let contentWidth: CGFloat = 480
     private(set) lazy var personality = BotPersonalitySection(personality: draft.personality, width: Self.contentWidth)
     /// Holds the content, so a sheet taller than the screen scrolls.
     let scroll = NSScrollView()
-    /// The tallest the sheet gets: the screen's room below the window's title bar, with a margin.
+    /// The tallest the sheet gets on the main screen: its room below the window's title bar, with a margin.
     static var maximumHeight: CGFloat { max(420, (NSScreen.main?.visibleFrame.height ?? 900) - 120) }
+    /// The tallest this sheet gets: `maximumHeight` unless a test gives another screen's.
+    private let maximumHeight: CGFloat
     private(set) var shapeButtons: [BotChoiceButton] = []
     private var tintButtons: [BotChoiceButton] = []
     private let modelButton = ComposerControlButton()
@@ -35,9 +37,10 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
         title: isNew ? String(localized: "Create Bot") : String(localized: "Save"), style: .primary, target: self,
         action: #selector(save))
 
-    init(bot: Bot?, store: AppStore = .shared, registry: ProviderRegistry = .shared) {
+    init(bot: Bot?, store: AppStore = .shared, registry: ProviderRegistry = .shared, maximumHeight: CGFloat = BotEditor.maximumHeight) {
         self.store = store
         self.registry = registry
+        self.maximumHeight = maximumHeight
         isNew = bot == nil
         draft = bot ?? Self.newBot(store: store, registry: registry)
         super.init(nibName: nil, bundle: nil)
@@ -200,15 +203,20 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
         scroll.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(scroll)
         let fits = scroll.heightAnchor.constraint(equalTo: document.heightAnchor)
-        // Below the labels' resistance to compression, so the content is never squeezed to fit; it scrolls instead.
-        fits.priority = .init(500)
+        // Above the window's hold on its size (`windowSizeStayPut`, 500), so the sheet grows to its content: at 500 the
+        // two tie, and the sheet AppKit makes from the zero-sized view stays empty, 0 points tall. Below the labels'
+        // resistance to compression (750), so the content is never squeezed to fit; it scrolls instead.
+        fits.priority = .init(NSLayoutConstraint.Priority.windowSizeStayPut.rawValue + 100)
+        let clip = scroll.contentView
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: document.leadingAnchor), stack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
             stack.topAnchor.constraint(equalTo: document.topAnchor), stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
-            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            // Pinned to the top left of the scroll view's clip view, so the content starts at the top.
+            document.leadingAnchor.constraint(equalTo: clip.leadingAnchor), document.topAnchor.constraint(equalTo: clip.topAnchor),
+            document.widthAnchor.constraint(equalTo: clip.widthAnchor),
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: root.topAnchor), scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            fits, scroll.heightAnchor.constraint(lessThanOrEqualToConstant: Self.maximumHeight),
+            fits, scroll.heightAnchor.constraint(lessThanOrEqualToConstant: maximumHeight),
         ])
         view = root
         refresh()
