@@ -154,7 +154,7 @@ struct ConnectionStatusRow: View {
                 Label("Pair Again", systemImage: "qrcode.viewfinder").font(.headline).foregroundStyle(theme.ink)
                 Text(message).font(.caption).foregroundStyle(theme.secondaryInk)
                 Button("Scan Pairing Code") { navigator.showsConnect = true }
-                    .buttonStyle(.glassProminent)
+                    .prominentButton()
             }
             .padding(.vertical, 4)
         case .idle:

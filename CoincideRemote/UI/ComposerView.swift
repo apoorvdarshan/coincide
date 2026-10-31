@@ -92,7 +92,7 @@ struct ComposerView: View {
                     Image(systemName: "arrow.up").fontWeight(.semibold).frame(minWidth: 22, minHeight: 22)
                 }
             }
-            .buttonStyle(.glassProminent)
+            .prominentButton()
             .disabled(draft.wrappedValue.isEmpty || isSending)
             .keyboardShortcut(.return, modifiers: .command)
             .accessibilityLabel(model.turn.isRunning ? Text("Send to the running turn") : Text("Send"))

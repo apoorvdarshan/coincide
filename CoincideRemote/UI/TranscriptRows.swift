@@ -372,7 +372,7 @@ struct ApprovalButtons: View {
     @ViewBuilder private var buttons: some View {
         ForEach(approval.options) { option in
             if option.kind == "allowOnce" {
-                Button(option.label) { choose(option) }.buttonStyle(.glassProminent)
+                Button(option.label) { choose(option) }.prominentButton()
             } else if option.kind == "deny" || option.kind == "cancel" {
                 Button(option.label, role: .destructive) { choose(option) }.buttonStyle(.glass)
             } else {
@@ -441,7 +441,7 @@ struct WaitingBanner: View {
                         .foregroundStyle(.orange)
                         .lineLimit(3)
                     HStack {
-                        Button("Answer…") { answering = item }.buttonStyle(.glassProminent)
+                        Button("Answer…") { answering = item }.prominentButton()
                         Button("Dismiss") {
                             Task { await client.perform(.dismissQuestion(threadID: model.id, itemID: item.id)) }
                         }

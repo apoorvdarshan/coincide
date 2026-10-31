@@ -252,7 +252,7 @@ struct ProjectThreadsView: View {
                     Text("Start one here or on your Mac.")
                 } actions: {
                     Button("New Thread") { Task { await newThread() } }
-                        .buttonStyle(.glassProminent)
+                        .prominentButton()
                         .disabled(!client.isConnected)
                 }
             }
@@ -304,7 +304,7 @@ struct ChatsView: View {
                     Text("Chats are threads outside any project.")
                 } actions: {
                     Button("New Chat") { Task { await newChat() } }
-                        .buttonStyle(.glassProminent)
+                        .prominentButton()
                 }
             }
         }

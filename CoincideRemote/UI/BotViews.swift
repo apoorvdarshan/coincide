@@ -83,7 +83,7 @@ struct BotsView: View {
                 } actions: {
                     if client.workspace.bots != nil {
                         Button("New Bot") { editing = .new }
-                            .buttonStyle(.glassProminent)
+                            .prominentButton()
                     }
                 }
             }
@@ -186,7 +186,7 @@ struct BotConversationsView: View {
                         Button("New Conversation") {
                             Task { if let id = await client.newBotConversation(botID) { navigator.push(.thread(id)) } }
                         }
-                        .buttonStyle(.glassProminent)
+                        .prominentButton()
                         .disabled(!client.isConnected)
                     }
                     .frame(maxWidth: .infinity)
