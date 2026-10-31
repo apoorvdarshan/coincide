@@ -92,18 +92,20 @@ xcodegen generate
 open Coincide.xcodeproj
 ```
 
+SwiftTerm runs a small build plug-in that reads its own repository metadata and terminfo source to generate Swift. Xcode asks once to trust it (Trust & Enable); on the command line, pass `-skipPackagePluginValidation` to `xcodebuild`, as below and in `scripts/`.
+
 `xcodegen generate` first runs `scripts/fetch-cua-driver.sh`, which downloads the pinned Cua Driver release for Computer Use once (it is cached in `~/Library/Caches/Coincide`), checks its checksum and Cua AI's signature, and places it in the gitignored `Vendor/` folder.
 
 Run the unit tests:
 
 ```sh
-xcodebuild -project Coincide.xcodeproj -scheme Coincide test
+xcodebuild -project Coincide.xcodeproj -scheme Coincide -skipPackagePluginValidation test
 ```
 
 Live provider tests talk to the real agent CLIs with your own account, so they only run when you ask:
 
 ```sh
-xcodebuild -project Coincide.xcodeproj -scheme Coincide test TEST_RUNNER_COINCIDE_LIVE_TESTS=1
+xcodebuild -project Coincide.xcodeproj -scheme Coincide -skipPackagePluginValidation test TEST_RUNNER_COINCIDE_LIVE_TESTS=1
 ```
 
 After changing user-facing text, update the string catalog with `scripts/sync-strings.sh`.

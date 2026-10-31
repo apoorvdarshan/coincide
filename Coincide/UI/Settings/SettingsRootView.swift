@@ -238,6 +238,12 @@ struct SettingsSearchResults: View {
                     String(localized: "Navigation"), String(localized: "Shell"), String(localized: "Layout"),
                 ]),
             SettingsSearchEntry(
+                title: String(localized: "GPU rendering"), pane: general, setting: .terminalGPURendering,
+                keywords: [
+                    String(localized: "Terminal"), String(localized: "Metal"), String(localized: "Graphics"),
+                    String(localized: "Performance"), "GPU", "Metal", "SwiftTerm",
+                ]),
+            SettingsSearchEntry(
                 title: String(localized: "Open project folders in"), pane: general, setting: .openIn,
                 keywords: [
                     String(localized: "Open In"), String(localized: "Editor"), "Xcode", "VS Code", "Cursor", "Finder",

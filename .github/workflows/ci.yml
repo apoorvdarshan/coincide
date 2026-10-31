@@ -33,5 +33,5 @@ jobs:
 
       - name: Build and run unit tests
         run: |
-          xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' \
+          xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' -skipPackagePluginValidation \
             -derivedDataPath build/DerivedData test -collect-test-diagnostics never

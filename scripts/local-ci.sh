@@ -61,7 +61,8 @@ run_checks() {
     for fuzzer in $fuzzers; do (cd Fuzz && swift build -q --target "$fuzzer") || return $?; done
     echo "== Unit tests"
     xcodegen generate -q || return $?
-    xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' \
+    # -skipPackagePluginValidation runs SwiftTerm's build plug-in without Xcode's interactive trust prompt (project.yml).
+    xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' -skipPackagePluginValidation \
         -derivedDataPath "$derived" test -collect-test-diagnostics never -quiet
 }
 run_checks >"$log" 2>&1 || status=$?

@@ -52,7 +52,7 @@ jobs:
       # CodeQL only analyzes what it sees compiled, so this is a clean, unsigned build with no cache.
       - name: Build for CodeQL
         run: |
-          xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' \
+          xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' -skipPackagePluginValidation \
             -derivedDataPath build/CodeQL build CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO
 
       - name: Perform CodeQL analysis

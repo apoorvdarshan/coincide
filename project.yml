@@ -11,8 +11,11 @@ options:
 packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
-    # 1.19 and later run a build-tool plug-in that xcodebuild refuses without -skipPackagePluginValidation.
-    exactVersion: 1.18.0
+    # Since 1.19 SwiftTerm runs a build-tool plug-in (SwiftTermBuildInfoPlugin): it reads SwiftTerm's own Git metadata
+    # and terminfo source and writes generated Swift into its work folder, with no network access. xcodebuild runs
+    # package plug-ins only after an interactive trust prompt or with -skipPackagePluginValidation, so every xcodebuild
+    # in scripts/ and .github/ passes that flag. Review the plug-in again before moving this pin.
+    exactVersion: 1.99.2
   # The remote protocol, pairing and theme palettes, shared by the Mac app and Coincide Remote on iOS.
   CoincideRemoteKit:
     path: CoincideRemoteKit

@@ -69,6 +69,11 @@ struct GeneralSettingsView: View {
                                 : String(localized: "The terminal opens on the right, beside the diff and the browser preview. Its button is with theirs at the top right."))
                     }
                     .settingsRevealable(.terminalPlacement, highlighted: highlighted)
+                    Toggle(isOn: model.binding(\.terminalGPURendering)) {
+                        Text("GPU rendering")
+                        Text("The terminal draws its text with Metal on the graphics processor. Turn this off to draw with the CPU instead.")
+                    }
+                    .settingsRevealable(.terminalGPURendering, highlighted: highlighted)
                     OpenInSettingsRow(selection: model.binding(\.preferredOpenTarget))
                         .settingsRevealable(.openIn, highlighted: highlighted)
                 }
@@ -273,6 +278,7 @@ struct GeneralSettingsView: View {
         settings.darkTheme = defaults.darkTheme
         settings.lightTheme = defaults.lightTheme
         settings.terminalPlacement = defaults.terminalPlacement
+        settings.terminalGPURendering = defaults.terminalGPURendering
         settings.preferredOpenTarget = defaults.preferredOpenTarget
         settings.sendOnReturn = defaults.sendOnReturn
         settings.followUpBehavior = defaults.followUpBehavior
