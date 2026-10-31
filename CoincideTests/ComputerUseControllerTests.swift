@@ -125,6 +125,34 @@ struct ComputerUseControllerTests {
         #expect(cursor.hides > beforeOff)
     }
 
+    @Test func anIdleHelperStopsAndTheAppForgetsItsSessionsUntilTheNextRequest() async throws {
+        let runtime = ComputerUseRuntime(executable: driver.executable, requestTimeout: 5, idleTimeout: 0.4, releaseGrace: 0.1)
+        let idle = ComputerUseController(
+            store: AppStore(directory: try folder.folder("idle-data")),
+            bridge: ComputerUseBridge(directory: folder.url.appendingPathComponent("idle-bridge", isDirectory: true)),
+            runtime: runtime, cursor: cursor)
+        idle.accessibilityCheck = { true }
+        idle.screenRecordingCheck = { false }
+        defer { idle.shutdown() }
+        idle.enabled = true
+        let id = UUID()
+        let access = try await idle.enableAccess(for: id)
+        _ = try await idle.perform(.call(name: "click", arguments: ["x": 10, "y": 20]), threadID: id, directory: access.directory)
+        #expect(idle.activeThreads == [id])
+        #expect(idle.isRunning)
+        let hides = cursor.hides
+        for _ in 0..<150 where runtime.isRunning { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(!runtime.isRunning)
+        #expect(!idle.isRunning)
+        #expect(idle.activeThreads.isEmpty)
+        #expect(idle.desktopOwner == nil)
+        #expect(cursor.hides > hides)
+        // The thread keeps its capability; its next request starts the helper again without an error.
+        _ = try await idle.perform(.call(name: "list_windows", arguments: [:]), threadID: id, directory: access.directory)
+        #expect(idle.activeThreads == [id])
+        #expect(idle.lastError == nil)
+    }
+
     @Test func withoutAccessibilityNothingReachesTheHelper() async throws {
         defer { controller.shutdown() }
         controller.accessibilityCheck = { false }

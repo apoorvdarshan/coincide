@@ -205,4 +205,88 @@ struct ComputerUseRuntimeTests {
         let response = try await runtime.call(threadID: other, name: "list_windows", arguments: [:])
         #expect(response.at("structuredContent.session")?.string == "coincide-" + other.uuidString.lowercased())
     }
+
+    // MARK: Idle
+
+    @Test func anIdleHelperStopsAndTheNextRequestStartsItAgain() async throws {
+        let helper = try FakeComputerUseDriver()
+        let runtime = ComputerUseRuntime(executable: helper.executable, idleTimeout: 1, releaseGrace: 0.1)
+        defer { runtime.stop() }
+        var idleStops = 0
+        runtime.onIdleStop = { idleStops += 1 }
+        let id = UUID()
+        _ = try await runtime.call(threadID: id, name: "list_windows", arguments: [:])
+        let socket = try #require(helper.events.first { $0["event"]?.string == "serve" }?["socket"]?.string)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(runtime.isRunning, "The helper stopped before the idle timeout.")
+        try await waitUntil { !runtime.isRunning }
+        #expect(idleStops == 1)
+        #expect(!FileManager.default.fileExists(atPath: socket))
+        let again = try await runtime.call(threadID: id, name: "list_windows", arguments: [:])
+        #expect(again.at("structuredContent.session")?.string == "coincide-" + id.uuidString.lowercased())
+        #expect(helper.events.filter { $0["event"]?.string == "serve" }.count == 2)
+        #expect(helper.events.filter { $0["name"]?.string == "start_session" }.count == 2)
+    }
+
+    @Test func everyRequestRestartsTheIdleCountdown() async throws {
+        let helper = try FakeComputerUseDriver()
+        let runtime = ComputerUseRuntime(executable: helper.executable, idleTimeout: 1.2, releaseGrace: 0.1)
+        defer { runtime.stop() }
+        let id = UUID()
+        _ = try await runtime.call(threadID: id, name: "list_windows", arguments: [:])
+        for _ in 0..<5 {
+            try await Task.sleep(for: .milliseconds(250))
+            _ = try await runtime.call(threadID: id, name: "list_windows", arguments: [:])
+            #expect(runtime.isRunning)
+        }
+        #expect(helper.events.filter { $0["event"]?.string == "serve" }.count == 1)
+    }
+
+    @Test func aRunningRequestIsNeverStoppedForIdleness() async throws {
+        let helper = try FakeComputerUseDriver()
+        let runtime = ComputerUseRuntime(executable: helper.executable, requestTimeout: 5, idleTimeout: 0.2, releaseGrace: 0.1)
+        defer { runtime.stop() }
+        var idleStops = 0
+        runtime.onIdleStop = { idleStops += 1 }
+        let id = UUID()
+        let pending = Task {
+            try await runtime.call(threadID: id, name: "get_window_state", arguments: ["pid": 1, "window_id": 1, "query": "hang"])
+        }
+        try await helper.waitFor { $0.contains { $0.at("arguments.query")?.string == "hang" } }
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(runtime.isRunning)
+        #expect(idleStops == 0)
+        pending.cancel()
+        _ = try? await pending.value
+        // The cancelled call ended the only connection, so the helper stops after the short grace.
+        try await waitUntil { !runtime.isRunning }
+        #expect(idleStops == 1)
+    }
+
+    @Test func releasingTheLastThreadStopsTheHelperSoonButNotWhileAnotherHasASession() async throws {
+        let helper = try FakeComputerUseDriver()
+        let runtime = ComputerUseRuntime(executable: helper.executable, idleTimeout: 30, releaseGrace: 0.2)
+        defer { runtime.stop() }
+        let a = UUID(), b = UUID()
+        _ = try await runtime.call(threadID: a, name: "list_windows", arguments: [:])
+        _ = try await runtime.call(threadID: b, name: "list_windows", arguments: [:])
+        runtime.end(threadID: a)
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(runtime.isRunning, "Another thread still has a session.")
+        runtime.end(threadID: b)
+        try await helper.waitFor { $0.filter { $0["name"]?.string == "end_session" }.count == 2 }
+        try await waitUntil { !runtime.isRunning }
+    }
+}
+
+private func waitUntil(timeout: Duration = .seconds(3), _ condition: () -> Bool) async throws {
+    let clock = ContinuousClock()
+    let deadline = clock.now + timeout
+    while !condition() {
+        guard clock.now < deadline else {
+            Issue.record("The condition never became true.")
+            return
+        }
+        try await Task.sleep(for: .milliseconds(20))
+    }
 }
