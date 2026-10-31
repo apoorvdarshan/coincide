@@ -30,33 +30,37 @@ struct VoiceSettingsView: View {
                         Text("Shows a microphone in the composer. Coincide asks for microphone access the first time you dictate.")
                     }
                     .settingsRevealable(.voiceEnabled, highlighted: highlighted)
-                    ThemedPicker(
-                        selection: model.binding(\.voice.engine),
-                        options: DictationEngineKind.allCases.map { .init($0, $0.displayName) }
-                    ) {
-                        Text("Engine")
-                        Text(engineDescription(settings.engine))
-                    }
-                    .settingsRevealable(.voiceEngine, highlighted: highlighted)
-                    ThemedPicker(
-                        selection: model.binding(\.voice.language),
-                        options: ([DictationLanguage.automatic] + DictationLanguage.identifiers).map {
-                            .init($0, DictationLanguage.displayName($0))
+                    // Only the rows below follow the switch; disabling the whole section also disabled the switch,
+                    // so dictation couldn't be turned back on.
+                    Group {
+                        ThemedPicker(
+                            selection: model.binding(\.voice.engine),
+                            options: DictationEngineKind.allCases.map { .init($0, $0.displayName) }
+                        ) {
+                            Text("Engine")
+                            Text(engineDescription(settings.engine))
                         }
-                    ) {
-                        Text("Language")
-                        Text(
-                            settings.engine == .apple
-                                ? "Automatic uses your Mac’s language." : "Automatic lets the engine detect the language you speak.")
+                        .settingsRevealable(.voiceEngine, highlighted: highlighted)
+                        ThemedPicker(
+                            selection: model.binding(\.voice.language),
+                            options: ([DictationLanguage.automatic] + DictationLanguage.identifiers).map {
+                                .init($0, DictationLanguage.displayName($0))
+                            }
+                        ) {
+                            Text("Language")
+                            Text(
+                                settings.engine == .apple
+                                    ? "Automatic uses your Mac’s language." : "Automatic lets the engine detect the language you speak.")
+                        }
+                        .settingsRevealable(.voiceLanguage, highlighted: highlighted)
+                        Toggle(isOn: model.binding(\.voice.sendsWhenStopped)) {
+                            Text("Send when I stop")
+                            Text("Sends the message as soon as dictation ends. Off, the text waits in the composer for you to check.")
+                        }
+                        .settingsRevealable(.voiceSendWhenStopped, highlighted: highlighted)
                     }
-                    .settingsRevealable(.voiceLanguage, highlighted: highlighted)
-                    Toggle(isOn: model.binding(\.voice.sendsWhenStopped)) {
-                        Text("Send when I stop")
-                        Text("Sends the message as soon as dictation ends. Off, the text waits in the composer for you to check.")
-                    }
-                    .settingsRevealable(.voiceSendWhenStopped, highlighted: highlighted)
+                    .disabled(!settings.isEnabled)
                 }
-                .disabled(!settings.isEnabled)
 
                 Section("Keyboard Shortcut") {
                     shortcutRows
