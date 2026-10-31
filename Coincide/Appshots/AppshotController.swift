@@ -117,6 +117,12 @@ final class AppshotController {
 
     var shortcut: KeyShortcut? { settings.shortcut?.keyShortcut }
 
+    /// While Settings records a new shortcut the current one is let go, so typing it records it instead of taking an
+    /// appshot.
+    @ObservationIgnored var isRecordingShortcut = false {
+        didSet { if isRecordingShortcut != oldValue { apply() } }
+    }
+
     /// Records the shortcut the user typed (with its key code), or removes it.
     func setShortcut(_ shortcut: KeyShortcut?, keyCode: UInt16?) {
         update { settings in
@@ -161,14 +167,15 @@ final class AppshotController {
     /// Follows the saved settings: installs what notices the trigger while Appshots is on, and nothing while it's off.
     private func apply() {
         if settings != store.settings.appshots { settings = store.settings.appshots }
-        refreshPermissions()
+        // Off, any settings change costs nothing more; the pane reads the permissions itself (`refresh()`).
+        if settings.enabled { refreshPermissions() }
         let wanted: Installation? =
             if !settings.enabled {
                 nil
             } else if settings.trigger == .bothCommandKeys {
                 Installation(watch: .bothCommandKeys(accessibility: accessibilityGranted))
             } else {
-                Installation(watch: settings.activeShortcut.map { .shortcut($0) })
+                Installation(watch: isRecordingShortcut ? nil : settings.activeShortcut.map { .shortcut($0) })
             }
         guard wanted != installation else { return }
         uninstall()

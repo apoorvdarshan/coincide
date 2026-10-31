@@ -127,7 +127,10 @@ struct AppshotsSettingsView: View {
         return LabeledContent {
             ShortcutRecorder(
                 shortcut: controller.shortcut, commandTitle: String(localized: "Take an appshot"),
-                onRecordingChange: { isRecording = $0 },
+                onRecordingChange: { recording in
+                    isRecording = recording
+                    controller.isRecordingShortcut = recording
+                },
                 onRecordKeyCode: { shortcut, keyCode in controller.setShortcut(shortcut, keyCode: keyCode) },
                 onChange: { shortcut in if shortcut == nil { controller.setShortcut(nil, keyCode: nil) } }
             )
