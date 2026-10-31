@@ -165,6 +165,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var terminalGPURendering: Bool
     /// The terminal's background lets the blurred desktop show through. Off by default, as Coincide's surfaces are opaque.
     public var terminalTranslucentBackground: Bool
+    /// The pointing-hand cursor shows over what can be clicked (buttons, links, tabs, list rows), as on the web, instead
+    /// of the arrow (`PointerCursor`). On by default; off leaves every cursor as macOS sets it.
+    public var showsPointingHand: Bool
     /// Bundle identifier of the app the "Open In" button opens project folders in, picked in Settings › General or from
     /// any Open In menu; nil for automatic, the first installed editor. (Earlier versions kept it in the interface
     /// state, `UIState`, from where it moves here once.)
@@ -238,6 +241,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         terminalPlacement = .bottom
         terminalGPURendering = true
         terminalTranslucentBackground = false
+        showsPointingHand = true
         preferredOpenTarget = nil
         darkTheme = "carbon"
         lightTheme = "carbon-light"
@@ -300,6 +304,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         terminalPlacement = value(.terminalPlacement, defaults.terminalPlacement)
         terminalGPURendering = value(.terminalGPURendering, defaults.terminalGPURendering)
         terminalTranslucentBackground = value(.terminalTranslucentBackground, defaults.terminalTranslucentBackground)
+        showsPointingHand = value(.showsPointingHand, defaults.showsPointingHand)
         preferredOpenTarget = value(.preferredOpenTarget, defaults.preferredOpenTarget)
         darkTheme = value(.darkTheme, defaults.darkTheme)
         lightTheme = value(.lightTheme, defaults.lightTheme)

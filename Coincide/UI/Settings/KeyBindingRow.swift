@@ -43,6 +43,7 @@ struct KeyBindingRow: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
+                .pointerCursor()
                 .help(Text("Reset or remove the shortcut"))
                 .accessibilityLabel(Text("More options for \(command.title)"))
             }

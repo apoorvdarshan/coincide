@@ -707,7 +707,7 @@ final class TranscriptThumbnailView: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .pointingHand)
+        addPointerCursorRect()
     }
 
     override func mouseUp(with event: NSEvent) {

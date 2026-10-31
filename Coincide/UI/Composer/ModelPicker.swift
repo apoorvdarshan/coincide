@@ -616,6 +616,10 @@ final class ModelPickerRowView: NSView {
         needsLayout = true
     }
 
+    override func resetCursorRects() {
+        addPointerCursorRect()
+    }
+
     /// Whether a point (in the row's coordinates) hits the star, with some room around it.
     func starContains(_ point: NSPoint) -> Bool {
         star.frame.insetBy(dx: -6, dy: -7).contains(point)
@@ -700,7 +704,7 @@ final class PickerTag: NSView {
 }
 
 /// A tab in the picker: an agent's logo (dimmed when the agent is not set up) or the Favorites star, filled while shown.
-final class PickerTabButton: NSControl {
+final class PickerTabButton: NSControl, PointerCursorControl {
     var isSelected = false {
         didSet { if isSelected != oldValue { needsDisplay = true } }
     }
@@ -772,7 +776,7 @@ final class PickerTabButton: NSControl {
 }
 
 /// A rounded choice chip, filled while chosen, such as a reasoning effort.
-final class PickerChip: NSControl {
+final class PickerChip: NSControl, PointerCursorControl {
     private let title: String
     private let isChosen: Bool
     private let run: () -> Void

@@ -579,7 +579,7 @@ final class TranscriptDisclosureHeader: NSView {
     }
 
     override func resetCursorRects() {
-        if isExpandable { addCursorRect(bounds, cursor: .pointingHand) }
+        addPointerCursorRect(clickable: isExpandable)
     }
 
     override func mouseDown(with event: NSEvent) {

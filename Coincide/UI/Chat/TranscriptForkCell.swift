@@ -156,8 +156,4 @@ final class TranscriptForkPill: NSButton {
     override func mouseExited(with event: NSEvent) {
         isHovered = false
     }
-
-    override func resetCursorRects() {
-        if isEnabled { addCursorRect(bounds, cursor: .pointingHand) }
-    }
 }

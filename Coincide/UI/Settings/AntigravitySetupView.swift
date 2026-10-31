@@ -57,6 +57,7 @@ private struct AntigravityRuntimeSection: View {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.borderless)
+                        .pointerCursor()
                         .disabled(signIn.isActive || runtime.leaseCount > 0)
                         .help(Text("Remove Downloaded Runtime"))
                         .accessibilityLabel(Text("Remove Downloaded Runtime"))
@@ -279,6 +280,7 @@ private struct AntigravityAccountSection: View {
                 Image(systemName: "doc.on.doc")
             }
             .buttonStyle(.borderless)
+            .pointerCursor()
             .help(Text("Copy Sign-in Link"))
             .accessibilityLabel(Text("Copy Sign-in Link"))
         }

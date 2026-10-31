@@ -82,6 +82,10 @@ final class ShortcutRecorderView: NSView {
 
     // MARK: Starting and stopping
 
+    override func resetCursorRects() {
+        addPointerCursorRect()
+    }
+
     override func mouseDown(with event: NSEvent) {
         if isRecording {
             stopRecording()

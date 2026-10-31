@@ -714,6 +714,16 @@ final class ThemedMenuRowView: NSView {
             setAccessibilityEnabled(item.isEnabled)
         }
         needsLayout = true
+        window?.invalidateCursorRects(for: self)
+    }
+
+    /// The pointing hand over the items that can be chosen and the way back (`PointerCursor`).
+    override func resetCursorRects() {
+        switch kind {
+        case .item(let item): addPointerCursorRect(clickable: item.isEnabled)
+        case .back: addPointerCursorRect()
+        case .header, .separator: break
+        }
     }
 
     static func width(for row: ThemedMenuViewController.Row) -> CGFloat {

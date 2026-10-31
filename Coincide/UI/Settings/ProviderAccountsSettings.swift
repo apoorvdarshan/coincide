@@ -152,6 +152,7 @@ private struct AddedAccountRow: View {
                     Image(systemName: "minus.circle.fill")
                 }
                 .buttonStyle(.borderless)
+                .pointerCursor()
                 .foregroundStyle(.red)
                 .help(Text("Remove account"))
                 .accessibilityLabel(Text("Remove \(account.name)"))

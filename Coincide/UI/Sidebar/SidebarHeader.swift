@@ -43,7 +43,7 @@ final class SidebarHeaderView: NSView {
 }
 
 /// A sidebar row that runs an action: a symbol, a title and, on hover, its shortcut.
-final class SidebarActionRow: NSControl {
+final class SidebarActionRow: NSControl, PointerCursorControl {
     var shortcut: String? {
         didSet { shortcutLabel.stringValue = shortcut ?? "" }
     }

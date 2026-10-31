@@ -32,6 +32,7 @@ struct ThemedPicker<Value: Hashable, Label: View>: View {
                 menu: makeMenu
             )
             .fixedSize()
+            .pointerCursor()
         } label: {
             label()
         }
@@ -86,7 +87,7 @@ private struct ThemedPickerField: NSViewRepresentable {
 }
 
 /// A rounded field showing a choice, with a chevron; clicking it opens `menuProvider`'s menu as a themed popup.
-final class ThemedPopupField: NSControl {
+final class ThemedPopupField: NSControl, PointerCursorControl {
     var menuProvider: (() -> NSMenu)?
 
     private let titleLabel = NSTextField(labelWithString: "")
@@ -232,6 +233,7 @@ private struct ThemedSwitch: View {
             .animation(.easeOut(duration: 0.15), value: isOn)
             .contentShape(Capsule())
             .onTapGesture { isOn.toggle() }
+            .pointerCursor()
     }
 }
 
@@ -253,6 +255,7 @@ struct ThemedButtonStyle: ButtonStyle {
                     .strokeBorder(Color(nsColor: Theme.surfaceBorder), lineWidth: 1))
             .opacity(isEnabled ? 1 : 0.5)
             .contentShape(Rectangle())
+            .pointerCursor()
     }
 }
 
@@ -282,6 +285,7 @@ struct ThemedCheckboxToggleStyle: ToggleStyle {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .accessibilityRepresentation {
             Toggle(isOn: configuration.$isOn) { configuration.label }
         }

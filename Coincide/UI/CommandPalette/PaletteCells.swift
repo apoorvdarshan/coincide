@@ -69,6 +69,10 @@ final class PaletteItemCell: NSTableCellView {
         didSet { applyColors() }
     }
 
+    override func resetCursorRects() {
+        addPointerCursorRect()
+    }
+
     private func applyColors() {
         let selected = backgroundStyle == .emphasized
         let primary: NSColor = selected ? .alternateSelectedControlTextColor : .labelColor

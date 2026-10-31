@@ -52,37 +52,43 @@ struct AboutSettingsView: View {
                 AboutLink(
                     symbol: "arrow.triangle.branch", color: .indigo, title: "T3 Code", detail: "github.com/pingdotgg/t3code",
                     url: "https://github.com/pingdotgg/t3code")
-                DisclosureGroup("T3 Code License") {
+                DisclosureGroup {
                     Text(verbatim: Self.t3CodeLicense)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 6)
+                } label: {
+                    Text("T3 Code License").pointerCursorRow()
                 }
                 Text("The terminal uses SwiftTerm by Miguel de Icaza under the MIT License.")
                 AboutLink(
                     symbol: "terminal", color: .gray, title: "SwiftTerm", detail: "github.com/migueldeicaza/SwiftTerm",
                     url: "https://github.com/migueldeicaza/SwiftTerm")
-                DisclosureGroup("SwiftTerm License") {
+                DisclosureGroup {
                     Text(verbatim: Self.bundledLicense("SwiftTerm-LICENSE", missing: String(localized: "SwiftTerm license could not be loaded.")))
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 6)
+                } label: {
+                    Text("SwiftTerm License").pointerCursorRow()
                 }
                 Text("Computer Use uses Cua Driver by Cua AI under the MIT License.")
                 AboutLink(
                     symbol: "desktopcomputer", color: .blue, title: "Cua Driver", detail: "github.com/trycua/cua",
                     url: "https://github.com/trycua/cua")
-                DisclosureGroup("Cua Driver License") {
+                DisclosureGroup {
                     Text(verbatim: Self.cuaDriverLicense)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 6)
+                } label: {
+                    Text("Cua Driver License").pointerCursorRow()
                 }
                 Text("Keep Awake comes from macbook-24x7-agents, which keeps a MacBook running agents with the lid closed.")
                 AboutLink(
@@ -180,6 +186,7 @@ private struct AboutLink: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .help(url)
         .accessibilityHint(Text("Opens \(url) in your browser"))
     }

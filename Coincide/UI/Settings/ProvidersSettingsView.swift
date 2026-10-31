@@ -78,11 +78,13 @@ private struct ProviderSummaryRow: View {
                     .foregroundStyle(.tertiary)
             }
             .buttonStyle(.borderless)
+            .pointerCursor()
             .accessibilityLabel(Text("Show \(kind.displayName) settings"))
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
         .onTapGesture { model.navigate(to: .provider(kind)) }
+        .pointerCursor()
     }
 }
 
@@ -253,6 +255,7 @@ private struct ProviderDetailsSection: View {
                             Image(systemName: "arrow.right.circle.fill")
                         }
                         .buttonStyle(.borderless)
+                        .pointerCursor()
                         .foregroundStyle(.secondary)
                         .help(Text("Show in Finder"))
                         .accessibilityLabel(Text("Show in Finder"))
@@ -466,6 +469,7 @@ struct SettingsModelRow: View {
                     Image(systemName: "minus.circle.fill")
                 }
                 .buttonStyle(.borderless)
+                .pointerCursor()
                 .foregroundStyle(.red)
                 .help(Text("Remove custom model"))
                 .accessibilityLabel(Text("Remove \(option.modelID)"))
@@ -564,6 +568,7 @@ private struct EnvironmentSection: View {
                             Image(systemName: revealed.contains(variable.id) ? "eye.slash" : "eye")
                         }
                         .buttonStyle(.borderless)
+                        .pointerCursor()
                         .help(revealed.contains(variable.id) ? Text("Hide value") : Text("Show value"))
                     }
                     Button {
@@ -573,6 +578,7 @@ private struct EnvironmentSection: View {
                         Image(systemName: "minus.circle.fill")
                     }
                     .buttonStyle(.borderless)
+                    .pointerCursor()
                     .foregroundStyle(.red)
                     .help(Text("Remove variable"))
                     .accessibilityLabel(Text("Remove \(variable.name)"))
@@ -672,6 +678,7 @@ private struct ProviderSetupSection: View {
                 Link(destination: website) {
                     Label("\(kind.displayName) Website", systemImage: "safari")
                 }
+                .pointerCursor()
             }
         } header: {
             Text("Setup")
@@ -701,6 +708,7 @@ private struct CommandRow: View {
             SettingsCopyButton(text: command.text)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
+                .pointerCursor()
             Button {
                 ProviderSetupGuide.runInTerminal(command.text)
             } label: {
@@ -708,6 +716,7 @@ private struct CommandRow: View {
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
+            .pointerCursor()
             .help(Text("Run in Terminal"))
         }
     }

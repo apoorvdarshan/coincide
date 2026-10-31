@@ -58,6 +58,11 @@ struct GeneralSettingsView: View {
                             isRevealed: highlighted == .lightTheme, onPick: showMode(of:))
                             .settingsRevealable(.lightTheme, highlighted: highlighted)
                     }
+                    Toggle(isOn: model.binding(\.showsPointingHand)) {
+                        Text("Pointing hand over clickable items")
+                        Text("Buttons, links, tabs and list rows show the pointing hand, as on the web. Text, the terminal and web pages keep their own cursors.")
+                    }
+                    .settingsRevealable(.pointingHand, highlighted: highlighted)
                     ThemedPicker(
                         selection: model.binding(\.terminalPlacement),
                         options: TerminalPlacement.allCases.map { .init($0, $0.displayName) }
@@ -282,6 +287,7 @@ struct GeneralSettingsView: View {
         settings.userMessageSide = defaults.userMessageSide
         settings.darkTheme = defaults.darkTheme
         settings.lightTheme = defaults.lightTheme
+        settings.showsPointingHand = defaults.showsPointingHand
         settings.terminalPlacement = defaults.terminalPlacement
         settings.terminalGPURendering = defaults.terminalGPURendering
         settings.terminalTranslucentBackground = defaults.terminalTranslucentBackground
@@ -336,6 +342,7 @@ private struct AppearancePicker: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
                 .accessibilityLabel(mode.displayName)
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
@@ -666,6 +673,7 @@ private struct ThemeGridRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerCursor()
             .accessibilityValue(Text(verbatim: current.name))
             if isExpanded {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 10)], alignment: .leading, spacing: 10) {
@@ -712,6 +720,7 @@ private struct ThemeTile: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .onHover { isHovered = $0 }
         .accessibilityLabel(Text(verbatim: theme.name))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
