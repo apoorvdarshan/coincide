@@ -131,6 +131,9 @@ struct ThreadView: View {
                 if model.turn.isRunning {
                     WorkingIndicator(turn: model.turn)
                         .id("working")
+                } else if let tasks = model.turn.backgroundTasks, !tasks.isEmpty {
+                    BackgroundWork(tasks: tasks)
+                        .id("background")
                 }
                 if model.items.isEmpty, !model.isLoading {
                     ContentUnavailableView("New Thread", systemImage: "bubble.left", description: Text("Send a message to start."))
@@ -221,25 +224,135 @@ struct ThreadTitle: View {
     }
 }
 
+/// The bottom line while a turn runs, as on the Mac: "Thinking…" (or "Starting Claude Code…") beside a breathing dot in
+/// the agent's color, and how long the turn has run.
 struct WorkingIndicator: View {
     let turn: RemoteTurnState
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            if let started = turn.startedAt {
-                Text(turn.isStarting ? "Starting…" : "Working")
-                    .foregroundStyle(theme.secondaryInk)
+        let provider = turn.provider ?? ""
+        HStack(spacing: 10) {
+            Circle()
+                .fill(theme.agent(provider))
+                .frame(width: 7, height: 7)
+                .phaseAnimator(reduceMotion ? [1.0] : [1.0, 0.35]) { dot, opacity in dot.opacity(opacity) } animation: { _ in
+                    .easeInOut(duration: 0.9)
+                }
+                .frame(width: 15)
+            Text(turn.isStarting ? String(localized: "Starting \(AgentLogo.name(provider))…") : String(localized: "Thinking…"))
+                .foregroundStyle(theme.secondaryInk)
+            if let started = turn.startedAt, !turn.isStarting {
                 Text(started, style: .timer)
                     .monospacedDigit()
-                    .foregroundStyle(theme.secondaryInk)
-            } else {
-                Text("Working").foregroundStyle(theme.secondaryInk)
+                    .foregroundStyle(theme.tertiaryInk)
             }
         }
-        .font(.callout)
+        .font(.subheadline)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// What the thread's agents still run between turns, as the Mac lists it under the transcript: "Claude Code is running
+/// 2 tasks in the background", then a line per subagent or command with what it does now and for how long it has run.
+/// Updated live from the Mac's turn events.
+struct BackgroundWork: View {
+    let tasks: [RemoteBackgroundTask]
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let name = AgentLogo.name(tasks.first?.provider ?? "")
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Circle().fill(theme.agent(tasks.first?.provider)).frame(width: 7, height: 7).frame(width: 15)
+                Text(tasks.count == 1
+                    ? String(localized: "\(name) is working in the background")
+                    : String(localized: "\(name) is running \(tasks.count) tasks in the background"))
+                    .font(.subheadline)
+                    .foregroundStyle(theme.secondaryInk)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            VStack(spacing: 2) {
+                ForEach(tasks) { task in BackgroundTaskLine(task: task) }
+            }
+            .padding(4)
+            .background(theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+}
+
+/// One background task: its kind's symbol, its title, "Subagent · fork · Running the tests", and its elapsed time.
+struct BackgroundTaskLine: View {
+    let task: RemoteBackgroundTask
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: Self.symbol(task.kind))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(theme.tertiaryInk)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(Self.oneLine(task.title))
+                    .font(.footnote)
+                    .foregroundStyle(theme.ink)
+                    .lineLimit(1)
+                let detail = Self.detail(task)
+                if !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryInk)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 6)
+            if let started = task.startedAt {
+                TimelineView(.periodic(from: started, by: 1)) { context in
+                    Text(Self.elapsed(context.date.timeIntervalSince(started)))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(theme.tertiaryInk)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "Subagent · fork · Running the tests", "Command", "Task", as the Mac words it.
+    static func detail(_ task: RemoteBackgroundTask) -> String {
+        let kind =
+            switch task.kind {
+            case .agent: String(localized: "Subagent")
+            case .command: String(localized: "Command")
+            case .other: String(localized: "Task")
+            }
+        return [kind, task.agentType, task.progress.map(oneLine)].compactMap { $0 }.filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+
+    /// A background command's title is often a whole script; one line reads in the list.
+    static func oneLine(_ text: String) -> String { text.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+
+    static func symbol(_ kind: RemoteBackgroundTask.Kind) -> String {
+        switch kind {
+        case .agent: "person.2"
+        case .command: "terminal"
+        case .other: "circle.dashed"
+        }
+    }
+
+    /// "42s", "1m 08s", "2h 05m", as the Mac's transcript counts.
+    static func elapsed(_ interval: TimeInterval) -> String {
+        let seconds = max(0, Int(interval))
+        let minutes = seconds / 60
+        if minutes == 0 { return "\(seconds)s" }
+        let hours = minutes / 60
+        if hours == 0 { return String(format: "%dm %02ds", minutes, seconds % 60) }
+        return String(format: "%dh %02dm", hours, minutes % 60)
     }
 }
 

@@ -149,8 +149,22 @@ enum DemoData {
                 .init(id: "allow", label: "Allow", kind: "allowOnce"), .init(id: "always", label: "Always Allow", kind: "allowAlways"),
                 .init(id: "deny", label: "Deny", kind: "deny"),
             ]))
+        // `-CoincideRemoteDemoBackground`: the turn ended, and a subagent and a command still run.
+        let background = ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoBackground")
+        let turn =
+            background
+            ? RemoteTurnState(provider: "claude", backgroundTasks: [
+                RemoteBackgroundTask(
+                    id: "a", provider: "claude", title: "iOS live threads, media, composer", kind: .agent,
+                    startedAt: Date().addingTimeInterval(-68), agentType: "general-purpose",
+                    progress: "Running Read Formatting and RemoteProject"),
+                RemoteBackgroundTask(
+                    id: "b", provider: "claude", title: "xcodebuild test -scheme CoincideRemote", kind: .command,
+                    startedAt: Date().addingTimeInterval(-412)),
+            ])
+            : RemoteTurnState(isRunning: true, startedAt: Date().addingTimeInterval(-95), provider: "claude")
         return RemoteTranscript(
-            thread: summary, items: items, turn: RemoteTurnState(isRunning: true, startedAt: Date().addingTimeInterval(-95), provider: "claude"),
+            thread: summary, items: background ? items.filter { $0.kind != .approval } : items, turn: turn,
             turnChanges: [
                 earlier.uuidString: [
                     RemoteChangedFile(path: "Coincide/Remote/RemoteSettingsView.swift", status: "added", additions: 212),

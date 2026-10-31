@@ -537,10 +537,14 @@ public struct RemoteTurnState: Codable, Hashable, Sendable {
     public var queued: [RemoteQueuedMessage]
     /// When a thread stopped at a usage limit resumes on its own.
     public var resumesAt: Date?
+    /// What the thread's agents still run in the background (subagents, long commands), which can go on after their
+    /// turn ended, as the Mac's transcript lists them. Nil from an older Mac.
+    public var backgroundTasks: [RemoteBackgroundTask]?
 
     public init(
         isRunning: Bool = false, isStarting: Bool = false, startedAt: Date? = nil, provider: String? = nil,
-        canSteer: Bool = false, queued: [RemoteQueuedMessage] = [], resumesAt: Date? = nil
+        canSteer: Bool = false, queued: [RemoteQueuedMessage] = [], resumesAt: Date? = nil,
+        backgroundTasks: [RemoteBackgroundTask]? = nil
     ) {
         self.isRunning = isRunning
         self.isStarting = isStarting
@@ -549,6 +553,43 @@ public struct RemoteTurnState: Codable, Hashable, Sendable {
         self.canSteer = canSteer
         self.queued = queued
         self.resumesAt = resumesAt
+        self.backgroundTasks = backgroundTasks
+    }
+}
+
+/// One task an agent runs in the background, as the Mac's `BackgroundTask`: a subagent, a command or something else.
+public struct RemoteBackgroundTask: Codable, Hashable, Sendable, Identifiable {
+    public enum Kind: String, Codable, Sendable {
+        case agent, command, other
+
+        public init(from decoder: Decoder) throws {
+            self = Kind(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
+        }
+    }
+
+    public var id: String
+    /// The agent whose task it is.
+    public var provider: String
+    public var title: String
+    public var kind: Kind
+    /// When it started, or when the Mac first heard of it.
+    public var startedAt: Date?
+    /// For a subagent, the kind of agent it runs as ("general-purpose", "fork").
+    public var agentType: String?
+    /// What it does right now, as the agent last reported.
+    public var progress: String?
+
+    public init(
+        id: String, provider: String, title: String, kind: Kind, startedAt: Date? = nil, agentType: String? = nil,
+        progress: String? = nil
+    ) {
+        self.id = id
+        self.provider = provider
+        self.title = title
+        self.kind = kind
+        self.startedAt = startedAt
+        self.agentType = agentType
+        self.progress = progress
     }
 }
 
