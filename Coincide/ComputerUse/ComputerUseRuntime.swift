@@ -64,9 +64,20 @@ final class ComputerUseRuntime {
     }
 
     static let backendVersion = "0.38.0"
+    /// How long the helper stays up with no Computer Use request from any thread. Cua Driver holds a display-sleep
+    /// assertion from a session's start until its daemon exits (`end_session` and disconnecting keep it), so an idle
+    /// helper is stopped and the next request starts it again. Two minutes is macOS's default display sleep on
+    /// battery, and longer than an agent usually thinks between steps.
+    static let defaultIdleTimeout: TimeInterval = 120
+    /// Once every thread has released or lost its connection, nothing is left to wait for beyond a quick next step.
+    static let defaultReleaseGrace: TimeInterval = 5
     private let executable: URL?
     private let startupTimeout: TimeInterval
     private let requestTimeout: TimeInterval
+    private let idleTimeout: TimeInterval
+    private let releaseGrace: TimeInterval
+    private var inFlight = 0
+    private var idleTimer: Task<Void, Never>?
     private var daemon: LineProcess?
     private var folder: URL?
     private var socket: String?
@@ -77,17 +88,26 @@ final class ComputerUseRuntime {
 
     /// Only unexpected daemon exits are reported. Stopping a thread's proxy does not stop other threads.
     var onExit: (() -> Void)?
+    /// Called after an idle helper was stopped, so the app can forget its sessions and hide the agent cursor.
+    var onIdleStop: (() -> Void)?
     var isRunning: Bool { ready && daemon?.isRunning == true }
+    /// The running helper's process, for diagnostics and the live driver test.
+    var helperProcessID: Int32? { isRunning ? daemon?.processIdentifier : nil }
 
     init(executable: URL? = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/cua-driver"),
-        startupTimeout: TimeInterval = 10, requestTimeout: TimeInterval = 115)
+        startupTimeout: TimeInterval = 10, requestTimeout: TimeInterval = 115,
+        idleTimeout: TimeInterval = ComputerUseRuntime.defaultIdleTimeout,
+        releaseGrace: TimeInterval = ComputerUseRuntime.defaultReleaseGrace)
     {
         self.executable = executable
         self.startupTimeout = min(max(startupTimeout, 0.1), 30)
         self.requestTimeout = min(max(requestTimeout, 0.1), 115)
+        self.idleTimeout = min(max(idleTimeout, 0.05), 3600)
+        self.releaseGrace = min(max(releaseGrace, 0.05), self.idleTimeout)
     }
 
     isolated deinit {
+        idleTimer?.cancel()
         starting?.cancel()
         for client in clients.values { client.close(Failure.stopped, gracefully: false) }
         daemon?.terminate()
@@ -109,6 +129,7 @@ final class ComputerUseRuntime {
             try await task.value
             guard self.generation == generation else { throw Failure.stopped }
             starting = nil
+            scheduleIdleStop()
         } catch {
             if self.generation == generation { stop() }
             throw error
@@ -116,6 +137,8 @@ final class ComputerUseRuntime {
     }
 
     func stop() {
+        idleTimer?.cancel()
+        idleTimer = nil
         generation = UUID()
         ready = false
         let starting = starting
@@ -133,7 +156,9 @@ final class ComputerUseRuntime {
     }
 
     func toolCatalog(threadID: UUID) async throws -> [JSONValue] {
-        try await withTaskCancellationHandler {
+        beginActivity()
+        defer { endActivity() }
+        return try await withTaskCancellationHandler {
             let client = try await client(for: threadID)
             try Task.checkCancellation()
             return client.tools
@@ -145,6 +170,8 @@ final class ComputerUseRuntime {
     func call(threadID: UUID, name: String, arguments: JSONValue) async throws -> JSONValue {
         guard let arguments = arguments.object else { throw Failure.invalidResponse }
         try ComputerUseToolPolicy.validate(name: name, arguments: arguments)
+        beginActivity()
+        defer { endActivity() }
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
             let client = try await client(for: threadID)
@@ -173,6 +200,37 @@ final class ComputerUseRuntime {
 
     func end(threadID: UUID) {
         clients.removeValue(forKey: threadID)?.close(Failure.stopped, gracefully: true)
+        scheduleIdleStop()
+    }
+
+    // MARK: Idle
+
+    private func beginActivity() {
+        inFlight += 1
+        idleTimer?.cancel()
+        idleTimer = nil
+    }
+
+    private func endActivity() {
+        inFlight = max(inFlight - 1, 0)
+        scheduleIdleStop()
+    }
+
+    /// Restarts the countdown to stopping the helper. Never while a request is running or the helper is starting.
+    private func scheduleIdleStop() {
+        idleTimer?.cancel()
+        idleTimer = nil
+        guard inFlight == 0, daemon != nil, starting == nil else { return }
+        let delay = clients.isEmpty ? releaseGrace : idleTimeout
+        let generation = generation
+        idleTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self, self.generation == generation, self.inFlight == 0, self.daemon != nil
+            else { return }
+            self.idleTimer = nil
+            self.stop()
+            self.onIdleStop?()
+        }
     }
 
     private func startDaemon(generation: UUID) async throws {
@@ -296,6 +354,8 @@ final class ComputerUseRuntime {
     /// Where the thread's agent cursor last acted, in global screen points with the origin at the top left of the main
     /// display (Core Graphics' convention). Coincide's own request, not an agent's; nil when the helper can't say.
     func cursorPosition(threadID: UUID) async -> CGPoint? {
+        beginActivity()
+        defer { endActivity() }
         guard isRunning, let client = clients[threadID], client.initialized, client.hasTool("get_agent_cursor_state"),
             !client.connection.isClosed
         else { return nil }

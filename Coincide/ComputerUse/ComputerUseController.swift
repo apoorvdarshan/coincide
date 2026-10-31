@@ -9,9 +9,9 @@ import Observation
 ///
 /// While Computer Use is on, every message an agent gets carries instructions with its thread's capability
 /// (`ComputerUseBridge`), whichever provider runs it. The helper (`ComputerUseRuntime`) starts on the first call as
-/// Coincide's child, so macOS counts its Accessibility and Screen Recording use as Coincide's, and stops when
-/// Computer Use turns off or Coincide quits. Actions that change the screen take the shared desktop for one thread
-/// at a time; reading windows never waits.
+/// Coincide's child, so macOS counts its Accessibility and Screen Recording use as Coincide's, and stops when no thread
+/// has used it for a while (it keeps the display awake while running), when Computer Use turns off or when Coincide
+/// quits. Actions that change the screen take the shared desktop for one thread at a time; reading windows never waits.
 @MainActor
 @Observable
 final class ComputerUseController {
@@ -72,6 +72,14 @@ final class ComputerUseController {
         self.cursor = cursor
         isEnabled = store.settings.computerUseEnabled
         isShowingAgentCursor = store.settings.computerUseShowsAgentCursor
+        // An idle helper stopped on purpose: its sessions are gone, and the next request starts a fresh one.
+        runtime.onIdleStop = { [weak self] in
+            guard let self else { return }
+            activeThreads.removeAll()
+            releaseDesktop()
+            cursor.hide()
+            refresh()
+        }
     }
 
     var enabled: Bool {

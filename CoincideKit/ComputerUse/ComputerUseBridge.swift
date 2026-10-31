@@ -28,7 +28,9 @@ public final class ComputerUseBridge {
                 affect the user's screen and focus; use them only for the user's requested task.
                 Only one thread controls the shared desktop at a time. If another thread has it, wait instead
                 of retrying input. {"action":"release"} releases this thread's control when finished. Releasing
-                or reconnecting never changes permissions. Computer Use stops when it is disabled or Coincide quits.
+                or reconnecting never changes permissions. After about two idle minutes, or soon after every thread
+                releases, the helper stops and the next request starts it again: observe again before acting, since
+                element tokens don't survive that. Computer Use stops when it is disabled or Coincide quits.
                 Never print or copy the private curl config; use it as a file. It contains an ephemeral credential.
                 </coincide_computer_use>
                 """
