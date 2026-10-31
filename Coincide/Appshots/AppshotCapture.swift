@@ -79,7 +79,8 @@ nonisolated enum AppshotPrivacy {
 
     /// Whether the window's app is taking a password: it turned secure input on (or someone did and macOS doesn't
     /// say who), or, when Coincide may read it, its focused field is a password field.
-    static func isTakingPassword(_ window: AppshotWindow, canReadApp: Bool) -> Bool {
+    @concurrent
+    static func isTakingPassword(_ window: AppshotWindow, canReadApp: Bool) async -> Bool {
         if let owner = secureInputOwner(), owner == 0 || owner == window.ownerPID { return true }
         guard canReadApp else { return false }
         let app = AXUIElementCreateApplication(window.ownerPID)

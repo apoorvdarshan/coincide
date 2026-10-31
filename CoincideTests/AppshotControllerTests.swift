@@ -190,6 +190,7 @@ struct AppshotControllerTests {
         screen.isTakingPassword = { _, _ in true }
         controller.screen = screen
         controller.takeAppshot()
+        await waitForCapture(controller)
         #expect(controller.lastOutcome == .passwordField(app: "Safari"))
 
         screen.isTakingPassword = { _, _ in false }
@@ -207,7 +208,6 @@ struct AppshotControllerTests {
         controller.takeAppshot()
         #expect(controller.lastOutcome == .noWindow)
 
-        await waitForCapture(controller)
         #expect(fixture.captured.values.isEmpty && fixture.newChats == 0 && fixture.opened.isEmpty)
         #expect(fixture.hud.alerts == [true, true, true])
     }

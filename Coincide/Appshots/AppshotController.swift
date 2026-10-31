@@ -160,7 +160,7 @@ final class AppshotController {
 
     /// Follows the saved settings: installs what notices the trigger while Appshots is on, and nothing while it's off.
     private func apply() {
-        settings = store.settings.appshots
+        if settings != store.settings.appshots { settings = store.settings.appshots }
         refreshPermissions()
         let wanted: Installation? =
             if !settings.enabled {
@@ -302,15 +302,17 @@ final class AppshotController {
             window = chosen
         }
         let app = screen.appName(window)
-        guard !screen.isTakingPassword(window, accessibilityGranted) else {
-            return finish(.passwordField(app: app), around: window.bounds)
-        }
-        let readsText = settings.includesWindowText && accessibilityGranted
+        let canReadApp = accessibilityGranted
+        let readsText = settings.includesWindowText && canReadApp
         let directory = store.directory.appendingPathComponent("attachments", isDirectory: true)
-        let (capture, readText) = (screen.capture, screen.readText)
+        let (isTakingPassword, capture, readText) = (screen.isTakingPassword, screen.capture, screen.readText)
         isCapturing = true
         Task {
             defer { isCapturing = false }
+            // Asking the app about its focused field may wait on it, so not on the main thread.
+            guard await !isTakingPassword(window, canReadApp) else {
+                return finish(.passwordField(app: app), around: window.bounds)
+            }
             // The text is read while the picture is taken.
             async let text: String? = readsText ? await readText(window) : nil
             do {
@@ -361,7 +363,9 @@ struct AppshotScreen {
             ?? (window.ownerName.isEmpty ? String(localized: "the app") : window.ownerName)
     }
     /// Whether the window's app is taking a password; the flag says whether Coincide may read the app.
-    var isTakingPassword: (AppshotWindow, Bool) -> Bool = { AppshotPrivacy.isTakingPassword($0, canReadApp: $1) }
+    var isTakingPassword: @Sendable (AppshotWindow, Bool) async -> Bool = {
+        await AppshotPrivacy.isTakingPassword($0, canReadApp: $1)
+    }
     /// Captures the window into the folder and returns the picture's path.
     var capture: @Sendable (AppshotWindow, URL) async throws -> String = { try await AppshotCapture.capture($0, into: $1) }
     var readText: @Sendable (AppshotWindow) async -> String? = { await AppshotWindowText.read(from: $0) }
