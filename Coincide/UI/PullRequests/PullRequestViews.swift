@@ -192,13 +192,15 @@ final class PullRequestMarkdownView: NSView {
 
 /// One check of a pull request: its status, its name, and a link to its run when it has one. The whole row opens
 /// the run.
-final class PullRequestCheckRow: NSControl {
+final class PullRequestCheckRow: NSControl, PointerCursorControl {
     private let icon = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let link = NSImageView()
     private let url: URL?
     private var isHovered = false
+    /// Only a check with a run to open is clicked (`PointerCursorControl`).
+    var isClickable: Bool { url != nil }
 
     init(_ check: PullRequestCheck) {
         url = check.url.flatMap(URL.init(string:))

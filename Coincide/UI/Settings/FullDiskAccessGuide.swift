@@ -117,6 +117,7 @@ struct FullDiskAccessCardView: View {
                 Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
             }
             .buttonStyle(.borderless)
+            .pointerCursor()
             .help(String(localized: "Close"))
         }
         .padding(16)

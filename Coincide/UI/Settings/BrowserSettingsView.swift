@@ -145,6 +145,7 @@ struct BrowserSettingsView: View {
                                 Image(systemName: "minus.circle")
                             }
                             .buttonStyle(.borderless)
+                            .pointerCursor()
                             .help(Text("Remove Bookmark"))
                             .accessibilityLabel(Text("Remove Bookmark"))
                         }
@@ -152,6 +153,7 @@ struct BrowserSettingsView: View {
                     if model.bookmarks.count > 12, !showsAllBookmarks {
                         Button("Show All \(model.bookmarks.count)") { showsAllBookmarks = true }
                             .buttonStyle(.borderless)
+                            .pointerCursor()
                     }
                 }
             } header: {

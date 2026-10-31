@@ -164,7 +164,8 @@ final class CommitSheetController: NSViewController, NSTableViewDataSource, NSTa
     func numberOfRows(in tableView: NSTableView) -> Int { files.count }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        ThemedTableRowView(inset: 4)
+        // Each file's checkbox is what a click acts on, not its row.
+        ThemedTableRowView(inset: 4, isClickable: false)
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

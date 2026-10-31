@@ -534,7 +534,7 @@ final class TranscriptFileRow: NSView {
     }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .pointingHand)
+        addPointerCursorRect()
     }
 
     override func mouseUp(with event: NSEvent) {

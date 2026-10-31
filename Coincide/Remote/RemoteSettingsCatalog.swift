@@ -166,6 +166,7 @@ extension RemoteStoreAdapter {
                 choice("general.replyTypeface", String(localized: "Reply typeface"), \.replyTypeface) { $0.displayName },
                 choice("general.userMessageSide", String(localized: "Your messages"), \.userMessageSide) { $0.displayName },
                 choice("general.numberFormat", String(localized: "Number format"), \.numberFormat) { $0.displayName },
+                toggle("general.showsPointingHand", String(localized: "Pointing hand over clickable items"), nil, \.showsPointingHand),
             ]),
             RemoteSettingsSection(id: "chat", title: String(localized: "Chat"), rows: [
                 toggle("general.sendOnReturn", String(localized: "Send with Return"), nil, \.sendOnReturn),

@@ -194,6 +194,8 @@ final class TranscriptMediaView: NSView, WKNavigationDelegate {
         if media.kind == .image, let url = media.url { onOpen?(url) }
         else { super.mouseDown(with: event) }
     }
+    /// An image opens on a click; a video and a web page handle the pointer themselves.
+    override func resetCursorRects() { addPointerCursorRect(clickable: media.kind == .image && media.url != nil) }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         let scheme = action.request.url?.scheme

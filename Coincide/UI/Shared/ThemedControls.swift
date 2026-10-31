@@ -460,13 +460,21 @@ final class ThemedAlertPanel: NSPanel {
 
 /// A list row whose selection is the theme's soft fill, never the system's accent or its emphasized look, so the
 /// row's text keeps its colors when selected. Tables using it must not use the source-list style, whose selection is a
-/// system material drawn outside the row view.
+/// system material drawn outside the row view. A row a click acts on shows the pointing hand (`PointerCursor`).
 final class ThemedTableRowView: NSTableRowView {
     private let inset: CGFloat
+    /// Whether a click on the row does something, such as opening what it lists; false for headers and notes.
+    private let isClickable: Bool
 
-    init(inset: CGFloat = 6) {
+    init(inset: CGFloat = 6, isClickable: Bool = true) {
         self.inset = inset
+        self.isClickable = isClickable
         super.init(frame: .zero)
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addPointerCursorRect(clickable: isClickable)
     }
 
     required init?(coder: NSCoder) {

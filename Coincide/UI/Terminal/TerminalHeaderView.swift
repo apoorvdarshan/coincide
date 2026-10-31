@@ -319,6 +319,10 @@ final class TerminalTabItemView: NSView {
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
 
+    override func resetCursorRects() {
+        addPointerCursorRect()
+    }
+
     override func mouseDown(with event: NSEvent) {
         onSelect?()
     }

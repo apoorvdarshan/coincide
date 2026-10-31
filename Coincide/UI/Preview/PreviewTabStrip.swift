@@ -186,6 +186,7 @@ final class PreviewTabButton: NSView {
 
     override func mouseEntered(with event: NSEvent) { isHovered = true; refresh() }
     override func mouseExited(with event: NSEvent) { isHovered = false; refresh() }
+    override func resetCursorRects() { addPointerCursorRect() }
     override func mouseDown(with event: NSEvent) { onSelect?() }
 
     /// A middle-click closes the tab, as in other browsers.

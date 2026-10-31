@@ -243,7 +243,8 @@ final class BranchPickerController: NSViewController, ThemedPopupContent, NSTabl
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        ThemedTableRowView()
+        if case .header = rows[row] { return ThemedTableRowView(isClickable: false) }
+        return ThemedTableRowView()
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {

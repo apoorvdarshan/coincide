@@ -85,7 +85,7 @@ final class TranscriptTurnHeaderCell: TranscriptCell {
     }
 
     override func resetCursorRects() {
-        if isToggle { addCursorRect(toggleRect, cursor: .pointingHand) }
+        addPointerCursorRect(toggleRect, clickable: isToggle)
     }
 
     override func updateTrackingAreas() {
@@ -767,7 +767,7 @@ final class TranscriptBackgroundTaskLine: NSView {
     }
 
     override func resetCursorRects() {
-        if onSelect != nil { addCursorRect(bounds, cursor: .pointingHand) }
+        addPointerCursorRect(clickable: onSelect != nil)
     }
 
     override func mouseDown(with event: NSEvent) {

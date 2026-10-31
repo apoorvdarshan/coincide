@@ -864,6 +864,9 @@ struct RemoteSessionTests {
 
         try send(session, .changeSetting(key: "general.showReasoning", value: .bool(false)), id: "toggle")
         #expect(store.settings.showReasoning == false)
+        #expect(rows["general.showsPointingHand"]?.value == .bool(true))
+        try send(session, .changeSetting(key: "general.showsPointingHand", value: .bool(false)), id: "pointer")
+        #expect(store.settings.showsPointingHand == false)
         try send(session, .changeSetting(key: "general.appearance", value: .string("dark")), id: "choice")
         #expect(store.settings.appearance == .dark)
         try send(session, .changeSetting(key: "general.fontSize", value: .number(16)), id: "number")

@@ -942,6 +942,10 @@ final class DiffFileHeaderView: DiffRowContentView {
         if event.clickCount == 1 { onToggle?() }
     }
 
+    override func resetCursorRects() {
+        addPointerCursorRect()
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         DiffColors.headerBackground.setFill()
         dirtyRect.fill()

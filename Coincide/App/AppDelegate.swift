@@ -46,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !Self.isHostingTests, !isHandingOff else { return }
         ThemeController.shared.start()
         AppearanceController.shared.start()
+        // Settings › General › Pointing hand over clickable items.
+        PointerCursor.shared.start()
         SettingsWindowController.shared.startHandlingRequests()
         if FullDiskAccess.takeResumeRequest() {
             BrowserSettingsView.opensImportOnAppear = true

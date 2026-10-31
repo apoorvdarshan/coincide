@@ -227,6 +227,7 @@ struct BrowserImportSheet: View {
                     .fill(Color(nsColor: selected ? Theme.sidebarSelection : .clear)))
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
@@ -287,8 +288,8 @@ struct BrowserImportSheet: View {
                 HStack {
                     Text("Cookies from these sites").font(.headline)
                     Spacer()
-                    Button("All") { model.selectedSites = Set(sites.map(\.site)) }.buttonStyle(.borderless)
-                    Button("None") { model.selectedSites = [] }.buttonStyle(.borderless)
+                    Button("All") { model.selectedSites = Set(sites.map(\.site)) }.buttonStyle(.borderless).pointerCursor()
+                    Button("None") { model.selectedSites = [] }.buttonStyle(.borderless).pointerCursor()
                 }
                 TextField("Filter sites", text: $model.siteFilter)
                     .textFieldStyle(ThemedTextFieldStyle())

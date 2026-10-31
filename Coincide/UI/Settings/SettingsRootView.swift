@@ -79,9 +79,11 @@ private struct SettingsSidebar: View {
                     } icon: {
                         SettingsIconTile(symbol: "square.grid.2x2.fill", color: .indigo)
                     }
+                    .pointerCursorRow()
                     .tag(SettingsPane.section(.providers))
                     ForEach(model.kinds, id: \.self) { kind in
                         ProviderSidebarRow(model: model, kind: kind)
+                            .pointerCursorRow()
                             .tag(SettingsPane.provider(kind))
                     }
                 }
@@ -106,6 +108,7 @@ private struct SettingsSidebar: View {
         } icon: {
             SettingsIconTile(symbol: section.symbolName, color: section.tint)
         }
+        .pointerCursorRow()
         .tag(SettingsPane.section(section))
     }
 }
@@ -186,6 +189,7 @@ struct SettingsSearchResults: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                            .pointerCursorRow()
                             .tag(entry.id)
                         }
                     }
@@ -224,6 +228,15 @@ struct SettingsSearchResults: View {
             SettingsSearchEntry(
                 title: String(localized: "Light theme"), pane: general, setting: .lightTheme,
                 keywords: [String(localized: "Theme"), String(localized: "Colors"), String(localized: "Light mode")]),
+            SettingsSearchEntry(
+                title: String(localized: "Pointing hand over clickable items"), pane: general, setting: .pointingHand,
+                keywords: [
+                    String(
+                        localized: "settings.search.cursor", defaultValue: "Cursor",
+                        comment: "A Settings search keyword for the mouse pointer (not the Cursor agent)"),
+                    String(localized: "Pointer"), String(localized: "Mouse"), String(localized: "Hand"),
+                    String(localized: "Links"), String(localized: "Buttons"), "cursor", "pointer",
+                ]),
             SettingsSearchEntry(
                 title: String(localized: "Reply font"), pane: general, setting: .replyTypeface,
                 keywords: [String(localized: "Serif"), String(localized: "Typeface"), String(localized: "New York")]),

@@ -1178,7 +1178,10 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     }
 
     func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-        ThemedTableRowView(inset: 10)
+        // "No threads yet" is the only row a click does nothing on.
+        var isEmptyNote = false
+        if let node = item as? SidebarNode, case .empty = node.kind { isEmptyNote = true }
+        return ThemedTableRowView(inset: 10, isClickable: !isEmptyNote)
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {

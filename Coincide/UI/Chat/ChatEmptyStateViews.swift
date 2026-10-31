@@ -255,12 +255,14 @@ final class ChatWelcomeView: NSView {
 
 /// An agent to start the thread with: its logo on a tile and its name below. The chosen one is tinted in the agent's
 /// color; agents that are not ready are dimmed and cannot be chosen.
-private final class ProviderChip: NSControl {
+private final class ProviderChip: NSControl, PointerCursorControl {
     private static let tileSize: CGFloat = 52
 
     private let kind: ProviderKind
     private let isSelected: Bool
     private let isReady: Bool
+    /// An agent that isn't ready can't be chosen, so it keeps the arrow (`PointerCursorControl`).
+    var isClickable: Bool { isReady }
     private let onChoose: () -> Void
     private let tile = NSView()
     private var isHovered = false

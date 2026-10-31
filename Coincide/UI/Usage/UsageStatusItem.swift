@@ -433,6 +433,7 @@ private struct UsageMenuAccountRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .onHover { isHovered = $0 }
         .help(String(localized: "Show in Settings › Usage"))
     }
@@ -460,6 +461,7 @@ struct UsageDisplayModeToggle: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
                 .foregroundStyle(isSelected ? Color(nsColor: Theme.ink) : .secondary)
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }

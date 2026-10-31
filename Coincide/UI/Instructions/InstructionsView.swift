@@ -308,6 +308,7 @@ private struct MasterRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -366,6 +367,7 @@ private struct FileRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor()
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -578,6 +580,7 @@ struct NoticeBanner<Actions: View>: View {
                     Image(systemName: "xmark")
                 }
                 .buttonStyle(.plain)
+                .pointerCursor()
                 .foregroundStyle(.secondary)
                 .accessibilityLabel(Text("Dismiss"))
             }
