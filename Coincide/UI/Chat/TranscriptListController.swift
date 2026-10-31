@@ -67,6 +67,7 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         tableView.focusRingType = .none
         tableView.dataSource = self
         tableView.delegate = self
+        tableView.onSelectionVisibilityChange = { [weak self] in self?.refreshRowSelection() }
         tableView.setAccessibilityLabel(String(localized: "Conversation"))
 
         scrollView.documentView = tableView
@@ -585,7 +586,7 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
             return cell
         }()
         cell.configure(item, host: host)
-        cell.isRowSelected = tableView.selectedRowIndexes.contains(row)
+        cell.isRowSelected = self.tableView.showsSelection && tableView.selectedRowIndexes.contains(row)
         return cell
     }
 
@@ -605,7 +606,12 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        let selected = tableView.selectedRowIndexes
+        refreshRowSelection()
+    }
+
+    /// Marks the selected row's cell while the selection shows, so a user message keeps its actions in view.
+    func refreshRowSelection() {
+        let selected = tableView.showsSelection ? tableView.selectedRowIndexes : []
         tableView.enumerateAvailableRowViews { rowView, row in
             (rowView.view(atColumn: 0) as? TranscriptCell)?.isRowSelected = selected.contains(row)
         }
@@ -629,6 +635,17 @@ final class TranscriptTableView: NSTableView {
         ThemedContextMenu.show(super.menu(for: event), for: event, in: window)
     }
 
+    /// Whether the selected row shows as selected: only once the keyboard has moved or used the selection, as a focus
+    /// ring shows only for keyboard focus. A click still selects its row, so the arrow keys, Space and ⌘C carry on from
+    /// there, but draws nothing over the conversation.
+    private(set) var showsSelection = false {
+        didSet {
+            guard showsSelection != oldValue else { return }
+            enumerateAvailableRowViews { rowView, _ in rowView.needsDisplay = true }
+            onSelectionVisibilityChange?()
+        }
+    }
+    var onSelectionVisibilityChange: (() -> Void)?
     var onToggleRow: ((Int, _ expand: Bool?) -> Void)?
     var onCopyRow: ((Int) -> Void)?
     var onEscape: (() -> Void)?
@@ -644,21 +661,29 @@ final class TranscriptTableView: NSTableView {
         onReaderScroll?()
     }
 
+    override func mouseDown(with event: NSEvent) {
+        showsSelection = false
+        super.mouseDown(with: event)
+    }
+
     private func handleKey(_ event: NSEvent) {
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         switch event.keyCode {
         case 49, 36, 76:
             if selectedRow >= 0 {
+                showsSelection = true
                 onToggleRow?(selectedRow, nil)
                 return
             }
         case 123 where modifiers.isEmpty:
             if selectedRow >= 0 {
+                showsSelection = true
                 onToggleRow?(selectedRow, false)
                 return
             }
         case 124 where modifiers.isEmpty:
             if selectedRow >= 0 {
+                showsSelection = true
                 onToggleRow?(selectedRow, true)
                 return
             }
@@ -673,6 +698,8 @@ final class TranscriptTableView: NSTableView {
                 return
             }
         }
+        // Arrows, Page Up and Down, Home and End move the selection: from here on it shows.
+        showsSelection = true
         super.keyDown(with: event)
     }
 
@@ -705,16 +732,34 @@ final class TranscriptScrollView: NSScrollView {
     }
 }
 
-/// Draws keyboard selection as a soft rounded highlight around the transcript column.
+/// Draws keyboard selection as a focus ring along the edge of what the row shows: a user message's card, or the
+/// transcript column for other rows. Nothing is drawn for a row a click selected, nor while the transcript doesn't
+/// have focus. The ring sits just inside that edge, so a card at the top of its row never clips it.
 final class TranscriptRowView: NSTableRowView {
+    /// The ring's width: wider with Increase Contrast.
+    static var ringWidth: CGFloat { NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 3 : 2 }
+
     override func drawBackground(in dirtyRect: NSRect) {}
 
-    override func drawSelection(in dirtyRect: NSRect) {
-        guard isEmphasized else { return }
+    /// The ring's path rectangle, in the row view's coordinates, with its corner radius; nil when the selection doesn't
+    /// show.
+    var focusRing: (rect: NSRect, cornerRadius: CGFloat)? {
+        guard isSelected, isEmphasized, (superview as? TranscriptTableView)?.showsSelection == true else { return nil }
         let column = TranscriptMetrics.column(width: bounds.width)
-        let rect = NSRect(x: column.x - 8, y: 0, width: column.width + 16, height: bounds.height).insetBy(dx: 0, dy: 1)
-        Theme.sidebarSelection.setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8).fill()
+        var content = (rect: NSRect(x: column.x - 8, y: 1, width: column.width + 16, height: bounds.height - 2), cornerRadius: CGFloat(8))
+        if let cell = view(atColumn: 0) as? TranscriptCell, let highlight = cell.selectionHighlight {
+            content = (convert(highlight.rect, from: cell), highlight.cornerRadius)
+        }
+        let inset = Self.ringWidth / 2
+        return (content.rect.insetBy(dx: inset, dy: inset), max(0, content.cornerRadius - inset))
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard let ring = focusRing else { return }
+        let path = NSBezierPath(roundedRect: ring.rect, xRadius: ring.cornerRadius, yRadius: ring.cornerRadius)
+        path.lineWidth = Self.ringWidth
+        NSColor.keyboardFocusIndicatorColor.setStroke()
+        path.stroke()
     }
 
     override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
