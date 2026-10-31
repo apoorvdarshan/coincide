@@ -74,7 +74,12 @@ final class RemoteClient {
         return false
     }
 
-    var savedMacs: [SavedMac] { saved.all.sorted { ($0.lastConnectedAt ?? $0.pairedAt) > ($1.lastConnectedAt ?? $1.pairedAt) } }
+    var savedMacs: [SavedMac] {
+        #if DEBUG
+        if DemoData.isEnabled { return [DemoData.mac] }
+        #endif
+        return saved.all.sorted { ($0.lastConnectedAt ?? $0.pairedAt) > ($1.lastConnectedAt ?? $1.pairedAt) }
+    }
 
     init() {
         #if DEBUG
@@ -124,6 +129,9 @@ final class RemoteClient {
 
     /// Tries again now, such as when the app returns to the foreground.
     func reconnectIfNeeded() {
+        #if DEBUG
+        if DemoData.isEnabled { return }
+        #endif
         guard mac != nil else { return }
         switch phase {
         case .offline, .idle:

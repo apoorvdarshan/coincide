@@ -7,6 +7,11 @@ struct MainTabView: View {
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
     @Environment(\.horizontalSizeClass) private var sizeClass
+    /// The window's width, which with the size class decides whether the list and the thread sit side by side.
+    @State private var width: CGFloat = 0
+
+    /// The list and the open thread side by side (`RemoteLayout.showsSideBySide`), or the thread pushed over the list.
+    private var isSplit: Bool { RemoteLayout.showsSideBySide(width: width, isRegular: sizeClass == .regular) }
 
     var body: some View {
         @Bindable var navigator = navigator
@@ -21,7 +26,7 @@ struct MainTabView: View {
                 stack(.chats) { ChatsView() }
             }
             Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
-                NavigationStack { SettingsView() }
+                SettingsView(isSplit: isSplit)
             }
             Tab(value: AppTab.search, role: .search) {
                 stack(.search) { SearchView() }
@@ -29,11 +34,12 @@ struct MainTabView: View {
         }
         .tabViewStyle(.sidebarAdaptable)
         .tabBarMinimizeBehavior(.onScrollDown)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onAppear {
-            navigator.isSplit = sizeClass == .regular
+            navigator.isSplit = isSplit
             wire()
         }
-        .onChange(of: sizeClass) { _, size in navigator.isSplit = size == .regular }
+        .onChange(of: isSplit) { _, split in navigator.isSplit = split }
         .onChange(of: client.workspace) { wire() }
         .onChange(of: navigator.recent) { _, recent in
             // Keep the last few threads following the Mac; stop the rest.
@@ -55,13 +61,14 @@ struct MainTabView: View {
     /// window is wide, as on an iPad or an unfolded Duo. Both read the same path, so folding keeps the place.
     @ViewBuilder
     private func stack<Content: View>(_ tab: AppTab, @ViewBuilder root: () -> Content) -> some View {
-        if sizeClass == .regular {
+        if isSplit {
             NavigationSplitView {
                 NavigationStack(path: navigator.listPath(tab)) {
                     root()
                         .navigationDestination(for: Route.self) { route in destination(route) }
                 }
-                .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
+                .navigationSplitViewColumnWidth(
+                    min: RemoteLayout.listColumn.minimum, ideal: RemoteLayout.listColumn.ideal, max: RemoteLayout.listColumn.maximum)
             } detail: {
                 NavigationStack {
                     if let id = navigator.detailThread(tab) {

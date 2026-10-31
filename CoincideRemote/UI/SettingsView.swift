@@ -1,26 +1,312 @@
 import CoincideRemoteKit
 import SwiftUI
 
+/// A screen of Settings: this phone's own (its Macs, appearance, notifications, keyboard), one of the Mac's panes
+/// (General through Computer Use, Providers), or About.
+enum SettingsPane: Hashable {
+    case macs, appearance, notifications, keyboard, about
+    /// A pane of the Mac's Settings, by its page id.
+    case mac(String)
+
+    /// A pane by name, for launch arguments: `macs`, `appearance`, `notifications`, `keyboard`, `about`, or a Mac page id.
+    static func named(_ name: String) -> SettingsPane {
+        switch name {
+        case "macs": .macs
+        case "appearance": .appearance
+        case "notifications": .notifications
+        case "keyboard": .keyboard
+        case "about": .about
+        default: .mac(name)
+        }
+    }
+}
+
+/// Settings as the Mac's Settings window lays it out: a sidebar of panes with colored tiles, and the pane beside it in a
+/// wide window (an iPad), or pushed over it in a narrow one (an iPhone, a folded Duo, Slide Over). Both read the same
+/// selection, so a window changing width keeps the pane.
 struct SettingsView: View {
+    let isSplit: Bool
     @Environment(RemoteClient.self) private var client
-    @Environment(AppearanceSettings.self) private var appearance
+    @Environment(Navigator.self) private var navigator
+
+    var body: some View {
+        @Bindable var navigator = navigator
+        Group {
+            if isSplit {
+                NavigationSplitView {
+                    SettingsSidebar(isSplit: true)
+                        .navigationSplitViewColumnWidth(
+                            min: RemoteLayout.listColumn.minimum, ideal: RemoteLayout.listColumn.ideal,
+                            max: RemoteLayout.listColumn.maximum)
+                } detail: {
+                    NavigationStack {
+                        SettingsPaneView(pane: navigator.settingsPane ?? .macs)
+                    }
+                    .id(navigator.settingsPane ?? .macs)
+                }
+                .navigationSplitViewStyle(.balanced)
+            } else {
+                NavigationStack {
+                    SettingsSidebar(isSplit: false)
+                        .navigationDestination(item: $navigator.settingsPane) { pane in SettingsPaneView(pane: pane) }
+                }
+            }
+        }
+        .task(id: client.isConnected) { await client.loadMacSettings() }
+    }
+}
+
+/// The list of panes in the Mac Settings sidebar's look: flat rows on the theme's sidebar color, each with its colored
+/// tile, under this phone's heading and then the Mac's.
+struct SettingsSidebar: View {
+    let isSplit: Bool
+    @Environment(RemoteClient.self) private var client
+    @Environment(Navigator.self) private var navigator
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        List {
+            SettingsMacCard(isSelected: isSelected(.macs)) { navigator.settingsPane = .macs }
+                .sidebarRow()
+            SidebarHeader(Text("Coincide Remote")).sidebarRow()
+            row(.appearance, title: String(localized: "Appearance"), symbol: "paintpalette.fill", color: "indigo")
+            row(.notifications, title: String(localized: "Notifications"), symbol: "bell.badge.fill", color: "red")
+            row(.keyboard, title: String(localized: "Hardware Keyboard"), symbol: "keyboard.fill", color: "gray")
+            if let snapshot = client.macSettings {
+                SidebarHeader(Text(client.server?.name ?? String(localized: "Mac"))).sidebarRow()
+                ForEach(snapshot.pages.filter { $0.group == .app && $0.id != "providers" }) { page in
+                    row(.mac(page.id), title: page.title, symbol: page.symbol, color: page.color)
+                }
+                SidebarHeader(Text("Providers")).sidebarRow()
+                if let overview = snapshot.page("providers") {
+                    row(.mac(overview.id), title: overview.title, symbol: overview.symbol, color: overview.color)
+                }
+                ForEach(snapshot.pages.filter { $0.group == .provider }) { page in
+                    row(
+                        .mac(page.id), title: page.title, logo: page.id.hasPrefix("provider.") ? String(page.id.dropFirst(9)) : nil,
+                        symbol: page.symbol, color: page.color, status: page.status)
+                }
+            } else if client.macSettingsUnsupported {
+                SidebarNote(text: String(localized: "Update Coincide on your Mac to change its settings here."), symbol: "arrow.down.circle")
+                    .frame(minHeight: 44)
+                    .sidebarRow()
+            } else if client.isConnected {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 44).sidebarRow()
+            }
+            Spacer(minLength: 12).sidebarRow().accessibilityHidden(true)
+            row(.about, title: String(localized: "About"), symbol: "info.circle.fill", color: "gray")
+        }
+        .sidebarList(theme)
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(isSplit ? .inline : .large)
+        .refreshable { await client.loadMacSettings() }
+        #if DEBUG
+        .onAppear {
+            // Screenshots of a pane without taps: `-CoincideRemoteSettingsPane general` (or macs, appearance, …).
+            if let name = DemoData.value(after: "-CoincideRemoteSettingsPane"), navigator.settingsPane == nil {
+                navigator.settingsPane = SettingsPane.named(name)
+            }
+        }
+        #endif
+    }
+
+    /// Side by side, the pane on screen (Macs until another is picked) is highlighted, as in the Mac's sidebar.
+    private func isSelected(_ pane: SettingsPane) -> Bool { isSplit && (navigator.settingsPane ?? .macs) == pane }
+
+    private func row(
+        _ pane: SettingsPane, title: String, logo: String? = nil, symbol: String, color: String, status: String? = nil
+    ) -> some View {
+        Button { navigator.settingsPane = pane } label: {
+            SettingsTileLabel(title: title, logo: logo, symbol: symbol, color: color, status: status)
+        }
+        .buttonStyle(SidebarRowButtonStyle(isSelected: isSelected(pane)))
+        .accessibilityAddTraits(isSelected(pane) ? .isSelected : [])
+        .sidebarRow()
+    }
+}
+
+/// A pane's colored tile and title, as in the Mac Settings sidebar: an agent's own mark for a provider's pane, and the
+/// provider's status dot.
+struct SettingsTileLabel: View {
+    let title: String
+    var logo: String?
+    let symbol: String
+    let color: String
+    var status: String?
+    @Environment(\.theme) private var theme
+    @ScaledMetric(relativeTo: .callout) private var tile: CGFloat = 26
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Group {
+                if let logo {
+                    AgentLogo(provider: logo, size: tile * 0.62)
+                        .frame(width: tile, height: tile)
+                        .background(RoundedRectangle(cornerRadius: tile * 0.26, style: .continuous).fill(theme.selection))
+                } else {
+                    Image(systemName: symbol)
+                        .font(.system(size: tile * 0.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: tile, height: tile)
+                        .background(
+                            RoundedRectangle(cornerRadius: tile * 0.26, style: .continuous).fill(MacSettingsLabel.color(color).gradient))
+                }
+            }
+            .accessibilityHidden(true)
+            Text(title)
+                .font(.callout)
+                .foregroundStyle(theme.ink)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if let status {
+                StatusDot(color: MacSettingsLabel.statusColor(status))
+                    .accessibilityLabel(Text(MacSettingsLabel.statusLabel(status)))
+            }
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The Mac this phone drives, at the top of Settings like the account at the top of iOS Settings: its name and whether
+/// it's connected. Opens the paired Macs.
+struct SettingsMacCard: View {
+    let isSelected: Bool
+    let open: () -> Void
+    @Environment(RemoteClient.self) private var client
+    @Environment(\.theme) private var theme
+    @ScaledMetric(relativeTo: .headline) private var tile: CGFloat = 40
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 12) {
+                Image(systemName: "laptopcomputer")
+                    .font(.system(size: tile * 0.44, weight: .medium))
+                    .foregroundStyle(theme.ink)
+                    .frame(width: tile, height: tile)
+                    .background(Circle().fill(theme.selection))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(client.server?.name ?? client.mac?.name ?? String(localized: "No Mac"))
+                        .font(.headline)
+                        .foregroundStyle(theme.ink)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        StatusDot(color: statusColor)
+                        Text(status).lineLimit(1)
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(theme.secondaryInk)
+                }
+                Spacer(minLength: 4)
+            }
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(SidebarRowButtonStyle(isSelected: isSelected))
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(Text("Shows the paired Macs"))
+    }
+
+    private var status: String {
+        switch client.phase {
+        case .connected: String(localized: "Connected")
+        case .connecting: String(localized: "Connecting…")
+        case .offline: String(localized: "Offline")
+        case .needsPairing: String(localized: "Pair Again")
+        case .idle: String(localized: "Not connected")
+        }
+    }
+
+    private var statusColor: Color {
+        switch client.phase {
+        case .connected: .green
+        case .offline, .needsPairing: .orange
+        case .connecting, .idle: theme.tertiaryInk
+        }
+    }
+}
+
+/// One pane, drawn as a grouped form on the theme's colors.
+struct SettingsPaneView: View {
+    let pane: SettingsPane
+
+    var body: some View {
+        switch pane {
+        case .macs: MacsSettingsPane()
+        case .appearance: AppearanceSettingsPane()
+        case .notifications: SettingsForm(title: String(localized: "Notifications")) { NotificationsSection() }
+        case .keyboard: KeyboardSettingsPane()
+        case .about: AboutSettingsPane()
+        case .mac(let id): MacSettingsPageView(pageID: id)
+        }
+    }
+}
+
+/// A pane's grouped form: cards in the theme's surface color on its background, with an inline title.
+struct SettingsForm<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Form {
+            Group { content }
+                .themedCards(theme)
+        }
+        .scrollContentBackground(.hidden)
+        .background(theme.isDark ? theme.content : theme.sidebar)
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// The Macs this phone is paired with: connect, add an address, forget, or pair another.
+struct MacsSettingsPane: View {
+    @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
     @State private var addingHostTo: SavedMac?
     @State private var newHost = ""
     @State private var forgetting: SavedMac?
-    @AppStorage("composer.returnSends") private var returnSends = true
 
     var body: some View {
-        Form {
-            Group { sections }
-                .themedCards(theme)
+        SettingsForm(title: String(localized: "Macs")) {
+            Section {
+                ForEach(client.savedMacs) { mac in
+                    Button { client.connect(to: mac) } label: {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(mac.name).foregroundStyle(theme.ink)
+                                Text(status(mac)).font(.caption).foregroundStyle(theme.secondaryInk)
+                                Text(mac.hosts.map(\.host).joined(separator: ", "))
+                                    .font(.caption2.monospaced()).foregroundStyle(theme.secondaryInk).lineLimit(2)
+                            }
+                            Spacer()
+                            if client.mac?.serverID == mac.serverID, client.isConnected {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                                    .accessibilityLabel(Text("Connected"))
+                            }
+                        }
+                    }
+                    .contextMenu {
+                        Button("Connect") { client.connect(to: mac) }
+                        Button("Add Address…") { addingHostTo = mac }
+                        Button("Forget", role: .destructive) { forgetting = mac }
+                    }
+                    .swipeActions {
+                        Button("Forget", role: .destructive) { forgetting = mac }
+                        Button("Address") { addingHostTo = mac }.tint(.indigo)
+                    }
+                    .accessibilityAction(named: Text("Add Address")) { addingHostTo = mac }
+                    .accessibilityAction(named: Text("Forget")) { forgetting = mac }
+                }
+                Button {
+                    navigator.showsConnect = true
+                } label: {
+                    Label("Pair Another Mac", systemImage: "plus")
+                }
+            }
         }
-        .scrollContentBackground(.hidden)
-        .background(theme.isDark ? theme.content : theme.sidebar)
-        .task(id: client.isConnected) { await client.loadMacSettings() }
-        .navigationTitle("Settings")
-        .navigationBarTitleDisplayMode(.large)
         .alert("Add an Address", isPresented: Binding(get: { addingHostTo != nil }, set: { if !$0 { addingHostTo = nil } })) {
             TextField("192.168.1.20 or mac.tailnet.ts.net", text: $newHost)
                 .textInputAutocapitalization(.never)
@@ -45,94 +331,6 @@ struct SettingsView: View {
         } message: {
             Text("To connect again, pair with the code the Mac shows. Revoke this device in the Mac’s Settings too.")
         }
-        #if DEBUG
-        // Screenshots of a pane without taps: `-CoincideRemoteSettingsPane general`.
-        .navigationDestination(isPresented: .constant(DemoData.value(after: "-CoincideRemoteSettingsPane") != nil)) {
-            MacSettingsPageView(pageID: DemoData.value(after: "-CoincideRemoteSettingsPane") ?? "")
-        }
-        #endif
-    }
-
-    @ViewBuilder private var sections: some View {
-        @Bindable var appearance = appearance
-            Section("Macs") {
-                ForEach(client.savedMacs) { mac in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(mac.name)
-                            Text(status(mac)).font(.caption).foregroundStyle(theme.secondaryInk)
-                            Text(mac.hosts.map(\.host).joined(separator: ", "))
-                                .font(.caption2.monospaced()).foregroundStyle(theme.secondaryInk).lineLimit(2)
-                        }
-                        Spacer()
-                        if client.mac?.serverID == mac.serverID, client.isConnected {
-                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                                .accessibilityLabel(Text("Connected"))
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture { client.connect(to: mac) }
-                    .contextMenu {
-                        Button("Connect") { client.connect(to: mac) }
-                        Button("Add Address…") { addingHostTo = mac }
-                        Button("Forget", role: .destructive) { forgetting = mac }
-                    }
-                    .swipeActions {
-                        Button("Forget", role: .destructive) { forgetting = mac }
-                        Button("Address") { addingHostTo = mac }.tint(.indigo)
-                    }
-                    .accessibilityAction(named: Text("Add Address")) { addingHostTo = mac }
-                    .accessibilityAction(named: Text("Forget")) { forgetting = mac }
-                }
-                Button {
-                    navigator.showsConnect = true
-                } label: {
-                    Label("Pair Another Mac", systemImage: "plus")
-                }
-            }
-
-            Section {
-                Toggle("Use the Mac’s Theme", isOn: $appearance.followsMac)
-                if !appearance.followsMac {
-                    Picker("Appearance", selection: $appearance.mode) {
-                        ForEach(AppearanceSettings.Mode.allCases) { Text($0.title).tag($0) }
-                    }
-                    Picker("Dark Theme", selection: $appearance.darkThemeID) {
-                        ForEach(RemotePalette.dark) { palette in
-                            ThemeSwatchLabel(palette: palette).tag(palette.id)
-                        }
-                    }
-                    Picker("Light Theme", selection: $appearance.lightThemeID) {
-                        ForEach(RemotePalette.light) { palette in
-                            ThemeSwatchLabel(palette: palette).tag(palette.id)
-                        }
-                    }
-                }
-            } header: {
-                Text("Appearance")
-            } footer: {
-                if appearance.followsMac, let server = client.server {
-                    Text("Following \(server.name): \(RemotePalette.dark(server.theme.darkThemeID).name) and \(RemotePalette.light(server.theme.lightThemeID).name).")
-                }
-            }
-
-            Section {
-                Toggle("Send with Return", isOn: $returnSends)
-            } footer: {
-                Text("With a hardware keyboard. Shift-Return starts a new line.")
-            }
-
-            NotificationsSection()
-
-            MacSettingsSections()
-
-            Section("About") {
-                LabeledContent("Coincide Remote", value: RemoteClient.appVersion)
-                if let server = client.server {
-                    LabeledContent("Coincide on \(server.name)", value: server.appVersion)
-                }
-                LabeledContent("Protocol", value: "\(RemoteProtocol.version)")
-            }
     }
 
     private func status(_ mac: SavedMac) -> String {
@@ -149,6 +347,93 @@ struct SettingsView: View {
             return String(localized: "Last connected \(date.formatted(.relative(presentation: .named)))")
         }
         return String(localized: "Paired")
+    }
+}
+
+/// The theme: the Mac's (by default) or one picked here.
+struct AppearanceSettingsPane: View {
+    @Environment(RemoteClient.self) private var client
+    @Environment(AppearanceSettings.self) private var appearance
+
+    var body: some View {
+        @Bindable var appearance = appearance
+        SettingsForm(title: String(localized: "Appearance")) {
+            Section {
+                Toggle("Use the Mac’s Theme", isOn: $appearance.followsMac)
+                if !appearance.followsMac {
+                    Picker("Appearance", selection: $appearance.mode) {
+                        ForEach(AppearanceSettings.Mode.allCases) { Text($0.title).tag($0) }
+                    }
+                    Picker("Dark Theme", selection: $appearance.darkThemeID) {
+                        ForEach(RemotePalette.dark) { palette in
+                            ThemeSwatchLabel(palette: palette).tag(palette.id)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                    Picker("Light Theme", selection: $appearance.lightThemeID) {
+                        ForEach(RemotePalette.light) { palette in
+                            ThemeSwatchLabel(palette: palette).tag(palette.id)
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                }
+            } footer: {
+                if appearance.followsMac, let server = client.server {
+                    Text("Following \(server.name): \(RemotePalette.dark(server.theme.darkThemeID).name) and \(RemotePalette.light(server.theme.lightThemeID).name).")
+                }
+            }
+        }
+    }
+}
+
+/// A hardware keyboard: whether Return sends, and the shortcuts Coincide Remote answers to.
+struct KeyboardSettingsPane: View {
+    @AppStorage("composer.returnSends") private var returnSends = true
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        SettingsForm(title: String(localized: "Hardware Keyboard")) {
+            Section {
+                Toggle("Send with Return", isOn: $returnSends)
+            } footer: {
+                Text("Shift-Return starts a new line.")
+            }
+            Section("Shortcuts") {
+                shortcut("New Thread", "⌘N")
+                shortcut("Search Threads", "⌘F")
+                shortcut("Send", returnSends ? "↩" : "⌘↩")
+                shortcut("Stop", "⌘.")
+                shortcut("Reconnect", "⌘R")
+            }
+        }
+    }
+
+    private func shortcut(_ title: LocalizedStringKey, _ keys: String) -> some View {
+        LabeledContent {
+            Text(keys).monospaced().foregroundStyle(theme.secondaryInk)
+        } label: {
+            Text(title)
+        }
+    }
+}
+
+/// Versions of both apps and the protocol between them.
+struct AboutSettingsPane: View {
+    @Environment(RemoteClient.self) private var client
+
+    var body: some View {
+        SettingsForm(title: String(localized: "About")) {
+            Section {
+                LabeledContent("Coincide Remote", value: RemoteClient.appVersion)
+                if let server = client.server {
+                    LabeledContent("Coincide on \(server.name)", value: server.appVersion)
+                }
+                if let rows = client.macSettings?.page("about")?.sections.flatMap(\.rows) {
+                    ForEach(rows.filter { $0.id != "about.version" }) { row in LabeledContent(row.title, value: row.detail ?? "") }
+                }
+                LabeledContent("Protocol", value: "\(RemoteProtocol.version)")
+            }
+        }
     }
 }
 
@@ -183,7 +468,8 @@ struct NotificationsSection: View {
                     isUpdating = false
                 }
             })) {
-                Text("Notify this iPhone when it’s locked")
+                UIDevice.current.userInterfaceIdiom == .pad
+                    ? Text("Notify this iPad when it’s locked") : Text("Notify this iPhone when it’s locked")
             }
             .disabled(isUpdating)
             if alerts.isLockScreenEnabled, let status = statusLine {
@@ -199,7 +485,9 @@ struct NotificationsSection: View {
             if let server = client.server, server.notifies == false {
                 Text("\(server.name) has notifications turned off, so it sends none here either.")
             } else {
-                Text("While you’re using this iPhone and not your Mac, alerts come here instead. When it’s locked, they come through your iCloud account, only if you turn that on.")
+                UIDevice.current.userInterfaceIdiom == .pad
+                    ? Text("While you’re using this iPad and not your Mac, alerts come here instead. When it’s locked, they come through your iCloud account, only if you turn that on.")
+                    : Text("While you’re using this iPhone and not your Mac, alerts come here instead. When it’s locked, they come through your iCloud account, only if you turn that on.")
             }
         }
         .task { await alerts.refreshAuthorization() }

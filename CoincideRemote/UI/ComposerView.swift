@@ -53,22 +53,15 @@ struct ComposerView: View {
                     }
                     return .handled
                 }
-            // The Mac composer's footer: its menus scroll sideways under a fade, so they never run under the buttons.
-            HStack(spacing: 2) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 0) {
-                        if let summary { ComposerControls(thread: summary) }
-                        if model.turn.isRunning { followUpMenu }
-                    }
+            // The Mac composer's footer: its menus from the leading edge, then steer or queue, attach and send, which
+            // never move. Menus that don't fit with their labels show their symbols (`RemoteLayout.footer`).
+            ComposerFooterLayout {
+                if let summary { ComposerControls(thread: summary) }
+                if model.turn.isRunning {
+                    followUpMenu.layoutValue(key: ComposerFooterRole.self, value: .pinned)
                 }
-                .mask {
-                    HStack(spacing: 0) {
-                        Color.black
-                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 18)
-                    }
-                }
-                attachMenu
-                sendButton
+                attachMenu.layoutValue(key: ComposerFooterRole.self, value: .fixed)
+                sendButton.layoutValue(key: ComposerFooterRole.self, value: .fixed)
             }
         }
         .task(id: completionWord) { await loadSuggestions() }
@@ -225,10 +218,12 @@ struct ComposerView: View {
         } label: {
             ComposerChip(menu: true) {
                 Image(systemName: followUp == "queue" ? "text.append" : "arrow.turn.down.right")
+            } label: {
                 Text(followUp == "queue" ? "Queue" : "Steer")
             }
         }
         .disabled(!model.turn.canSteer && followUp != "queue")
+        .accessibilityLabel(followUp == "queue" ? Text("While the agent works: Queue") : Text("While the agent works: Steer"))
     }
 
     @ViewBuilder private var sendButton: some View {
@@ -451,7 +446,8 @@ struct ComposerControls: View {
         } label: {
             ComposerChip(menu: true) {
                 AgentLogo(provider: thread.selection.provider, size: 14)
-                Text(thread.selection.modelName).lineLimit(1)
+            } label: {
+                Text(thread.selection.modelName)
                 if let account = thread.selection.accountName { Text("· \(account)").foregroundStyle(theme.secondaryInk) }
             }
         }
@@ -465,6 +461,7 @@ struct ComposerControls: View {
             } label: {
                 ComposerChip(menu: true) {
                     Image(systemName: "brain")
+                } label: {
                     Text(Self.effortTitle(thread.selection.effort ?? currentModel?.defaultEffort ?? ""))
                 }
             }
@@ -485,6 +482,7 @@ struct ComposerControls: View {
             } label: {
                 ComposerChip(menu: true) {
                     Image(systemName: "gauge.with.needle")
+                } label: {
                     Text(speeds.first { $0.id == thread.selection.speed }?.name ?? String(localized: "Standard"))
                 }
             }
@@ -498,6 +496,7 @@ struct ComposerControls: View {
         } label: {
             ComposerChip(menu: true) {
                 Image(systemName: thread.accessMode == "fullAccess" ? "lock.open" : "lock")
+            } label: {
                 Text(thread.accessMode == "fullAccess" ? "Full access" : "Ask for approval")
             }
         }
@@ -509,6 +508,7 @@ struct ComposerControls: View {
         } label: {
             ComposerChip(menu: false, color: thread.interactionMode == "plan" ? theme.accent : nil) {
                 Image(systemName: thread.interactionMode == "plan" ? "list.bullet.clipboard" : "hammer")
+            } label: {
                 Text(thread.interactionMode == "plan" ? "Plan" : "Build")
             }
         }
@@ -560,18 +560,28 @@ struct ComposerControls: View {
     }
 }
 
-/// One of the composer's menus as the Mac's footer draws it: borderless, an icon and the current choice, and a small
-/// chevron when it opens a menu. A full-height touch target without a capsule around it.
-struct ComposerChip<Content: View>: View {
+/// One of the composer's menus as the Mac's footer draws it: borderless, a symbol and the current choice, and a small
+/// chevron when it opens a menu. A full-height touch target without a capsule around it. Offered less room than its
+/// label needs, it shows its symbol alone (its accessibility label still says the choice).
+struct ComposerChip<Symbol: View, Label: View>: View {
     var menu: Bool
     /// The label's color when it marks something on (Plan mode); the theme's text otherwise.
     var color: Color?
-    @ViewBuilder var content: Content
+    @ViewBuilder var symbol: Symbol
+    @ViewBuilder var label: Label
     @Environment(\.theme) private var theme
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            chip(showsLabel: true)
+            chip(showsLabel: false)
+        }
+    }
+
+    private func chip(showsLabel: Bool) -> some View {
         HStack(spacing: 5) {
-            content
+            symbol
+            if showsLabel { label }
             if menu {
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.semibold))
@@ -581,8 +591,67 @@ struct ComposerChip<Content: View>: View {
         .font(.subheadline.weight(.medium))
         .foregroundStyle(color ?? theme.ink)
         .lineLimit(1)
-        .padding(.horizontal, 8)
-        .frame(minHeight: 44)
+        .fixedSize()
+        .padding(.horizontal, 6)
+        .frame(minWidth: 44, minHeight: 44)
         .contentShape(.rect)
+    }
+}
+
+/// What a view in the composer's footer is to `ComposerFooterLayout`.
+nonisolated enum ComposerFooterRole: LayoutValueKey {
+    /// A menu, placed from the leading edge; it may show its symbol alone or move to another line.
+    case chip
+    /// Steer or queue: at the trailing end, before attach and send; it may show its symbol alone.
+    case pinned
+    /// Attach and send or stop: always at the trailing end of the first line, at their own size.
+    case fixed
+
+    static let defaultValue = ComposerFooterRole.chip
+}
+
+/// The composer's footer, placed by `RemoteLayout.footer`: menus never run under steer, attach or send, at any width or
+/// text size.
+struct ComposerFooterLayout: Layout {
+    var spacing: CGFloat = 2
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? subviews.reduce(0) { $0 + $1.sizeThatFits(.unspecified).width + spacing }
+        return footer(width: width, subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let footer = footer(width: bounds.width, subviews)
+        let height = footer.size.height / CGFloat((footer.chips.map(\.line).max() ?? 0) + 1)
+        var chips = footer.chips.makeIterator()
+        var pins = footer.pinned.makeIterator()
+        var fixedX = footer.fixed.minX
+        for subview in subviews {
+            let placement: CGRect
+            switch subview[ComposerFooterRole.self] {
+            case .chip: placement = chips.next()?.frame ?? .zero
+            case .pinned: placement = pins.next()?.frame ?? .zero
+            case .fixed:
+                let width = subview.sizeThatFits(.unspecified).width
+                placement = CGRect(x: fixedX, y: 0, width: width, height: height)
+                fixedX += width + spacing
+            }
+            subview.place(
+                at: CGPoint(x: bounds.minX + placement.minX, y: bounds.minY + placement.midY), anchor: .leading,
+                proposal: ProposedViewSize(width: placement.width, height: nil))
+        }
+    }
+
+    private func footer(width: CGFloat, _ subviews: Subviews) -> RemoteLayout.Footer {
+        func chip(_ subview: LayoutSubview) -> RemoteLayout.Chip {
+            RemoteLayout.Chip(
+                full: subview.sizeThatFits(.unspecified).width, compact: subview.sizeThatFits(ProposedViewSize(width: 0, height: nil)).width)
+        }
+        let fixed = subviews.filter { $0[ComposerFooterRole.self] == .fixed }.map { $0.sizeThatFits(.unspecified).width }
+        let height = subviews.map { $0.sizeThatFits(.unspecified).height }.max() ?? 44
+        return RemoteLayout.footer(
+            width: width, chips: subviews.filter { $0[ComposerFooterRole.self] == .chip }.map(chip),
+            pinned: subviews.filter { $0[ComposerFooterRole.self] == .pinned }.map(chip),
+            fixed: fixed.reduce(0, +) + spacing * CGFloat(max(0, fixed.count - 1)), height: max(44, height), spacing: spacing)
     }
 }

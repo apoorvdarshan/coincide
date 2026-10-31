@@ -220,10 +220,16 @@ final class PhoneAlerts: NSObject, UNUserNotificationCenterDelegate {
             switch try await container.accountStatus() {
             case .available: break
             case .noAccount:
-                lockScreenStatus = .unavailable(String(localized: "Sign in to iCloud on this iPhone to get alerts while it’s locked."))
+                lockScreenStatus = .unavailable(
+                    UIDevice.current.userInterfaceIdiom == .pad
+                        ? String(localized: "Sign in to iCloud on this iPad to get alerts while it’s locked.")
+                        : String(localized: "Sign in to iCloud on this iPhone to get alerts while it’s locked."))
                 return
             default:
-                lockScreenStatus = .unavailable(String(localized: "iCloud isn’t available on this iPhone right now."))
+                lockScreenStatus = .unavailable(
+                    UIDevice.current.userInterfaceIdiom == .pad
+                        ? String(localized: "iCloud isn’t available on this iPad right now.")
+                        : String(localized: "iCloud isn’t available on this iPhone right now."))
                 return
             }
             let database = container.privateCloudDatabase
