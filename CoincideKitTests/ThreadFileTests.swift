@@ -225,7 +225,7 @@ struct ThreadFileTests {
         // Fields that fall back to a value when unreadable, holding that value.
         store.append(TranscriptItem(kind: .user, text: "", createdAt: .distantPast), to: thread.id)
         let bot = store.addBot(
-            Bot(name: "Bot", avatar: BotAvatar(shape: .blob, tint: .sky), persona: "", selection: ModelSelection(provider: .claude, modelID: "m")))
+            Bot(name: "Bot", avatar: BotAvatar(shape: .alien, tint: .sky), persona: "", selection: ModelSelection(provider: .claude, modelID: "m")))
         store.updateThread(thread.id) {
             $0.title = "Everything"
             $0.modelPreferences = ["claude/default": ProviderModelPreferences(effort: "high", speed: "fast"), "codex/work": .init()]

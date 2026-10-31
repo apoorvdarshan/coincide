@@ -45,7 +45,7 @@ public struct Bot: Codable, Hashable, Sendable, Identifiable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         name = container.lenient(String.self, forKey: .name) ?? String(localized: "Bot")
-        avatar = container.lenient(BotAvatar.self, forKey: .avatar) ?? BotAvatar(shape: .blob, tint: .sky)
+        avatar = container.lenient(BotAvatar.self, forKey: .avatar) ?? BotAvatar(character: .alien)
         persona = container.lenient(String.self, forKey: .persona) ?? ""
         selection =
             container.lenient(ModelSelection.self, forKey: .selection) ?? ModelSelection(provider: .claude, modelID: "default")
@@ -54,6 +54,20 @@ public struct Bot: Codable, Hashable, Sendable, Identifiable {
         folder = container.lenient(String.self, forKey: .folder)
         createdAt = container.lenient(Date.self, forKey: .createdAt) ?? .distantPast
         starterID = container.lenient(String.self, forKey: .starterID)
+        // A starter still in the look it came with, from before the characters, takes its starter's character and
+        // color now. A look the user changed keeps its color, on the character the old shape maps to.
+        if let starterID, let original = BotStarter.originalLooks[starterID],
+            let saved = try? container.nestedContainer(keyedBy: LookKeys.self, forKey: .avatar),
+            (try? saved.decode(String.self, forKey: .shape)) == original.shape,
+            (try? saved.decode(String.self, forKey: .tint)) == original.tint,
+            let starter = BotStarter.all.first(where: { $0.id == starterID })
+        {
+            avatar = starter.avatar
+        }
+    }
+
+    private enum LookKeys: String, CodingKey {
+        case shape, tint
     }
 
     /// The folder its conversations run in: the one the user picked, or the home folder.
@@ -103,14 +117,56 @@ public struct Bot: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-/// A bot's look: a soft body shape with two eyes, in one of a few colors that read on dark and light themes alike.
+/// A bot's look: one of seven characters drawn from hand-made illustrations, its body in one of a few colors that read
+/// on dark and light themes alike.
 public struct BotAvatar: Codable, Hashable, Sendable {
+    /// The character. Earlier versions drew plain body shapes; their saved names read as the character closest in
+    /// silhouette (`legacy`), so a bot from then keeps a face and its color.
     public enum Shape: String, Codable, CaseIterable, Sendable {
-        case blob, pebble, cloud, drop, star, bean, bun, sprout
+        case alien, star, croissant, bomboloni, cherry, teddy, brulee
+
+        nonisolated static let legacy: [String: Shape] = [
+            "blob": .alien, "pebble": .croissant, "cloud": .teddy, "drop": .brulee, "bean": .cherry, "bun": .bomboloni,
+            "sprout": .cherry,
+        ]
+
+        public nonisolated init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            guard let shape = Shape(rawValue: raw) ?? Self.legacy[raw] else {
+                throw DecodingError.dataCorrupted(
+                    DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "No bot character \(raw)"))
+            }
+            self = shape
+        }
+
+        /// The color the character was drawn in, which it starts with.
+        public nonisolated var defaultTint: Tint {
+            switch self {
+            case .alien: .leaf
+            case .star, .bomboloni: .sunflower
+            case .croissant: .tangerine
+            case .cherry: .cherry
+            case .teddy: .caramel
+            case .brulee: .rose
+            }
+        }
+
+        /// The character's name, which a new bot with it starts with.
+        public nonisolated var defaultName: String {
+            switch self {
+            case .alien: String(localized: "Alien")
+            case .star: String(localized: "Star")
+            case .croissant: String(localized: "Croissant")
+            case .bomboloni: String(localized: "Bomboloni")
+            case .cherry: String(localized: "Cherry")
+            case .teddy: String(localized: "Teddy")
+            case .brulee: String(localized: "Brûlée")
+            }
+        }
     }
 
     public enum Tint: String, Codable, CaseIterable, Sendable {
-        case sunflower, tangerine, coral, rose, lilac, sky, mint, sage
+        case sunflower, tangerine, coral, cherry, rose, lilac, sky, mint, leaf, sage, caramel
     }
 
     public var shape: Shape
@@ -121,11 +177,16 @@ public struct BotAvatar: Codable, Hashable, Sendable {
         self.tint = tint
     }
 
-    /// A shape or tint added later reads as the defaults, keeping the rest.
+    /// A character in its own color.
+    public nonisolated init(character: Shape) {
+        self.init(shape: character, tint: character.defaultTint)
+    }
+
+    /// A character or tint added later reads as the defaults, keeping the rest.
     public nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        shape = container.lenient(Shape.self, forKey: .shape) ?? .blob
-        tint = container.lenient(Tint.self, forKey: .tint) ?? .sky
+        shape = container.lenient(Shape.self, forKey: .shape) ?? .alien
+        tint = container.lenient(Tint.self, forKey: .tint) ?? shape.defaultTint
     }
 }
 
@@ -140,10 +201,16 @@ public struct BotStarter: Sendable {
     /// Starters that change files or settings ask first, whatever the user's default.
     public var asksForApproval: Bool
 
+    /// The look each starter had before the characters, as saved (shape, tint), so `Bot` can tell an untouched one.
+    nonisolated static let originalLooks: [String: (shape: String, tint: String)] = [
+        "sunny": ("blob", "sunflower"), "tuck": ("bean", "mint"), "fetch": ("cloud", "sky"), "quill": ("drop", "lilac"),
+        "patch": ("pebble", "coral"),
+    ]
+
     public nonisolated static var all: [BotStarter] {
         [
             BotStarter(
-                id: "sunny", name: String(localized: "Sunny"), avatar: BotAvatar(shape: .blob, tint: .sunflower),
+                id: "sunny", name: BotAvatar.Shape.star.defaultName, avatar: BotAvatar(character: .star),
                 persona: """
                     You are a cheerful everyday helper. Answer quick questions, explain things plainly, do small tasks \
                     on this Mac (convert a file, rename a batch of photos, work out a command) and suggest a better \
@@ -151,7 +218,7 @@ public struct BotStarter: Sendable {
                     """,
                 asksForApproval: false),
             BotStarter(
-                id: "tuck", name: String(localized: "Tuck"), avatar: BotAvatar(shape: .bean, tint: .mint),
+                id: "tuck", name: BotAvatar.Shape.teddy.defaultName, avatar: BotAvatar(character: .teddy),
                 persona: """
                     You are a tidy-up bot. You organize folders, starting with ~/Downloads and ~/Desktop: group files \
                     into sensible folders, find duplicates and large old files, and propose a plan before moving \
@@ -161,7 +228,7 @@ public struct BotStarter: Sendable {
                     """,
                 asksForApproval: true),
             BotStarter(
-                id: "fetch", name: String(localized: "Fetch"), avatar: BotAvatar(shape: .cloud, tint: .sky),
+                id: "fetch", name: BotAvatar.Shape.alien.defaultName, avatar: BotAvatar(character: .alien),
                 persona: """
                     You are a research scout. Look things up on the web and in local files, compare options and \
                     summarize what you found in a few bullet points with links to the sources. Say how sure you are \
@@ -169,7 +236,7 @@ public struct BotStarter: Sendable {
                     """,
                 asksForApproval: false),
             BotStarter(
-                id: "quill", name: String(localized: "Quill"), avatar: BotAvatar(shape: .drop, tint: .lilac),
+                id: "quill", name: BotAvatar.Shape.croissant.defaultName, avatar: BotAvatar(character: .croissant),
                 persona: """
                     You are a writing companion for emails, docs, READMEs, release notes and posts. Match the tone the \
                     user asks for, keep it clear and concise, and offer one or two alternatives for important lines. \
@@ -178,7 +245,7 @@ public struct BotStarter: Sendable {
                     """,
                 asksForApproval: false),
             BotStarter(
-                id: "patch", name: String(localized: "Patch"), avatar: BotAvatar(shape: .pebble, tint: .coral),
+                id: "patch", name: BotAvatar.Shape.cherry.defaultName, avatar: BotAvatar(character: .cherry),
                 persona: """
                     You are a Mac and developer-environment fixer. Diagnose broken toolchains, PATH and shell setup, \
                     Homebrew, Xcode, Git, SSH keys, disk space and stuck processes. Look before you change anything: \

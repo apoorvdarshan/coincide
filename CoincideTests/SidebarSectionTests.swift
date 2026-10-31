@@ -306,7 +306,7 @@ struct SidebarSectionTests {
         let saved = UIState.shared.values.sidebarSections
         UIState.shared.update { $0.sidebarSections = [] }
         let bot = store.addBot(
-            Bot(name: "Pebbles", avatar: BotAvatar(shape: .pebble, tint: .sage), persona: "Be brief.",
+            Bot(name: "Pebbles", avatar: BotAvatar(shape: .croissant, tint: .sage), persona: "Be brief.",
                 selection: ModelSelection(provider: .claude, modelID: "default")))
         let first = try #require(store.startConversation(with: bot.id))
         let second = try #require(store.startConversation(with: bot.id))
@@ -431,7 +431,7 @@ struct SidebarSectionTests {
         let saved = (UIState.shared.values.botSort, UIState.shared.values.collapsedSections)
         let selection = ModelSelection(provider: .claude, modelID: "default")
         let made = ["Zeta", "Alpha", "Mid"].map { name in
-            store.addBot(Bot(name: name, avatar: BotAvatar(shape: .pebble, tint: .sage), persona: "", selection: selection))
+            store.addBot(Bot(name: name, avatar: BotAvatar(shape: .croissant, tint: .sage), persona: "", selection: selection))
         }
         let ids = made.map(\.id)
         let conversation = try #require(store.startConversation(with: ids[2]))
