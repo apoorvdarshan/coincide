@@ -207,10 +207,28 @@ enum DemoData {
                     choice("models.defaultModel", "Model", "opus", [("opus", "Claude Opus"), ("sonnet", "Claude Sonnet")]),
                     choice("models.defaultAccessMode", "Access", "fullAccess", [("fullAccess", "Full access"), ("approval", "Ask for approval")]),
                 ]),
-                RemoteSettingsSection(id: "lists", rows: [
-                    RemoteSettingsRow(id: "models.favorites", kind: .info, title: "Favorites", detail: "3"),
-                    RemoteSettingsRow(id: "models.hidden", kind: .info, title: "Hidden models", detail: "5"),
-                ]),
+                RemoteSettingsSection(
+                    id: "lists", title: "Model picker", footer: "Star the models you use most, or hide the ones you never pick.",
+                    rows: [
+                        RemoteSettingsRow(
+                            id: "models.list.claude", kind: .page, title: "Claude Code", detail: "4 models · 1 starred",
+                            target: "models.claude"),
+                        RemoteSettingsRow(
+                            id: "models.list.codex", kind: .page, title: "Codex", detail: "6 models · 2 hidden", target: "models.codex"),
+                    ]),
+            ]),
+            RemoteSettingsPage(id: "models.claude", title: "Claude Code", symbol: "cube", color: "purple", group: .detail, sections: [
+                RemoteSettingsSection(
+                    id: "favorites", title: "Favorites", footer: "Starred models come first in the model picker.",
+                    rows: [("opus", "Claude Opus", true), ("sonnet", "Claude Sonnet", false), ("haiku", "Claude Haiku", false)].map {
+                        toggle("models.favorite.claude/\($0.0)", $0.1, $0.2)
+                    }),
+                RemoteSettingsSection(
+                    id: "shown", title: "In the model picker",
+                    footer: "Hidden models stay out of the model picker until you show them again.",
+                    rows: [("opus", "Claude Opus", true), ("sonnet", "Claude Sonnet", true), ("haiku", "Claude Haiku", false)].map {
+                        toggle("models.shown.claude/\($0.0)", $0.1, $0.2)
+                    }),
             ]),
             RemoteSettingsPage(id: "usage", title: "Usage", symbol: "chart.bar.fill", color: "green", sections: [
                 RemoteSettingsSection(id: "limits", rows: [RemoteSettingsRow(id: "usage.limits", kind: .usage, title: "Usage Limits")]),
@@ -221,8 +239,18 @@ enum DemoData {
             ]),
             RemoteSettingsPage(id: "instructions", title: "Instructions", symbol: "text.document", color: "teal", sections: [
                 RemoteSettingsSection(
-                    id: "instructions", footer: "Instructions are long documents; edit them on your Mac.",
-                    rows: [onMac("instructions.open", "Edit on Your Mac")]),
+                    id: "files", title: "Files", footer: "The global instruction files every agent reads, in every project.",
+                    rows: [
+                        RemoteSettingsRow(
+                            id: "instructions.file./Users/apoorv/.config/coincide/AGENTS.md", kind: .document,
+                            title: "~/.config/coincide/AGENTS.md", detail: "Master · Claude Code, Codex, Cursor and OpenCode"),
+                        RemoteSettingsRow(
+                            id: "instructions.file./Users/apoorv/.gemini/GEMINI.md", kind: .document, title: "~/.gemini/GEMINI.md",
+                            detail: "Antigravity · Not created yet"),
+                    ]),
+                RemoteSettingsSection(
+                    id: "instructions", footer: "Linking files to a master and copying it to iCloud or a repository happen on your Mac.",
+                    rows: [onMac("instructions.open", "Open Instructions on Your Mac")]),
             ]),
             RemoteSettingsPage(id: "archive", title: "Archive", symbol: "archivebox", color: "brown", sections: [
                 RemoteSettingsSection(id: "threads", rows: [
@@ -242,7 +270,35 @@ enum DemoData {
             ]),
             RemoteSettingsPage(id: "browser", title: "Browser", symbol: "globe", color: "cyan", sections: [
                 RemoteSettingsSection(
-                    id: "browser", footer: "Imported sign-ins and password managers stay on your Mac.",
+                    id: "profile", title: "Profile",
+                    footer: "Cookies and site data include sign-ins in the shared browser profile; pages open in threads reload. Bookmarks are kept.",
+                    rows: [
+                        toggle(
+                            "browser.privateSessions", "Use private sessions", false,
+                            detail: "Each thread starts signed out, and forgets its cookies when it closes."),
+                        choice("browser.searchEngine", "Search engine", "google", [("google", "Google"), ("duckduckgo", "DuckDuckGo"), ("bing", "Bing")]),
+                        RemoteSettingsRow(id: "browser.history", kind: .info, title: "History items", detail: "1,284"),
+                        RemoteSettingsRow(id: "browser.clearHistory", kind: .action, title: "Clear History", isDestructive: true),
+                        RemoteSettingsRow(id: "browser.clearSiteData", kind: .action, title: "Clear Cookies and Site Data", isDestructive: true),
+                    ]),
+                RemoteSettingsSection(
+                    id: "agents", title: "Agents",
+                    footer: "Agents can’t read cookies, site storage or what’s typed in password fields, and ask you to take over for sign-ins, CAPTCHAs and two-factor codes.",
+                    rows: [
+                        toggle(
+                            "browser.agentControl", "Agent Control in new threads", true,
+                            detail: "Agents can use their thread’s browser in the background and open it when they need you.")
+                    ]),
+                RemoteSettingsSection(id: "bookmarks", title: "Bookmarks", rows: [
+                    RemoteSettingsRow(
+                        id: "browser.bookmark.remove.1", kind: .action, title: "App Store Connect", detail: "appstoreconnect.apple.com",
+                        action: "Remove", isDestructive: true),
+                    RemoteSettingsRow(
+                        id: "browser.bookmark.remove.2", kind: .action, title: "Coincide on GitHub", detail: "github.com", action: "Remove",
+                        isDestructive: true),
+                ]),
+                RemoteSettingsSection(
+                    id: "browser", title: "Passwords and Imports", footer: "Password managers, saved logins and browser imports stay on your Mac.",
                     rows: [onMac("browser.open", "Open Browser Settings on Your Mac")]),
             ]),
             RemoteSettingsPage(id: "computerUse", title: "Computer Use", symbol: "desktopcomputer", color: "blue", sections: [
@@ -292,6 +348,25 @@ enum DemoData {
                 ]),
             ]))
         return RemoteSettingsSnapshot(pages: pages)
+    }
+
+    /// An instruction file's text, for the document editor.
+    static func document(_ key: String) -> RemoteSettingsDocument {
+        RemoteSettingsDocument(
+            key: key, title: String(key.split(separator: "/").last ?? "AGENTS.md"),
+            text: """
+                # Global instructions
+
+                - Read the repository's AGENTS.md before changing anything.
+                - Keep commits small and explain why, not what.
+                - Run the tests that cover what you changed, headless.
+                - Never put API keys in URLs; send them in headers.
+
+                ## Mobile apps
+
+                Rebuild and install on the iPhone after every change that runs there.
+                """,
+            version: "demo")
     }
 
     /// Two pictures waiting in the composer, for `-CoincideRemoteDemoAttachments`.

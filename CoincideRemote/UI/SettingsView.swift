@@ -237,7 +237,17 @@ struct SettingsPaneView: View {
         case .notifications: SettingsForm(title: String(localized: "Notifications")) { NotificationsSection() }
         case .keyboard: KeyboardSettingsPane()
         case .about: AboutSettingsPane()
-        case .mac(let id): MacSettingsPageView(pageID: id)
+        case .mac(let id):
+            #if DEBUG
+            // Screenshots of the instruction editor: `-CoincideRemoteSettingsPane document`.
+            if id == "document", DemoData.isEnabled {
+                SettingsDocumentEditor(key: "instructions.file./Users/apoorv/.config/coincide/AGENTS.md", title: "~/.config/coincide/AGENTS.md")
+            } else {
+                MacSettingsPageView(pageID: id)
+            }
+            #else
+            MacSettingsPageView(pageID: id)
+            #endif
         }
     }
 }

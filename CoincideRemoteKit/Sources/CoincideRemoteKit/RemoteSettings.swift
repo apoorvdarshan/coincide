@@ -18,9 +18,11 @@ public struct RemoteSettingsSnapshot: Codable, Hashable, Sendable {
 
 /// One of the Mac's Settings panes.
 public struct RemoteSettingsPage: Codable, Hashable, Sendable, Identifiable {
-    /// `app` for the Mac's panes, `provider` for an agent under Providers, `about` for About.
+    /// `app` for the Mac's panes, `provider` for an agent under Providers, `about` for About, and `detail` for a page
+    /// reached only from another page's row (an agent's models under Models), which no sidebar lists. A phone that
+    /// doesn't know a group lists the page nowhere but still opens it from a row.
     public enum Group: String, Codable, Sendable {
-        case app, provider, about, unknown
+        case app, provider, about, detail, unknown
 
         public init(from decoder: Decoder) throws {
             self = Group(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
@@ -130,6 +132,9 @@ public struct RemoteSettingsRow: Codable, Hashable, Sendable, Identifiable {
         case page
         /// A web link (`url`).
         case link
+        /// A text document the phone opens and edits as a whole, such as an instruction file. Its text isn't in the
+        /// snapshot: the phone asks for it (`settingsDocument`) and saves it back (`saveSettingsDocument`).
+        case document
         /// A kind this version doesn't know, which the phone leaves out.
         case unknown
 
@@ -194,5 +199,27 @@ public struct RemoteSettingsRow: Codable, Hashable, Sendable, Identifiable {
             }
         }
         return rows
+    }
+}
+
+/// A document a `document` row stands for, with the version it was read at. Saving sends that version back, and the
+/// Mac refuses the save when the document changed since, so an edit on the phone never silently overwrites one made
+/// on the Mac.
+public struct RemoteSettingsDocument: Codable, Hashable, Sendable {
+    /// The row's key.
+    public var key: String
+    public var title: String
+    public var text: String
+    /// Opaque to the phone: the Mac's fingerprint of the document as read.
+    public var version: String
+
+    /// The most a document may hold, in characters, both ways.
+    public static let maxLength = 200_000
+
+    public init(key: String, title: String, text: String, version: String) {
+        self.key = key
+        self.title = title
+        self.text = text
+        self.version = version
     }
 }

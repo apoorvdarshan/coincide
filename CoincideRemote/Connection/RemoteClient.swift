@@ -674,6 +674,25 @@ final class RemoteClient {
         if case .settings(let snapshot)? = await performNewer(.changeSetting(key: key, value: value)) { macSettings = snapshot }
     }
 
+    /// A settings document's text, such as an instruction file. Throws what the Mac said, for the editor to show.
+    func settingsDocument(_ key: String) async throws -> RemoteSettingsDocument {
+        #if DEBUG
+        if DemoData.isEnabled { return DemoData.document(key) }
+        #endif
+        guard case .settingsDocument(let document) = try await request(.settingsDocument(key: key)) else {
+            throw RemoteError(.failed, String(localized: "The Mac didn’t send the file."))
+        }
+        return document
+    }
+
+    /// Saves a settings document; refused with `conflict` when it changed on the Mac since it was read.
+    func saveSettingsDocument(_ document: RemoteSettingsDocument) async throws -> RemoteSettingsDocument {
+        guard case .settingsDocument(let saved) = try await request(.saveSettingsDocument(document)) else {
+            throw RemoteError(.failed, String(localized: "The Mac didn’t save the file."))
+        }
+        return saved
+    }
+
     func performMacSettingsAction(_ key: String) async {
         if case .settings(let snapshot)? = await performNewer(.settingsAction(key: key)) { macSettings = snapshot }
     }

@@ -71,6 +71,7 @@ struct MacSettingsRowView: View {
     @Environment(RemoteClient.self) private var client
     @Environment(\.theme) private var theme
     @State private var text = ""
+    @State private var confirming = false
 
     var body: some View {
         switch row.kind {
@@ -121,11 +122,12 @@ struct MacSettingsRowView: View {
             }
         case .action:
             Button(role: row.isDestructive == true ? .destructive : nil) {
-                Task { await client.performMacSettingsAction(row.id) }
+                // Clearing data or removing something asks first, as the Mac does.
+                if row.isDestructive == true { confirming = true } else { Task { await client.performMacSettingsAction(row.id) } }
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(row.title).foregroundStyle(theme.ink)
+                        Text(row.title).foregroundStyle(row.isDestructive == true && row.action == nil ? Color.red : theme.ink)
                         if let detail = row.detail { Text(detail).font(.caption).foregroundStyle(theme.secondaryInk) }
                     }
                     Spacer()
@@ -138,6 +140,23 @@ struct MacSettingsRowView: View {
             }
             .disabled(isDisabled || !client.isConnected)
             .accessibilityHint(row.finishesOnMac == true ? Text("Opens this on your Mac") : Text(""))
+            .confirmationDialog(Text(row.title), isPresented: $confirming, titleVisibility: .visible) {
+                Button(row.action ?? row.title, role: .destructive) { Task { await client.performMacSettingsAction(row.id) } }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                if let detail = row.detail { Text(detail) } else { Text("This can’t be undone.") }
+            }
+        case .document:
+            NavigationLink { SettingsDocumentEditor(key: row.id, title: row.title) } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.title).font(.callout.monospaced()).foregroundStyle(theme.ink).lineLimit(1).truncationMode(.head)
+                    if let detail = row.detail, !detail.isEmpty {
+                        Text(detail).font(.caption).foregroundStyle(theme.secondaryInk).lineLimit(2)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .disabled(!client.isConnected)
         case .usage:
             NavigationLink { UsageView() } label: { Label(row.title, systemImage: "gauge.with.dots.needle.33percent") }
         case .page:

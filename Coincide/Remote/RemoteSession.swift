@@ -276,6 +276,13 @@ final class RemoteSession {
                 let snapshot = adapter.settingsSnapshot()
                 lastSettings = snapshot
                 respond(id, .settings(snapshot))
+                refreshInstructions()
+            case .settingsDocument(let key):
+                respond(id, .settingsDocument(try adapter.instructions.document(key)))
+            case .saveSettingsDocument(let document):
+                respond(id, .settingsDocument(try adapter.instructions.save(document)))
+                // A file saved for the first time exists now; the pane says so.
+                refreshInstructions()
             case .changeSetting(let key, let value):
                 try adapter.changeSetting(key, to: value)
                 followsSettings = true
@@ -407,6 +414,23 @@ final class RemoteSession {
         pendingTurns = []
     }
 
+    /// Finds the instruction files again (they live on disk, outside the store), then sends Settings if the list changed.
+    private func refreshInstructions() {
+        Task { [weak self] in
+            await self?.adapter.instructions.refresh()
+            self?.sendSettingsIfChanged()
+        }
+    }
+
+    /// Sends the Mac's Settings to a phone that follows them, when they changed since it last heard.
+    private func sendSettingsIfChanged() {
+        guard case .authenticated = state, followsSettings else { return }
+        let snapshot = adapter.settingsSnapshot()
+        guard snapshot != lastSettings else { return }
+        lastSettings = snapshot
+        send(.event(.settings(snapshot)))
+    }
+
     func flushWorkspace() {
         guard case .authenticated = state else { return }
         if serverDirty {
@@ -414,11 +438,7 @@ final class RemoteSession {
             send(.event(.server(serverInfo())))
         }
         if followsSettings, serverDirty || workspaceDirty || lastSettings != nil {
-            let snapshot = adapter.settingsSnapshot()
-            if snapshot != lastSettings {
-                lastSettings = snapshot
-                send(.event(.settings(snapshot)))
-            }
+            sendSettingsIfChanged()
         }
         guard workspaceDirty else { return }
         workspaceDirty = false

@@ -14,6 +14,8 @@ extension RemoteStoreAdapter {
     struct SettingsServices {
         var computerUsePermissions: () -> (accessibility: Bool, screenRecording: Bool)
         var showOnMac: (String) -> Void
+        /// The browser profile Settings › Browser describes; a scratch one in tests.
+        var browser: () -> BrowserProfile = { .shared }
 
         static var live: SettingsServices {
             SettingsServices(
@@ -243,13 +245,53 @@ extension RemoteStoreAdapter {
                     options: models.map { RemoteSettingOption(id: $0.modelID, title: $0.displayName) }),
                 choice("models.defaultAccessMode", String(localized: "Access"), \.defaultAccessMode) { $0.displayName },
             ]),
-            RemoteSettingsSection(id: "lists", rows: [
-                RemoteSettingsRow(
-                    id: "models.favorites", kind: .info, title: String(localized: "Favorites"), detail: "\(settings.favoriteModels.count)"),
-                RemoteSettingsRow(
-                    id: "models.hidden", kind: .info, title: String(localized: "Hidden models"), detail: "\(settings.hiddenModels.count)"),
-            ]),
+            RemoteSettingsSection(
+                id: "lists", title: String(localized: "Model picker"),
+                footer: String(localized: "Star the models you use most, or hide the ones you never pick."),
+                rows: registry.orderedKinds.filter { !registry.models(for: $0).isEmpty }.map { kind in
+                    let models = registry.models(for: kind)
+                    let favorites = models.filter { settings.favoriteModels.contains($0.reference) }.count
+                    let hidden = models.filter { settings.hiddenModels.contains($0.reference) }.count
+                    var detail = [String(localized: "\(models.count) models")]
+                    if favorites > 0 { detail.append(String(localized: "\(favorites) starred")) }
+                    if hidden > 0 { detail.append(String(localized: "\(hidden) hidden")) }
+                    return RemoteSettingsRow(
+                        id: "models.list.\(kind.rawValue)", kind: .page, title: kind.displayName,
+                        detail: detail.joined(separator: " · "), target: "models.\(kind.rawValue)")
+                }),
         ])
+        for kind in registry.orderedKinds {
+            let models = Array(registry.models(for: kind).prefix(Self.maxListedModels))
+            guard !models.isEmpty else { continue }
+            var favoriteRows: [RemoteSettingsRow] = []
+            var shownRows: [RemoteSettingsRow] = []
+            for model in models {
+                let reference = model.reference
+                let key = "\(kind.rawValue)/\(model.modelID)"
+                catalog.setters["models.favorite.\(key)"] = { value in
+                    store.updateSettings { $0.setFavorite(value.bool ?? false, reference) }
+                }
+                catalog.setters["models.shown.\(key)"] = { value in
+                    store.updateSettings { $0.setHidden(!(value.bool ?? true), reference) }
+                }
+                favoriteRows.append(
+                    RemoteSettingsRow(
+                        id: "models.favorite.\(key)", kind: .toggle, title: model.displayName,
+                        value: .bool(settings.favoriteModels.contains(reference))))
+                shownRows.append(
+                    RemoteSettingsRow(
+                        id: "models.shown.\(key)", kind: .toggle, title: model.displayName,
+                        value: .bool(!settings.hiddenModels.contains(reference))))
+            }
+            page("models.\(kind.rawValue)", kind.displayName, "cube", "purple", group: .detail, [
+                RemoteSettingsSection(
+                    id: "favorites", title: String(localized: "Favorites"),
+                    footer: String(localized: "Starred models come first in the model picker."), rows: favoriteRows),
+                RemoteSettingsSection(
+                    id: "shown", title: String(localized: "In the model picker"),
+                    footer: String(localized: "Hidden models stay out of the model picker until you show them again."), rows: shownRows),
+            ])
+        }
 
         // Usage
         page("usage", String(localized: "Usage"), "chart.bar.fill", "green", [
@@ -265,10 +307,17 @@ extension RemoteStoreAdapter {
         ])
 
         // Instructions
+        let instructionFiles = instructions.files
         page("instructions", String(localized: "Instructions"), "text.document", "teal", [
             RemoteSettingsSection(
-                id: "instructions", footer: String(localized: "Instructions are long documents; edit them on your Mac."),
-                rows: [showAction("instructions.open", String(localized: "Edit on Your Mac"), page: "instructions")]),
+                id: "files", title: String(localized: "Files"),
+                footer: String(localized: "The global instruction files every agent reads, in every project."),
+                rows: instructionFiles.map { file in
+                    RemoteSettingsRow(id: file.key, kind: .document, title: file.title, detail: file.detail)
+                }),
+            RemoteSettingsSection(
+                id: "instructions", footer: String(localized: "Linking files to a master and copying it to iCloud or a repository happen on your Mac."),
+                rows: [showAction("instructions.open", String(localized: "Open Instructions on Your Mac"), page: "instructions")]),
         ])
 
         // Archive
@@ -300,9 +349,70 @@ extension RemoteStoreAdapter {
         ])
 
         // Browser
+        let browser = settingsServices.browser()
+        let browserSettings = browser.settings.settings
+        catalog.setters["browser.privateSessions"] = { value in browser.settings.update { $0.usesPrivateSessions = value.bool ?? false } }
+        catalog.setters["browser.agentControl"] = { value in browser.settings.update { $0.agentControlByDefault = value.bool ?? true } }
+        catalog.setters["browser.searchEngine"] = { value in
+            guard let engine = value.string.flatMap(SearchEngine.init(rawValue:)) else { return }
+            browser.settings.update { $0.searchEngine = engine }
+        }
+        catalog.actions["browser.clearHistory"] = { Task { await browser.clear(siteData: false, history: true) } }
+        catalog.actions["browser.clearSiteData"] = {
+            Task {
+                await browser.clear(siteData: true, history: false)
+                PreviewSessions.shared.resetSessions()
+            }
+        }
+        var bookmarkRows: [RemoteSettingsRow] = []
+        for bookmark in browser.library.bookmarks.prefix(Self.maxListedBookmarks) {
+            let key = "browser.bookmark.remove.\(bookmark.id.uuidString)"
+            catalog.actions[key] = { browser.library.removeBookmarks { $0.id == bookmark.id } }
+            // The host alone: a bookmark's path and query can carry what a page put there.
+            bookmarkRows.append(
+                RemoteSettingsRow(
+                    id: key, kind: .action, title: bookmark.title.isEmpty ? (URL(string: bookmark.url)?.host() ?? bookmark.url) : bookmark.title,
+                    detail: URL(string: bookmark.url)?.host(), action: String(localized: "Remove"), isDestructive: true))
+        }
+        if bookmarkRows.isEmpty {
+            bookmarkRows = [
+                RemoteSettingsRow(id: "browser.bookmarks.none", kind: .info, title: String(localized: "Bookmark a page with the star in the browser’s address bar."))
+            ]
+        }
         page("browser", String(localized: "Browser"), "globe", "cyan", [
             RemoteSettingsSection(
-                id: "browser", footer: String(localized: "Imported sign-ins and password managers stay on your Mac."),
+                id: "profile", title: String(localized: "Profile"),
+                footer: String(localized: "Cookies and site data include sign-ins in the shared browser profile; pages open in threads reload. Bookmarks are kept."),
+                rows: [
+                    RemoteSettingsRow(
+                        id: "browser.privateSessions", kind: .toggle, title: String(localized: "Use private sessions"),
+                        detail: String(localized: "Each thread starts signed out, and forgets its cookies when it closes."),
+                        value: .bool(browserSettings.usesPrivateSessions)),
+                    RemoteSettingsRow(
+                        id: "browser.searchEngine", kind: .choice, title: String(localized: "Search engine"),
+                        value: .string(browserSettings.searchEngine.rawValue),
+                        options: SearchEngine.allCases.map { RemoteSettingOption(id: $0.rawValue, title: $0.name) }),
+                    RemoteSettingsRow(
+                        id: "browser.history", kind: .info, title: String(localized: "History items"),
+                        detail: browser.library.history.count.formatted()),
+                    RemoteSettingsRow(
+                        id: "browser.clearHistory", kind: .action, title: String(localized: "Clear History"), isDestructive: true),
+                    RemoteSettingsRow(
+                        id: "browser.clearSiteData", kind: .action, title: String(localized: "Clear Cookies and Site Data"), isDestructive: true),
+                ]),
+            RemoteSettingsSection(
+                id: "agents", title: String(localized: "Agents"),
+                footer: String(localized: "Agents can’t read cookies, site storage or what’s typed in password fields, and ask you to take over for sign-ins, CAPTCHAs and two-factor codes."),
+                rows: [
+                    RemoteSettingsRow(
+                        id: "browser.agentControl", kind: .toggle, title: String(localized: "Agent Control in new threads"),
+                        detail: String(localized: "Agents can use their thread’s browser in the background and open it when they need you."),
+                        value: .bool(browserSettings.agentControlByDefault))
+                ]),
+            RemoteSettingsSection(id: "bookmarks", title: String(localized: "Bookmarks"), rows: bookmarkRows),
+            RemoteSettingsSection(
+                id: "browser", title: String(localized: "Passwords and Imports"),
+                footer: String(localized: "Password managers, saved logins and browser imports stay on your Mac."),
                 rows: [showAction("browser.open", String(localized: "Open Browser Settings on Your Mac"), page: "browser")]),
         ])
 
@@ -392,6 +502,10 @@ extension RemoteStoreAdapter {
         catalog.rows = RemoteSettingsRow.index(catalog.snapshot)
         return catalog
     }
+
+    /// Most models listed per agent, and bookmarks in Browser; the rest stay on the Mac's own panes.
+    static let maxListedModels = 80
+    static let maxListedBookmarks = 50
 
     nonisolated static func statusName(_ status: String) -> String {
         switch status {
