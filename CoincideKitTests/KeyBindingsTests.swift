@@ -149,7 +149,7 @@ struct KeyShortcutMenuTests {
 struct KeyCommandTests {
     @Test func defaultsAreUsableDistinctAndFreeOfMacOSShortcuts() {
         let defaults = KeyCommand.allCases.compactMap(\.defaultShortcut)
-        #expect(defaults.count == 31)
+        #expect(defaults.count == 32)
         #expect(Set(defaults).count == defaults.count)
         #expect(defaults.allSatisfy { $0.isUsableInMenus })
         let reserved = Set(ReservedShortcut.macOS.map(\.shortcut))
@@ -178,6 +178,19 @@ struct KeyCommandTests {
         #expect(KeyCommand.showArchive.defaultShortcut == .builtIn("mod+alt+a"))
         #expect(KeyCommand.showArchive.menu == .view)
         #expect(KeyBindings().commands(using: .builtIn("mod+alt+a")) == [.showArchive])
+    }
+
+    /// ⌘R renames the open thread. No other command or macOS shortcut claims it (the composer and terminal keys are
+    /// checked in `ShortcutHintTests`).
+    @Test func commandRRenamesTheThread() {
+        let commandR = KeyShortcut.builtIn("mod+r")
+        #expect(KeyCommand.renameThread.defaultShortcut == commandR)
+        #expect(KeyBindings().shortcut(for: .renameThread) == commandR)
+        #expect(KeyBindings().commands(using: commandR) == [.renameThread])
+        #expect(KeyBindings().conflicts(for: .renameThread, reserved: ReservedShortcut.macOS).isEmpty)
+        // Clearing it leaves ⌘R to nothing; choosing another key counts as a change.
+        #expect(KeyBindings(overrides: ["thread.rename": ""]).commands(using: commandR).isEmpty)
+        #expect(KeyBindings(overrides: ["thread.rename": "ctrl+r"]).customized == [.renameThread])
     }
 
     @Test func defaultsMatchT3WhereT3HasTheCommand() {
@@ -216,7 +229,7 @@ struct KeyBindingsTests {
     @Test func defaultsApplyWithoutOverrides() {
         let bindings = KeyBindings()
         #expect(bindings.shortcut(for: .stopTurn) == KeyShortcut("mod+."))
-        #expect(bindings.shortcut(for: .renameThread) == nil)
+        #expect(bindings.shortcut(for: .deleteThread) == nil)
         #expect(bindings.customized.isEmpty)
         #expect(bindings.issues.isEmpty)
         for command in KeyCommand.allCases {

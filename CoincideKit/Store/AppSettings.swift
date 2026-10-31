@@ -753,6 +753,9 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
             .increaseFontSize: "mod++", .decreaseFontSize: "mod+-", .resetFontSize: "mod+0", .stopTurn: "mod+.",
             .previousThread: "mod+shift+[", .nextThread: "mod+shift+]", .chooseModel: "mod+shift+m",
             .reasoningEffort: "mod+shift+e", .accessMode: "mod+shift+a", .pinThread: "mod+shift+p",
+            // ⌘R renames the open thread in the sidebar. A focused terminal and the browser panel leave it to the menu, so
+            // it renames from there too (a web page that handles ⌘R itself gets it first, as with any menu shortcut).
+            .renameThread: "mod+r",
             // ⌘W puts the open thread away in the archive, where it can be brought back. File › Close Window moves to ⌘⇧W,
             // and other windows still close with ⌘W.
             .archiveThread: "mod+w", .showArchive: "mod+alt+a",

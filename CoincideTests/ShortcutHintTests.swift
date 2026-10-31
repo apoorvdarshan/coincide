@@ -33,11 +33,19 @@ struct ShortcutHintTests {
         // Without a shortcut the tooltip names none.
         set(.stopTurn, "")
         #expect(controller.toolTip("Stop", for: .stopTurn) == "Stop")
-        #expect(controller.toolTip("Rename", for: .renameThread) == "Rename")
+        #expect(controller.toolTip("Delete", for: .deleteThread) == "Delete")
+        #expect(controller.toolTip("Rename", for: .renameThread) == "Rename (⌘R)")
         // Nor when another command runs on its keys instead.
         set(.toggleTerminal, "mod+shift+e")
         #expect(controller.toolTip("Hide Terminal", for: .toggleTerminal) == "Hide Terminal (⇧⌘E)")
         #expect(controller.toolTip("Reasoning effort", for: .reasoningEffort) == "Reasoning effort")
+    }
+
+    /// ⌘R goes to Rename from anywhere in the main window: neither the composer nor a focused terminal keeps it.
+    @Test func commandRIsLeftToRename() {
+        let commandR = KeyShortcut("mod+r")!
+        #expect(!KeyBindingsController.reservedShortcuts(fixed: []).contains { $0.shortcut == commandR })
+        #expect(controller.displayString(for: .renameThread) == "⌘R")
     }
 
     @Test func theComposerSendKeysLeaveOutAKeyAMenuItemHas() {
