@@ -168,6 +168,9 @@ final class KeyBindingsController {
         (String(localized: "Previous and next pane"), [shortcut("mod+alt+arrowleft"), shortcut("mod+alt+arrowright")]),
         (String(localized: "Move to the start or end of the line"), [shortcut("mod+arrowleft"), shortcut("mod+arrowright")]),
         (String(localized: "Move by word"), [shortcut("alt+arrowleft"), shortcut("alt+arrowright")]),
+        // With the shell integration's prompt marks (ShellIntegration).
+        (String(localized: "Previous and next command"), [shortcut("mod+arrowup"), shortcut("mod+arrowdown")]),
+        (String(localized: "Send last command’s output to the agent"), [shortcut("mod+shift+l")]),
     ]
 
     /// Keys the composer handles itself. The menu bar sees keys first, so a command given one takes it from the composer.
