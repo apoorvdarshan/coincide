@@ -443,8 +443,8 @@ struct SettingsSearchResults: View {
                 keywords: [
                     String(localized: "Screenshot"), String(localized: "Capture"), String(localized: "Window"),
                     String(localized: "Both Command keys"), String(localized: "Shortcut"), String(localized: "Window text"),
-                    String(localized: "Screen Recording"), String(localized: "Accessibility"),
-                    "appshot", "screenshot", "capture", "window", "command", "hotkey", "⌘",
+                    String(localized: "Screen Recording"), String(localized: "Accessibility"), String(localized: "Play a sound"),
+                    "appshot", "screenshot", "capture", "window", "command", "hotkey", "⌘", "sound",
                 ]),
             SettingsSearchEntry(
                 title: String(localized: "About Coincide"), pane: .section(.about),

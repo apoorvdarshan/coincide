@@ -116,7 +116,8 @@ final class ComposerAttachmentChip: NSView {
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         layer?.borderWidth = 1
-        thumbnail.contentsGravity = .resizeAspectFill
+        // The whole picture, letterboxed, the way it will be sent: a wide window's appshot isn't cut to its middle.
+        thumbnail.contentsGravity = .resize
         thumbnail.masksToBounds = true
         layer?.addSublayer(thumbnail)
 
@@ -158,7 +159,32 @@ final class ComposerAttachmentChip: NSView {
 
     override func layout() {
         super.layout()
-        thumbnail.frame = bounds
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        thumbnail.frame = thumbnailFrame
+        CATransaction.commit()
+    }
+
+    /// Where the thumbnail is drawn: the picture fitted inside the chip, keeping its shape.
+    var thumbnailFrame: CGRect { Self.fittedFrame(for: thumbnailSize, in: bounds) }
+
+    private var thumbnailSize: CGSize?
+
+    /// `size` scaled to fit inside `bounds` and centred, keeping its aspect; all of `bounds` while it isn't known.
+    static func fittedFrame(for size: CGSize?, in bounds: CGRect) -> CGRect {
+        guard let size, size.width > 0, size.height > 0, bounds.width > 0, bounds.height > 0 else { return bounds }
+        let scale = min(bounds.width / size.width, bounds.height / size.height)
+        let width = size.width * scale
+        let height = size.height * scale
+        return CGRect(x: bounds.midX - width / 2, y: bounds.midY - height / 2, width: width, height: height).integral
+            .intersection(bounds)
+    }
+
+    /// Shows `image` as the thumbnail; tests call it with a picture of their own.
+    func show(_ image: CGImage?) {
+        thumbnailSize = image.map { CGSize(width: $0.width, height: $0.height) }
+        thumbnail.contents = image
+        needsLayout = true
     }
 
     override func updateLayer() {
@@ -175,7 +201,7 @@ final class ComposerAttachmentChip: NSView {
             representationTypes: .thumbnail)
         Task { [weak self] in
             let representation = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
-            self?.thumbnail.contents = representation?.cgImage
+            self?.show(representation?.cgImage)
         }
     }
 
@@ -385,10 +411,18 @@ final class ComposerAttachmentStrip: NSStackView {
 
     /// Scrolls a newly added card into view.
     func reveal(_ context: MessageContext) {
-        guard let card = chips.arrangedSubviews.first(where: { ($0 as? ComposerContextCard)?.context.id == context.id })
-        else { return }
+        reveal { ($0 as? ComposerContextCard)?.context.id == context.id }
+    }
+
+    /// Scrolls a newly added image's thumbnail into view, such as an appshot added from another app.
+    func reveal(_ attachment: ComposerAttachment) {
+        reveal { ($0 as? ComposerAttachmentChip)?.attachment.path == attachment.path }
+    }
+
+    private func reveal(where matches: (NSView) -> Bool) {
+        guard let view = chips.arrangedSubviews.first(where: matches) else { return }
         layoutSubtreeIfNeeded()
-        card.scrollToVisible(card.bounds)
+        view.scrollToVisible(view.bounds)
     }
 
     private func makeChip(_ attachment: ComposerAttachment) -> ComposerAttachmentChip {

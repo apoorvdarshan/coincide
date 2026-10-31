@@ -43,6 +43,10 @@ struct AppshotsSettingsView: View {
                     Text("Include the window’s text")
                     Text("Adds the text the app makes available in that window, read through Accessibility, as a card beside the picture.")
                 }
+                Toggle(isOn: $controller.playsSound) {
+                    Text("Play a sound")
+                    Text("Plays the screenshot sound when an appshot is taken, at your alert volume.")
+                }
                 LabeledContent("Status") {
                     Text(controller.stateDescription)
                         .foregroundStyle(.secondary)

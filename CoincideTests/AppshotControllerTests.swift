@@ -17,6 +17,11 @@ struct AppshotControllerTests {
         }
     }
 
+    private final class RecordingSound: AppshotSoundPlaying {
+        var plays = 0
+        func playCapture() { plays += 1 }
+    }
+
     @MainActor
     final class Box<Value> {
         var values: [Value] = []
@@ -30,6 +35,9 @@ struct AppshotControllerTests {
         let composer: ComposerViewController
         let controller: AppshotController
         let hud = RecordingHUD()
+        let sound = RecordingSound()
+        /// The frame each capture was asked to take.
+        let frames = Box<CGRect>()
         /// Where the fake screen saved its captures.
         let captured = Box<String>()
         let openedBox = Box<UUID>()
@@ -49,7 +57,8 @@ struct AppshotControllerTests {
             composer.threadID = thread
             controller = AppshotController(store: store)
             controller.hud = hud
-            controller.screen = AppshotControllerTests.screen(capturedInto: captured)
+            controller.sound = sound
+            controller.screen = AppshotControllerTests.screen(capturedInto: captured, frames: frames)
             controller.accessibilityCheck = { true }
             controller.screenRecordingCheck = { true }
             controller.visibleThread = { nil }
@@ -85,7 +94,9 @@ struct AppshotControllerTests {
         id: 1, ownerPID: 1, ownerName: "Coincide", bounds: CGRect(x: 0, y: 0, width: 800, height: 600))
 
     /// A screen with Coincide's window in front of Safari's, and Safari the frontmost app.
-    private static func screen(capturedInto paths: Box<String>, text: String? = "Example Domain\nMore information") -> AppshotScreen {
+    private static func screen(
+        capturedInto paths: Box<String>, frames: Box<CGRect>? = nil, text: String? = "Example Domain\nMore information"
+    ) -> AppshotScreen {
         var screen = AppshotScreen()
         screen.ownPID = 1
         screen.windows = {
@@ -96,13 +107,17 @@ struct AppshotControllerTests {
             ]
         }
         screen.frontmostPID = { safari }
+        screen.displays = { [CGRect(x: 0, y: 0, width: 1470, height: 956)] }
         screen.appName = { $0.ownerName }
         screen.isTakingPassword = { _, _ in false }
-        screen.capture = { window, directory in
+        screen.capture = { window, frame, directory in
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let url = directory.appendingPathComponent("appshot-\(window.id).png")
             try Data([0x89, 0x50, 0x4E, 0x47]).write(to: url)
-            await MainActor.run { paths.values.append(url.path) }
+            await MainActor.run {
+                paths.values.append(url.path)
+                frames?.values.append(frame)
+            }
             return url.path
         }
         screen.readText = { _ in text }
@@ -249,5 +264,110 @@ struct AppshotControllerTests {
         }
         #expect(SettingsSection(rawValue: "appshots") == .appshots)
         #expect(SettingsSection.appshots.title == "Appshots")
+        #expect(entries.contains { $0.pane == .section(.appshots) && $0.matches("sound") })
+    }
+
+    @Test func anAppshotPlaysTheCaptureSoundUnlessTurnedOff() async {
+        let fixture = Fixture()
+        let controller = fixture.controller
+        controller.enabled = true
+        defer { controller.shutdown() }
+        #expect(controller.playsSound)
+        controller.takeAppshot()
+        await waitForCapture(controller)
+        #expect(fixture.sound.plays == 1)
+
+        controller.playsSound = false
+        #expect(!fixture.store.settings.appshots.playsSound)
+        controller.takeAppshot()
+        await waitForCapture(controller)
+        #expect(fixture.captured.values.count == 2 && fixture.sound.plays == 1)
+    }
+
+    @Test func noSoundWhenNothingWasTaken() async {
+        let fixture = Fixture()
+        let controller = fixture.controller
+        var screen = Self.screen(capturedInto: fixture.captured)
+        screen.isTakingPassword = { _, _ in true }
+        controller.screen = screen
+        controller.enabled = true
+        defer { controller.shutdown() }
+        controller.takeAppshot()
+        await waitForCapture(controller)
+        var failing = Self.screen(capturedInto: fixture.captured)
+        failing.capture = { _, _, _ in throw AppshotCapture.Failure.windowGone }
+        controller.screen = failing
+        controller.takeAppshot()
+        await waitForCapture(controller)
+        #expect(controller.lastOutcome == .failed(AppshotCapture.Failure.windowGone.localizedDescription))
+        #expect(fixture.sound.plays == 0 && fixture.activations.values.isEmpty)
+    }
+
+    @Test func chromesToolbarWindowIsCapturedWithItsPage() async {
+        let fixture = Fixture()
+        let controller = fixture.controller
+        var screen = Self.screen(capturedInto: fixture.captured, frames: fixture.frames)
+        let chrome: Int32 = 5151
+        let strip = AppshotWindow(id: 7, ownerPID: chrome, ownerName: "Google Chrome", bounds: CGRect(x: 0, y: 33, width: 1470, height: 81))
+        let page = AppshotWindow(id: 8, ownerPID: chrome, ownerName: "Google Chrome", bounds: CGRect(x: 0, y: 114, width: 1470, height: 842))
+        screen.windows = { [Self.coincideWindow, strip, page] }
+        screen.frontmostPID = { chrome }
+        let read = Box<CGRect>()
+        screen.readText = { window in
+            await MainActor.run { read.values.append(window.bounds) }
+            return "Page text"
+        }
+        controller.screen = screen
+        controller.enabled = true
+        defer { controller.shutdown() }
+        controller.takeAppshot()
+        await waitForCapture(controller)
+        // The strip is what's in front, and the picture is sized for the whole window it's part of.
+        #expect(fixture.captured.values.first?.hasSuffix("appshot-7.png") == true)
+        #expect(fixture.frames.values == [CGRect(x: 0, y: 33, width: 1470, height: 923)])
+        // Its text is read across the page too, not clipped to the strip.
+        #expect(read.values == [CGRect(x: 0, y: 33, width: 1470, height: 923)])
+    }
+
+    @Test func aWindowOffEveryDisplayIsntTaken() async {
+        let fixture = Fixture()
+        let controller = fixture.controller
+        var screen = Self.screen(capturedInto: fixture.captured)
+        let parked = AppshotWindow(id: 9, ownerPID: Self.safari, ownerName: "Safari", bounds: CGRect(x: 4000, y: 0, width: 800, height: 600))
+        screen.windows = { [Self.coincideWindow, parked] }
+        controller.screen = screen
+        controller.enabled = true
+        defer { controller.shutdown() }
+        controller.takeAppshot()
+        await waitForCapture(controller)
+        #expect(controller.lastOutcome == .noWindow && fixture.captured.values.isEmpty && fixture.sound.plays == 0)
+    }
+
+    @Test func theComposersThumbnailShowsTheWholePicture() throws {
+        func picture(_ width: Int, _ height: Int) throws -> CGImage {
+            let context = try #require(
+                CGContext(
+                    data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            return try #require(context.makeImage())
+        }
+        let side = ComposerAttachmentChip.side
+        let bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        // A wide window's appshot is letterboxed, whole and unstretched, rather than cut to its middle.
+        let wide = ComposerAttachmentChip.fittedFrame(for: CGSize(width: 2940, height: 1846), in: bounds)
+        #expect(wide.width == side && wide.minX == 0)
+        #expect(abs(wide.width / wide.height - 2940.0 / 1846) < 0.06 && abs(wide.midY - side / 2) <= 0.5)
+        let tall = ComposerAttachmentChip.fittedFrame(for: CGSize(width: 600, height: 1200), in: bounds)
+        #expect(tall.height == side && tall.width == side / 2 && tall.midX == side / 2)
+        #expect(ComposerAttachmentChip.fittedFrame(for: CGSize(width: 300, height: 300), in: bounds) == bounds)
+        #expect(ComposerAttachmentChip.fittedFrame(for: nil, in: bounds) == bounds)
+        #expect(ComposerAttachmentChip.fittedFrame(for: .zero, in: bounds) == bounds)
+        // The chip itself (never in a window) lays its thumbnail out that way.
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString).png")
+        let chip = ComposerAttachmentChip(attachment: ComposerAttachment(path: url.path, name: "Appshot"))
+        chip.frame = bounds
+        chip.show(try picture(2000, 1000))
+        chip.layoutSubtreeIfNeeded()
+        #expect(chip.thumbnailFrame == CGRect(x: 0, y: 14, width: side, height: 28))
     }
 }

@@ -36,6 +36,13 @@ public struct AppshotWindow: Hashable, Sendable {
         self.ownerIsRegularApp = ownerIsRegularApp
     }
 
+    /// The same window at `bounds`, such as the frame of the windows it's drawn with.
+    public nonisolated func with(bounds: CGRect) -> AppshotWindow {
+        var copy = self
+        copy.bounds = bounds
+        return copy
+    }
+
     /// Reads one entry of `CGWindowListCopyWindowInfo`; nil when it lacks the window's number, owner or bounds.
     /// `isRegularApp` says whether a process is an app in the Dock.
     public nonisolated init?(windowListEntry entry: [String: Any], isRegularApp: (Int32) -> Bool = { _ in true }) {
@@ -70,12 +77,16 @@ public enum AppshotWindowPicker {
     /// The frontmost window of the frontmost app that isn't `excluded` (Coincide). `windows` are front to back, as the
     /// window server lists them. While another app is in front (`frontmostPID`) only its windows count, so a window
     /// of an app behind it is never taken instead; while Coincide is, the app whose window is next in front.
+    /// Only ordinary windows (layer 0: not the menu bar, its extras, menus or the Dock) that are visible, at least
+    /// `minimumSide` both ways and, when `displays` (window-server coordinates) are known, showing at least that much
+    /// on one of them, so a window parked off screen is never taken.
     public nonisolated static func choose(
-        from windows: [AppshotWindow], frontmostPID: Int32?, excluding excluded: Set<Int32>
+        from windows: [AppshotWindow], frontmostPID: Int32?, excluding excluded: Set<Int32>, displays: [CGRect] = []
     ) -> AppshotWindowChoice {
         let candidates = windows.filter { window in
             window.layer == 0 && window.alpha > 0 && window.bounds.width >= minimumSide
                 && window.bounds.height >= minimumSide && !excluded.contains(window.ownerPID)
+                && isOnScreen(window.bounds, displays: displays)
         }
         let window: AppshotWindow?
         if let frontmostPID, !excluded.contains(frontmostPID) {
@@ -85,6 +96,15 @@ public enum AppshotWindowPicker {
         }
         guard let window else { return .none }
         return window.isShareable ? .capture(window) : .protected(window)
+    }
+
+    /// Whether at least `minimumSide` of `frame` both ways shows on one of `displays`; true when none are known.
+    public nonisolated static func isOnScreen(_ frame: CGRect, displays: [CGRect]) -> Bool {
+        guard !displays.isEmpty else { return true }
+        return displays.contains { display in
+            let shown = display.intersection(frame)
+            return !shown.isNull && shown.width >= minimumSide && shown.height >= minimumSide
+        }
     }
 }
 

@@ -15,6 +15,7 @@ struct AppshotSettingsTests {
         #expect(!AppSettings().appshots.enabled)
         #expect(AppSettings().appshots.trigger == .bothCommandKeys)
         #expect(AppSettings().appshots.includesWindowText)
+        #expect(AppSettings().appshots.playsSound)
         // Settings written before Appshots existed decode with it off.
         let older = try decode(#"{"fontSize": 15, "computerUseEnabled": true}"#)
         #expect(!older.appshots.enabled && older.fontSize == 15 && older.computerUseEnabled)
@@ -35,6 +36,10 @@ struct AppshotSettingsTests {
         #expect(settings.appshots.trigger == .bothCommandKeys)
         #expect(!settings.appshots.includesWindowText)
         #expect(settings.appshots.shortcut == nil)
+        // Saved before the sound had a setting: it plays.
+        #expect(settings.appshots.playsSound)
+        let quiet = try decode(#"{"appshots": {"enabled": true, "playsSound": false}}"#)
+        #expect(!quiet.appshots.playsSound && quiet.appshots.enabled)
     }
 
     @Test func theChoicesSaveAndReadBack() throws {
@@ -42,6 +47,7 @@ struct AppshotSettingsTests {
         settings.appshots.enabled = true
         settings.appshots.trigger = .shortcut
         settings.appshots.shortcut = AppshotShortcut(keyCode: 0x01, shortcut: KeyShortcut("mod+ctrl+s")!)
+        settings.appshots.playsSound = false
         let saved = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
         #expect(saved.appshots == settings.appshots)
         #expect(saved.appshots.activeShortcut?.keyShortcut == KeyShortcut("mod+ctrl+s"))
@@ -229,6 +235,28 @@ struct AppshotWindowPickerTests {
             Self.window(4, Self.safari),
         ]
         #expect(choose(windows, frontmost: Self.safari) == .capture(windows[3]))
+    }
+
+    @Test func windowsOffEveryDisplayAreSkipped() {
+        // A 1470×956 laptop display and a 1920×1080 one to its right, in window-server coordinates.
+        let displays = [CGRect(x: 0, y: 0, width: 1470, height: 956), CGRect(x: 1470, y: -124, width: 1920, height: 1080)]
+        func window(_ id: UInt32, _ frame: CGRect) -> AppshotWindow {
+            AppshotWindow(id: id, ownerPID: Self.safari, ownerName: "Safari", bounds: frame)
+        }
+        let parked = window(1, CGRect(x: -5000, y: 200, width: 800, height: 600))
+        let sliver = window(2, CGRect(x: 1440, y: -700, width: 800, height: 600))  // Its bottom 24 points show.
+        let peeking = window(3, CGRect(x: -760, y: 100, width: 800, height: 600))  // 40 points show.
+        let onSecond = window(4, CGRect(x: 2000, y: 0, width: 800, height: 600))
+        func choose(_ windows: [AppshotWindow]) -> AppshotWindowChoice {
+            AppshotWindowPicker.choose(from: windows, frontmostPID: Self.safari, excluding: [Self.coincide], displays: displays)
+        }
+        #expect(choose([parked, onSecond]) == .capture(onSecond))
+        #expect(choose([parked, peeking, onSecond]) == .capture(peeking))
+        #expect(choose([parked]) == .none)
+        #expect(!AppshotWindowPicker.isOnScreen(sliver.bounds, displays: displays))
+        #expect(AppshotWindowPicker.isOnScreen(CGRect(x: 1440, y: 0, width: 800, height: 600), displays: displays))
+        // Without the displays, nothing is ruled out for its place.
+        #expect(AppshotWindowPicker.choose(from: [parked], frontmostPID: Self.safari, excluding: []) == .capture(parked))
     }
 
     @Test func coincidesOwnWindowsAreNeverCaptured() {

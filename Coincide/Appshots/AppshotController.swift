@@ -74,7 +74,11 @@ final class AppshotController {
     /// Opening a thread, starting a chat and bringing Coincide forward; tests replace them, so no window shows.
     @ObservationIgnored var openThread: (UUID) -> Void = { AppEvents.openThread($0) }
     @ObservationIgnored var newChat: () -> UUID? = { ThreadActions.newChat() }
-    @ObservationIgnored var activate: () -> Void = { NSApp.activate() }
+    /// Brings Coincide forward from the background, with the main window in front and the focus in the composer.
+    @ObservationIgnored var activate: () -> Void = {
+        AppForegrounder.shared.bringForward { AppEvents.post(.coincideFocusComposer) }
+    }
+    @ObservationIgnored var sound: AppshotSoundPlaying = AppshotShutterSound()
     @ObservationIgnored var openSettings: () -> Void = { AppEvents.showSettings(section: .appshots) }
     @ObservationIgnored private var observation: ObservationToken?
     /// Nil while nothing is installed.
@@ -113,6 +117,11 @@ final class AppshotController {
     var includesWindowText: Bool {
         get { settings.includesWindowText }
         set { update { $0.includesWindowText = newValue } }
+    }
+
+    var playsSound: Bool {
+        get { settings.playsSound }
+        set { update { $0.playsSound = newValue } }
     }
 
     var shortcut: KeyShortcut? { settings.shortcut?.keyShortcut }
@@ -300,7 +309,10 @@ final class AppshotController {
             return
         }
         let window: AppshotWindow
-        switch AppshotWindowPicker.choose(from: screen.windows(), frontmostPID: screen.frontmostPID(), excluding: [screen.ownPID]) {
+        let windows = screen.windows()
+        switch AppshotWindowPicker.choose(
+            from: windows, frontmostPID: screen.frontmostPID(), excluding: [screen.ownPID], displays: screen.displays())
+        {
         case .none:
             return finish(.noWindow, around: nil)
         case .protected(let protected):
@@ -309,6 +321,11 @@ final class AppshotController {
             window = chosen
         }
         let app = screen.appName(window)
+        // Chrome draws its toolbar as a window of its own in front of the page's: the picture takes them together.
+        let frame = AppshotCaptureGeometry.groupFrame(of: window, in: windows)
+        // Its text is read across the whole of it too, not just the strip's.
+        let textWindow = window.with(bounds: frame)
+        let playsSound = settings.playsSound
         let canReadApp = accessibilityGranted
         let readsText = settings.includesWindowText && canReadApp
         let directory = store.directory.appendingPathComponent("attachments", isDirectory: true)
@@ -318,17 +335,18 @@ final class AppshotController {
             defer { isCapturing = false }
             // Asking the app about its focused field may wait on it, so not on the main thread.
             guard await !isTakingPassword(window, canReadApp) else {
-                return finish(.passwordField(app: app), around: window.bounds)
+                return finish(.passwordField(app: app), around: frame)
             }
             // The text is read while the picture is taken.
-            async let text: String? = readsText ? await readText(window) : nil
+            async let text: String? = readsText ? await readText(textWindow) : nil
             do {
-                let path = try await capture(window, directory)
+                let path = try await capture(window, frame, directory)
+                if playsSound { sound.playCapture() }
                 let context = await text.map { MessageContext(.windowText(.init(app: app, title: window.title, text: $0))) }
                 deliver(ComposerAttachment(path: path, name: String(localized: "Appshot of \(app)")), context: context)
-                finish(.added(app: app), around: window.bounds)
+                finish(.added(app: app), around: frame)
             } catch {
-                finish(.failed(error.localizedDescription), around: window.bounds)
+                finish(.failed(error.localizedDescription), around: frame)
             }
         }
     }
@@ -364,6 +382,8 @@ struct AppshotScreen {
     /// Coincide's own process, whose windows are never captured.
     var ownPID = ProcessInfo.processInfo.processIdentifier
     var windows: () -> [AppshotWindow] = { AppshotCapture.windows() }
+    /// The displays' frames in window-server coordinates, so a window off every display isn't chosen.
+    var displays: () -> [CGRect] = { AppshotCapture.currentDisplays().map(\.frame) }
     var frontmostPID: () -> Int32? = { NSWorkspace.shared.frontmostApplication?.processIdentifier }
     var appName: (AppshotWindow) -> String = { window in
         NSRunningApplication(processIdentifier: window.ownerPID)?.localizedName
@@ -373,7 +393,10 @@ struct AppshotScreen {
     var isTakingPassword: @Sendable (AppshotWindow, Bool) async -> Bool = {
         await AppshotPrivacy.isTakingPassword($0, canReadApp: $1)
     }
-    /// Captures the window into the folder and returns the picture's path.
-    var capture: @Sendable (AppshotWindow, URL) async throws -> String = { try await AppshotCapture.capture($0, into: $1) }
+    /// Captures the window, drawn with the windows at `frame` it's made of, into the folder, and returns the picture's
+    /// path.
+    var capture: @Sendable (AppshotWindow, CGRect, URL) async throws -> String = {
+        try await AppshotCapture.capture($0, frame: $1, into: $2)
+    }
     var readText: @Sendable (AppshotWindow) async -> String? = { await AppshotWindowText.read(from: $0) }
 }

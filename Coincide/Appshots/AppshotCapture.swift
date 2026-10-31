@@ -30,26 +30,50 @@ nonisolated enum AppshotCapture {
         return list.compactMap { AppshotWindow(windowListEntry: $0) { regular.contains($0) } }
     }
 
-    /// Captures the window and saves the picture into the attachments folder, returning its path.
+    /// Captures the window, drawn with the windows it's made of (`frame`: theirs together, see
+    /// `AppshotCaptureGeometry`), and saves the picture into the attachments folder, returning its path.
     @concurrent
-    static func capture(_ window: AppshotWindow, into directory: URL) async throws -> String {
-        try await save(image(of: window), into: directory)
+    static func capture(_ window: AppshotWindow, frame: CGRect, into directory: URL) async throws -> String {
+        try await save(image(of: window, frame: frame), into: directory)
     }
 
-    /// The window alone at the display's full (Retina) resolution, through ScreenCaptureKit: no other window, no
-    /// cursor, no shadow, never the rest of the screen.
-    private static func image(of window: AppshotWindow) async throws -> CGImage {
+    /// The window alone at its display's full (Retina) resolution, through ScreenCaptureKit: no other app's window, no
+    /// cursor, no shadow, never the rest of the screen, and the parts off the display included.
+    private static func image(of window: AppshotWindow, frame: CGRect) async throws -> CGImage {
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         guard let shareable = content.windows.first(where: { $0.windowID == window.id }) else { throw Failure.windowGone }
         let filter = SCContentFilter(desktopIndependentWindow: shareable)
+        let displays = await MainActor.run { currentDisplays() }
+        let scale = AppshotCaptureGeometry.scale(for: frame, displays: displays, fallback: CGFloat(filter.pointPixelScale))
+        let output = AppshotCaptureGeometry.pixelSize(for: frame, scale: scale)
+        let first = AppshotImageTrim.trimmed(try await shot(filter, size: output))
+        // Drawn in only part of the picture: the window's group was guessed wrong. Once more at the right shape.
+        let drawn = AppshotPixelSize(width: first.width, height: first.height)
+        guard
+            let better = AppshotCaptureGeometry.refinedFrame(
+                content: drawn, output: output, used: frame, alternatives: [window.bounds, shareable.frame])
+        else { return first }
+        return AppshotImageTrim.trimmed(try await shot(filter, size: AppshotCaptureGeometry.pixelSize(for: better, scale: scale)))
+    }
+
+    private static func shot(_ filter: SCContentFilter, size: AppshotPixelSize) async throws -> CGImage {
         let configuration = SCStreamConfiguration()
-        let scale = CGFloat(filter.pointPixelScale)
-        configuration.width = max(1, Int((filter.contentRect.width * scale).rounded()))
-        configuration.height = max(1, Int((filter.contentRect.height * scale).rounded()))
+        configuration.width = size.width
+        configuration.height = size.height
+        configuration.preservesAspectRatio = true
         configuration.showsCursor = false
         configuration.ignoreShadowsSingleWindow = true
         configuration.captureResolution = .best
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+    }
+
+    /// The displays in window-server coordinates, with their scales.
+    @MainActor
+    static func currentDisplays() -> [AppshotDisplay] {
+        let screens = NSScreen.screens
+        // The main display (with the menu bar) is the first, at the origin of both coordinate systems.
+        let mainHeight = screens.first?.frame.height ?? 0
+        return screens.map { AppshotDisplay(appKitFrame: $0.frame, scale: $0.backingScaleFactor, mainHeight: mainHeight) }
     }
 
     /// Saves the picture into the attachments folder the way the composer saves pasted images (at most 2000 pixels on
