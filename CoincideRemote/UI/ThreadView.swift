@@ -317,7 +317,7 @@ struct BackgroundTaskLine: View {
             Image(systemName: Self.symbol(task.kind))
                 .font(.caption.weight(.medium))
                 .foregroundStyle(theme.tertiaryInk)
-                .frame(width: 18)
+                .frame(minWidth: 18)
             VStack(alignment: .leading, spacing: 1) {
                 Text(Self.oneLine(task.title))
                     .font(.footnote)
