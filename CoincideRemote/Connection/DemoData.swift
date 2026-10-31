@@ -519,6 +519,11 @@ enum DemoData {
             ]))
         // `-CoincideRemoteDemoMedia`: pictures the user attached and an agent's generated image, video and page.
         if ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoMedia") {
+            // A wide Mac screenshot alone, which must stay within the bubble.
+            add(.user, "Why is this terminal not taking my typing?", media: [
+                RemoteMedia(index: 4, kind: .image, label: "Screenshot 2026-10-31 at 9.31.12 PM.png")
+            ])
+            add(.assistant, "The terminal never becomes first responder when clicked. I'll fix the focus handling.")
             add(.user, "Make the settings screen match these.", media: [
                 RemoteMedia(index: 0, kind: .image, label: "5025975E-88A1-4F2B-9C1D-2B7E5C3A9F10.png"),
                 RemoteMedia(index: 1, kind: .image, label: "IMG_2041.jpg"),

@@ -2,7 +2,7 @@ import CoreGraphics
 import Testing
 
 /// Coincide Remote's layout rules (`CoincideRemote/UI/RemoteLayout.swift`, compiled into this suite): when the list
-/// and a thread sit side by side, and where the composer's controls go at every width.
+/// and a thread sit side by side, where the composer's controls go at every width, and how large a message's pictures are.
 struct RemoteLayoutTests {
     // MARK: Side by side
 
@@ -94,6 +94,61 @@ struct RemoteLayoutTests {
             width: 330, chips: large, pinned: [RemoteLayout.Chip(full: 150, compact: 70)], fixed: 150, height: 70)
         expectWellFormed(footer, width: 330)
         #expect(footer.size.height == CGFloat(footer.chips.map(\.line).max()! + 1) * 70)
+    }
+
+    // MARK: Pictures
+
+    /// The room a picture has: inside the user's bubble on an iPhone (282), a folded Duo (358), an unfolded Duo (561),
+    /// and a reply's column beside the list on an iPad (480) or alone on a landscape iPad (790).
+    private let pictureRooms: [CGFloat] = [282, 358, 561, 480, 790]
+
+    @Test func aLonePictureKeepsItsShapeWithinItsMessageAndTheHeightCap() {
+        // A Mac screenshot (2940 × 1912), a phone screenshot (1179 × 2556), a square, and one still loading.
+        for aspect: CGFloat? in [2940.0 / 1912, 1179.0 / 2556, 1, nil] {
+            for width in pictureRooms {
+                let grid = RemoteLayout.pictureGrid(aspects: [aspect], width: width)
+                let frame = grid.frames[0]
+                #expect(frame.width <= width, "\(String(describing: aspect)) is wider than its message at \(width)")
+                #expect(frame.height <= RemoteLayout.pictureMaximumHeight)
+                #expect(frame.width > 0 && frame.height > 0)
+                #expect(grid.size == frame.size)
+                // Its shape, within a point of rounding, cropped only past the limits.
+                let shape = min(max(aspect ?? 4 / 3, RemoteLayout.pictureAspects.lowerBound), RemoteLayout.pictureAspects.upperBound)
+                #expect(abs(frame.width - frame.height * shape) <= 1, "\(String(describing: aspect)) at \(width): \(frame)")
+            }
+        }
+        // The Mac screenshot fills an iPhone bubble's width, a third of the screen tall, not the whole screen.
+        let phone = RemoteLayout.pictureGrid(aspects: [2940.0 / 1912], width: 282).size
+        #expect(phone.width == 282)
+        #expect(phone.height == 183)
+        // On an iPad it stops at the height cap rather than growing across the column.
+        #expect(RemoteLayout.pictureGrid(aspects: [2940.0 / 1912], width: 790).size.height == RemoteLayout.pictureMaximumHeight)
+        // A long phone screenshot is cropped to a readable shape instead of a sliver.
+        #expect(RemoteLayout.pictureGrid(aspects: [1179.0 / 2556], width: 282).size == CGSize(width: 120, height: 240))
+    }
+
+    @Test func severalPicturesSitTwoToARowInTilesThatFitTheirMessage() {
+        for count in 2...5 {
+            for width in pictureRooms + [120] {
+                let grid = RemoteLayout.pictureGrid(aspects: Array(repeating: 1.5, count: count), width: width)
+                #expect(grid.frames.count == count)
+                #expect(grid.size.width <= width, "\(count) pictures are wider than their message at \(width)")
+                for (index, frame) in grid.frames.enumerated() {
+                    #expect(frame.width <= RemoteLayout.pictureTileMaximumWidth)
+                    #expect(frame.height == (frame.width * 0.75).rounded())
+                    #expect(frame.maxX <= grid.size.width && frame.maxY <= grid.size.height)
+                    #expect(frame.minX == (index % 2 == 0 ? 0 : frame.width + RemoteLayout.pictureSpacing))
+                    for other in grid.frames[(index + 1)...] { #expect(!frame.intersects(other)) }
+                }
+            }
+        }
+        #expect(RemoteLayout.pictureGrid(aspects: [1, 1, 1], width: 282).size == CGSize(width: 282, height: 103 * 2 + 8))
+        #expect(RemoteLayout.pictureGrid(aspects: [1, 1], width: 790).size == CGSize(width: 328, height: 120))
+    }
+
+    @Test func noRoomLaysOutNothing() {
+        #expect(RemoteLayout.pictureGrid(aspects: [1.5], width: 0).size == .zero)
+        #expect(RemoteLayout.pictureGrid(aspects: [], width: 300).frames.isEmpty)
     }
 
     // MARK: Search

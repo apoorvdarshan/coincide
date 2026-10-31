@@ -17,6 +17,49 @@ nonisolated enum RemoteLayout {
         isRegular && width >= listColumn.minimum + minimumThreadWidth
     }
 
+    /// The tallest a picture in the transcript gets, so a screenshot never takes over the screen.
+    static let pictureMaximumHeight: CGFloat = 240
+    /// The shapes a lone picture keeps, width over height; a panorama or a long screenshot is cropped to these.
+    static let pictureAspects: ClosedRange<CGFloat> = 0.5...2.4
+    /// The widest tile when several pictures share a message, as the Mac's message thumbnails (104 points there).
+    static let pictureTileMaximumWidth: CGFloat = 160
+    static let pictureSpacing: CGFloat = 8
+
+    struct PictureGrid: Equatable {
+        var frames: [CGRect]
+        var size: CGSize
+    }
+
+    /// Lays out a message's pictures within `width`, the room their message has (inside the user's bubble, or the
+    /// reply's column). One picture keeps its shape, as large as fits under `maxHeight`. Several sit two to a row in 4:3
+    /// tiles, as the Mac lays out a message's thumbnails. `aspects` are each picture's width over its height, nil while
+    /// it loads (drawn 4:3 until then).
+    static func pictureGrid(
+        aspects: [CGFloat?], width: CGFloat, maxHeight: CGFloat = pictureMaximumHeight, spacing: CGFloat = pictureSpacing
+    ) -> PictureGrid {
+        let width = max(0, width.isFinite ? width : 0)
+        guard !aspects.isEmpty, width > 0 else { return PictureGrid(frames: aspects.map { _ in .zero }, size: .zero) }
+        if aspects.count == 1 {
+            let raw = aspects[0].flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 4 / 3
+            let aspect = min(max(raw, pictureAspects.lowerBound), pictureAspects.upperBound)
+            // As wide as the message when that keeps it under the cap; otherwise as tall as the cap allows.
+            let size =
+                width / aspect <= maxHeight
+                ? CGSize(width: width, height: min(maxHeight, (width / aspect).rounded()))
+                : CGSize(width: min(width, (maxHeight * aspect).rounded(.down)), height: maxHeight)
+            return PictureGrid(frames: [CGRect(origin: .zero, size: size)], size: size)
+        }
+        let tile = max(0, min(pictureTileMaximumWidth, ((width - spacing) / 2).rounded(.down)))
+        let tileHeight = (tile * 0.75).rounded()
+        let frames = aspects.indices.map { index in
+            CGRect(
+                x: CGFloat(index % 2) * (tile + spacing), y: CGFloat(index / 2) * (tileHeight + spacing), width: tile,
+                height: tileHeight)
+        }
+        let rows = CGFloat((aspects.count + 1) / 2)
+        return PictureGrid(frames: frames, size: CGSize(width: tile * 2 + spacing, height: rows * tileHeight + (rows - 1) * spacing))
+    }
+
     /// A control in the composer's footer: its width with its label, and its narrowest form (its symbol alone).
     struct Chip: Equatable {
         var full: CGFloat

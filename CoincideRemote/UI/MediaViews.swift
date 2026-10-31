@@ -85,8 +85,8 @@ final class MediaCache {
     }
 }
 
-/// An item's previews under its text, as the Mac shows them: images as thumbnails (tap for full screen), video with
-/// its first frame, and audio or interactive pages as a card that says to open them on the Mac.
+/// An item's previews, as the Mac shows them: images as thumbnails sized to the room their message has (tap for full
+/// screen), video with its first frame, and audio or interactive pages as a card that says to open them on the Mac.
 struct MediaStrip: View {
     let item: RemoteItem
     let threadID: UUID
@@ -100,21 +100,17 @@ struct MediaStrip: View {
         let others = media.filter { $0.kind != .image && $0.kind != .video }
         VStack(alignment: alignment, spacing: 8) {
             if !pictures.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(pictures) { media in
-                            MediaThumbnail(media: media, key: .init(threadID, item.id, media.index, full: false), count: pictures.count) {
-                                if media.kind == .image {
-                                    viewing = media
-                                } else {
-                                    client.notice = String(localized: "Open it on your Mac to play it.")
-                                }
+                PictureGridLayout {
+                    ForEach(pictures) { media in
+                        MediaThumbnail(media: media, key: .init(threadID, item.id, media.index, full: false)) {
+                            if media.kind == .image {
+                                viewing = media
+                            } else {
+                                client.notice = String(localized: "Open it on your Mac to play it.")
                             }
                         }
                     }
                 }
-                .scrollClipDisabled()
-                .defaultScrollAnchor(alignment == .trailing ? .trailing : .leading)
             }
             ForEach(others) { media in OpenOnMacCard(media: media) }
         }
@@ -133,68 +129,91 @@ struct MediaStrip: View {
     }
 }
 
-/// One thumbnail: a placeholder while it loads, then the picture, rounded, at a size that keeps a single picture large
-/// and several in a row.
+/// A picture's shape, width over height, once its thumbnail has loaded.
+private nonisolated struct PictureAspect: LayoutValueKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+/// Places a message's thumbnails by `RemoteLayout.pictureGrid` in the width its message offers, so they follow the
+/// window: an iPhone, a folded or unfolded Duo, an iPad beside the list.
+struct PictureGridLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        grid(width: proposal.width, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let grid = grid(width: proposal.width ?? bounds.width, subviews: subviews)
+        for (subview, frame) in zip(subviews, grid.frames) {
+            subview.place(
+                at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), anchor: .topLeading,
+                proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func grid(width: CGFloat?, subviews: Subviews) -> RemoteLayout.PictureGrid {
+        // Asked for an ideal size, with no width offered: about a phone's message width.
+        let width = width.flatMap { $0.isFinite ? $0 : nil } ?? 300
+        return RemoteLayout.pictureGrid(aspects: subviews.map { $0[PictureAspect.self] }, width: width)
+    }
+}
+
+/// One thumbnail: a placeholder while it loads, then the picture, rounded, filling the frame the grid gives it.
 struct MediaThumbnail: View {
     let media: RemoteMedia
     let key: MediaCache.Key
-    let count: Int
     let open: () -> Void
     @Environment(RemoteClient.self) private var client
     @Environment(\.theme) private var theme
     @State private var outcome: MediaCache.Outcome?
 
     var body: some View {
-        let height: CGFloat = count == 1 ? 200 : 128
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         Button(action: open) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(theme.card)
-                switch outcome {
-                case .image(let image):
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: width(image, height: height), height: height)
-                        .clipped()
-                    if media.kind == .video {
-                        Image(systemName: "play.circle.fill")
-                            .font(.largeTitle)
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(.white, .black.opacity(0.45))
+            shape.fill(theme.card)
+                .overlay {
+                    switch outcome {
+                    case .image(let image):
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                        if media.kind == .video {
+                            Image(systemName: "play.circle.fill")
+                                .font(.largeTitle)
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, .black.opacity(0.45))
+                        }
+                    case .unavailable(let reason):
+                        VStack(spacing: 4) {
+                            Image(systemName: "photo.badge.exclamationmark").font(.title3)
+                            Text(reason).font(.caption2).multilineTextAlignment(.center).lineLimit(3)
+                        }
+                        .foregroundStyle(theme.secondaryInk)
+                        .padding(8)
+                    case nil:
+                        ProgressView().tint(theme.secondaryInk)
                     }
-                case .unavailable(let reason):
-                    VStack(spacing: 4) {
-                        Image(systemName: "photo.badge.exclamationmark").font(.title3)
-                        Text(reason).font(.caption2).multilineTextAlignment(.center).lineLimit(3)
-                    }
-                    .foregroundStyle(theme.secondaryInk)
-                    .padding(8)
-                case nil:
-                    ProgressView().tint(theme.secondaryInk)
                 }
-            }
-            .frame(width: outcome.flatMap(image).map { width($0, height: height) } ?? height * 1.3, height: height)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(theme.border, lineWidth: theme.borderWidth * 0.5))
-            .contentShape(.rect)
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(theme.border, lineWidth: theme.borderWidth * 0.5))
+                .contentShape(shape)
         }
         .buttonStyle(.plain)
-        .allowsHitTesting(outcome.flatMap(image) != nil)
+        .layoutValue(key: PictureAspect.self, value: aspect)
+        .allowsHitTesting(loadedImage != nil)
         .task(id: key.id) { outcome = await client.media.load(key, client: client) }
         .accessibilityLabel(Text(media.label.isEmpty ? String(localized: "Image") : media.label))
         .accessibilityHint(media.kind == .image ? Text("Opens it full screen") : Text("Open it on your Mac to play it."))
         .accessibilityAddTraits(.isImage)
     }
 
-    private func image(_ outcome: MediaCache.Outcome) -> UIImage? {
+    private var loadedImage: UIImage? {
         if case .image(let image) = outcome { return image }
         return nil
     }
 
-    /// The width that keeps the picture's shape at this height, within reason for very wide or tall ones.
-    private func width(_ image: UIImage, height: CGFloat) -> CGFloat {
-        guard image.size.height > 0 else { return height }
-        return min(max(height * image.size.width / image.size.height, height * 0.6), height * 2.2)
+    private var aspect: CGFloat? {
+        guard let size = loadedImage?.size, size.width > 0, size.height > 0 else { return nil }
+        return size.width / size.height
     }
 }
 

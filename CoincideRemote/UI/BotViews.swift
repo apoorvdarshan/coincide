@@ -154,6 +154,12 @@ struct BotsView: View {
         }
         .sheet(item: $editing) { target in BotEditorView(target: target) }
         .modifier(BotDeletion(bot: $deleting))
+        #if DEBUG
+        // Screenshots of the editor without taps: `-CoincideRemoteTab bots -CoincideRemoteDemoBotEditor <character>`.
+        .task {
+            if DemoData.isEnabled, DemoData.value(after: "-CoincideRemoteDemoBotEditor") != nil { editing = .new }
+        }
+        #endif
     }
 
     @ViewBuilder
@@ -355,9 +361,7 @@ struct BotEditorView: View {
     @Environment(RemoteClient.self) private var client
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
-    @State private var name = ""
-    @State private var character = BotArtwork.Character.brulee
-    @State private var tint = BotArtwork.Character.brulee.defaultTint
+    @State private var look = BotEditorLook(character: .brulee)
     @State private var persona = ""
     @State private var provider: String?
     @State private var modelID: String?
@@ -397,51 +401,55 @@ struct BotEditorView: View {
 
     @ViewBuilder private var fields: some View {
                 Section {
-                    BotAvatarImage(avatar: RemoteBotAvatar(character, tint), size: 112)
+                    BotAvatarImage(avatar: RemoteBotAvatar(look.character, look.tint), size: 112)
                         .frame(maxWidth: .infinity)
                         .listRowBackground(Color.clear)
-                    TextField(character.defaultName, text: $name)
+                    TextField(look.character.defaultName, text: $look.name)
                         .font(.title3.weight(.semibold))
                         .multilineTextAlignment(.center)
                         .submitLabel(.done)
                 }
+                // As the Mac's editor: every character in its own color, the chosen one in the bot's, ringed in the
+                // theme's accent. Picking one brings its color and, unless the user named the bot, its name.
                 Section("Character") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 56), spacing: 12)], spacing: 12) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 60), spacing: 10)], spacing: 10) {
                         ForEach(BotArtwork.Character.allCases, id: \.self) { option in
-                            Button {
-                                let followsName = name.isEmpty || name == character.defaultName
-                                if tint == character.defaultTint { tint = option.defaultTint }
-                                character = option
-                                if followsName { name = "" }
-                            } label: {
-                                BotAvatarImage(avatar: RemoteBotAvatar(option, tint), size: 48)
-                                    .padding(4)
-                                    .background(Circle().fill(option == character ? theme.selection : .clear))
-                                    .overlay(Circle().strokeBorder(option == character ? theme.ink : .clear, lineWidth: 2))
+                            let isChosen = option == look.character
+                            let tile = RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            Button { look.pick(option) } label: {
+                                BotAvatarImage(avatar: RemoteBotAvatar(option, look.pickerTint(for: option)), size: 44)
+                                    .frame(width: 60, height: 60)
+                                    .background(tile.fill(isChosen ? theme.raised : .clear))
+                                    .overlay(tile.strokeBorder(isChosen ? theme.accent : .clear, lineWidth: 2))
+                                    .contentShape(tile)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel(Text(option.defaultName))
-                            .accessibilityAddTraits(option == character ? .isSelected : [])
+                            .accessibilityAddTraits(isChosen ? .isSelected : [])
                         }
                     }
                     .padding(.vertical, 4)
                 }
                 Section("Color") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 36), spacing: 12)], spacing: 12) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 6)], spacing: 6) {
                         ForEach(BotArtwork.Tint.allCases, id: \.self) { option in
                             let color = BotArtwork.color(option)
-                            Button { tint = option } label: {
+                            let isChosen = option == look.tint
+                            Button { look.tint = option } label: {
                                 Circle()
                                     .fill(Color(.sRGB, red: color.red, green: color.green, blue: color.blue))
-                                    .frame(width: 32, height: 32)
-                                    .overlay(Circle().strokeBorder(theme.ink, lineWidth: option == tint ? 3 : 0).padding(-4))
+                                    .frame(width: 30, height: 30)
+                                    .padding(5)
+                                    .overlay(Circle().strokeBorder(isChosen ? theme.accent : .clear, lineWidth: 2))
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(.circle)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel(Text(Self.name(of: option)))
-                            .accessibilityAddTraits(option == tint ? .isSelected : [])
+                            .accessibilityAddTraits(isChosen ? .isSelected : [])
                         }
                     }
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 4)
                 }
                 Section {
                     TextField("What it’s like and how it works", text: $persona, axis: .vertical)
@@ -469,19 +477,27 @@ struct BotEditorView: View {
     private func load() {
         guard !loaded else { return }
         if let bot = existing {
-            name = bot.name
-            character = bot.avatar?.artCharacter ?? .alien
-            tint = bot.avatar?.artTint ?? character.defaultTint
-            if name == character.defaultName { name = "" }
+            let fallback = BotAvatarImage.character(named: bot.name)
+            let character = bot.avatar?.artCharacter ?? fallback?.0 ?? .alien
+            look = BotEditorLook(character: character, tint: bot.avatar?.artTint ?? character.defaultTint, name: bot.name)
             persona = bot.persona ?? ""
             provider = bot.selection?.provider
             modelID = bot.selection?.modelID
             fullAccess = bot.accessMode == "fullAccess"
         } else {
+            // As the Mac starts a new bot: a character none of the bots is yet, in its own color and with its name.
+            look = .newBot(avoiding: Set((client.workspace.bots ?? []).compactMap { $0.avatar?.artCharacter }))
             let first = client.workspace.providers.first
             provider = first?.id
             modelID = first?.models.first?.id
         }
+        #if DEBUG
+        // Screenshots: `-CoincideRemoteDemoBotEditor <character>` starts a new bot as Brulee and picks that character.
+        if DemoData.isEnabled, existing == nil, let raw = DemoData.value(after: "-CoincideRemoteDemoBotEditor") {
+            look = BotEditorLook(character: .brulee)
+            if let character = BotArtwork.Character(rawValue: raw) { look.pick(character) }
+        }
+        #endif
         DispatchQueue.main.async { loaded = true }
     }
 
@@ -490,7 +506,7 @@ struct BotEditorView: View {
         defer { saving = false }
         let original = existing
         let draft = RemoteBotDraft(
-            id: original?.id, name: name, avatar: RemoteBotAvatar(character, tint), persona: persona,
+            id: original?.id, name: look.name, avatar: RemoteBotAvatar(look.character, look.tint), persona: persona,
             provider: provider == original?.selection?.provider && modelID == original?.selection?.modelID ? nil : provider,
             modelID: provider == original?.selection?.provider && modelID == original?.selection?.modelID ? nil : modelID,
             accessMode: fullAccess ? "fullAccess" : "approval")
