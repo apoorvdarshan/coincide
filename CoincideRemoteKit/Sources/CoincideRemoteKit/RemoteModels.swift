@@ -20,11 +20,16 @@ public struct RemoteServerInfo: Codable, Hashable, Sendable {
     /// Whether the Mac notifies about finished turns, approvals and questions (its "Notify…" setting), which also
     /// decides whether it sends any to the phone. Nil from a Mac older than notification routing.
     public var notifies: Bool?
+    /// The typeface of agents' replies (Settings › General): `newYork` or `system`. Nil from an older Mac, which
+    /// replies in New York by default.
+    public var replyTypeface: String?
+    /// Where the user's messages sit in the conversation: `right` or `left`. Nil from an older Mac (right).
+    public var userMessageSide: String?
 
     public init(
         serverID: String, name: String, appVersion: String, protocolVersion: Int = RemoteProtocol.version,
         theme: RemoteThemeInfo = RemoteThemeInfo(), showsReasoning: Bool = true, followUpBehavior: String = "steer",
-        notifies: Bool? = nil
+        notifies: Bool? = nil, replyTypeface: String? = nil, userMessageSide: String? = nil
     ) {
         self.serverID = serverID
         self.name = name
@@ -34,7 +39,12 @@ public struct RemoteServerInfo: Codable, Hashable, Sendable {
         self.showsReasoning = showsReasoning
         self.followUpBehavior = followUpBehavior
         self.notifies = notifies
+        self.replyTypeface = replyTypeface
+        self.userMessageSide = userMessageSide
     }
+
+    /// Whether replies are set in New York, as the Mac does by default.
+    public var usesSerifReplies: Bool { replyTypeface != "system" }
 }
 
 /// The Mac's appearance settings, so the phone can follow its theme.
@@ -86,13 +96,19 @@ public struct RemoteProject: Codable, Hashable, Sendable, Identifiable {
     public var path: String
     public var isChats: Bool
     public var scripts: [RemoteScript]
+    /// Whether the Mac's sidebar shows the project's threads (its disclosure triangle). Nil from an older Mac, which
+    /// leaves expanding projects to the phone.
+    public var isExpanded: Bool?
 
-    public init(id: UUID, name: String, path: String, isChats: Bool = false, scripts: [RemoteScript] = []) {
+    public init(
+        id: UUID, name: String, path: String, isChats: Bool = false, scripts: [RemoteScript] = [], isExpanded: Bool? = nil
+    ) {
         self.id = id
         self.name = name
         self.path = path
         self.isChats = isChats
         self.scripts = scripts
+        self.isExpanded = isExpanded
     }
 }
 
@@ -252,6 +268,11 @@ public struct RemoteThreadSummary: Codable, Hashable, Sendable, Identifiable {
     public var queuedMessages: Int
     public var hasDraft: Bool
     public var itemCount: Int
+    /// When the running turn started, for the elapsed time the Mac's sidebar shows. Nil while idle or from an older Mac.
+    public var runningSince: Date?
+    /// An agent of the thread still works in the background after its reply (a subagent or a background command), so
+    /// the Mac's sidebar keeps its spinner. Nil from an older Mac.
+    public var hasBackgroundWork: Bool?
 
     public init(
         id: UUID, projectID: UUID, title: String, createdAt: Date = Date(), updatedAt: Date = Date(),
@@ -259,7 +280,8 @@ public struct RemoteThreadSummary: Codable, Hashable, Sendable, Identifiable {
         isPinned: Bool = false, isArchived: Bool = false, snoozedUntil: Date? = nil, isSettled: Bool = false,
         isHidden: Bool = false, branch: String? = nil, hasWorktree: Bool = false, isRunning: Bool = false,
         isStarting: Bool = false, pendingApprovals: Int = 0, pendingQuestions: Int = 0, unseen: String? = nil,
-        queuedMessages: Int = 0, hasDraft: Bool = false, itemCount: Int = 0
+        queuedMessages: Int = 0, hasDraft: Bool = false, itemCount: Int = 0, runningSince: Date? = nil,
+        hasBackgroundWork: Bool? = nil
     ) {
         self.id = id
         self.projectID = projectID
@@ -284,6 +306,8 @@ public struct RemoteThreadSummary: Codable, Hashable, Sendable, Identifiable {
         self.queuedMessages = queuedMessages
         self.hasDraft = hasDraft
         self.itemCount = itemCount
+        self.runningSince = runningSince
+        self.hasBackgroundWork = hasBackgroundWork
     }
 
     /// The agent waits for the user: an approval or a question.

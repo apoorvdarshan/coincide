@@ -14,8 +14,14 @@ enum DemoData {
     static let botsID = UUID(uuidString: "B0B5B0B5-C01C-4D1E-B075-000000000001")!
     static let bruleeThreadID = UUID(uuidString: "55555555-5555-5555-5555-555555555555")!
 
+    /// `-CoincideRemoteDemoTheme <dark id> <light id>` follows other Mac themes than Carbon.
     static var server: RemoteServerInfo {
-        RemoteServerInfo(serverID: "demo", name: "Apoorv’s MacBook Pro", appVersion: "0.1.0")
+        let arguments = ProcessInfo.processInfo.arguments
+        var theme = RemoteThemeInfo()
+        if let index = arguments.firstIndex(of: "-CoincideRemoteDemoTheme"), index + 2 < arguments.count {
+            theme = RemoteThemeInfo(darkThemeID: arguments[index + 1], lightThemeID: arguments[index + 2])
+        }
+        return RemoteServerInfo(serverID: "demo", name: "Apoorv’s MacBook Pro", appVersion: "0.1.0", theme: theme)
     }
 
     static var mac: SavedMac {
@@ -24,44 +30,69 @@ enum DemoData {
             port: RemoteProtocol.defaultPort, fingerprint: String(repeating: "0", count: 64), deviceID: "demo", pairedAt: Date())
     }
 
+    /// `-CoincideRemoteDemoOldMac` sends what a Mac from before bot characters, synced project expansion and turn
+    /// timers sends.
+    static var isOldMac: Bool { ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoOldMac") }
+
     static var workspace: RemoteWorkspace {
-        let claude = RemoteSelection(provider: "claude", modelID: "opus", modelName: "Claude Opus", effort: "high")
-        let codex = RemoteSelection(provider: "codex", modelID: "gpt", modelName: "GPT-5.5", effort: "medium", speed: "priority")
+        let claude = RemoteSelection(provider: "claude", modelID: "opus", modelName: "Opus", effort: "high")
+        let codex = RemoteSelection(provider: "codex", modelID: "gpt", modelName: "GPT-6.1-Sol", effort: "medium", speed: "priority")
+        let grok = RemoteSelection(provider: "grok", modelID: "grok", modelName: "Grok 4.7")
+        let antigravity = RemoteSelection(provider: "antigravity", modelID: "gemini", modelName: "Gemini 3.5 Pro")
+        let old = isOldMac
+        let pins = ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoPinned")
         let now = Date()
         func thread(_ title: String, _ project: UUID, _ selection: RemoteSelection, minutes: Double, id: UUID = UUID(),
                     pinned: Bool = false, running: Bool = false, approvals: Int = 0, unseen: String? = nil) -> RemoteThreadSummary {
             RemoteThreadSummary(
                 id: id, projectID: project, title: title, updatedAt: now.addingTimeInterval(-minutes * 60), selection: selection,
-                isPinned: pinned, branch: "main", isRunning: running, pendingApprovals: approvals, unseen: unseen, itemCount: 8)
+                isPinned: pinned, branch: "main", isRunning: running, pendingApprovals: approvals, unseen: unseen, itemCount: 8,
+                runningSince: running && !old ? now.addingTimeInterval(-41) : nil, hasBackgroundWork: old ? nil : false)
         }
+        let versionsID = UUID(uuidString: "99999999-9999-9999-9999-999999999999")!
         return RemoteWorkspace(
             projects: [
                 RemoteProject(
                     id: projectID, name: "coincide", path: "~/coincide",
-                    scripts: [RemoteScript(id: UUID(), name: "Tests", command: "xcodebuild test", icon: "test")]),
-                RemoteProject(id: otherProjectID, name: "fud-ai", path: "~/fud-ai"),
+                    scripts: [RemoteScript(id: UUID(), name: "Tests", command: "xcodebuild test", icon: "test")],
+                    isExpanded: old ? nil : true),
+                RemoteProject(id: otherProjectID, name: "fud-ai", path: "~/fud-ai", isExpanded: old ? nil : false),
+                RemoteProject(id: versionsID, name: "verceltics", path: "~/verceltics", isExpanded: old ? nil : false),
                 RemoteProject(id: chatsID, name: "Chats", path: "~/Library/Application Support/Coincide", isChats: true),
             ],
             threads: [
-                thread("Release checklist", otherProjectID, codex, minutes: 300, pinned: true),
-                thread("Coincide Remote: iPhone companion", projectID, claude, minutes: 1, id: threadID, running: true, approvals: 1),
+                thread("Release checklist", otherProjectID, codex, minutes: 300, pinned: pins),
+                thread("iPhone image previews in threads", projectID, claude, minutes: 1, id: threadID, running: true),
                 thread("Fix stale transcript row heights", projectID, codex, minutes: 25, unseen: "completed"),
-                thread("Sidebar sorting and pinned section", projectID, claude, minutes: 90),
+                thread("Run git push for the remote branch", projectID, claude, minutes: 50, approvals: 1),
                 thread("Paywall copy for annual plan", otherProjectID, codex, minutes: 60 * 26, unseen: "failed"),
-                thread("What’s a good name for a cat?", chatsID, claude, minutes: 60 * 4),
+                thread("Usage chart by project", versionsID, claude, minutes: 60 * 72),
+                thread("New thread", chatsID, claude, minutes: 60 * 6),
+                thread("Remove Agent Browser from profile", chatsID, codex, minutes: 60 * 7),
+                thread("Generate a dog image", chatsID, codex, minutes: 60 * 7.2),
+                thread("Diagnose Mac heat and resource use", chatsID, codex, minutes: 60 * 18),
+                thread("Check the TetherShot connection", chatsID, codex, minutes: 60 * 19),
+                thread("Clarify son reference", chatsID, codex, minutes: 60 * 21),
+                thread("yo", chatsID, grok, minutes: 60 * 21.3),
+                thread("New thread", chatsID, claude, minutes: 60 * 23),
+                thread("Greeting and session start", chatsID, claude, minutes: 60 * 30),
+                thread("Bajaj Finance loan details review", chatsID, claude, minutes: 60 * 36),
+                thread("Greeting and session start", chatsID, claude, minutes: 60 * 50),
+                thread("Restore Spotify to profile", chatsID, claude, minutes: 60 * 52),
+                thread("Monthly AI token usage per provider", chatsID, claude, minutes: 60 * 54),
+                thread("yo", chatsID, antigravity, minutes: 60 * 56),
                 thread("Plan my Saturday", botsID, claude, minutes: 12, id: bruleeThreadID, unseen: "completed"),
             ],
             bots: [
                 RemoteBot(
                     id: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!, name: "Brulee", projectID: botsID,
-                    threadIDs: [bruleeThreadID], avatar: RemoteBotAvatar(.brulee, .rose), persona: "Friendly and brief.",
-                    selection: claude, accessMode: "approval", interactionMode: "build"),
+                    threadIDs: [bruleeThreadID], avatar: old ? nil : RemoteBotAvatar(.brulee, .rose),
+                    persona: old ? nil : "Friendly and brief.", selection: old ? nil : claude, accessMode: old ? nil : "approval",
+                    interactionMode: old ? nil : "build"),
                 RemoteBot(
-                    id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!, name: "Teddy", projectID: botsID,
-                    avatar: RemoteBotAvatar(.teddy, .caramel), selection: codex, accessMode: "approval", interactionMode: "build"),
-                RemoteBot(
-                    id: UUID(uuidString: "88888888-8888-8888-8888-888888888888")!, name: "Alien", projectID: botsID,
-                    avatar: RemoteBotAvatar(.alien, .leaf), selection: claude, accessMode: "fullAccess", interactionMode: "build"),
+                    id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!, name: old ? "Researcher" : "Teddy", projectID: botsID,
+                    avatar: old ? nil : RemoteBotAvatar(.teddy, .caramel), selection: old ? nil : codex,
+                    accessMode: old ? nil : "approval", interactionMode: old ? nil : "build"),
             ],
             providers: [
                 RemoteProvider(

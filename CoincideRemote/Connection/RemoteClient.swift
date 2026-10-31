@@ -39,6 +39,10 @@ final class RemoteClient {
     var drafts: [UUID: ComposerDraft] = [:]
     /// A message to show briefly, such as a failed action.
     var notice: String?
+    /// Projects expanded or collapsed on this phone, kept for a Mac that doesn't remember it.
+    private var localExpansion: [UUID: Bool] = RemoteClient.savedExpansion()
+    /// Projects whose change the Mac hasn't confirmed yet, so an older snapshot doesn't undo it meanwhile.
+    private var expansionInFlight: Set<UUID> = []
 
     let bonjour = BonjourBrowser()
     @ObservationIgnored private let saved = SavedMacs.shared
@@ -503,6 +507,50 @@ final class RemoteClient {
         if case .workspace(let workspace)? = try? await request(.workspace(includeArchived: includesArchived)) {
             apply(workspace)
         }
+    }
+
+    // MARK: Expanded projects
+
+    /// Whether a project shows its threads: as the Mac's sidebar has it, or as the user left it here when the Mac
+    /// doesn't say (an older Mac) or hasn't confirmed a change yet.
+    func isExpanded(_ project: RemoteProject) -> Bool {
+        if expansionInFlight.contains(project.id) { return localExpansion[project.id] ?? true }
+        return project.isExpanded ?? localExpansion[project.id] ?? true
+    }
+
+    /// Expands or collapses a project here and in the Mac's sidebar.
+    func setExpanded(_ project: RemoteProject, _ expanded: Bool) {
+        localExpansion[project.id] = expanded
+        UserDefaults.standard.set(
+            Dictionary(uniqueKeysWithValues: localExpansion.map { ($0.key.uuidString, $0.value) }), forKey: Self.expansionKey)
+        #if DEBUG
+        if DemoData.isEnabled {
+            updateProject(project.id) { $0.isExpanded = $0.isExpanded.map { _ in expanded } }
+            return
+        }
+        #endif
+        // An older Mac doesn't keep the choice; the phone does.
+        guard project.isExpanded != nil, isConnected else { return }
+        expansionInFlight.insert(project.id)
+        Task {
+            defer { expansionInFlight.remove(project.id) }
+            do {
+                try await request(.setProjectExpanded(projectID: project.id, expanded: expanded))
+                updateProject(project.id) { $0.isExpanded = expanded }
+            } catch {}
+        }
+    }
+
+    private func updateProject(_ id: UUID, _ change: (inout RemoteProject) -> Void) {
+        guard let index = workspace.projects.firstIndex(where: { $0.id == id }) else { return }
+        change(&workspace.projects[index])
+    }
+
+    private static let expansionKey = "projects.expanded"
+
+    private static func savedExpansion() -> [UUID: Bool] {
+        let saved = UserDefaults.standard.dictionary(forKey: expansionKey) as? [String: Bool] ?? [:]
+        return Dictionary(uniqueKeysWithValues: saved.compactMap { key, value in UUID(uuidString: key).map { ($0, value) } })
     }
 
     func summary(_ id: UUID) -> RemoteThreadSummary? { workspace.threads.first { $0.id == id } }

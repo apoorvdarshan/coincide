@@ -287,6 +287,9 @@ final class RemoteSession {
                 let snapshot = adapter.settingsSnapshot()
                 lastSettings = snapshot
                 respond(id, .settings(snapshot))
+            case .setProjectExpanded(let projectID, let expanded):
+                try adapter.setProjectExpanded(projectID, expanded: expanded)
+                respond(id, .ok)
             case .showThread(let threadID):
                 guard isLocal else { throw RemoteError(.unsupported, "Unsupported request “showThread”.") }
                 guard adapter.hasThread(threadID) else { throw notFound }

@@ -1,30 +1,72 @@
 import CoincideRemoteKit
 import SwiftUI
 
-/// A bot's character, drawn by the same code as on the Mac.
+/// A bot's character, drawn by the same code as on the Mac. It blinks while the bot works, as on the Mac.
 struct BotAvatarImage: View {
     let avatar: RemoteBotAvatar?
     var size: CGFloat = 40
+    /// The bot's name, which picks a character when an older Mac sends none.
+    var name: String?
+    var isWorking = false
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if let avatar {
-                Canvas { context, canvasSize in
-                    context.withCGContext { cg in
-                        BotArtwork.draw(
-                            avatar.artCharacter, tint: avatar.artTint, in: cg, rect: CGRect(origin: .zero, size: canvasSize))
+            if let look = avatar.map({ ($0.artCharacter, $0.artTint) }) ?? Self.character(named: name) {
+                if isWorking, !reduceMotion {
+                    TimelineView(.animation(minimumInterval: 1 / 30)) { context in
+                        art(look.0, look.1, openness: Self.openness(at: context.date))
                     }
+                } else {
+                    art(look.0, look.1, openness: 1)
                 }
             } else {
-                // A Mac from before bot characters.
-                Image(systemName: "face.smiling.inverse")
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(.secondary)
+                silhouette
             }
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
+    }
+
+    private func art(_ character: BotArtwork.Character, _ tint: BotArtwork.Tint, openness: CGFloat) -> some View {
+        Canvas { context, canvasSize in
+            context.withCGContext { cg in
+                BotArtwork.draw(character, tint: tint, in: cg, rect: CGRect(origin: .zero, size: canvasSize), openness: openness)
+            }
+        }
+    }
+
+    /// A Mac from before bot characters, with a bot that doesn't carry a character's own name: a quiet figure in the
+    /// theme's colors, like a contact without a photo.
+    private var silhouette: some View {
+        Circle()
+            .fill(theme.selection)
+            .overlay {
+                Image(systemName: "person.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(theme.tertiaryInk)
+                    .padding(size * 0.24)
+                    .offset(y: size * 0.04)
+            }
+            .clipShape(Circle())
+    }
+
+    /// The character whose own name the bot has, as the Mac names a new bot after its character: an older Mac's
+    /// "Brulee" still looks like Brulee.
+    static func character(named name: String?) -> (BotArtwork.Character, BotArtwork.Tint)? {
+        guard let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty,
+            let character = BotArtwork.Character.allCases.first(where: { $0.defaultName.caseInsensitiveCompare(name) == .orderedSame })
+        else { return nil }
+        return (character, character.defaultTint)
+    }
+
+    /// How open the eyes are: a quick blink every few seconds.
+    static func openness(at date: Date) -> CGFloat {
+        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.6)
+        guard phase < 0.18 else { return 1 }
+        return CGFloat(abs(phase - 0.09) / 0.09)
     }
 }
 
@@ -52,26 +94,23 @@ struct BotsView: View {
         let bots = client.workspace.bots ?? []
         List {
             ConnectionStatusRow()
-                .listRowBackground(Color.clear)
             ForEach(bots) { bot in
-                Button { Task { await BotOpening.open(bot, client: client, navigator: navigator) } } label: {
-                    BotRow(bot: bot)
-                }
-                .buttonStyle(.plain)
-                .contextMenu { menu(bot) }
-                .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) { deleting = bot } label: { Label("Delete", systemImage: "trash") }
-                    Button { editing = .edit(bot) } label: { Label("Edit", systemImage: "pencil") }
-                        .tint(.gray)
-                }
-                .swipeActions(edge: .leading) {
-                    Button { Task { await newConversation(bot) } } label: {
-                        Label("New Conversation", systemImage: "square.and.pencil")
+                BotLink(bot: bot)
+                    .contextMenu { menu(bot) }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) { deleting = bot } label: { Label("Delete", systemImage: "trash") }
+                        Button { editing = .edit(bot) } label: { Label("Edit", systemImage: "pencil") }
+                            .tint(.gray)
                     }
-                    .tint(.indigo)
-                }
+                    .swipeActions(edge: .leading) {
+                        Button { Task { await newConversation(bot) } } label: {
+                            Label("New Conversation", systemImage: "square.and.pencil")
+                        }
+                        .tint(.indigo)
+                    }
             }
         }
+        .sidebarList(theme)
         .overlay {
             if bots.isEmpty, client.isConnected {
                 ContentUnavailableView {
@@ -86,9 +125,9 @@ struct BotsView: View {
                             .prominentButton()
                     }
                 }
+                .foregroundStyle(theme.secondaryInk)
             }
         }
-        .themedList(theme)
         .refreshable { await client.refreshWorkspace() }
         .navigationTitle("Bots")
         .toolbar {
@@ -120,46 +159,87 @@ struct BotsView: View {
     }
 }
 
-/// A bot with its latest conversation, or an invitation to start one.
+/// A bot in a sidebar list: tap to open its latest conversation (or start one).
+struct BotLink: View {
+    let bot: RemoteBot
+    @Environment(RemoteClient.self) private var client
+    @Environment(Navigator.self) private var navigator
+
+    var body: some View {
+        Button { Task { await BotOpening.open(bot, client: client, navigator: navigator) } } label: {
+            BotRow(bot: bot)
+        }
+        .buttonStyle(SidebarRowButtonStyle(isSelected: navigator.isSplit && navigator.selection.map(bot.threadIDs.contains) == true))
+        .sidebarRow()
+    }
+}
+
+/// A bot as the Mac's sidebar shows it (`BotCell`): its character, its name and time on the first line, its latest
+/// conversation below, like a conversation in a messaging app. The character blinks while the bot works; an approval
+/// or a failure shows as a badge.
 struct BotRow: View {
     let bot: RemoteBot
     @Environment(RemoteClient.self) private var client
     @Environment(\.theme) private var theme
+    @ScaledMetric(relativeTo: .callout) private var avatarSize: CGFloat = 36
 
     var body: some View {
-        let latest = bot.threadIDs.first.flatMap { client.summary($0) }
-        HStack(spacing: 12) {
-            BotAvatarImage(avatar: bot.avatar, size: 44)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(bot.name)
-                    .font(.body.weight(latest?.unseen != nil ? .semibold : .medium))
-                    .foregroundStyle(theme.ink)
-                    .lineLimit(1)
+        let conversations = bot.threadIDs.compactMap { client.summary($0) }
+        let latest = conversations.first
+        let status = SidebarStatus.strongest(conversations) ?? .idle
+        HStack(spacing: 10) {
+            BotAvatarImage(avatar: bot.avatar, size: avatarSize, name: bot.name, isWorking: status.isRunning)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(bot.name)
+                        .font(.callout.weight(status == .completed || status == .failed ? .semibold : .medium))
+                        .foregroundStyle(theme.ink)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    accessories(status, latest: latest)
+                }
                 Text(latest.map { $0.title } ?? String(localized: "Say hello"))
-                    .font(.subheadline)
+                    .font(.footnote)
                     .foregroundStyle(theme.secondaryInk)
                     .lineLimit(1)
             }
-            Spacer(minLength: 8)
-            if let latest {
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(latest.updatedAt, format: .relative(presentation: .named, unitsStyle: .abbreviated))
-                        .font(.caption)
-                        .foregroundStyle(theme.secondaryInk)
-                    if latest.needsUser {
-                        Image(systemName: "hand.raised.fill").font(.caption).foregroundStyle(.orange)
-                    } else if latest.isRunning {
-                        ProgressView().controlSize(.mini)
-                    } else if latest.unseen != nil {
-                        Circle().fill(latest.unseen == "failed" ? .red : .green).frame(width: 8, height: 8)
+        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text([bot.name, latest?.title ?? String(localized: "Say hello"), status.label].compactMap(\.self).joined(separator: ", ")))
+        .accessibilityHint(Text("Opens the latest conversation"))
+    }
+
+    @ViewBuilder
+    private func accessories(_ status: SidebarStatus, latest: RemoteThreadSummary?) -> some View {
+        HStack(spacing: 6) {
+            switch status {
+            case .approval(let count):
+                StatusBadge(text: count > 1 ? String(localized: "Approval \(count)") : String(localized: "Approval"), color: .orange)
+            case .question:
+                StatusBadge(text: String(localized: "Question"), color: .orange)
+            case .failed:
+                StatusBadge(text: String(localized: "Failed"), color: .red)
+            case .starting:
+                ProgressView().controlSize(.mini)
+            case .running(let since?):
+                TimelineView(.periodic(from: since, by: 1)) { context in
+                    Text(Formatting.elapsed(since: since, now: context.date))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(theme.ink)
+                }
+            case .completed, .idle, .running(nil):
+                if status == .completed { StatusDot(color: .green) }
+                if let latest {
+                    TimelineView(.everyMinute) { context in
+                        Text(Formatting.compactAge(of: latest.updatedAt, now: context.date))
+                            .font(.footnote.monospacedDigit())
+                            .foregroundStyle(theme.secondaryInk)
                     }
                 }
             }
         }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityHint(Text("Opens the latest conversation"))
+        .fixedSize()
     }
 }
 
@@ -176,32 +256,28 @@ struct BotConversationsView: View {
         let threads = (bot?.threadIDs ?? []).compactMap { client.summary($0) }
         List {
             if let bot {
-                Section {
-                    VStack(spacing: 10) {
-                        BotAvatarImage(avatar: bot.avatar, size: 96)
-                        Text(bot.name).font(.title2.weight(.semibold))
-                        if let model = bot.selection?.modelName {
-                            Text(model).font(.subheadline).foregroundStyle(theme.secondaryInk)
-                        }
-                        Button("New Conversation") {
-                            Task { if let id = await client.newBotConversation(botID) { navigator.push(.thread(id)) } }
-                        }
-                        .prominentButton()
-                        .disabled(!client.isConnected)
+                VStack(spacing: 10) {
+                    BotAvatarImage(avatar: bot.avatar, size: 88, name: bot.name)
+                    Text(bot.name).font(.title3.weight(.semibold)).foregroundStyle(theme.ink)
+                    if let model = bot.selection?.modelName {
+                        Text(model).font(.footnote).foregroundStyle(theme.secondaryInk)
                     }
-                    .frame(maxWidth: .infinity)
-                    .listRowBackground(Color.clear)
+                    Button("New Conversation") {
+                        Task { if let id = await client.newBotConversation(botID) { navigator.push(.thread(id)) } }
+                    }
+                    .prominentButton()
+                    .disabled(!client.isConnected)
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .sidebarRow()
             }
             if !threads.isEmpty {
-                Section("Conversations") {
-                    ForEach(threads) { thread in
-                        NavigationLink(value: Route.thread(thread.id)) { ThreadRow(thread: thread) }
-                    }
-                }
+                SidebarHeader(Text("Conversations")).sidebarRow()
+                ForEach(threads) { thread in ThreadLink(thread: thread) }
             }
         }
-        .themedList(theme)
+        .sidebarList(theme)
         .navigationTitle(bot?.name ?? String(localized: "Bot"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -281,6 +357,29 @@ struct BotEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group { fields }
+                    .themedCards(theme)
+            }
+            .scrollContentBackground(.hidden)
+            .background(theme.isDark ? theme.content : theme.sidebar)
+            .navigationTitle(existing == nil ? "New Bot" : "Edit Bot")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(existing == nil ? "Create" : "Save") { Task { await save() } }
+                        .disabled(saving || !client.isConnected)
+                }
+            }
+            .onAppear(perform: load)
+            .onChange(of: provider) { old, new in
+                guard loaded, old != new else { return }
+                modelID = client.provider(new ?? "")?.models.first?.id
+            }
+        }
+    }
+
+    @ViewBuilder private var fields: some View {
                 Section {
                     BotAvatarImage(avatar: RemoteBotAvatar(character, tint), size: 112)
                         .frame(maxWidth: .infinity)
@@ -349,24 +448,6 @@ struct BotEditorView: View {
                     }
                     Toggle("Full Access", isOn: $fullAccess)
                 }
-            }
-            .scrollContentBackground(.hidden)
-            .background(theme.content)
-            .navigationTitle(existing == nil ? "New Bot" : "Edit Bot")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(existing == nil ? "Create" : "Save") { Task { await save() } }
-                        .disabled(saving || !client.isConnected)
-                }
-            }
-            .onAppear(perform: load)
-            .onChange(of: provider) { old, new in
-                guard loaded, old != new else { return }
-                modelID = client.provider(new ?? "")?.models.first?.id
-            }
-        }
     }
 
     private func load() {

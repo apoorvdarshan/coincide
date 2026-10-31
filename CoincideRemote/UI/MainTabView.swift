@@ -6,6 +6,7 @@ import SwiftUI
 struct MainTabView: View {
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         @Bindable var navigator = navigator
@@ -28,7 +29,11 @@ struct MainTabView: View {
         }
         .tabViewStyle(.sidebarAdaptable)
         .tabBarMinimizeBehavior(.onScrollDown)
-        .onAppear(perform: wire)
+        .onAppear {
+            navigator.isSplit = sizeClass == .regular
+            wire()
+        }
+        .onChange(of: sizeClass) { _, size in navigator.isSplit = size == .regular }
         .onChange(of: client.workspace) { wire() }
         .onChange(of: navigator.recent) { _, recent in
             // Keep the last few threads following the Mac; stop the rest.
@@ -46,16 +51,40 @@ struct MainTabView: View {
         #endif
     }
 
+    /// A tab's screens: pushed one over another on a phone, or side by side (the list, then the open thread) where the
+    /// window is wide, as on an iPad or an unfolded Duo. Both read the same path, so folding keeps the place.
+    @ViewBuilder
     private func stack<Content: View>(_ tab: AppTab, @ViewBuilder root: () -> Content) -> some View {
-        NavigationStack(path: navigator.path(tab)) {
-            root()
-                .navigationDestination(for: Route.self) { route in
-                    switch route {
-                    case .thread(let id): ThreadContainer(threadID: id)
-                    case .project(let id): ProjectThreadsView(projectID: id)
-                    case .bot(let id): BotConversationsView(botID: id)
+        if sizeClass == .regular {
+            NavigationSplitView {
+                NavigationStack(path: navigator.listPath(tab)) {
+                    root()
+                        .navigationDestination(for: Route.self) { route in destination(route) }
+                }
+                .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
+            } detail: {
+                NavigationStack {
+                    if let id = navigator.detailThread(tab) {
+                        ThreadContainer(threadID: id).id(id)
+                    } else {
+                        NoThreadSelected()
                     }
                 }
+            }
+            .navigationSplitViewStyle(.balanced)
+        } else {
+            NavigationStack(path: navigator.path(tab)) {
+                root()
+                    .navigationDestination(for: Route.self) { route in destination(route) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func destination(_ route: Route) -> some View {
+        switch route {
+        case .thread(let id): ThreadContainer(threadID: id)
+        case .bot(let id): BotConversationsView(botID: id)
         }
     }
 
@@ -68,18 +97,15 @@ struct MainTabView: View {
             guard let thread = client.summary(id), let project = client.project(thread.projectID), !project.isChats else {
                 return (.chats, nil)
             }
-            return (.projects, .project(project.id))
+            return (.projects, nil)
         }
     }
 
-    /// ⌘N: a thread in the project on screen, a new conversation with the bot on screen, or a chat.
+    /// ⌘N: a thread in the project of the thread on screen, a new conversation with the bot on screen, or a chat.
     private func newThreadForShortcut() async {
         let routes = navigator.paths[navigator.tab] ?? []
         for route in routes.reversed() {
             switch route {
-            case .project(let id):
-                if let thread = await client.newThread(in: id) { navigator.push(.thread(thread)) }
-                return
             case .bot(let id):
                 if let thread = await client.newBotConversation(id) { navigator.push(.thread(thread)) }
                 return
@@ -103,12 +129,19 @@ struct MainTabView: View {
 
 // MARK: Projects
 
-/// The Mac's projects, with its Pinned threads first.
+/// The Mac sidebar's Pinned and Projects sections: each project expands in place to show its threads, and remembers
+/// whether it's open, together with the Mac.
 struct ProjectsView: View {
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("sidebar.showsHidden") private var showsHidden = false
+    /// Projects whose whole list shows, past "Show more".
+    @State private var showsAll: Set<UUID> = []
+
+    /// Threads a project lists before "Show more".
+    static let threadLimit = 6
 
     var body: some View {
         let filter = ThreadFilter(showsHidden: showsHidden, keeping: navigator.selection)
@@ -116,40 +149,36 @@ struct ProjectsView: View {
         let pinned = pinnedThreads(filter)
         List {
             ConnectionStatusRow()
-                .listRowBackground(Color.clear)
             if !pinned.isEmpty {
-                Section("Pinned") {
-                    ForEach(pinned) { thread in
-                        NavigationLink(value: Route.thread(thread.id)) { ThreadRow(thread: thread, showsProject: true) }
-                    }
+                SidebarHeader(Text("Pinned")).sidebarRow()
+                ForEach(pinned) { thread in
+                    ThreadLink(thread: thread, place: client.project(thread.projectID)?.name)
                 }
             }
-            Section {
-                ForEach(projects) { project in
-                    NavigationLink(value: Route.project(project.id)) {
-                        ProjectRow(project: project, threads: filter.visible(threads(in: project)))
-                    }
-                    .contextMenu {
-                        Button {
-                            Task { if let id = await client.newThread(in: project.id) { navigator.open(id) } }
-                        } label: {
-                            Label("New Thread", systemImage: "square.and.pencil")
-                        }
-                        .disabled(!client.isConnected)
-                    }
+            // Under Pinned, a heading tells the projects apart; on their own, the title says it.
+            if !pinned.isEmpty, !projects.isEmpty {
+                SidebarHeader(Text("Projects")).sidebarRow()
+            }
+            ForEach(projects) { project in
+                let threads = filter.visible(client.workspace.threads.filter { $0.projectID == project.id && !$0.isPinned })
+                let isExpanded = client.isExpanded(project)
+                ProjectRow(project: project, isExpanded: isExpanded, hiddenStatus: isExpanded ? nil : SidebarStatus.strongest(threads)) {
+                    toggle(project)
                 }
-            } header: {
-                if !pinned.isEmpty { Text("Projects") }
+                if isExpanded { children(of: project, threads: threads) }
             }
         }
+        .sidebarList(theme)
         .overlay {
-            if projects.isEmpty, client.isConnected {
-                ContentUnavailableView(
-                    "No Projects", systemImage: "folder",
-                    description: Text("Add a project on your Mac and it shows up here."))
+            if projects.isEmpty, pinned.isEmpty, client.isConnected {
+                ContentUnavailableView {
+                    Label("No Projects", systemImage: "folder")
+                } description: {
+                    Text("Add a project on your Mac and it shows up here.")
+                }
+                .foregroundStyle(theme.secondaryInk)
             }
         }
-        .themedList(theme)
         .refreshable { await client.refreshWorkspace() }
         .navigationTitle("Projects")
         .toolbar {
@@ -157,8 +186,45 @@ struct ProjectsView: View {
         }
     }
 
-    private func threads(in project: RemoteProject) -> [RemoteThreadSummary] {
-        client.workspace.threads.filter { $0.projectID == project.id }
+    /// A project's threads under it, cut at the limit with "Show more", as on the Mac.
+    @ViewBuilder
+    private func children(of project: RemoteProject, threads: [RemoteThreadSummary]) -> some View {
+        if threads.isEmpty {
+            SidebarNote(text: String(localized: "No threads yet"))
+                .padding(.leading, ProjectRow.nestedIndent + 10)
+                .frame(minHeight: 36)
+                .sidebarRow()
+        } else {
+            let all = showsAll.contains(project.id) || threads.count <= Self.threadLimit + 1
+            let visible = all ? threads : Array(threads.prefix(Self.threadLimit))
+            ForEach(visible) { thread in ThreadLink(thread: thread, isNested: true) }
+            if !all {
+                let hidden = Array(threads.dropFirst(Self.threadLimit))
+                Button { withAnimation(motion) { _ = showsAll.insert(project.id) } } label: {
+                    SidebarNote(
+                        text: String(localized: "Show \(hidden.count) more"), symbol: "chevron.down",
+                        status: SidebarStatus.strongest(hidden)
+                    )
+                    .padding(.leading, ProjectRow.nestedIndent)
+                }
+                .buttonStyle(SidebarRowButtonStyle())
+                .sidebarRow()
+            } else if showsAll.contains(project.id), threads.count > Self.threadLimit + 1 {
+                Button { withAnimation(motion) { _ = showsAll.remove(project.id) } } label: {
+                    SidebarNote(text: String(localized: "Show less"), symbol: "chevron.up")
+                        .padding(.leading, ProjectRow.nestedIndent)
+                }
+                .buttonStyle(SidebarRowButtonStyle())
+                .sidebarRow()
+            }
+        }
+    }
+
+    private var motion: Animation? { reduceMotion ? nil : .snappy(duration: 0.25) }
+
+    private func toggle(_ project: RemoteProject) {
+        let expanded = !client.isExpanded(project)
+        withAnimation(motion) { client.setExpanded(project, expanded) }
     }
 
     private func pinnedThreads(_ filter: ThreadFilter) -> [RemoteThreadSummary] {
@@ -170,109 +236,68 @@ struct ProjectsView: View {
     }
 }
 
-/// A project at a glance: its name and folder, how many threads, and whether any is working, waiting or unread.
+/// A project as the Mac's sidebar shows it: a disclosure triangle, its folder and name, and while collapsed, a dot for
+/// the most pressing thing its threads are doing. Tap to expand or collapse; long-press or swipe to start a thread.
 struct ProjectRow: View {
     let project: RemoteProject
-    let threads: [RemoteThreadSummary]
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "folder.fill")
-                .font(.title3)
-                .foregroundStyle(theme.secondaryInk)
-                .frame(width: 28)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(project.name)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(theme.ink)
-                    .lineLimit(1)
-                Text(project.path)
-                    .font(.caption)
-                    .foregroundStyle(theme.secondaryInk)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            Spacer(minLength: 8)
-            ProjectActivity(threads: threads)
-        }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// The busiest state among some threads, and how many there are.
-struct ProjectActivity: View {
-    let threads: [RemoteThreadSummary]
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if threads.contains(where: \.needsUser) {
-                Image(systemName: "hand.raised.fill").foregroundStyle(.orange).accessibilityLabel(Text("Waiting for you"))
-            } else if threads.contains(where: \.isRunning) {
-                ProgressView().controlSize(.small).accessibilityLabel(Text("Working"))
-            } else if threads.contains(where: { $0.unseen != nil }) {
-                Circle().fill(.green).frame(width: 8, height: 8).accessibilityLabel(Text("Unread"))
-            }
-            if !threads.isEmpty {
-                Text(threads.count, format: .number)
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(theme.secondaryInk)
-            }
-        }
-    }
-}
-
-/// One project's threads, in the Mac's order.
-struct ProjectThreadsView: View {
-    let projectID: UUID
+    let isExpanded: Bool
+    let hiddenStatus: SidebarStatus?
+    let toggle: () -> Void
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
-    @AppStorage("sidebar.showsHidden") private var showsHidden = false
+    @ScaledMetric(relativeTo: .callout) private var chevronWidth: CGFloat = 14
+
+    /// How far a project's threads sit in, so their marks line up under its folder.
+    static let nestedIndent: CGFloat = 22
 
     var body: some View {
-        let project = client.project(projectID)
-        let threads = ThreadFilter(showsHidden: showsHidden, keeping: navigator.selection)
-            .visible(client.workspace.threads.filter { $0.projectID == projectID && !$0.isPinned })
-        List {
-            ConnectionStatusRow()
-                .listRowBackground(Color.clear)
-            ForEach(threads) { thread in
-                NavigationLink(value: Route.thread(thread.id)) { ThreadRow(thread: thread) }
+        Button(action: toggle) {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(theme.tertiaryInk)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .frame(width: chevronWidth)
+                Image(systemName: "folder")
+                    .font(.subheadline)
+                    .foregroundStyle(theme.secondaryInk)
+                Text(project.name)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(theme.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let color = hiddenStatus?.color(theme) { StatusDot(color: color) }
             }
         }
-        .overlay {
-            if threads.isEmpty {
-                ContentUnavailableView {
-                    Label("No Threads", systemImage: "text.bubble")
-                } description: {
-                    Text("Start one here or on your Mac.")
-                } actions: {
-                    Button("New Thread") { Task { await newThread() } }
-                        .prominentButton()
-                        .disabled(!client.isConnected)
-                }
+        .buttonStyle(SidebarRowButtonStyle())
+        .contextMenu {
+            Button { Task { await newThread() } } label: {
+                Label("New Thread", systemImage: "square.and.pencil")
+            }
+            .disabled(!client.isConnected)
+            Button(action: toggle) {
+                Label(
+                    isExpanded ? String(localized: "Collapse \(project.name)") : String(localized: "Expand \(project.name)"),
+                    systemImage: isExpanded ? "chevron.up" : "chevron.down")
             }
         }
-        .themedList(theme)
-        .refreshable { await client.refreshWorkspace() }
-        .navigationTitle(project?.name ?? String(localized: "Project"))
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { ThreadFilterMenu() }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await newThread() } } label: {
-                    Label("New Thread", systemImage: "square.and.pencil")
-                }
-                .disabled(!client.isConnected)
+        .swipeActions(edge: .trailing) {
+            Button { Task { await newThread() } } label: {
+                Label("New Thread", systemImage: "square.and.pencil")
             }
+            .tint(.indigo)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text([project.name, project.path, hiddenStatus?.label].compactMap(\.self).joined(separator: ", ")))
+        .accessibilityValue(isExpanded ? Text("Expanded") : Text("Collapsed"))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: Text("New Thread in \(project.name)")) { Task { await newThread() } }
+        .sidebarRow()
     }
 
     private func newThread() async {
-        if let id = await client.newThread(in: projectID) { navigator.push(.thread(id)) }
+        if let id = await client.newThread(in: project.id) { navigator.push(.thread(id)) }
     }
 }
 
@@ -291,11 +316,9 @@ struct ChatsView: View {
             .visible(client.workspace.threads.filter { chatsIDs.contains($0.projectID) })
         List {
             ConnectionStatusRow()
-                .listRowBackground(Color.clear)
-            ForEach(threads) { thread in
-                NavigationLink(value: Route.thread(thread.id)) { ThreadRow(thread: thread) }
-            }
+            ForEach(threads) { thread in ThreadLink(thread: thread) }
         }
+        .sidebarList(theme)
         .overlay {
             if threads.isEmpty, client.isConnected {
                 ContentUnavailableView {
@@ -306,9 +329,9 @@ struct ChatsView: View {
                     Button("New Chat") { Task { await newChat() } }
                         .prominentButton()
                 }
+                .foregroundStyle(theme.secondaryInk)
             }
         }
-        .themedList(theme)
         .refreshable { await client.refreshWorkspace() }
         .navigationTitle("Chats")
         .toolbar {
@@ -342,29 +365,27 @@ struct SearchView: View {
         let threads = matches(query)
         List {
             if !bots.isEmpty {
-                Section("Bots") {
-                    ForEach(bots) { bot in
-                        Button { Task { await BotOpening.open(bot, client: client, navigator: navigator) } } label: {
-                            BotRow(bot: bot)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                SidebarHeader(Text("Bots")).sidebarRow()
+                ForEach(bots) { bot in BotLink(bot: bot) }
             }
-            Section(query.isEmpty ? "Recent" : "Threads") {
-                ForEach(threads) { thread in
-                    NavigationLink(value: Route.thread(thread.id)) { ThreadRow(thread: thread, showsProject: true) }
-                }
+            if !threads.isEmpty {
+                SidebarHeader(query.isEmpty ? Text("Recent") : Text("Threads")).sidebarRow()
+                ForEach(threads) { thread in ThreadLink(thread: thread, place: place(of: thread)) }
             }
         }
+        .sidebarList(theme)
         .overlay {
             if !query.isEmpty, bots.isEmpty, threads.isEmpty {
                 ContentUnavailableView.search(text: query)
             }
         }
-        .themedList(theme)
         .navigationTitle("Search")
         .searchable(text: $navigator.searchText, prompt: "Threads and bots")
+    }
+
+    private func place(of thread: RemoteThreadSummary) -> String? {
+        guard let project = client.project(thread.projectID), !project.isChats else { return nil }
+        return project.name
     }
 
     private func matches(_ query: String) -> [RemoteThreadSummary] {
@@ -373,15 +394,5 @@ struct SearchView: View {
             return Array(all.filter { !$0.isHidden }.sorted { $0.updatedAt > $1.updatedAt }.prefix(15))
         }
         return all.filter { $0.title.localizedStandardContains(query) }.sorted { $0.updatedAt > $1.updatedAt }
-    }
-}
-
-extension View {
-    /// A list on the theme's own background: its content color in dark themes and its sidebar's quieter tone in light
-    /// ones, so the cards stand out as the Mac's grouped settings do.
-    func themedList(_ theme: Theme) -> some View {
-        listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .background(theme.isDark ? theme.content : theme.sidebar)
     }
 }

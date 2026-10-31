@@ -114,6 +114,7 @@ struct MacSettingsPageView: View {
                 } footer: {
                     if let footer = section.footer { Text(footer) }
                 }
+                .themedCards(theme)
             }
         }
         .scrollContentBackground(.hidden)

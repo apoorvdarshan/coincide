@@ -10,7 +10,33 @@ struct TranscriptBlockView: View {
         case .item(let item): ItemView(item: item, threadID: model.id)
         case .work(let items): WorkGroup(items: items, model: model)
         case .changes(let turnID, let files): ChangesCard(threadID: model.id, turnID: turnID, files: files)
+        case .footer(let item): ReplyFooter(item: item)
         }
+    }
+}
+
+/// Under a finished turn's reply, as on the Mac: the agent in its color, the model, and when it answered.
+struct ReplyFooter: View {
+    let item: RemoteItem
+    @Environment(RemoteClient.self) private var client
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let provider = item.provider ?? ""
+        let model = item.modelID.flatMap { id in client.provider(provider)?.models.first { $0.id == id }?.name } ?? item.modelID
+        HStack(spacing: 8) {
+            Text(AgentLogo.name(provider))
+                .fontWeight(.medium)
+                .foregroundStyle(theme.agent(provider))
+            if let model { Text(model).foregroundStyle(theme.secondaryInk) }
+            Text((item.completedAt ?? item.createdAt).formatted(date: .omitted, time: .shortened))
+                .foregroundStyle(theme.tertiaryInk)
+        }
+        .font(.footnote)
+        .lineLimit(1)
+        .padding(.leading, 15)
+        .padding(.top, -6)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -24,9 +50,10 @@ struct ItemView: View {
         case .user:
             UserMessage(item: item)
         case .assistant:
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
                 AgentRail(provider: item.provider)
-                MarkdownText(text: item.text)
+                MarkdownText(text: item.text, font: theme.serifReplies ? .system(.body, design: .serif) : .body)
+                    .fontDesign(theme.serifReplies ? .serif : .default)
             }
         case .plan:
             Card(tint: theme.accent) {
@@ -76,8 +103,8 @@ struct UserMessage: View {
 
     var body: some View {
         HStack {
-            Spacer(minLength: 40)
-            VStack(alignment: .trailing, spacing: 6) {
+            if !theme.userMessagesOnLeft { Spacer(minLength: 40) }
+            VStack(alignment: theme.userMessagesOnLeft ? .leading : .trailing, spacing: 6) {
                 if !item.text.isEmpty {
                     Text(item.text)
                         .foregroundStyle(theme.ink)
@@ -100,6 +127,7 @@ struct UserMessage: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            if theme.userMessagesOnLeft { Spacer(minLength: 40) }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("You: \(item.text)"))

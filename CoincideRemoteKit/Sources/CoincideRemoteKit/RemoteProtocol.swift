@@ -244,6 +244,9 @@ public enum RemoteRequest: Hashable, Sendable {
     case changeSetting(key: String, value: RemoteSettingValue)
     /// Runs a row's action, or brings up its place on the Mac for one that finishes there. Answers `settings`.
     case settingsAction(key: String)
+    /// Expands or collapses a project in the Mac's sidebar, so both show the same. Answers `ok`. An older Mac answers
+    /// `unsupported`, and the phone keeps the choice to itself.
+    case setProjectExpanded(projectID: UUID, expanded: Bool)
 
     /// The request's name on the wire.
     public var name: String {
@@ -277,6 +280,7 @@ public enum RemoteRequest: Hashable, Sendable {
         case .settings: "settings"
         case .changeSetting: "changeSetting"
         case .settingsAction: "settingsAction"
+        case .setProjectExpanded: "setProjectExpanded"
         }
     }
 }
@@ -300,6 +304,7 @@ private struct RequestBody: Codable {
     var deletesConversations: Bool?
     var key: String?
     var value: RemoteSettingValue?
+    var expanded: Bool?
 }
 
 public enum RemoteProtocolError: Error, Equatable, Sendable {
@@ -396,6 +401,9 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
             let f = try fields()
             request = .changeSetting(key: try need(f.key, "key"), value: try need(f.value, "value"))
         case "settingsAction": request = .settingsAction(key: try need(try fields().key, "key"))
+        case "setProjectExpanded":
+            let f = try fields()
+            request = .setProjectExpanded(projectID: try need(f.projectID, "projectID"), expanded: try need(f.expanded, "expanded"))
         default: throw RemoteProtocolError.unsupported(type)
         }
     }
@@ -447,6 +455,9 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
             f.threadID = threadID
             f.itemID = itemID
         case .newThread(let projectID): f.projectID = projectID
+        case .setProjectExpanded(let projectID, let expanded):
+            f.projectID = projectID
+            f.expanded = expanded
         case .threadAction(let threadID, let action):
             f.threadID = threadID
             f.action = action

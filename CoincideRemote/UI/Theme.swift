@@ -66,6 +66,12 @@ struct Theme: Equatable {
     var onControl: Color { isDark ? .black : .white }
     var ink: Color { palette.ink.map { Color(hex: $0) } ?? .primary }
     var secondaryInk: Color { ink.opacity(0.62) }
+    /// The quietest text: a project's name after a pinned thread, disclosure triangles, archived marks.
+    var tertiaryInk: Color { ink.opacity(0.38) }
+    /// Agents' replies in New York, as the Mac sets them unless the user chose the system font.
+    var serifReplies = true
+    /// The user's messages on the left of the conversation rather than the right (Settings › General on the Mac).
+    var userMessagesOnLeft = false
     var isDark: Bool { palette.isDark }
     var borderWidth: CGFloat { palette.borderWidth }
     /// A quiet fill for cards and the user's messages.
@@ -92,6 +98,14 @@ private struct ProminentButton: ViewModifier {
 
 extension View {
     func prominentButton() -> some View { modifier(ProminentButton()) }
+}
+
+/// Switches in the system's green. The controls' tint is the theme's ink (white on dark themes), which would hide the
+/// switch's white knob on its track.
+struct ThemedSwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Toggle(configuration).toggleStyle(.switch).tint(.green)
+    }
 }
 
 extension Color {
@@ -122,7 +136,9 @@ struct ThemedRoot<Content: View>: View {
     var body: some View {
         let resolved = appearance.resolved(server: server)
         let palette = colorScheme == .dark ? resolved.dark : resolved.light
-        let theme = Theme(palette: palette)
+        let theme = Theme(
+            palette: palette, serifReplies: server?.usesSerifReplies ?? true,
+            userMessagesOnLeft: server?.userMessageSide == "left")
         content
             .environment(\.theme, theme)
             .tint(theme.control)
@@ -130,21 +146,27 @@ struct ThemedRoot<Content: View>: View {
     }
 }
 
-/// An agent's mark from the asset catalog.
+/// An agent's mark from the asset catalog, drawn as the Mac draws it (`Theme.logo(for:)`): Codex, Cursor, Grok and
+/// OpenCode have one-color marks that take the color of the text around them; Claude's and Antigravity's keep their own.
 struct AgentLogo: View {
     let provider: String
     var size: CGFloat = 16
+    /// The color of a one-color mark: the theme's text color unless the row is quieter (archived, say).
+    var tint: Color?
     @Environment(\.theme) private var theme
 
     var body: some View {
         Image(Self.assetName(provider))
             .resizable()
-            .renderingMode(provider == "claude" || provider == "antigravity" ? .original : .template)
+            .renderingMode(Self.keepsColors(provider) ? .original : .template)
             .scaledToFit()
             .frame(width: size, height: size)
-            .foregroundStyle(theme.agent(provider))
+            .foregroundStyle(tint ?? theme.ink)
             .accessibilityHidden(true)
     }
+
+    /// Whether the mark keeps its own colors rather than taking the text's.
+    static func keepsColors(_ provider: String) -> Bool { provider == "claude" || provider == "antigravity" }
 
     static func assetName(_ provider: String) -> String {
         switch provider {

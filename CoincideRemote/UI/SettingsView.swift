@@ -11,8 +11,43 @@ struct SettingsView: View {
     @State private var forgetting: SavedMac?
 
     var body: some View {
-        @Bindable var appearance = appearance
         Form {
+            Group { sections }
+                .themedCards(theme)
+        }
+        .scrollContentBackground(.hidden)
+        .background(theme.isDark ? theme.content : theme.sidebar)
+        .task(id: client.isConnected) { await client.loadMacSettings() }
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.large)
+        .alert("Add an Address", isPresented: Binding(get: { addingHostTo != nil }, set: { if !$0 { addingHostTo = nil } })) {
+            TextField("192.168.1.20 or mac.tailnet.ts.net", text: $newHost)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Add") {
+                if let mac = addingHostTo { client.addHost(newHost, to: mac.serverID) }
+                newHost = ""
+                addingHostTo = nil
+            }
+            Button("Cancel", role: .cancel) { addingHostTo = nil }
+        } message: {
+            Text("Coincide Remote tries it after the Mac’s own addresses.")
+        }
+        .confirmationDialog(
+            "Forget “\(forgetting?.name ?? "")”?", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Forget", role: .destructive) {
+                if let mac = forgetting { client.forget(mac.serverID) }
+                forgetting = nil
+            }
+        } message: {
+            Text("To connect again, pair with the code the Mac shows. Revoke this device in the Mac’s Settings too.")
+        }
+    }
+
+    @ViewBuilder private var sections: some View {
+        @Bindable var appearance = appearance
             Section("Macs") {
                 ForEach(client.savedMacs) { mac in
                     HStack {
@@ -85,36 +120,6 @@ struct SettingsView: View {
                 }
                 LabeledContent("Protocol", value: "\(RemoteProtocol.version)")
             }
-        }
-        .scrollContentBackground(.hidden)
-        .background(theme.content)
-        .task(id: client.isConnected) { await client.loadMacSettings() }
-        .navigationTitle("Settings")
-        .navigationBarTitleDisplayMode(.large)
-        .alert("Add an Address", isPresented: Binding(get: { addingHostTo != nil }, set: { if !$0 { addingHostTo = nil } })) {
-            TextField("192.168.1.20 or mac.tailnet.ts.net", text: $newHost)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            Button("Add") {
-                if let mac = addingHostTo { client.addHost(newHost, to: mac.serverID) }
-                newHost = ""
-                addingHostTo = nil
-            }
-            Button("Cancel", role: .cancel) { addingHostTo = nil }
-        } message: {
-            Text("Coincide Remote tries it after the Mac’s own addresses.")
-        }
-        .confirmationDialog(
-            "Forget “\(forgetting?.name ?? "")”?", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Forget", role: .destructive) {
-                if let mac = forgetting { client.forget(mac.serverID) }
-                forgetting = nil
-            }
-        } message: {
-            Text("To connect again, pair with the code the Mac shows. Revoke this device in the Mac’s Settings too.")
-        }
     }
 
     private func status(_ mac: SavedMac) -> String {
@@ -256,13 +261,14 @@ struct UsageView: View {
                             Text(entry.accountName.map { "\(entry.providerName) · \($0)" } ?? entry.providerName)
                         }
                     }
+                    .themedCards(theme)
                 }
             } else {
                 ProgressView()
             }
         }
         .scrollContentBackground(.hidden)
-        .background(theme.content)
+        .background(theme.isDark ? theme.content : theme.sidebar)
         .navigationTitle("Usage Limits")
         .refreshable { await load() }
         .task { await load() }
