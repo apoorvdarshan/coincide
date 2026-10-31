@@ -353,17 +353,18 @@ struct ShortcutSettingsTests {
         settings.setShortcut(nil, for: .stopTurn)
         #expect(settings.shortcutOverrides == ["thread.stop": ""])
         #expect(settings.keyBindings.shortcut(for: .stopTurn) == nil)
-        settings.setShortcut(nil, for: .renameThread)
-        #expect(settings.shortcutOverrides["thread.rename"] == nil)
+        // Removing a shortcut a command never had saves nothing.
+        settings.setShortcut(nil, for: .deleteThread)
+        #expect(settings.shortcutOverrides["thread.delete"] == nil)
         settings.resetShortcut(for: .stopTurn)
         #expect(settings.shortcutOverrides.isEmpty)
     }
 
     @Test func resettingAllAndRemovingUnusableOverrides() {
         var settings = AppSettings()
-        settings.shortcutOverrides = ["thread.stop": "nope", "thread.rename": "mod+r", "thread.unknown": "mod+u"]
+        settings.shortcutOverrides = ["thread.stop": "nope", "thread.rename": "mod+shift+r", "thread.unknown": "mod+u"]
         settings.removeUnusableShortcuts()
-        #expect(settings.shortcutOverrides == ["thread.rename": "mod+r"])
+        #expect(settings.shortcutOverrides == ["thread.rename": "mod+shift+r"])
         settings.resetAllShortcuts()
         #expect(settings.shortcutOverrides.isEmpty)
     }
