@@ -73,6 +73,21 @@ struct DictationComposerTests {
         #expect(DictationShortcutConflicts.warnings(for: .modifier(.fn)).isEmpty)
     }
 
+    @Test func appshotsShortcutsAreNamed() throws {
+        var appshots = AppshotSettings()
+        appshots.enabled = true
+        // Both ⌘ keys, Appshots' default, would also be a lone ⌘ press.
+        #expect(DictationShortcutConflicts.warnings(for: .modifier(.command), appshots: appshots).count == 1)
+        #expect(DictationShortcutConflicts.warnings(for: .modifier(.fn), appshots: appshots).isEmpty)
+        let keys = try #require(KeyShortcut("mod+ctrl+s"))
+        appshots.trigger = .shortcut
+        appshots.shortcut = AppshotShortcut(keyCode: 1, shortcut: keys)
+        #expect(DictationShortcutConflicts.warnings(for: .keys(keys), appshots: appshots).contains { $0.contains("Appshots") })
+        #expect(DictationShortcutConflicts.warnings(for: .modifier(.command), appshots: appshots).isEmpty)
+        appshots.enabled = false
+        #expect(DictationShortcutConflicts.warnings(for: .keys(keys), appshots: appshots).contains { $0.contains("Appshots") } == false)
+    }
+
     @Test func theMenuNamesTheShortcutOnlyWhenItsOn() {
         var voice = VoiceSettings()
         #expect(DictationMenu.subtitle(for: voice) == nil)

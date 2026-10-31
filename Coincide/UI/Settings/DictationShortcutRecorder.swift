@@ -53,6 +53,10 @@ final class DictationShortcutRecorderView: NSView {
         path.stroke()
     }
 
+    override func resetCursorRects() {
+        addPointerCursorRect()
+    }
+
     override func mouseDown(with event: NSEvent) {
         if isRecording { stopRecording() } else { startRecording() }
     }
@@ -225,9 +229,21 @@ struct DictationShortcutRecorder: NSViewRepresentable {
 /// What else a dictation shortcut runs into, for Settings › Voice. Dictation's monitor sees keys before the menu bar, so
 /// while the composer's window is key it takes a key from a menu command that has it.
 enum DictationShortcutConflicts {
-    static func warnings(for shortcut: DictationShortcut, bindings: KeyBindingsController = .shared) -> [String] {
-        guard case .keys(let keys) = shortcut else { return [] }
+    static func warnings(
+        for shortcut: DictationShortcut, appshots: AppshotSettings = AppStore.shared.settings.appshots,
+        bindings: KeyBindingsController = .shared
+    ) -> [String] {
+        guard case .keys(let keys) = shortcut else {
+            // Appshots' both-⌘ chord is a ⌘ pressed and let go on its own, which a lone ⌘ shortcut would also take.
+            if shortcut == .modifier(.command), appshots.enabled, appshots.trigger == .bothCommandKeys {
+                return [String(localized: "Pressing both ⌘ keys for Appshots would also start dictation. Choose another key.")]
+            }
+            return []
+        }
         var warnings: [String] = []
+        if appshots.enabled, appshots.activeShortcut?.keyShortcut == keys {
+            warnings.append(String(localized: "Appshots uses \(keys.displayString) in every app, so it won’t reach dictation. Choose another key."))
+        }
         if let reserved = ReservedShortcut.macOS.first(where: { $0.shortcut == keys }) {
             warnings.append(String(localized: "macOS uses \(keys.displayString) for \(reserved.title), so Coincide may never see it."))
         }
