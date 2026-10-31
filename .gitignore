@@ -21,3 +21,6 @@ xcuserdata/
 
 # Cua Driver for Computer Use, fetched by scripts/fetch-cua-driver.sh
 /Vendor/
+
+# CFBundleVersion, written by scripts/build-number.sh when the project is generated
+/BuildNumber.xcconfig

@@ -29,7 +29,7 @@ final class BrowserProfile {
         let testing = AppDelegate.isHostingTests
         secrets = testing ? MemorySecretStore() : KeychainSecretStore()
         logins = CoincideLoginProvider(directory: directory,
-            secrets: testing ? MemorySecretStore() : KeychainSecretStore(service: "com.apoorvdarshan.coincide.browser-logins"))
+            secrets: testing ? MemorySecretStore() : KeychainSecretStore(service: CoincideLoginProvider.keychainService))
     }
 
     /// The password managers Coincide can fill from, each used only while the user has it turned on.

@@ -2,7 +2,7 @@ import Foundation
 import IOKit
 
 // coincide-always-on: the lid watcher for Settings › General › Keep Awake. launchd starts it at login while Keep
-// Awake is on (com.apoorvdarshan.coincide.always-on.plist) and the app unregisters it when it turns off. With sleep
+// Awake is on (CoincideAgentHost/LaunchAgents/always-on.plist) and the app unregisters it when it turns off. With sleep
 // disabled macOS no longer turns the display off when the lid closes, so this does, and optionally keeps displays
 // off and sound muted until the lid opens. It waits for the lid's notifications instead of polling, and ticks every
 // two seconds only while a closed lid needs it (LidWatcherCore).

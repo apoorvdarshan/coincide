@@ -8,12 +8,14 @@ import Foundation
 /// The app stays the only writer of threads, settings and projects; it applies the events to the transcript
 /// as they arrive, or from the log when it comes back.
 public enum AgentHostIdentity {
+    /// `com.apoorvdarshan.coincide.agent-host`, or a Debug build's own (`CoincideIdentity`). Also the label of the
+    /// LaunchAgent that runs it.
+    public nonisolated static let bundleID = CoincideIdentity.scoped("agent-host")
     /// The Mach service the LaunchAgent's plist names, which launchd starts the host for on demand.
-    public nonisolated static let machServiceName = "com.apoorvdarshan.coincide.agent-host"
+    public nonisolated static let machServiceName = bundleID
     /// The plist in `Contents/Library/LaunchAgents`, registered with `SMAppService.agent(plistName:)`.
-    public nonisolated static let plistName = "com.apoorvdarshan.coincide.agent-host.plist"
-    public nonisolated static let bundleID = "com.apoorvdarshan.coincide.agent-host"
-    public nonisolated static let appBundleID = "com.apoorvdarshan.coincide"
+    public nonisolated static let plistName = "\(bundleID).plist"
+    public nonisolated static let appBundleID = CoincideIdentity.bundleID
 }
 
 /// Where the host keeps its event logs: `agent-host` in Coincide's data folder, which the app never writes.

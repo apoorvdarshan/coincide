@@ -3,7 +3,7 @@ import IOKit
 import IOKit.ps
 
 // coincide-power-helper: the battery helper for Settings › General › Keep Awake › "Sleep normally on battery". A
-// launchd daemon running as root (com.apoorvdarshan.coincide.power-helper.plist), registered with SMAppService only
+// launchd daemon running as root (CoincideAgentHost/LaunchDaemons/power-helper.plist), registered with SMAppService only
 // while that option and Keep Awake are on. It does one thing: `pmset disablesleep` 1 on the charger and 0 on battery,
 // so closing the lid on battery sleeps the Mac. It takes no input from anyone; the power source is all it reads.
 

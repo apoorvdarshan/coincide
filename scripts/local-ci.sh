@@ -44,9 +44,9 @@ while [ -z "$slot" ]; do
 done
 cleanup() {
     rmdir "${TMPDIR:-/tmp}/coincide-local-ci-slot-$slot" 2>/dev/null || true
-    # The test build registers with Launch Services, which could then pick it to open a notification click.
-    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u \
-        "${derived:-}/Build/Products/Debug/Coincide.app" 2>/dev/null || true
+    # Every app the run built (Coincide.app, its nested agent host, the standalone host) registered with Launch
+    # Services, passed or failed; unregistered, none can show up for a notification's icon or click.
+    if [ -n "${derived:-}" ]; then "$root/scripts/unregister-builds.sh" "$derived/Build/Products" || true; fi
     if [ -n "$pr" ]; then git -C "$root" worktree remove --force "$work"; fi
 }
 trap cleanup EXIT

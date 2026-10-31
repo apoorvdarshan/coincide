@@ -35,7 +35,9 @@ final class CommandLineControl {
     var socketPath: String {
         let path = store.directory.appendingPathComponent("control.sock").path
         guard path.utf8.count >= 100 else { return path }
-        return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("coincide-control.sock").path
+        // A Debug build's own, as its data folder is.
+        let name = CoincideIdentity.isDebug ? "coincide-debug-control.sock" : "coincide-control.sock"
+        return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(name).path
     }
 
     var isRunning: Bool { server?.isRunning == true }
@@ -59,6 +61,12 @@ final class CommandLineControl {
     /// disabling command-line control leaves the Terminal command installed, but the socket refuses requests.
     func refreshTerminalInstallation() {
         guard !AppDelegate.isHostingTests, installationTask == nil else { return }
+        if CoincideIdentity.isDebug {
+            // Terminal's `coincide` stays the installed Coincide's: this build's tool reaches only this build's data
+            // folder (`CoincideIdentity`). Agents it starts still have that tool. Debug builds only, so not localized.
+            terminalError = "A Debug build leaves the Terminal command to the installed Coincide. Agents it starts still have it."
+            return
+        }
         installationTask = Task {
             let path = await ShellEnvironment.shared.terminalSearchPath() ?? ProcessInfo.processInfo.environment["PATH"] ?? ""
             let tool = Self.toolURL

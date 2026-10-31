@@ -98,7 +98,9 @@ struct ComputerUseRuntimeTests {
         #expect(starts.count == 1)
         let start = try #require(starts.first)
         #expect(start["embedded"]?.string == "1")
-        #expect(start["host"]?.string == "com.apoorvdarshan.coincide")
+        // This build's own: a Debug build never uses the installed Coincide's permissions.
+        #expect(start["host"]?.string == CoincideIdentity.bundleID)
+        #expect(start["host"]?.string == Bundle.main.bundleIdentifier)
         #expect(start["mode"]?.string == "standard")
         #expect(start["privateToken"]?.bool == false)
         let socket = try #require(start["socket"]?.string)

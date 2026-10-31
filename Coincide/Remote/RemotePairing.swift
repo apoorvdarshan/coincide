@@ -16,7 +16,7 @@ protocol RemoteDeviceStorage {
 
 /// Paired devices in the login Keychain, as one item.
 nonisolated struct KeychainRemoteDeviceStorage: RemoteDeviceStorage {
-    let keychain = KeychainStore(service: "com.apoorvdarshan.coincide.remote")
+    let keychain = KeychainStore(service: CoincideIdentity.scoped("remote"))
 
     func load() -> [RemotePairedDevice] {
         guard let json = (try? keychain.value(for: "devices")) ?? nil else { return [] }

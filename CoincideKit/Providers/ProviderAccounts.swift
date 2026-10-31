@@ -247,7 +247,7 @@ public struct KeychainStore: Sendable {
 
 /// Where accounts' API keys are kept: one Keychain item per account, never in settings, logs or thread files.
 public struct ProviderAccountSecrets: Sendable {
-    public nonisolated static let standard = ProviderAccountSecrets(keychain: KeychainStore(service: "com.apoorvdarshan.coincide.provider-account"))
+    public nonisolated static let standard = ProviderAccountSecrets(keychain: KeychainStore(service: CoincideIdentity.scoped("provider-account")))
 
     public var keychain: KeychainStore
 

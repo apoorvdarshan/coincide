@@ -22,8 +22,7 @@ public struct AntigravityPaths: Sendable, Hashable {
         if let override = ProcessInfo.processInfo.environment["COINCIDE_DATA_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Coincide", isDirectory: true)
+        return CoincideIdentity.dataDirectory
     }
 
     /// The downloaded runtime for this Mac's architecture.

@@ -29,7 +29,7 @@ final class AppUpdates {
         self.store = store
         self.bundleURL = bundleURL
         self.root = root ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("com.apoorvdarshan.coincide/Updates", isDirectory: true)
+            .appendingPathComponent(CoincideIdentity.bundleID, isDirectory: true).appendingPathComponent("Updates", isDirectory: true)
     }
 
     var busy: Bool { state == .checking || state == .downloading || state == .arming }

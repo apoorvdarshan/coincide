@@ -3,22 +3,17 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.apoorvdarshan.coincide.always-on</string>
+	<string>$(COINCIDE_BUNDLE_ID).power-helper</string>
 	<key>BundleProgram</key>
-	<string>Contents/Helpers/coincide-always-on</string>
+	<string>Contents/Helpers/coincide-power-helper</string>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<dict>
-		<key>SuccessfulExit</key>
-		<false/>
-	</dict>
+	<true/>
 	<key>AssociatedBundleIdentifiers</key>
 	<array>
-		<string>com.apoorvdarshan.coincide</string>
+		<string>$(COINCIDE_BUNDLE_ID)</string>
 	</array>
-	<key>LimitLoadToSessionType</key>
-	<string>Aqua</string>
 	<key>ProcessType</key>
 	<string>Standard</string>
 </dict>

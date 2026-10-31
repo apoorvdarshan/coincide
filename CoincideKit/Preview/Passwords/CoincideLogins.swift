@@ -13,7 +13,7 @@ public protocol SecretStore: Sendable {
 public nonisolated struct KeychainSecretStore: SecretStore {
     let service: String
 
-    public init(service: String = "com.apoorvdarshan.coincide.browser") { self.service = service }
+    public init(service: String = CoincideIdentity.scoped("browser")) { self.service = service }
 
     private func query(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
@@ -100,7 +100,10 @@ public nonisolated struct CoincideLoginProvider: PasswordProvider {
         var totp: String?
     }
 
-    public init(directory: URL, secrets: SecretStore = KeychainSecretStore(service: "com.apoorvdarshan.coincide.browser-logins")) {
+    /// The Keychain service the logins' secrets are kept under.
+    public static let keychainService = CoincideIdentity.scoped("browser-logins")
+
+    public init(directory: URL, secrets: SecretStore = KeychainSecretStore(service: CoincideLoginProvider.keychainService)) {
         index = directory.appendingPathComponent("browser-logins.json")
         self.secrets = secrets
     }

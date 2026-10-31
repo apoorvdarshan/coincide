@@ -15,10 +15,18 @@ nonisolated struct ControlError: Error, CustomStringConvertible, Equatable {
 }
 
 nonisolated enum ControlPaths {
+    /// The data folder of the Coincide this tool was built with: a Debug build's tool talks to the Debug app
+    /// (`CoincideIdentity.dataDirectory`, which the tool doesn't link).
+    #if DEBUG
+    static let dataFolderName = "Coincide Debug"
+    #else
+    static let dataFolderName = "Coincide"
+    #endif
+
     /// Where Coincide listens unless `COINCIDE_CONTROL_SOCKET` says otherwise.
     static var defaultSocket: String {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Coincide/control.sock").path
+            .appendingPathComponent("Library/Application Support/\(dataFolderName)/control.sock").path
     }
 
     static func socket(explicit: String?, environment: [String: String]) -> String {
