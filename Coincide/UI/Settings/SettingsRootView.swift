@@ -333,7 +333,7 @@ struct SettingsSearchResults: View {
                     String(localized: "Accessibility"), String(localized: "Screen Recording"),
                     String(localized: "Permissions"), String(localized: "Automation"),
                     "computer use", "accessibility", "screen recording", "automation", "desktop", "screen", "control",
-                    "TryCua", "Cua Driver",
+                    "TryCua", "Cua Driver", String(localized: "Show agent cursor"), "cursor", "pointer",
                 ]),
             SettingsSearchEntry(
                 title: String(localized: "About Coincide"), pane: .section(.about),
