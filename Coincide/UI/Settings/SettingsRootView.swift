@@ -244,6 +244,12 @@ struct SettingsSearchResults: View {
                     String(localized: "Performance"), "GPU", "Metal", "SwiftTerm",
                 ]),
             SettingsSearchEntry(
+                title: String(localized: "Translucent terminal"), pane: general, setting: .terminalTranslucency,
+                keywords: [
+                    String(localized: "Terminal"), String(localized: "Transparency"), String(localized: "Background"),
+                    String(localized: "Blur"), String(localized: "Opacity"),
+                ]),
+            SettingsSearchEntry(
                 title: String(localized: "Open project folders in"), pane: general, setting: .openIn,
                 keywords: [
                     String(localized: "Open In"), String(localized: "Editor"), "Xcode", "VS Code", "Cursor", "Finder",

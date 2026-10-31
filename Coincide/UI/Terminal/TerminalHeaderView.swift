@@ -12,6 +12,8 @@ final class TerminalHeaderView: NSView {
         var symbolName: String
         var toolTip: String
         var hasExited: Bool
+        /// The active terminal's progress report, shown as a ring in place of the icon.
+        var progress: TerminalProgress? = nil
     }
 
     var onSelectTab: ((UUID) -> Void)?
@@ -203,6 +205,7 @@ final class TerminalTabItemView: NSView {
     private(set) var isSelected = false
 
     private let iconView = NSImageView()
+    let progressRing = NSProgressIndicator()
     private let titleField = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
     private var isHovered = false {
@@ -224,7 +227,14 @@ final class TerminalTabItemView: NSView {
         closeButton.target = self
         closeButton.action = #selector(closeTab)
 
-        let stack = NSStackView(views: [iconView, titleField, closeButton])
+        progressRing.style = .spinning
+        progressRing.controlSize = .mini
+        progressRing.minValue = 0
+        progressRing.maxValue = 100
+        progressRing.isDisplayedWhenStopped = false
+        progressRing.isHidden = true
+        progressRing.setAccessibilityElement(false)
+        let stack = NSStackView(views: [iconView, progressRing, titleField, closeButton])
         stack.orientation = .horizontal
         stack.spacing = 5
         stack.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 4)
@@ -254,15 +264,38 @@ final class TerminalTabItemView: NSView {
         self.isSelected = isSelected
         iconView.image = Theme.symbol(tab.symbolName, size: 11)
         iconView.contentTintColor = isSelected ? .labelColor : .secondaryLabelColor
+        showProgress(tab.progress)
         titleField.stringValue = tab.title
         titleField.textColor = tab.hasExited ? .tertiaryLabelColor : (isSelected ? .labelColor : .secondaryLabelColor)
         toolTip = tab.toolTip
         let closeLabel = String(localized: "Close \(tab.title)")
         closeButton.toolTip = closeLabel
         closeButton.setAccessibilityLabel(closeLabel)
-        setAccessibilityLabel(tab.title)
+        setAccessibilityLabel(tab.progress.map { "\(tab.title), \($0.description)" } ?? tab.title)
         setAccessibilityValue(isSelected)
         updateAppearance()
+    }
+
+    /// While the terminal reports progress, a ring in place of the icon that fills with the percentage or spins while
+    /// indeterminate; after an error a red warning sign, and while paused a yellow pause sign.
+    private func showProgress(_ progress: TerminalProgress?) {
+        let ring = progress.map { $0.state == .normal || $0.state == .indeterminate } ?? false
+        progressRing.isHidden = !ring
+        iconView.isHidden = ring
+        guard let progress, ring else {
+            progressRing.stopAnimation(nil)
+            if progress?.state == .error {
+                iconView.image = Theme.symbol("exclamationmark.triangle.fill", size: 11)
+                iconView.contentTintColor = .systemRed
+            } else if progress?.state == .paused {
+                iconView.image = Theme.symbol("pause.circle.fill", size: 11)
+                iconView.contentTintColor = .systemYellow
+            }
+            return
+        }
+        progressRing.isIndeterminate = progress.state == .indeterminate
+        progressRing.doubleValue = Double(progress.percent ?? 0)
+        if progressRing.isIndeterminate { progressRing.startAnimation(nil) } else { progressRing.stopAnimation(nil) }
     }
 
     private func updateAppearance() {
