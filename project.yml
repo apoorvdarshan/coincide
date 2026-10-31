@@ -6,8 +6,9 @@ options:
     iOS: "26.0"
   createIntermediateGroups: true
   developmentLanguage: en
-  # The Cua Driver release Computer Use bundles, checked against pinned checksums (cached after the first download).
-  preGenCommand: scripts/fetch-cua-driver.sh
+  # The Cua Driver release Computer Use bundles, checked against pinned checksums (cached after the first download),
+  # and the build number (CFBundleVersion), the count of commits in HEAD's history (see Signing.xcconfig).
+  preGenCommand: scripts/fetch-cua-driver.sh && scripts/build-number.sh
 packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
@@ -25,13 +26,21 @@ settings:
     SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    # CURRENT_PROJECT_VERSION (CFBundleVersion) comes from Signing.xcconfig: the count of commits in HEAD's history.
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
     DEVELOPMENT_TEAM: ""
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     LOCALIZATION_PREFERS_STRING_CATALOGS: YES
     SWIFT_EMIT_LOC_STRINGS: YES
+    # The Mac app's bundle ID; the agent host's and the launchd jobs' build on it. Debug builds (tests, agents' and
+    # Xcode's builds) get their own, so macOS never takes one for the installed Coincide: Launch Services would
+    # otherwise pick among every copy for a notification's icon or click. CoincideIdentity in CoincideKit has the same
+    # IDs and names the data folder, Keychain items and launchd jobs after them; CoincideIdentityTests check they agree.
+    COINCIDE_BUNDLE_ID: com.apoorvdarshan.coincide
+  configs:
+    Debug:
+      COINCIDE_BUNDLE_ID: com.apoorvdarshan.coincide.debug
 targets:
   CoincideKit:
     type: framework
@@ -84,7 +93,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.cli
         SKIP_INSTALL: YES
   # The lid watcher for Settings › General › Keep Awake (CoincideAlwaysOn/main.swift), embedded in
-  # Coincide.app/Contents/Helpers. launchd runs it at login while Keep Awake is on. It shares only CoincideKit/AlwaysOn.
+  # Coincide.app/Contents/Helpers. launchd runs it at login while Keep Awake is on. It shares only CoincideKit/AlwaysOn
+  # and the build's identity (which data folder it reads).
   CoincideAlwaysOn:
     type: tool
     platform: macOS
@@ -94,6 +104,7 @@ targets:
     sources:
       - path: CoincideAlwaysOn
       - path: CoincideKit/AlwaysOn
+      - path: CoincideKit/Support/CoincideIdentity.swift
     settings:
       base:
         SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
@@ -140,7 +151,8 @@ targets:
         embed: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.agent-host
+        # Also its LaunchAgent's label and Mach service (AgentHostIdentity).
+        PRODUCT_BUNDLE_IDENTIFIER: $(COINCIDE_BUNDLE_ID).agent-host
         PRODUCT_NAME: CoincideAgentHost
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Coincide Agents
@@ -153,6 +165,9 @@ targets:
         SKIP_INSTALL: YES
         # Contents/Helpers/CoincideAgentHost.app/Contents/MacOS, four folders below Coincide.app/Contents.
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../../../../Frameworks"
+      configs:
+        Debug:
+          INFOPLIST_KEY_CFBundleDisplayName: Coincide Debug Agents
   Coincide:
     type: application
     platform: macOS
@@ -165,18 +180,11 @@ targets:
           - Info.plist
       # The command-line tool's parsing, client and commands, also built into the app so its tests can run them.
       - path: CoincideCLI/Shared
-      # Registered with SMAppService.agent(plistName:), which looks for it here.
+      # Templates of the launchd jobs, written into the app by "Embed launchd jobs".
       - path: CoincideAgentHost/LaunchAgents
-        buildPhase:
-          copyFiles:
-            destination: wrapper
-            subpath: Contents/Library/LaunchAgents
-      # Keep Awake's battery helper, registered with SMAppService.daemon(plistName:), which looks for it here.
+        buildPhase: none
       - path: CoincideAgentHost/LaunchDaemons
-        buildPhase:
-          copyFiles:
-            destination: wrapper
-            subpath: Contents/Library/LaunchDaemons
+        buildPhase: none
     dependencies:
       - target: CoincideKit
       - target: CoincideAgentHost
@@ -226,7 +234,7 @@ targets:
           - $(SRCROOT)/Vendor/CuaDriver/cua-driver
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/cua-driver
-      # Where com.apoorvdarshan.coincide.always-on.plist's BundleProgram points.
+      # Where the always-on job's BundleProgram points.
       - name: Embed lid watcher
         script: |
           /bin/mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
@@ -235,7 +243,7 @@ targets:
           - $(BUILT_PRODUCTS_DIR)/coincide-always-on
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/coincide-always-on
-      # Where com.apoorvdarshan.coincide.power-helper.plist's BundleProgram points.
+      # Where the power-helper job's BundleProgram points.
       - name: Embed battery helper
         script: |
           /bin/mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
@@ -244,9 +252,33 @@ targets:
           - $(BUILT_PRODUCTS_DIR)/coincide-power-helper
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/coincide-power-helper
+      # The launchd jobs SMAppService registers: agent(plistName:) and daemon(plistName:) look for them in
+      # Contents/Library/LaunchAgents and LaunchDaemons. Written from the templates in CoincideAgentHost with this
+      # build's COINCIDE_BUNDLE_ID in their names, labels, Mach service and associated app, so a Debug build's jobs
+      # never replace the installed Coincide's (AgentHostIdentity and AlwaysOnIdentity name them).
+      - name: Embed launchd jobs
+        script: |
+          set -eu
+          embed() {
+            /bin/mkdir -p "$(/usr/bin/dirname "$2")"
+            /usr/bin/sed 's/[$](COINCIDE_BUNDLE_ID)/'"$COINCIDE_BUNDLE_ID"'/g' "$1" >"$2"
+            /usr/bin/plutil -lint -s "$2"
+            if /usr/bin/grep -q COINCIDE_BUNDLE_ID "$2"; then echo "error: $2 still names COINCIDE_BUNDLE_ID"; exit 1; fi
+          }
+          embed "$SCRIPT_INPUT_FILE_0" "$SCRIPT_OUTPUT_FILE_0"
+          embed "$SCRIPT_INPUT_FILE_1" "$SCRIPT_OUTPUT_FILE_1"
+          embed "$SCRIPT_INPUT_FILE_2" "$SCRIPT_OUTPUT_FILE_2"
+        inputFiles:
+          - $(SRCROOT)/CoincideAgentHost/LaunchAgents/agent-host.plist
+          - $(SRCROOT)/CoincideAgentHost/LaunchAgents/always-on.plist
+          - $(SRCROOT)/CoincideAgentHost/LaunchDaemons/power-helper.plist
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents/$(COINCIDE_BUNDLE_ID).agent-host.plist
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents/$(COINCIDE_BUNDLE_ID).always-on.plist
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchDaemons/$(COINCIDE_BUNDLE_ID).power-helper.plist
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide
+        PRODUCT_BUNDLE_IDENTIFIER: $(COINCIDE_BUNDLE_ID)
         PRODUCT_NAME: Coincide
         # Keys the generated Info.plist can't express (App Transport Security for the browser preview).
         INFOPLIST_FILE: Coincide/Info.plist
@@ -269,6 +301,12 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_APP_SANDBOX: NO
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+      configs:
+        Debug:
+          INFOPLIST_KEY_CFBundleDisplayName: Coincide Debug
+          # A profile for com.apoorvdarshan.coincide doesn't cover the Debug build's bundle ID (Signing.xcconfig).
+          CODE_SIGN_ENTITLEMENTS: ""
+          PROVISIONING_PROFILE_SPECIFIER: ""
   # Coincide Remote: the iPhone and iPad app that drives Coincide on a Mac over the local network or Tailscale.
   CoincideRemote:
     type: application

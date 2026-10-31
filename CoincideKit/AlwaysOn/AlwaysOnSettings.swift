@@ -49,20 +49,20 @@ public struct AlwaysOnSettings: Codable, Hashable, Sendable {
 
 /// Names and places shared by the app and the lid watcher.
 public enum AlwaysOnIdentity {
+    /// The watcher's launchd label, named after the app (`CoincideIdentity`).
+    public static let label = CoincideIdentity.scoped("always-on")
     /// The plist in `Contents/Library/LaunchAgents`, registered with `SMAppService.agent(plistName:)`.
-    public static let plistName = "com.apoorvdarshan.coincide.always-on.plist"
-    public static let label = "com.apoorvdarshan.coincide.always-on"
+    public static let plistName = "\(label).plist"
+    /// The battery helper's launchd label.
+    public static let batteryHelperLabel = CoincideIdentity.scoped("power-helper")
     /// The battery helper's plist in `Contents/Library/LaunchDaemons`, registered with `SMAppService.daemon(plistName:)`.
-    public static let batteryHelperPlistName = "com.apoorvdarshan.coincide.power-helper.plist"
+    public static let batteryHelperPlistName = "\(batteryHelperLabel).plist"
     /// Where the helper's BundleProgram points, inside Coincide.app.
     public static let batteryHelperPath = "Contents/Helpers/coincide-power-helper"
 
     /// Coincide's data folder, as `AppStore.defaultDirectory` without the testing override: launchd starts the
     /// watcher without the app's environment.
-    public static var dataDirectory: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Coincide", isDirectory: true)
-    }
+    public static var dataDirectory: URL { CoincideIdentity.dataDirectory }
 
     public static func settingsFile(in directory: URL) -> URL { directory.appendingPathComponent("settings.json") }
     /// The sleep settings to put back when Keep Awake turns off (`AlwaysOnRestorePoint`).

@@ -1,13 +1,16 @@
 import AppKit
+import CoincideKit
 import UserNotifications
 
-/// Keeps one Coincide running. macOS can launch another copy of the app (a development build, a version kept for
-/// rolling back) to deliver a notification click; that copy passes the click to the Coincide already running and
-/// quits, so the thread opens in the window the user has instead of a second window onto the same threads.
+/// Keeps one Coincide running. macOS can launch another copy of the app with the same bundle ID (a version kept for
+/// rolling back, another Release build; Debug builds have their own, see `CoincideIdentity`) to deliver a notification
+/// click; that copy passes the click to the Coincide already running and quits, so the thread opens in the window the
+/// user has instead of a second window onto the same threads.
 final class SecondInstance: NSObject, UNUserNotificationCenterDelegate {
     /// Posted by the copy that's handing over. userInfo["threadID"]: the thread's UUID string;
     /// userInfo["opensBrowser"]: whether to show its browser.
-    static let openThread = Notification.Name("com.apoorvdarshan.coincide.openThreadFromAnotherCopy")
+    /// Named after the build (`CoincideIdentity`), so a Debug copy never opens threads in the installed Coincide.
+    static let openThread = Notification.Name(CoincideIdentity.scoped("openThreadFromAnotherCopy"))
 
     private static var current: SecondInstance?
     private let running: NSRunningApplication

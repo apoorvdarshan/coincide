@@ -34,4 +34,13 @@
 //
 // Don't add the key without such a profile: macOS refuses to launch an app claiming a managed entitlement its
 // profile doesn't grant.
+//
+// Both settings apply to Release builds only. Debug builds have their own bundle ID (com.apoorvdarshan.coincide.debug,
+// see COINCIDE_BUNDLE_ID in project.yml), which a profile for com.apoorvdarshan.coincide doesn't cover, so they never
+// sign for iCloud or passkeys.
 #include? "Local.xcconfig"
+
+// The build number (CFBundleVersion) of every target: the number of commits in HEAD's history, which
+// scripts/build-number.sh writes to the gitignored BuildNumber.xcconfig whenever xcodegen generates the project.
+CURRENT_PROJECT_VERSION = 1
+#include? "BuildNumber.xcconfig"

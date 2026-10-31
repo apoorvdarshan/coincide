@@ -241,7 +241,7 @@ final class ComputerUseRuntime {
         self.socket = socket
         let arguments = [
             "serve", "--embedded", "--socket", socket, "--permission-mode", "standard",
-            "--host-bundle-id", Bundle.main.bundleIdentifier ?? "com.apoorvdarshan.coincide",
+            "--host-bundle-id", CoincideIdentity.bundleID,
         ]
         let process = LineProcess(executable: executable, arguments: arguments,
             workingDirectory: folder, environment: Self.environment(directory: folder))
@@ -377,7 +377,8 @@ final class ComputerUseRuntime {
         environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
         environment["TMPDIR"] = directory.path + "/"
         environment["CUA_DRIVER_EMBEDDED"] = "1"
-        environment["CUA_DRIVER_HOST_BUNDLE_ID"] = "com.apoorvdarshan.coincide"
+        // The app whose permissions it uses: a Debug build's own, never the installed Coincide's.
+        environment["CUA_DRIVER_HOST_BUNDLE_ID"] = CoincideIdentity.bundleID
         environment["CUA_DRIVER_PERMISSION_MODE"] = "standard"
         return environment
     }

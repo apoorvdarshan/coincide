@@ -1,3 +1,4 @@
+import CoincideKit
 import CoincideRemoteKit
 import Foundation
 import Security
@@ -12,8 +13,10 @@ nonisolated struct RemoteIdentity: @unchecked Sendable {
     /// Lowercase hex SHA-256 of the certificate, which the pairing code carries.
     var fingerprint: String { RemoteCrypto.sha256Hex(certificateDER) }
 
-    static let label = "Coincide Remote"
-    private static let keyTag = Data("com.apoorvdarshan.coincide.remote.tls-key".utf8)
+    /// "Coincide Remote", or "Coincide Debug Remote": the certificate is found by its label, so a Debug build makes and
+    /// resets its own, never the installed app's (`CoincideIdentity`).
+    static let label = "\(CoincideIdentity.displayName) Remote"
+    private static let keyTag = Data(CoincideIdentity.scoped("remote.tls-key").utf8)
 
     /// The saved identity, or a new one made and saved now.
     static func loadOrCreate() throws -> RemoteIdentity {

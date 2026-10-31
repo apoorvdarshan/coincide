@@ -99,13 +99,13 @@ public final class AppStore {
     var failedSaveRetryDelay: TimeInterval = 5
     private let writer = StoreWriter()
 
-    /// `~/Library/Application Support/Coincide`, or `COINCIDE_DATA_DIR` when set (used for testing).
+    /// `~/Library/Application Support/Coincide` (`Coincide Debug` for a Debug build, see `CoincideIdentity`), or
+    /// `COINCIDE_DATA_DIR` when set (used for testing).
     public static var defaultDirectory: URL {
         if let override = ProcessInfo.processInfo.environment["COINCIDE_DATA_DIR"], !override.isEmpty {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Coincide", isDirectory: true)
+        return CoincideIdentity.dataDirectory
     }
 
     public init(directory: URL) {

@@ -240,7 +240,9 @@ struct AlwaysOnSettingsTests {
     }
 
     @Test func theWatcherLooksWhereTheAppSaves() {
-        #expect(AlwaysOnIdentity.dataDirectory.path.hasSuffix("Library/Application Support/Coincide"))
+        // Tests are Debug builds, which keep their own folder (CoincideIdentity).
+        #expect(AlwaysOnIdentity.dataDirectory.path.hasSuffix("Library/Application Support/Coincide Debug"))
+        #expect(AlwaysOnIdentity.dataDirectory == CoincideIdentity.dataDirectory)
         if ProcessInfo.processInfo.environment["COINCIDE_DATA_DIR"] == nil {
             #expect(AlwaysOnIdentity.dataDirectory == AppStore.defaultDirectory)
         }
