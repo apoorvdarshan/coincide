@@ -76,15 +76,7 @@ struct SettingsView: View {
 
             NotificationsSection()
 
-            if client.isConnected {
-                Section {
-                    NavigationLink {
-                        UsageView()
-                    } label: {
-                        Label("Usage Limits", systemImage: "chart.bar")
-                    }
-                }
-            }
+            MacSettingsSections()
 
             Section("About") {
                 LabeledContent("Coincide Remote", value: RemoteClient.appVersion)
@@ -96,6 +88,7 @@ struct SettingsView: View {
         }
         .scrollContentBackground(.hidden)
         .background(theme.content)
+        .task(id: client.isConnected) { await client.loadMacSettings() }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
         .alert("Add an Address", isPresented: Binding(get: { addingHostTo != nil }, set: { if !$0 { addingHostTo = nil } })) {

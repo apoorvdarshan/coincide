@@ -54,6 +54,11 @@ struct RemoteProtocolTests {
                     accessMode: "fullAccess", interactionMode: "plan")),
             .deleteBot(botID: item, deletesConversations: true),
             .deleteBot(botID: item, deletesConversations: false),
+            .settings,
+            .changeSetting(key: "general.showReasoning", value: .bool(false)),
+            .changeSetting(key: "general.fontSize", value: .number(15)),
+            .changeSetting(key: "general.appearance", value: .string("dark")),
+            .settingsAction(key: "computerUse.open"),
         ]
         for request in requests {
             let decoded = try roundTrip(RemoteClientMessage(id: "1", request: request))
@@ -100,6 +105,20 @@ struct RemoteProtocolTests {
             .response(id: "4", result: .transcript(RemoteTranscript(thread: summary, items: [item], hasEarlier: true))),
             .response(id: "5", result: .usage([RemoteUsage(provider: "codex", providerName: "Codex", accountID: "default", windows: [])])),
             .response(id: "5b", result: .bot(thread)),
+            .response(
+                id: "5c",
+                result: .settings(
+                    RemoteSettingsSnapshot(pages: [
+                        RemoteSettingsPage(id: "general", title: "General", symbol: "gearshape", sections: [
+                            RemoteSettingsSection(id: "s", rows: [
+                                RemoteSettingsRow(id: "k", kind: .toggle, title: "T", value: .bool(true)),
+                                RemoteSettingsRow(
+                                    id: "c", kind: .choice, title: "C", value: .string("a"), options: [RemoteSettingOption(id: "a", title: "A")]),
+                                RemoteSettingsRow(id: "n", kind: .number, title: "N", value: .number(13), minimum: 10, maximum: 20, step: 1),
+                            ])
+                        ])
+                    ]))),
+            .event(.settings(RemoteSettingsSnapshot())),
             .failure(id: "6", error: RemoteError(.notFound, "Gone")),
             .event(.items(threadID: thread, items: [item], count: 4)),
             .event(.turn(threadID: thread, state: RemoteTurnState(isRunning: true, canSteer: true))),
@@ -624,6 +643,70 @@ struct RemoteSessionTests {
         #expect(store.summary(conversation) != nil)
         try send(session, .newBotConversation(botID: botID), id: "gone")
         #expect(transport.error("gone")?.code == .notFound)
+    }
+
+    @Test func thePhoneSeesAndChangesTheMacsSettingsWithinWhatTheyOffer() throws {
+        let fixture = fixture("remote-settings")
+        var opened: [String] = []
+        fixture.adapter.settingsServices = .init(computerUsePermissions: { (true, false) }, showOnMac: { opened.append($0) })
+        let store = fixture.store
+        let thread = store.createThread(in: fixture.project.id)
+        store.updateThread(thread.id) { $0.isArchived = true }
+        let (session, transport) = try authenticated(fixture)
+
+        try send(session, .settings, id: "get")
+        guard case .settings(let snapshot)? = transport.result("get") else {
+            Issue.record("No settings")
+            return
+        }
+        let pages = snapshot.pages.map(\.id)
+        for expected in ["general", "models", "usage", "instructions", "archive", "keyboard", "browser", "computerUse", "providers", "about"] {
+            #expect(pages.contains(expected), "Missing \(expected)")
+        }
+        let rows = RemoteSettingsRow.index(snapshot)
+        #expect(rows["general.showReasoning"]?.value == .bool(store.settings.showReasoning))
+        #expect(rows["computerUse.screenRecording"]?.state == "warning")
+        #expect(rows["archive.restore.\(thread.id.uuidString)"] != nil)
+
+        try send(session, .changeSetting(key: "general.showReasoning", value: .bool(false)), id: "toggle")
+        #expect(store.settings.showReasoning == false)
+        try send(session, .changeSetting(key: "general.appearance", value: .string("dark")), id: "choice")
+        #expect(store.settings.appearance == .dark)
+        try send(session, .changeSetting(key: "general.fontSize", value: .number(16)), id: "number")
+        #expect(store.settings.fontSize == 16)
+        guard case .settings(let updated)? = transport.result("number") else {
+            Issue.record("No updated settings")
+            return
+        }
+        #expect(RemoteSettingsRow.index(updated)["general.fontSize"]?.value == .number(16))
+
+        // Only what the Mac offers, with values it accepts.
+        try send(session, .changeSetting(key: "general.fontSize", value: .number(400)), id: "range")
+        #expect(transport.error("range")?.code == .badRequest)
+        try send(session, .changeSetting(key: "general.appearance", value: .string("neon")), id: "option")
+        #expect(transport.error("option")?.code == .badRequest)
+        try send(session, .changeSetting(key: "general.showReasoning", value: .string("yes")), id: "type")
+        #expect(transport.error("type")?.code == .badRequest)
+        try send(session, .changeSetting(key: "lastAppUpdateCheck", value: .number(0)), id: "unknown")
+        #expect(transport.error("unknown")?.code == .notAllowed)
+        try send(session, .changeSetting(key: "keepAwake.status", value: .bool(true)), id: "status")
+        #expect(transport.error("status")?.code == .notAllowed)
+        #expect(store.settings.fontSize == 16)
+        #expect(store.settings.alwaysOn.enabled == false)
+
+        // What finishes on the Mac brings up its pane there; restoring an archived thread goes through.
+        try send(session, .settingsAction(key: "computerUse.open"), id: "open")
+        #expect(opened == ["computerUse"])
+        try send(session, .settingsAction(key: "archive.restore.\(thread.id.uuidString)"), id: "restore")
+        // (The fixture's archive service does nothing; the live one is ThreadInbox's, as for the threads' own menu.)
+        #expect(transport.error("restore") == nil)
+        try send(session, .settingsAction(key: "rm -rf"), id: "bogus")
+        #expect(transport.error("bogus")?.code == .notAllowed)
+
+        // Nothing secret is described: no executable paths, environments or tokens.
+        let json = String(decoding: try RemoteProtocol.makeEncoder().encode(snapshot), as: UTF8.self)
+        #expect(!json.contains("executablePath"))
+        #expect(!json.localizedCaseInsensitiveContains("token"))
     }
 
     @Test func secretAnswersAndLongToolOutputStayOnTheMac() {

@@ -55,6 +55,9 @@ final class RemoteSession {
     private var pendingTurns: Set<UUID> = []
     private var workspaceDirty = false
     private var serverDirty = false
+    /// The phone asked for Settings, so it hears when they change.
+    private var followsSettings = false
+    private var lastSettings: RemoteSettingsSnapshot?
     private var itemFlush: Task<Void, Never>?
     private var workspaceFlush: Task<Void, Never>?
     private var lastWorkspace: RemoteWorkspace?
@@ -268,6 +271,22 @@ final class RemoteSession {
             case .deleteBot(let botID, let deletesConversations):
                 try adapter.deleteBot(botID, deletingConversations: deletesConversations)
                 respond(id, .ok)
+            case .settings:
+                followsSettings = true
+                let snapshot = adapter.settingsSnapshot()
+                lastSettings = snapshot
+                respond(id, .settings(snapshot))
+            case .changeSetting(let key, let value):
+                try adapter.changeSetting(key, to: value)
+                followsSettings = true
+                let snapshot = adapter.settingsSnapshot()
+                lastSettings = snapshot
+                respond(id, .settings(snapshot))
+            case .settingsAction(let key):
+                try adapter.performSettingsAction(key)
+                let snapshot = adapter.settingsSnapshot()
+                lastSettings = snapshot
+                respond(id, .settings(snapshot))
             case .showThread(let threadID):
                 guard isLocal else { throw RemoteError(.unsupported, "Unsupported request “showThread”.") }
                 guard adapter.hasThread(threadID) else { throw notFound }
@@ -376,6 +395,13 @@ final class RemoteSession {
         if serverDirty {
             serverDirty = false
             send(.event(.server(serverInfo())))
+        }
+        if followsSettings, serverDirty || workspaceDirty || lastSettings != nil {
+            let snapshot = adapter.settingsSnapshot()
+            if snapshot != lastSettings {
+                lastSettings = snapshot
+                send(.event(.settings(snapshot)))
+            }
         }
         guard workspaceDirty else { return }
         workspaceDirty = false
