@@ -28,6 +28,7 @@ extension MessageContext {
             } else {
                 URL(fileURLWithPath: file.path).pathExtension.lowercased() == "pdf" ? "doc.richtext" : "doc.text"
             }
+        case .windowText: "macwindow"
         }
     }
 
@@ -55,6 +56,7 @@ extension MessageContext {
                 ? String(localized: "\(Self.fileName(comment.path)) \(comment.rangeLabel) (before)")
                 : "\(Self.fileName(comment.path)) \(comment.rangeLabel)"
         case .file(let file): file.name
+        case .windowText(let window): String(localized: "Window text from \(window.app)")
         }
     }
 
@@ -67,6 +69,7 @@ extension MessageContext {
             comment.comment.isEmpty ? String(localized: "No comment") : Self.firstLine(comment.comment)
         case .file(let file):
             (URL(fileURLWithPath: file.path).deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
+        case .windowText(let window): window.title ?? Self.firstLine(window.text)
         }
     }
 
@@ -83,6 +86,7 @@ extension MessageContext {
             case .terminal: String(localized: "Terminal output")
             case .diffComment: String(localized: "Comment on the diff")
             case .file: String(localized: "File")
+            case .windowText: String(localized: "Window text")
             }
         return String(localized: "\(kind): \(title), \(preview)")
     }
@@ -94,6 +98,7 @@ extension MessageContext {
         case .terminal(let excerpt): excerpt.text
         case .diffComment(let comment): comment.diff
         case .file: nil
+        case .windowText(let window): window.text
         }
     }
 
@@ -148,6 +153,8 @@ enum MessageContextDetails {
                 note.isSelectable = true
                 rows.append(note)
             }
+        case .windowText(let window):
+            subtitle = window.title
         case .quote, .file:
             break
         }

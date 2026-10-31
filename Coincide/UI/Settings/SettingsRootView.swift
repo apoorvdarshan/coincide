@@ -42,6 +42,7 @@ struct SettingsRootView: View {
         case .section(.keyboard): KeyboardSettingsView(model: model)
         case .section(.browser): BrowserSettingsView()
         case .section(.computerUse): ComputerUseSettingsView()
+        case .section(.appshots): AppshotsSettingsView()
         case .section(.about): AboutSettingsView()
         case .provider(let kind): ProviderSettingsView(model: model, kind: kind).id(kind)
         }
@@ -72,6 +73,7 @@ private struct SettingsSidebar: View {
                     row(.keyboard)
                     row(.browser)
                     row(.computerUse)
+                    row(.appshots)
                 }
                 Section("Providers") {
                     Label {
@@ -148,6 +150,7 @@ extension SettingsSection {
         case .keyboard: Color(nsColor: .darkGray)
         case .browser: .cyan
         case .computerUse: .blue
+        case .appshots: .orange
         case .about: .blue
         }
     }
@@ -378,6 +381,14 @@ struct SettingsSearchResults: View {
                     String(localized: "Permissions"), String(localized: "Automation"),
                     "computer use", "accessibility", "screen recording", "automation", "desktop", "screen", "control",
                     "TryCua", "Cua Driver", String(localized: "Show agent cursor"), "cursor", "pointer",
+                ]),
+            SettingsSearchEntry(
+                title: String(localized: "Appshots"), pane: .section(.appshots),
+                keywords: [
+                    String(localized: "Screenshot"), String(localized: "Capture"), String(localized: "Window"),
+                    String(localized: "Both Command keys"), String(localized: "Shortcut"), String(localized: "Window text"),
+                    String(localized: "Screen Recording"), String(localized: "Accessibility"),
+                    "appshot", "screenshot", "capture", "window", "command", "hotkey", "⌘",
                 ]),
             SettingsSearchEntry(
                 title: String(localized: "About Coincide"), pane: .section(.about),

@@ -128,6 +128,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(contextRequested(_:)), name: .coincideAddComposerContext, object: nil)
         NotificationCenter.default.addObserver(
+            self, selector: #selector(imagesRequested(_:)), name: .coincideAddComposerImages, object: nil)
+        NotificationCenter.default.addObserver(
             self, selector: #selector(mentionPullRequest(_:)), name: .coincideMentionPullRequest, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationWillTerminate), name: NSApplication.willTerminateNotification, object: nil)
@@ -1715,6 +1717,22 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             }
             self?.importingImages -= 1
             self?.updateSendState()
+        }
+    }
+
+    /// Images already saved in the attachments folder, such as an appshot (`AppEvents.addToComposer(images:threadID:)`).
+    /// Images for another thread wait with that thread's message, as images do when the user switches threads. Nothing
+    /// is sent: the caret goes to the text for the user's question.
+    @objc private func imagesRequested(_ notification: Notification) {
+        guard let target = notification.userInfo?["threadID"] as? UUID,
+            let images = notification.userInfo?["images"] as? [ComposerAttachment], !images.isEmpty
+        else { return }
+        if target == threadID {
+            attachments += images.filter { image in !attachments.contains { $0.path == image.path } }
+            refreshAttachments()
+            focus()
+        } else if store.summary(target) != nil {
+            parkedAttachments[target, default: []] += images
         }
     }
 

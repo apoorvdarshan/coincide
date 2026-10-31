@@ -3531,6 +3531,118 @@
         }
       }
     },
+    "%@ doesn’t allow capturing this window" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bei %@ ist die Aufnahme dieses Fensters nicht erlaubt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ no permite capturar esta ventana"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ no permite capturar esta ventana"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ n’autorise pas la capture de cette fenêtre"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ इस विंडो को कैप्चर करने की अनुमति नहीं देता"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ tidak mengizinkan jendela ini diambil"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ non consente l’acquisizione della finestra"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ではこのウインドウをキャプチャできません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@에서 이 윈도우의 캡처를 허용하지 않습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ staat niet toe dat dit venster wordt vastgelegd"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ nie pozwala przechwycić tego okna"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ não permite capturar esta janela"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ не разрешает снимать это окно"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ bu pencerenin yakalanmasına izin vermiyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ не дозволяє знімати це вікно"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ không cho phép chụp cửa sổ này"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 不允许捕捉此窗口"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 不允許擷取此視窗"
+          }
+        }
+      }
+    },
     "%@ encrypts cookies with a key in your Keychain. macOS will ask whether Coincide may use “%@”; choose Allow to import cookies. The key is used once, on this Mac, and isn’t kept." : {
       "localizations" : {
         "de" : {
@@ -4665,6 +4777,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%@ 位於 iCloud Drive 中，但尚未下載到這部 Mac。Coincide 已開始下載，請稍後再試。"
+          }
+        }
+      }
+    },
+    "%@ is in use by another app" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ wird bereits von einer anderen App verwendet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otra app ya está usando %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otra app ya está usando %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ est déjà utilisé par une autre app"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ का इस्तेमाल कोई दूसरा ऐप कर रहा है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ sedang digunakan oleh app lain"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ è già in uso da parte di un’altra app"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@はほかのアプリで使用中です"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@은(는) 다른 앱에서 사용 중입니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ wordt al gebruikt door een andere app"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skrót %@ jest używany przez inną aplikację"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ está em uso por outro app"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сочетание %@ уже используется другим приложением"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ başka bir uygulama tarafından kullanılıyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Скорочення %@ уже використовує інша програма"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ đang được một ứng dụng khác sử dụng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 已被其他 App 占用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 正由其他 App 使用中"
           }
         }
       }
@@ -22584,6 +22808,118 @@
         }
       }
     },
+    "A shortcut works in every app, and needs no Accessibility access." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein Tastaturkurzbefehl funktioniert in jeder App und braucht keinen Zugriff auf die Bedienungshilfen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Una función rápida funciona en todas las apps y no necesita acceso a Accesibilidad."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un atajo funciona en todas las apps y no necesita acceso a Accesibilidad."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un raccourci fonctionne dans toutes les apps et ne nécessite pas d’accès à l’Accessibilité."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "शॉर्टकट हर ऐप में काम करता है, और इसके लिए सुलभता की अनुमति की ज़रूरत नहीं होती।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pintasan berfungsi di semua app dan tidak memerlukan akses Aksesibilitas."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un’abbreviazione funziona in tutte le app e non richiede l’accesso ad Accessibilità."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ショートカットはすべてのアプリで使え、アクセシビリティへのアクセスは不要です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "단축키는 모든 앱에서 작동하며 손쉬운 사용 접근 권한이 필요하지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Een toetscombinatie werkt in elke app en heeft geen toegang tot Toegankelijkheid nodig."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skrót działa w każdej aplikacji i nie wymaga dostępu do funkcji Dostępność."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Um atalho funciona em qualquer app e não precisa de acesso à Acessibilidade."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сочетание клавиш работает в любом приложении и не требует универсального доступа."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kestirme her uygulamada çalışır ve Erişilebilirlik erişimi gerektirmez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Скорочення працює в будь-якій програмі й не потребує доступу до спеціальних можливостей."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Phím tắt hoạt động trong mọi ứng dụng và không cần quyền truy cập Trợ năng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "快捷键适用于所有 App，且无需辅助功能权限。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "快速鍵在所有 App 中都能使用，且不需要輔助使用權限。"
+          }
+        }
+      }
+    },
     "A subagent has a question" : {
       "localizations" : {
         "de" : {
@@ -29142,6 +29478,118 @@
         }
       }
     },
+    "Adds the text the app makes available in that window, read through Accessibility, as a card beside the picture." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fügt neben dem Bild eine Karte mit dem Text hinzu, den die App in diesem Fenster bereitstellt – gelesen über die Bedienungshilfen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Añade junto a la imagen una tarjeta con el texto que la app ofrece en esa ventana, leído mediante Accesibilidad."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Añade junto a la imagen una tarjeta con el texto que la app ofrece en esa ventana, leído mediante Accesibilidad."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajoute, sous forme de carte à côté de l’image, le texte que l’app rend disponible dans cette fenêtre, lu via l’Accessibilité."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ऐप उस विंडो में जो टेक्स्ट उपलब्ध कराता है, उसे सुलभता के ज़रिए पढ़कर तस्वीर के बगल में एक कार्ड के रूप में जोड़ता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menambahkan teks yang disediakan app di jendela tersebut, dibaca melalui Aksesibilitas, sebagai kartu di samping gambar."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aggiunge, come scheda accanto all’immagine, il testo che l’app rende disponibile in quella finestra, letto tramite Accessibilità."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "そのウインドウでアプリが提供するテキストをアクセシビリティで読み取り、画像の横にカードとして追加します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "앱이 해당 윈도우에서 제공하는 텍스트를 손쉬운 사용으로 읽어 이미지 옆에 카드로 추가합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voegt de tekst die de app in dat venster beschikbaar maakt, gelezen via Toegankelijkheid, als kaart naast de afbeelding toe."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dodaje tekst, który aplikacja udostępnia w tym oknie, odczytany przez funkcję Dostępność, jako kartę obok obrazu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Adiciona o texto que o app disponibiliza nessa janela, lido pela Acessibilidade, como um cartão ao lado da imagem."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Добавляет текст, который приложение показывает в этом окне (считанный через универсальный доступ), в виде карточки рядом с изображением."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uygulamanın o pencerede sunduğu ve Erişilebilirlik ile okunan metni, resmin yanına kart olarak ekler."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Додає текст, який програма показує в цьому вікні (зчитаний через спеціальні можливості), як картку поруч із зображенням."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Thêm văn bản mà ứng dụng cung cấp trong cửa sổ đó, được đọc qua Trợ năng, dưới dạng thẻ bên cạnh hình ảnh."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "通过辅助功能读取该 App 在此窗口中提供的文本，并以卡片形式添加在图片旁边。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "透過輔助使用讀取該 App 在此視窗中提供的文字，並以卡片形式加在圖片旁邊。"
+          }
+        }
+      }
+    },
     "Admin API key" : {
       "localizations" : {
         "de" : {
@@ -35198,6 +35646,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "允許一次"
+          }
+        }
+      }
+    },
+    "Allow Screen Recording in Settings › Appshots" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erlaube die Bildschirmaufnahme unter Einstellungen › Appshots"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite Grabación de pantalla en Ajustes › Appshots"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite Grabación de pantalla en Configuración › Appshots"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autorisez l’enregistrement de l’écran dans Réglages › Appshots"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सेटिंग्ज़ › Appshots में स्क्रीन रिकॉर्डिंग की अनुमति दें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Izinkan Perekaman Layar di Pengaturan › Appshots"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consenti la registrazione schermo in Impostazioni › Appshots"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "設定 › Appshotsで画面収録を許可してください"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "설정 › Appshots에서 화면 기록을 허용하십시오"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sta Schermopname toe in Instellingen › Appshots"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zezwól na nagrywanie ekranu w Ustawienia › Appshots"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permita a Gravação da Tela em Ajustes › Appshots"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешите запись экрана в «Настройки › Appshots»"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ayarlar › Appshots’ta Ekran Kaydı’na izin verin"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозвольте запис екрана в «Параметри › Appshots»"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép Ghi màn hình trong Cài đặt › Appshots"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在设置 › Appshots 中允许屏幕录制"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在設定 › Appshots 中允許螢幕錄製"
           }
         }
       }
@@ -42990,6 +43550,454 @@
         }
       }
     },
+    "Appshot of %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot von %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot de %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot de %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot de %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ का Appshot"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot dari %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot di %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@のAppshot"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@의 Appshot"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot van %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot de %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot của %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 的 Appshot"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ 的 Appshot"
+          }
+        }
+      }
+    },
+    "Appshot of %@ added" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot von %@ hinzugefügt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot de %@ añadido"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot de %@ añadido"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot de %@ ajouté"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ का Appshot जोड़ा गया"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot dari %@ ditambahkan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot di %@ aggiunto"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@のAppshotを追加しました"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@의 Appshot이 추가됨"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot van %@ toegevoegd"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dodano appshot: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot de %@ adicionado"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot добавлен: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot eklendi: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot додано: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã thêm Appshot của %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已添加 %@ 的 Appshot"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已加入 %@ 的 Appshot"
+          }
+        }
+      }
+    },
+    "Appshots" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots"
+          }
+        }
+      }
+    },
+    "Appshots never send anything on their own: the picture waits in the composer until you send your message. If you used a thread in the last minute, the appshot goes there; otherwise it starts a new chat." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots senden nie von selbst etwas: Das Bild wartet im Eingabefeld, bis du deine Nachricht sendest. Wenn du in der letzten Minute einen Thread verwendet hast, landet der Appshot dort; andernfalls beginnt er einen neuen Chat."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los appshots nunca envían nada por sí solos: la imagen espera en el cuadro de mensaje hasta que envíes tu mensaje. Si has usado una conversación en el último minuto, el appshot va ahí; si no, empieza un chat nuevo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los appshots nunca envían nada por sí solos: la imagen espera en el cuadro de mensaje hasta que envíes tu mensaje. Si usaste una conversación en el último minuto, el appshot va ahí; si no, empieza un chat nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les appshots n’envoient jamais rien d’eux-mêmes : l’image attend dans la zone de message jusqu’à ce que vous envoyiez votre message. Si vous avez utilisé une discussion au cours de la dernière minute, l’appshot y est ajouté ; sinon, il démarre une nouvelle discussion."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots अपने आप कभी कुछ नहीं भेजते: तस्वीर संदेश बॉक्स में तब तक रहती है जब तक आप अपना संदेश नहीं भेजते। अगर आपने पिछले एक मिनट में किसी थ्रेड का इस्तेमाल किया है, तो Appshot उसी में जाता है; वरना एक नई चैट शुरू होती है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots tidak pernah mengirim apa pun dengan sendirinya: gambar menunggu di kotak pesan sampai Anda mengirim pesan. Jika Anda menggunakan utas dalam satu menit terakhir, appshot masuk ke sana; jika tidak, appshot memulai obrolan baru."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gli appshot non inviano mai nulla da soli: l’immagine resta nel campo messaggio finché non invii il messaggio. Se hai usato un thread nell’ultimo minuto, l’appshot va lì; altrimenti avvia una nuova chat."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshotsが自動で何かを送信することはありません。画像は、メッセージを送信するまで入力欄で待機します。直近1分以内にスレッドを使っていた場合はそのスレッドに追加され、そうでない場合は新しいチャットが始まります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots는 스스로 아무것도 보내지 않습니다. 이미지는 메시지를 보낼 때까지 입력창에서 대기합니다. 최근 1분 안에 스레드를 사용했다면 Appshot이 해당 스레드에 추가되고, 그렇지 않으면 새 채팅이 시작됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots versturen nooit zelf iets: de afbeelding wacht in het berichtveld tot je je bericht verstuurt. Als je in de afgelopen minuut een thread hebt gebruikt, gaat de appshot daarheen; anders begint hij een nieuwe chat."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Funkcja Appshots nigdy niczego nie wysyła sama: obraz czeka w polu wiadomości, aż wyślesz swoją wiadomość. Jeśli w ciągu ostatniej minuty był używany jakiś wątek, appshot trafi do niego; w przeciwnym razie rozpocznie nowy czat."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os Appshots nunca enviam nada sozinhos: a imagem fica no campo de mensagem até você enviar sua mensagem. Se você usou uma conversa no último minuto, o appshot vai para ela; caso contrário, ele inicia um novo chat."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots никогда ничего не отправляют сами: изображение ждёт в поле ввода, пока вы не отправите сообщение. Если вы пользовались чатом в последнюю минуту, appshot попадёт туда; иначе начнётся новый чат."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots hiçbir şeyi kendi kendine göndermez: resim, siz mesajınızı gönderene kadar mesaj kutusunda bekler. Son bir dakika içinde bir sohbet kullandıysanız appshot oraya gider; aksi takdirde yeni bir sohbet başlatır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots ніколи нічого не надсилають самі: зображення чекає в полі введення, доки ви не надішлете повідомлення. Якщо ви користувалися чатом протягом останньої хвилини, appshot потрапить туди; інакше почнеться новий чат."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots không bao giờ tự gửi bất cứ thứ gì: hình ảnh nằm chờ trong ô soạn thảo cho đến khi bạn gửi tin nhắn. Nếu bạn đã dùng một luồng trong một phút vừa qua, Appshot sẽ được thêm vào luồng đó; nếu không, một cuộc trò chuyện mới sẽ được bắt đầu."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots 绝不会自行发送任何内容：图片会留在输入框中，直到你发送消息。如果你在过去一分钟内使用过某个对话，Appshot 会添加到该对话；否则会开始新的聊天。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots 絕不會自行傳送任何內容：圖片會留在輸入框中，直到你傳送訊息。如果你在過去一分鐘內使用過某個對話，Appshot 會加入該對話；否則會開始新的聊天。"
+          }
+        }
+      }
+    },
     "Archive" : {
       "localizations" : {
         "de" : {
@@ -48926,6 +49934,230 @@
         }
       }
     },
+    "Both Command keys" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beide Befehlstasten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ambas teclas Comando"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ambas teclas Comando"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les deux touches Commande"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "दोनों Command कुंजियाँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kedua tombol Command"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrambi i tasti Comando"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "両方のCommandキー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "양쪽 Command 키"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beide Command-toetsen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oba klawisze Command"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ambas as teclas Command"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Обе клавиши Command"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Her iki Command tuşu"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Обидві клавіші Command"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cả hai phím Command"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "两个 Command 键"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "兩個 Command 鍵"
+          }
+        }
+      }
+    },
+    "Both ⌘ keys" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beide ⌘-Tasten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ambas teclas ⌘"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ambas teclas ⌘"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les deux touches ⌘"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "दोनों ⌘ कुंजियाँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kedua tombol ⌘"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrambi i tasti ⌘"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "両方の⌘キー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "양쪽 ⌘ 키"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beide ⌘-toetsen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oba klawisze ⌘"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ambas as teclas ⌘"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Обе клавиши ⌘"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Her iki ⌘ tuşu"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Обидві клавіші ⌘"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cả hai phím ⌘"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "两个 ⌘ 键"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "兩個 ⌘ 鍵"
+          }
+        }
+      }
+    },
     "Bots" : {
       "localizations" : {
         "de" : {
@@ -54130,6 +55362,342 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "首字大寫"
+          }
+        }
+      }
+    },
+    "Capture" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aufnehmen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capturar"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capturar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capturer"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कैप्चर"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tangkap"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Acquisisci"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "キャプチャ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "캡처"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vastleggen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przechwytywanie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capturar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Захват"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yakalama"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Захоплення"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chụp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "捕捉"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "擷取"
+          }
+        }
+      }
+    },
+    "Capture the frontmost window of the app you’re using and attach it to a chat in Coincide, ready for your question." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nimm das vorderste Fenster der App auf, die du gerade verwendest, und hänge es an einen Chat in Coincide an – bereit für deine Frage."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Captura la ventana en primer plano de la app que estás usando y adjúntala a un chat en Coincide, lista para tu pregunta."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Captura la ventana en primer plano de la app que estás usando y adjúntala a un chat en Coincide, lista para tu pregunta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capturez la fenêtre au premier plan de l’app que vous utilisez et joignez-la à une discussion dans Coincide, prête pour votre question."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "आप जिस ऐप का इस्तेमाल कर रहे हैं, उसकी सबसे आगे वाली विंडो कैप्चर करें और उसे Coincide की किसी चैट में जोड़ें, ताकि आप तुरंत अपना सवाल पूछ सकें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tangkap jendela paling depan dari app yang sedang Anda gunakan dan lampirkan ke obrolan di Coincide, siap untuk pertanyaan Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Acquisisci la finestra in primo piano dell’app che stai usando e allegala a una chat in Coincide, pronta per la tua domanda."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用中のアプリの最前面のウインドウをキャプチャしてCoincideのチャットに添付し、すぐに質問できるようにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사용 중인 앱의 맨 앞 윈도우를 캡처하여 Coincide의 채팅에 첨부하므로 바로 질문할 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leg het voorste venster vast van de app die je gebruikt en voeg het toe aan een chat in Coincide, klaar voor je vraag."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przechwyć okno na pierwszym planie w aplikacji, której używasz, i dołącz je do czatu w Coincide, aby od razu zadać pytanie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capture a janela em primeiro plano do app que você está usando e anexe-a a um chat no Coincide, pronta para sua pergunta."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Снимите окно на переднем плане приложения, которым вы пользуетесь, и прикрепите его к чату в Coincide, чтобы сразу задать вопрос."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kullandığınız uygulamanın ön plandaki penceresini yakalayın ve sorunuza hazır şekilde Coincide’da bir sohbete ekleyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зніміть вікно на передньому плані програми, якою ви користуєтеся, і прикріпіть його до чату в Coincide, щоб одразу поставити запитання."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chụp cửa sổ phía trước của ứng dụng bạn đang dùng và đính kèm vào một cuộc trò chuyện trong Coincide, sẵn sàng cho câu hỏi của bạn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "捕捉你正在使用的 App 的最前方窗口，并将其附加到 Coincide 的聊天中，方便你直接提问。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "擷取你正在使用之 App 的最前方視窗，並附加到 Coincide 的聊天中，方便你直接提問。"
+          }
+        }
+      }
+    },
+    "Capture the window you’re working in and ask an agent about it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nimm das Fenster auf, in dem du arbeitest, und frag einen Agenten dazu."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Captura la ventana en la que estás trabajando y pregúntale a un agente sobre ella."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Captura la ventana en la que estás trabajando y pregúntale a un agente sobre ella."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capturez la fenêtre dans laquelle vous travaillez et interrogez un agent à son sujet."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जिस विंडो में आप काम कर रहे हैं, उसे कैप्चर करें और उसके बारे में किसी एजेंट से पूछें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tangkap jendela tempat Anda bekerja dan tanyakan kepada agen tentangnya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Acquisisci la finestra in cui stai lavorando e fai domande su di essa a un agente."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "作業中のウインドウをキャプチャして、エージェントに質問できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "작업 중인 윈도우를 캡처하여 에이전트에게 질문하십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leg het venster vast waarin je werkt en stel een agent er een vraag over."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przechwyć okno, w którym pracujesz, i zapytaj o nie agenta."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capture a janela em que você está trabalhando e pergunte a um agente sobre ela."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Снимите окно, в котором работаете, и спросите о нём агента."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çalıştığınız pencereyi yakalayın ve bir ajana onunla ilgili soru sorun."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зніміть вікно, у якому працюєте, і запитайте про нього агента."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chụp cửa sổ bạn đang làm việc và hỏi agent về nó."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "捕捉你正在使用的窗口，并向智能体提问。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "擷取你正在使用的視窗，並向代理程式提問。"
           }
         }
       }
@@ -72958,6 +74526,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Coincide 在 %@ 上找不到此儲存庫的頁面。"
+          }
+        }
+      }
+    },
+    "Coincide captures only the frontmost window, never the whole screen or other windows. It skips its own windows, windows that ask not to be captured, and apps where you’re typing a password. Captures are kept with Coincide’s other attachments on this Mac, and agents see them only when you send them." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide nimmt nur das vorderste Fenster auf, nie den ganzen Bildschirm oder andere Fenster. Übersprungen werden die eigenen Fenster, Fenster, die nicht aufgenommen werden möchten, und Apps, in denen du gerade ein Passwort eingibst. Aufnahmen werden zusammen mit den anderen Anhängen von Coincide auf diesem Mac gespeichert, und Agenten sehen sie erst, wenn du sie sendest."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide solo captura la ventana en primer plano, nunca la pantalla completa ni otras ventanas. Omite sus propias ventanas, las ventanas que piden no ser capturadas y las apps en las que estás escribiendo una contraseña. Las capturas se guardan con los demás archivos adjuntos de Coincide en este Mac, y los agentes solo las ven cuando las envías."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide solo captura la ventana en primer plano, nunca la pantalla completa ni otras ventanas. Omite sus propias ventanas, las ventanas que piden no ser capturadas y las apps en las que estás escribiendo una contraseña. Las capturas se guardan con los demás archivos adjuntos de Coincide en esta Mac, y los agentes solo las ven cuando las envías."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide capture uniquement la fenêtre au premier plan, jamais l’écran entier ni d’autres fenêtres. Il ignore ses propres fenêtres, les fenêtres qui demandent à ne pas être capturées et les apps dans lesquelles vous saisissez un mot de passe. Les captures sont conservées avec les autres pièces jointes de Coincide sur ce Mac, et les agents ne les voient que lorsque vous les envoyez."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide सिर्फ़ सबसे आगे वाली विंडो कैप्चर करता है, कभी पूरी स्क्रीन या दूसरी विंडो नहीं। यह अपनी विंडो, कैप्चर न किए जाने का अनुरोध करने वाली विंडो, और वे ऐप छोड़ देता है जिनमें आप पासवर्ड टाइप कर रहे हों। कैप्चर इस Mac पर Coincide के दूसरे अटैचमेंट के साथ रखे जाते हैं, और एजेंट उन्हें तभी देखते हैं जब आप उन्हें भेजते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide hanya menangkap jendela paling depan, tidak pernah seluruh layar atau jendela lain. Coincide melewati jendelanya sendiri, jendela yang meminta untuk tidak ditangkap, dan app tempat Anda sedang mengetik kata sandi. Tangkapan disimpan bersama lampiran Coincide lainnya di Mac ini, dan agen hanya melihatnya saat Anda mengirimkannya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide acquisisce solo la finestra in primo piano, mai l’intero schermo o altre finestre. Salta le proprie finestre, quelle che chiedono di non essere acquisite e le app in cui stai digitando una password. Le acquisizioni vengono conservate con gli altri allegati di Coincide su questo Mac e gli agenti le vedono solo quando le invii."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideがキャプチャするのは最前面のウインドウだけで、画面全体やほかのウインドウはキャプチャしません。Coincide自身のウインドウ、キャプチャしないよう指定されたウインドウ、パスワードを入力中のアプリはスキップします。キャプチャはこのMac上にCoincideのほかの添付ファイルと一緒に保存され、エージェントが見られるのはあなたが送信したときだけです。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide는 맨 앞 윈도우만 캡처하며 전체 화면이나 다른 윈도우는 절대 캡처하지 않습니다. Coincide 자체 윈도우, 캡처되지 않도록 요청한 윈도우, 암호를 입력 중인 앱은 건너뜁니다. 캡처한 내용은 이 Mac에 Coincide의 다른 첨부 파일과 함께 보관되며, 에이전트는 사용자가 보낼 때만 볼 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide legt alleen het voorste venster vast, nooit het hele scherm of andere vensters. Het slaat zijn eigen vensters over, vensters die vragen om niet te worden vastgelegd en apps waarin je een wachtwoord typt. Opnamen worden bij de andere bijlagen van Coincide op deze Mac bewaard, en agents zien ze pas als je ze verstuurt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide przechwytuje tylko okno na pierwszym planie, nigdy cały ekran ani inne okna. Pomija własne okna, okna, które zastrzegają, by ich nie przechwytywać, oraz aplikacje, w których wpisujesz hasło. Przechwycone obrazy są przechowywane razem z innymi załącznikami Coincide na tym Macu, a agenci widzą je dopiero wtedy, gdy je wyślesz."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide captura apenas a janela em primeiro plano, nunca a tela inteira nem outras janelas. Ele ignora as próprias janelas, as janelas que pedem para não ser capturadas e os apps em que você está digitando uma senha. As capturas ficam guardadas com os outros anexos do Coincide neste Mac, e os agentes só as veem quando você as envia."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide снимает только окно на переднем плане — никогда весь экран или другие окна. Он пропускает собственные окна, окна, которые запрещают съёмку, и приложения, в которых вы вводите пароль. Снимки хранятся вместе с другими вложениями Coincide на этом Mac, а агенты видят их, только когда вы их отправите."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide yalnızca ön plandaki pencereyi yakalar; asla tüm ekranı veya diğer pencereleri yakalamaz. Kendi pencerelerini, yakalanmak istemeyen pencereleri ve parola yazdığınız uygulamaları atlar. Yakalamalar bu Mac’te Coincide’ın diğer ekleriyle birlikte saklanır ve ajanlar onları yalnızca siz gönderdiğinizde görür."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide знімає лише вікно на передньому плані — ніколи весь екран чи інші вікна. Він пропускає власні вікна, вікна, які забороняють знімання, і програми, у яких ви вводите пароль. Знімки зберігаються разом з іншими вкладеннями Coincide на цьому Mac, а агенти бачать їх, лише коли ви їх надішлете."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide chỉ chụp cửa sổ phía trước, không bao giờ chụp toàn bộ màn hình hay các cửa sổ khác. Coincide bỏ qua cửa sổ của chính mình, các cửa sổ yêu cầu không được chụp và các ứng dụng mà bạn đang nhập mật khẩu. Ảnh chụp được lưu cùng các tệp đính kèm khác của Coincide trên máy Mac này, và agent chỉ thấy chúng khi bạn gửi."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 只捕捉最前方的窗口，绝不会捕捉整个屏幕或其他窗口。它会跳过自身的窗口、要求不被捕捉的窗口，以及你正在输入密码的 App。捕捉内容与 Coincide 的其他附件一起保存在这台 Mac 上，只有在你发送后智能体才能看到。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 只會擷取最前方的視窗，絕不會擷取整個螢幕或其他視窗。它會略過自身的視窗、要求不被擷取的視窗，以及你正在輸入密碼的 App。擷取內容會與 Coincide 的其他附件一起儲存在這部 Mac 上，只有在你傳送後代理程式才能看到。"
           }
         }
       }
@@ -101666,6 +103346,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "自訂路徑"
+          }
+        }
+      }
+    },
+    "Custom shortcut" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eigener Tastaturkurzbefehl"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Función rápida personalizada"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Atajo personalizado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Raccourci personnalisé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कस्टम शॉर्टकट"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pintasan khusus"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abbreviazione personalizzata"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "カスタムショートカット"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사용자 지정 단축키"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aangepaste toetscombinatie"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Własny skrót"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Atalho personalizado"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Своё сочетание клавиш"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Özel kestirme"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Власне скорочення"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Phím tắt tùy chỉnh"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自定义快捷键"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "自訂快速鍵"
           }
         }
       }
@@ -137422,6 +139214,118 @@
         }
       }
     },
+    "Include the window’s text" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Text des Fensters einbeziehen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Incluir el texto de la ventana"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Incluir el texto de la ventana"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inclure le texte de la fenêtre"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "विंडो का टेक्स्ट शामिल करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sertakan teks jendela"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Includi il testo della finestra"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ウインドウのテキストを含める"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "윈도우 텍스트 포함"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tekst van het venster toevoegen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dołącz tekst okna"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Incluir o texto da janela"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Добавлять текст окна"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pencerenin metnini dahil et"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Додавати текст вікна"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bao gồm văn bản của cửa sổ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "包含窗口文本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "包含視窗文字"
+          }
+        }
+      }
+    },
     "Include usage from outside Coincide" : {
       "localizations" : {
         "de" : {
@@ -146906,6 +148810,118 @@
         }
       }
     },
+    "Last appshot" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Letzter Appshot"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Último appshot"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Último appshot"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dernier appshot"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पिछला Appshot"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot terakhir"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ultimo appshot"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "最新のAppshot"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "최근 Appshot"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laatste appshot"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ostatni appshot"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Último appshot"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Последний appshot"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Son appshot"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Останній appshot"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot gần nhất"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "最近的 Appshot"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "最近的 Appshot"
+          }
+        }
+      }
+    },
     "Last checked %@" : {
       "localizations" : {
         "de" : {
@@ -148474,6 +150490,342 @@
         }
       }
     },
+    "Lets Coincide capture the frontmost window. Appshots never capture the whole screen." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erlaubt Coincide, das vorderste Fenster aufzunehmen. Appshots nehmen nie den ganzen Bildschirm auf."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que Coincide capture la ventana en primer plano. Los appshots nunca capturan la pantalla completa."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que Coincide capture la ventana en primer plano. Los appshots nunca capturan la pantalla completa."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permet à Coincide de capturer la fenêtre au premier plan. Les appshots ne capturent jamais l’écran entier."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide को सबसे आगे वाली विंडो कैप्चर करने देता है। Appshots कभी पूरी स्क्रीन कैप्चर नहीं करते।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mengizinkan Coincide menangkap jendela paling depan. Appshots tidak pernah menangkap seluruh layar."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consente a Coincide di acquisire la finestra in primo piano. Gli appshot non acquisiscono mai l’intero schermo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideが最前面のウインドウをキャプチャできるようにします。Appshotsが画面全体をキャプチャすることはありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide가 맨 앞 윈도우를 캡처할 수 있도록 합니다. Appshots는 전체 화면을 캡처하지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hiermee kan Coincide het voorste venster vastleggen. Appshots leggen nooit het hele scherm vast."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozwala Coincide przechwytywać okno na pierwszym planie. Funkcja Appshots nigdy nie przechwytuje całego ekranu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que o Coincide capture a janela em primeiro plano. Os Appshots nunca capturam a tela inteira."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Позволяет Coincide снимать окно на переднем плане. Appshots никогда не снимают весь экран."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide’ın ön plandaki pencereyi yakalamasına izin verir. Appshots asla tüm ekranı yakalamaz."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволяє Coincide знімати вікно на передньому плані. Appshots ніколи не знімають увесь екран."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép Coincide chụp cửa sổ phía trước. Appshots không bao giờ chụp toàn bộ màn hình."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许 Coincide 捕捉最前方的窗口。Appshots 绝不会捕捉整个屏幕。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允許 Coincide 擷取最前方的視窗。Appshots 絕不會擷取整個螢幕。"
+          }
+        }
+      }
+    },
+    "Lets Coincide notice both ⌘ keys while you use other apps, and read the window’s text." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erlaubt Coincide, beide ⌘-Tasten zu erkennen, während du andere Apps verwendest, und den Text des Fensters zu lesen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que Coincide detecte ambas teclas ⌘ mientras usas otras apps y lea el texto de la ventana."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que Coincide detecte ambas teclas ⌘ mientras usas otras apps y lea el texto de la ventana."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permet à Coincide de détecter les deux touches ⌘ pendant que vous utilisez d’autres apps, et de lire le texte de la fenêtre."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "दूसरे ऐप इस्तेमाल करते समय Coincide को दोनों ⌘ कुंजियाँ पहचानने और विंडो का टेक्स्ट पढ़ने देता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mengizinkan Coincide mendeteksi kedua tombol ⌘ saat Anda menggunakan app lain, dan membaca teks jendela."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consente a Coincide di rilevare entrambi i tasti ⌘ mentre usi altre app e di leggere il testo della finestra."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ほかのアプリを使っているときにCoincideが両方の⌘キーを検知し、ウインドウのテキストを読み取れるようにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "다른 앱을 사용하는 동안 Coincide가 양쪽 ⌘ 키를 감지하고 윈도우의 텍스트를 읽을 수 있도록 합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hiermee kan Coincide beide ⌘-toetsen opmerken terwijl je andere apps gebruikt, en de tekst van het venster lezen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozwala Coincide wykryć naciśnięcie obu klawiszy ⌘, gdy używasz innych aplikacji, i odczytać tekst okna."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que o Coincide perceba as duas teclas ⌘ enquanto você usa outros apps e leia o texto da janela."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Позволяет Coincide замечать нажатие обеих клавиш ⌘, когда вы работаете в других приложениях, и считывать текст окна."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Siz başka uygulamaları kullanırken Coincide’ın iki ⌘ tuşuna birlikte basıldığını fark etmesine ve pencerenin metnini okumasına izin verir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволяє Coincide помічати натискання обох клавіш ⌘, коли ви працюєте в інших програмах, і зчитувати текст вікна."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép Coincide nhận biết cả hai phím ⌘ khi bạn dùng ứng dụng khác và đọc văn bản của cửa sổ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许 Coincide 在你使用其他 App 时识别两个 ⌘ 键，并读取窗口文本。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允許 Coincide 在你使用其他 App 時偵測兩個 ⌘ 鍵，並讀取視窗文字。"
+          }
+        }
+      }
+    },
+    "Lets Coincide notice both ⌘ keys while you use other apps." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erlaubt Coincide, beide ⌘-Tasten zu erkennen, während du andere Apps verwendest."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que Coincide detecte ambas teclas ⌘ mientras usas otras apps."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que Coincide detecte ambas teclas ⌘ mientras usas otras apps."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permet à Coincide de détecter les deux touches ⌘ pendant que vous utilisez d’autres apps."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "दूसरे ऐप इस्तेमाल करते समय Coincide को दोनों ⌘ कुंजियाँ पहचानने देता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mengizinkan Coincide mendeteksi kedua tombol ⌘ saat Anda menggunakan app lain."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consente a Coincide di rilevare entrambi i tasti ⌘ mentre usi altre app."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ほかのアプリを使っているときにCoincideが両方の⌘キーを検知できるようにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "다른 앱을 사용하는 동안 Coincide가 양쪽 ⌘ 키를 감지할 수 있도록 합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hiermee kan Coincide beide ⌘-toetsen opmerken terwijl je andere apps gebruikt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozwala Coincide wykryć naciśnięcie obu klawiszy ⌘, gdy używasz innych aplikacji."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que o Coincide perceba as duas teclas ⌘ enquanto você usa outros apps."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Позволяет Coincide замечать нажатие обеих клавиш ⌘, когда вы работаете в других приложениях."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Siz başka uygulamaları kullanırken Coincide’ın iki ⌘ tuşuna birlikte basıldığını fark etmesine izin verir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволяє Coincide помічати натискання обох клавіш ⌘, коли ви працюєте в інших програмах."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép Coincide nhận biết cả hai phím ⌘ khi bạn dùng ứng dụng khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许 Coincide 在你使用其他 App 时识别两个 ⌘ 键。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允許 Coincide 在你使用其他 App 時偵測兩個 ⌘ 鍵。"
+          }
+        }
+      }
+    },
     "Lets Coincide read app controls, click and type." : {
       "localizations" : {
         "de" : {
@@ -148582,6 +150934,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "允許 Coincide 讀取 App 控制項、點按及輸入。"
+          }
+        }
+      }
+    },
+    "Lets Coincide read the window’s text." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erlaubt Coincide, den Text des Fensters zu lesen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que Coincide lea el texto de la ventana."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que Coincide lea el texto de la ventana."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permet à Coincide de lire le texte de la fenêtre."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide को विंडो का टेक्स्ट पढ़ने देता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mengizinkan Coincide membaca teks jendela."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consente a Coincide di leggere il testo della finestra."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideがウインドウのテキストを読み取れるようにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide가 윈도우의 텍스트를 읽을 수 있도록 합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hiermee kan Coincide de tekst van het venster lezen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozwala Coincide odczytać tekst okna."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite que o Coincide leia o texto da janela."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Позволяет Coincide считывать текст окна."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide’ın pencerenin metnini okumasına izin verir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволяє Coincide зчитувати текст вікна."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép Coincide đọc văn bản của cửa sổ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许 Coincide 读取窗口文本。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允許 Coincide 讀取視窗文字。"
           }
         }
       }
@@ -178081,6 +180545,118 @@
         }
       }
     },
+    "No window to capture" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kein Fenster zum Aufnehmen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No hay ninguna ventana que capturar"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No hay ninguna ventana que capturar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucune fenêtre à capturer"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कैप्चर करने के लिए कोई विंडो नहीं है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidak ada jendela untuk ditangkap"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nessuna finestra da acquisire"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "キャプチャするウインドウがありません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "캡처할 윈도우 없음"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geen venster om vast te leggen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Brak okna do przechwycenia"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhuma janela para capturar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нет окна для снимка"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yakalanacak pencere yok"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Немає вікна для знімка"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không có cửa sổ để chụp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "没有可捕捉的窗口"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "沒有可擷取的視窗"
+          }
+        }
+      }
+    },
     "None" : {
       "localizations" : {
         "de" : {
@@ -180093,6 +182669,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "尚未連結"
+          }
+        }
+      }
+    },
+    "Not needed with a custom shortcut and without the window’s text." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht nötig mit eigenem Tastaturkurzbefehl und ohne den Text des Fensters."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No es necesario con una función rápida personalizada y sin el texto de la ventana."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No es necesario con un atajo personalizado y sin el texto de la ventana."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inutile avec un raccourci personnalisé et sans le texte de la fenêtre."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कस्टम शॉर्टकट के साथ और विंडो के टेक्स्ट के बिना इसकी ज़रूरत नहीं है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidak diperlukan dengan pintasan khusus dan tanpa teks jendela."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Non necessario con un’abbreviazione personalizzata e senza il testo della finestra."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "カスタムショートカットを使い、ウインドウのテキストを含めない場合は不要です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사용자 지정 단축키를 사용하고 윈도우 텍스트를 포함하지 않으면 필요하지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Niet nodig met een aangepaste toetscombinatie en zonder de tekst van het venster."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Niepotrzebne przy własnym skrócie i bez tekstu okna."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não é necessário com um atalho personalizado e sem o texto da janela."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не требуется при своём сочетании клавиш и без текста окна."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Özel bir kestirmeyle ve pencere metni olmadan gerekmez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не потрібно з власним скороченням і без тексту вікна."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không cần khi dùng phím tắt tùy chỉnh và không bao gồm văn bản của cửa sổ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用自定义快捷键且不包含窗口文本时无需此权限。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用自訂快速鍵且不包含視窗文字時不需要此權限。"
           }
         }
       }
@@ -199482,6 +202170,118 @@
         }
       }
     },
+    "Press the left and right ⌘ keys together, without other keys." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Drücke die linke und die rechte ⌘-Taste gleichzeitig, ohne weitere Tasten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pulsa las teclas ⌘ izquierda y derecha a la vez, sin otras teclas."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Presiona las teclas ⌘ izquierda y derecha a la vez, sin otras teclas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appuyez simultanément sur les touches ⌘ gauche et droite, sans autre touche."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बाईं और दाईं ⌘ कुंजियाँ एक साथ दबाएँ, कोई और कुंजी नहीं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tekan tombol ⌘ kiri dan kanan bersamaan, tanpa tombol lain."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Premi insieme i tasti ⌘ sinistro e destro, senza altri tasti."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "左右の⌘キーを同時に押してください。ほかのキーは押さないでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "다른 키 없이 왼쪽과 오른쪽 ⌘ 키를 함께 누르십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Druk tegelijk op de linker- en rechter-⌘-toets, zonder andere toetsen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Naciśnij jednocześnie lewy i prawy klawisz ⌘, bez innych klawiszy."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pressione as teclas ⌘ esquerda e direita juntas, sem outras teclas."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нажмите одновременно левую и правую клавиши ⌘, без других клавиш."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sol ve sağ ⌘ tuşlarına, başka tuş olmadan birlikte basın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Натисніть одночасно ліву й праву клавіші ⌘, без інших клавіш."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhấn đồng thời phím ⌘ bên trái và bên phải, không kèm phím nào khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "同时按下左右两个 ⌘ 键，不要按其他键。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "同時按下左右兩個 ⌘ 鍵，不要按其他鍵。"
+          }
+        }
+      }
+    },
     "Press the new shortcut. Delete removes it; Escape cancels." : {
       "localizations" : {
         "de" : {
@@ -201160,6 +203960,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "上一個和下一個終端機標籤頁"
+          }
+        }
+      }
+    },
+    "Privacy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Datenschutz"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Privacidad"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Privacidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confidentialité"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "गोपनीयता"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Privasi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Privacy"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プライバシー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "개인정보 보호"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Privacy"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prywatność"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Privacidade"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Конфиденциальность"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gizlilik"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Конфіденційність"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quyền riêng tư"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "隐私"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "隱私權"
           }
         }
       }
@@ -211472,6 +214384,230 @@
         }
       }
     },
+    "Ready: press %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bereit: Drücke %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Listo: pulsa %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Listo: presiona %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prêt : appuyez sur %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "तैयार: %@ दबाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Siap: tekan %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pronto: premi %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "準備完了：%@を押してください"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "준비됨: %@을(를) 누르십시오"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klaar: druk op %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gotowe: naciśnij %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pronto: pressione %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Готово: нажмите %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hazır: %@ tuşlarına basın"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Готово: натисніть %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sẵn sàng: nhấn %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "就绪：按下 %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "就緒：按下 %@"
+          }
+        }
+      }
+    },
+    "Ready: press both ⌘ keys" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bereit: Drücke beide ⌘-Tasten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Listo: pulsa ambas teclas ⌘"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Listo: presiona ambas teclas ⌘"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prêt : appuyez sur les deux touches ⌘"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "तैयार: दोनों ⌘ कुंजियाँ दबाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Siap: tekan kedua tombol ⌘"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pronto: premi entrambi i tasti ⌘"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "準備完了：両方の⌘キーを押してください"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "준비됨: 양쪽 ⌘ 키를 누르십시오"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klaar: druk op beide ⌘-toetsen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gotowe: naciśnij oba klawisze ⌘"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pronto: pressione as duas teclas ⌘"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Готово: нажмите обе клавиши ⌘"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hazır: her iki ⌘ tuşuna basın"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Готово: натисніть обидві клавіші ⌘"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sẵn sàng: nhấn cả hai phím ⌘"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "就绪：按下两个 ⌘ 键"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "就緒：按下兩個 ⌘ 鍵"
+          }
+        }
+      }
+    },
     "Reasoning" : {
       "localizations" : {
         "de" : {
@@ -212700,6 +215836,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "最近造訪"
+          }
+        }
+      }
+    },
+    "Record a shortcut" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tastaturkurzbefehl aufnehmen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Grabar una función rápida"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Grabar un atajo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enregistrer un raccourci"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "शॉर्टकट रिकॉर्ड करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rekam pintasan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Registra un’abbreviazione"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ショートカットを記録"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "단축키 기록"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toetscombinatie opnemen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nagraj skrót"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gravar um atalho"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Записать сочетание клавиш"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kestirme kaydet"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Записати скорочення"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ghi phím tắt"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "录制快捷键"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "錄製快速鍵"
           }
         }
       }
@@ -247096,6 +250344,118 @@
         }
       }
     },
+    "Skipped: %@ is taking a password" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Übersprungen: In %@ wird ein Passwort eingegeben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Omitido: %@ está pidiendo una contraseña"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Omitido: %@ está pidiendo una contraseña"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ignoré : %@ demande un mot de passe"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "छोड़ा गया: %@ में पासवर्ड डाला जा रहा है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dilewati: %@ sedang meminta kata sandi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ignorato: %@ sta chiedendo una password"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スキップしました：%@でパスワードを入力中です"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "건너뜀: %@에서 암호를 입력 중입니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Overgeslagen: %@ vraagt om een wachtwoord"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pominięto: %@ czeka na wpisanie hasła"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ignorado: %@ está pedindo uma senha"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пропущено: %@ запрашивает пароль"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Atlandı: %@ parola istiyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пропущено: %@ запитує пароль"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã bỏ qua: %@ đang yêu cầu nhập mật khẩu"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已跳过：%@ 正在请求输入密码"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已略過：%@ 正在要求輸入密碼"
+          }
+        }
+      }
+    },
     "Sky" : {
       "localizations" : {
         "de" : {
@@ -260445,6 +263805,230 @@
         }
       }
     },
+    "Take an appshot" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot aufnehmen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hacer un appshot"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tomar un appshot"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prendre un appshot"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot लें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ambil appshot"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Acquisisci un appshot"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshotを撮る"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot 찍기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot maken"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zrób appshot"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fazer um appshot"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сделать appshot"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot al"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зробити appshot"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chụp Appshot"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "拍摄 Appshot"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "拍攝 Appshot"
+          }
+        }
+      }
+    },
+    "Take an appshot with" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot aufnehmen mit"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hacer un appshot con"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tomar un appshot con"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prendre un appshot avec"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot लेने का तरीका"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ambil appshot dengan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Acquisisci un appshot con"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshotを撮る方法"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot 찍는 방법"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot maken met"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wywoływanie appshota"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fazer appshot com"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Как делать appshot"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot alma yöntemi"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Як робити appshot"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chụp Appshot bằng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "拍摄 Appshot 的方式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "拍攝 Appshot 的方式"
+          }
+        }
+      }
+    },
     "Takes %@ from %@." : {
       "localizations" : {
         "de" : {
@@ -268753,6 +272337,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "代理想用 %2$@ 登入 %1$@。"
+          }
+        }
+      }
+    },
+    "The appshot couldn’t be saved." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Appshot konnte nicht gespeichert werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se ha podido guardar el appshot."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo guardar el appshot."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible d’enregistrer l’appshot."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot सेव नहीं किया जा सका।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot tidak dapat disimpan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossibile salvare l’appshot."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshotを保存できませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot을 저장할 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De appshot kon niet worden bewaard."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie udało się zapisać appshota."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível salvar o appshot."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не удалось сохранить appshot."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshot kaydedilemedi."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не вдалося зберегти appshot."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không thể lưu Appshot."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法存储 Appshot。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法儲存 Appshot。"
           }
         }
       }
@@ -281079,6 +284775,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "使用者不允許登入 %@。"
+          }
+        }
+      }
+    },
+    "The window closed before Coincide could capture it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das Fenster wurde geschlossen, bevor Coincide es aufnehmen konnte."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La ventana se cerró antes de que Coincide pudiera capturarla."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La ventana se cerró antes de que Coincide pudiera capturarla."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La fenêtre s’est fermée avant que Coincide ne puisse la capturer."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide के कैप्चर करने से पहले ही विंडो बंद हो गई।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jendela tertutup sebelum Coincide sempat menangkapnya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La finestra si è chiusa prima che Coincide potesse acquisirla."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideがキャプチャする前にウインドウが閉じられました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide가 캡처하기 전에 윈도우가 닫혔습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het venster werd gesloten voordat Coincide het kon vastleggen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Okno zamknęło się przed przechwyceniem przez Coincide."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A janela foi fechada antes que o Coincide pudesse capturá-la."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Окно закрылось до того, как Coincide успел его снять."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pencere, Coincide yakalayamadan kapandı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вікно закрилося до того, як Coincide встиг його зняти."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cửa sổ đã đóng trước khi Coincide kịp chụp."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "窗口在 Coincide 捕捉之前已关闭。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "視窗在 Coincide 擷取前就已關閉。"
           }
         }
       }
@@ -294357,6 +298165,118 @@
         }
       }
     },
+    "Turn on Appshots" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots aktivieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activar Appshots"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activar Appshots"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activer les Appshots"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots चालू करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktifkan Appshots"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Attiva Appshots"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshotsをオンにする"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots 켜기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots inschakelen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Włącz Appshots"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ativar Appshots"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Включить Appshots"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appshots’u aç"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увімкнути Appshots"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bật Appshots"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "开启 Appshots"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "開啟 Appshots"
+          }
+        }
+      }
+    },
     "Turn on checkpoints in Settings to see each turn's changes." : {
       "localizations" : {
         "de" : {
@@ -301771,6 +305691,118 @@
         }
       }
     },
+    "Use ⌘ or ⌃ with a key, such as ⌃⌥⌘S." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verwende ⌘ oder ⌃ mit einer Taste, zum Beispiel ⌃⌥⌘S."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usa ⌘ o ⌃ con una tecla, como ⌃⌥⌘S."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usa ⌘ o ⌃ con una tecla, como ⌃⌥⌘S."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utilisez ⌘ ou ⌃ avec une touche, par exemple ⌃⌥⌘S."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "किसी कुंजी के साथ ⌘ या ⌃ का इस्तेमाल करें, जैसे ⌃⌥⌘S।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gunakan ⌘ atau ⌃ dengan sebuah tombol, misalnya ⌃⌥⌘S."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usa ⌘ o ⌃ con un tasto, ad esempio ⌃⌥⌘S."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "⌘または⌃とキーを組み合わせてください（例：⌃⌥⌘S）。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "⌘ 또는 ⌃를 다른 키와 함께 사용하십시오(예: ⌃⌥⌘S)."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gebruik ⌘ of ⌃ met een toets, zoals ⌃⌥⌘S."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Użyj ⌘ lub ⌃ z innym klawiszem, np. ⌃⌥⌘S."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Use ⌘ ou ⌃ com uma tecla, como ⌃⌥⌘S."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Используйте ⌘ или ⌃ вместе с клавишей, например ⌃⌥⌘S."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir tuşla birlikte ⌘ veya ⌃ kullanın, örneğin ⌃⌥⌘S."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Використовуйте ⌘ або ⌃ разом із клавішею, наприклад ⌃⌥⌘S."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dùng ⌘ hoặc ⌃ với một phím, chẳng hạn ⌃⌥⌘S."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 ⌘ 或 ⌃ 加一个键，例如 ⌃⌥⌘S。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 ⌘ 或 ⌃ 搭配一個鍵，例如 ⌃⌥⌘S。"
+          }
+        }
+      }
+    },
     "Used" : {
       "comment" : "Usage shows what is used of each limit",
       "localizations" : {
@@ -305100,6 +309132,118 @@
         }
       }
     },
+    "Waiting for Screen Recording access" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Warte auf Zugriff auf die Bildschirmaufnahme"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esperando acceso a Grabación de pantalla"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esperando acceso a Grabación de pantalla"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En attente de l’accès à l’enregistrement de l’écran"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्क्रीन रिकॉर्डिंग की अनुमति का इंतज़ार है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menunggu akses Perekaman Layar"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In attesa dell’accesso alla registrazione schermo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "画面収録へのアクセスを待っています"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "화면 기록 접근 권한을 기다리는 중"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wachten op toegang tot Schermopname"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oczekiwanie na dostęp do nagrywania ekranu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aguardando acesso à Gravação da Tela"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ожидание доступа к записи экрана"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ekran Kaydı erişimi bekleniyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Очікування доступу до запису екрана"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đang chờ quyền truy cập Ghi màn hình"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在等待屏幕录制权限"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在等待螢幕錄製權限"
+          }
+        }
+      }
+    },
     "Waiting for iCloud Drive to download the copy." : {
       "localizations" : {
         "de" : {
@@ -307784,6 +311928,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "視窗"
+          }
+        }
+      }
+    },
+    "Window text" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fenstertext"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Texto de la ventana"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Texto de la ventana"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Texte de la fenêtre"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "विंडो का टेक्स्ट"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Teks jendela"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Testo della finestra"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ウインドウのテキスト"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "윈도우 텍스트"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Venstertekst"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tekst okna"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Texto da janela"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Текст окна"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pencere metni"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Текст вікна"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Văn bản cửa sổ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "窗口文本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "視窗文字"
+          }
+        }
+      }
+    },
+    "Window text from %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fenstertext aus %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Texto de la ventana de %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Texto de la ventana de %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Texte de la fenêtre de %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ की विंडो का टेक्स्ट"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Teks jendela dari %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Testo della finestra di %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@のウインドウのテキスト"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@의 윈도우 텍스트"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Venstertekst van %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tekst okna: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Texto da janela de %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Текст окна: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pencere metni: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Текст вікна: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Văn bản cửa sổ từ %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "来自 %@ 的窗口文本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "來自 %@ 的視窗文字"
           }
         }
       }
@@ -317883,6 +322251,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "之前 7 天"
+          }
+        }
+      }
+    },
+    "the app" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "der App"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "la app"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "la app"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "l’app"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ऐप"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "app"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "questa app"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アプリ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "앱"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "de app"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "aplikacja"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "um app"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "приложение"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "uygulama"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "програма"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ứng dụng"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "该 App"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "該 App"
           }
         }
       }

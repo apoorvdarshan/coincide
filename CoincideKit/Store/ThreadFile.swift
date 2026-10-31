@@ -204,6 +204,7 @@ struct ThreadFile: Decodable {
             case "diff-comment":
                 fields = ["id", "kind", "path", "lineStart", "lineEnd", "isBeforeChange", "diff", "comment"]
             case "file": fields = ["id", "kind", "path"]
+            case "window-text": fields = ["id", "kind", "app", "title", "text"]
             default: return false
             }
             guard entry.hasOnly(fields) else { return false }

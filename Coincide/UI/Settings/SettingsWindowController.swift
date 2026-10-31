@@ -13,6 +13,7 @@ nonisolated enum SettingsSection: String, CaseIterable, Sendable {
     case keyboard
     case browser
     case computerUse
+    case appshots
     case about
 
     var title: String {
@@ -26,6 +27,7 @@ nonisolated enum SettingsSection: String, CaseIterable, Sendable {
         case .keyboard: String(localized: "Keyboard")
         case .browser: String(localized: "Browser")
         case .computerUse: String(localized: "Computer Use")
+        case .appshots: String(localized: "Appshots")
         case .about: String(localized: "About")
         }
     }
@@ -41,6 +43,7 @@ nonisolated enum SettingsSection: String, CaseIterable, Sendable {
         case .keyboard: "keyboard.fill"
         case .browser: "globe"
         case .computerUse: "desktopcomputer"
+        case .appshots: "camera.viewfinder"
         case .about: "info"
         }
     }

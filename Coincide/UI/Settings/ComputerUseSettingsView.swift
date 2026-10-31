@@ -42,7 +42,7 @@ struct ComputerUseSettingsView: View {
             }
 
             Section {
-                ComputerUsePermissionRow(
+                PrivacyPermissionRow(
                     title: "Accessibility",
                     detail: "Lets Coincide read app controls, click and type.",
                     granted: controller.accessibilityGranted,
@@ -50,7 +50,7 @@ struct ComputerUseSettingsView: View {
                     settingsLabel: "Open Accessibility settings",
                     request: controller.requestAccessibility,
                     openSettings: controller.openAccessibilitySettings)
-                ComputerUsePermissionRow(
+                PrivacyPermissionRow(
                     title: "Screen Recording",
                     detail: "Lets Coincide capture app windows and the screen for agents.",
                     granted: controller.screenRecordingGranted,
@@ -106,7 +106,8 @@ struct ComputerUseSettingsView: View {
     }
 }
 
-private struct ComputerUsePermissionRow: View {
+/// A macOS privacy permission Coincide needs, with its status and buttons to ask for it or open System Settings.
+struct PrivacyPermissionRow: View {
     let title: LocalizedStringKey
     let detail: LocalizedStringKey
     let granted: Bool

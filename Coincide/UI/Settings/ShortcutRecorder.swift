@@ -22,6 +22,8 @@ final class ShortcutRecorderView: NSView {
     var commandTitle = ""
     /// Called with the recorded shortcut, or nil when the user removed it.
     var onChange: ((KeyShortcut?) -> Void)?
+    /// Called with a recorded shortcut and the virtual key code of its key, for a system-wide hot key.
+    var onRecordKeyCode: ((KeyShortcut, UInt16) -> Void)?
     var onRecordingChange: ((Bool) -> Void)?
 
     private(set) var isRecording = false
@@ -194,6 +196,7 @@ final class ShortcutRecorderView: NSView {
             return true
         }
         stopRecording()
+        onRecordKeyCode?(shortcut, event.keyCode)
         onChange?(shortcut)
         return true
     }
@@ -274,6 +277,7 @@ struct ShortcutRecorder: NSViewRepresentable {
     let shortcut: KeyShortcut?
     let commandTitle: String
     var onRecordingChange: (Bool) -> Void = { _ in }
+    var onRecordKeyCode: ((KeyShortcut, UInt16) -> Void)?
     let onChange: (KeyShortcut?) -> Void
 
     func makeNSView(context: Context) -> ShortcutRecorderView {
@@ -284,6 +288,7 @@ struct ShortcutRecorder: NSViewRepresentable {
         view.commandTitle = commandTitle
         view.onChange = onChange
         view.onRecordingChange = onRecordingChange
+        view.onRecordKeyCode = onRecordKeyCode
         view.shortcut = shortcut
     }
 }
