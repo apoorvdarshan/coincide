@@ -428,6 +428,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         splitController.content.chat.showComposerPicker(.model)
     }
 
+    @objc func toggleDictation(_ sender: Any?) {
+        splitController.content.chat.toggleDictation()
+    }
+
     @objc func showEffortPicker(_ sender: Any?) {
         splitController.content.chat.showComposerPicker(.effort)
     }
@@ -601,6 +605,12 @@ extension MainWindowController: NSMenuItemValidation {
             return window?.isVisible == true && splitController.content.chat.canShowComposerPicker(.effort)
         case #selector(showAccessPicker(_:)):
             return window?.isVisible == true && splitController.content.chat.canShowComposerPicker(.access)
+        case #selector(toggleDictation(_:)):
+            let chat = splitController.content.chat
+            menuItem.title = chat.isDictating ? String(localized: "Stop Dictating") : String(localized: "Dictate")
+            menuItem.subtitle = DictationMenu.subtitle(for: store.settings.voice)
+            menuItem.isHidden = !store.settings.voice.isEnabled
+            return window?.isKeyWindow == true && (chat.isDictating || chat.canDictate)
         case #selector(togglePlanMode(_:)):
             menuItem.state = thread?.interactionMode == .plan ? .on : .off
             return thread != nil

@@ -44,6 +44,15 @@ nonisolated enum SettingsRowID: String, Hashable, Sendable {
     case keepAwake
     case remote
     case commandLine
+    case voiceEnabled
+    case voiceEngine
+    case voiceLanguage
+    case voiceShortcut
+    case voiceSendWhenStopped
+    case voiceMicrophone
+    case voiceOpenAI
+    case voiceGroq
+    case voiceWhisper
 }
 
 /// A request to scroll a pane to a row and highlight it. The id makes repeated requests distinct.

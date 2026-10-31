@@ -239,6 +239,125 @@
         }
       }
     },
+    "NSMicrophoneUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote verwendet das Mikrofon, während du eine Nachricht diktierst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincide Remote listens to the microphone while you dictate a message."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote escucha el micrófono mientras dictas un mensaje."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote escucha el micrófono mientras dictas un mensaje."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote écoute le micro pendant que vous dictez un message."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जब आप कोई संदेश डिक्टेट करते हैं, तब Coincide Remote माइक्रोफ़ोन सुनता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote mendengarkan mikrofon saat Anda mendiktekan pesan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote ascolta il microfono mentre detti un messaggio."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remoteは、メッセージを音声入力している間マイクの音声を聞き取ります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote는 메시지를 받아쓰는 동안 마이크를 듣습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote luistert naar de microfoon terwijl je een bericht dicteert."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote słucha mikrofonu, gdy dyktujesz wiadomość."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide Remote escuta o microfone enquanto você dita uma mensagem."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote слушает микрофон, пока вы диктуете сообщение."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote, siz bir mesajı dikte ederken mikrofonu dinler."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote слухає мікрофон, поки ви диктуєте повідомлення."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote nghe micrô trong lúc bạn đọc một tin nhắn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote 会在你听写消息时使用麦克风收听。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote 會在你聽寫訊息時使用麥克風收音。"
+          }
+        }
+      }
+    },
     "NSPhotoLibraryAddUsageDescription" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -473,6 +592,125 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Coincide Remote 會將你選擇的照片附加到訊息中。"
+          }
+        }
+      }
+    },
+    "NSSpeechRecognitionUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote wandelt dein Diktat mit der Spracherkennung von Apple auf diesem Gerät in Text um."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincide Remote turns your dictation into text with Apple’s speech recognition on this device."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote convierte tu dictado en texto con el reconocimiento de voz de Apple en este dispositivo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote convierte tu dictado en texto con el reconocimiento de voz de Apple en este dispositivo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote convertit votre dictée en texte grâce à la reconnaissance vocale d’Apple sur cet appareil."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote इस डिवाइस पर Apple के स्पीच रिकग्निशन से आपके डिक्टेशन को टेक्स्ट में बदलता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote mengubah dikte Anda menjadi teks dengan pengenalan ucapan Apple di perangkat ini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote trasforma la tua dettatura in testo con il riconoscimento vocale di Apple su questo dispositivo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remoteは、このデバイス上のAppleの音声認識を使って音声入力をテキストに変換します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote는 이 기기에서 Apple의 음성 인식을 사용하여 받아쓰기를 텍스트로 변환합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote zet je dictaat om in tekst met de spraakherkenning van Apple op dit apparaat."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote zamienia Twoje dyktowanie na tekst za pomocą rozpoznawania mowy Apple na tym urządzeniu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide Remote transforma seu ditado em texto com o reconhecimento de fala da Apple neste dispositivo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote преобразует диктовку в текст с помощью распознавания речи Apple на этом устройстве."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote, bu aygıttaki Apple konuşma tanıma özelliğiyle diktenizi metne dönüştürür."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote перетворює диктування на текст за допомогою розпізнавання мовлення Apple на цьому пристрої."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote chuyển lời đọc chính tả của bạn thành văn bản bằng tính năng nhận dạng giọng nói của Apple trên thiết bị này."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote 会使用这台设备上的 Apple 语音识别将你的听写内容转换为文字。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide Remote 會使用這台裝置上的 Apple 語音辨識，將你的聽寫內容轉換為文字。"
           }
         }
       }

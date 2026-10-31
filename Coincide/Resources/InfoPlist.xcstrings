@@ -238,6 +238,244 @@
           }
         }
       }
+    },
+    "NSMicrophoneUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide verwendet das Mikrofon, während du eine Nachricht diktierst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincide listens to the microphone while you dictate a message."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide escucha el micrófono mientras dictas un mensaje."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide escucha el micrófono mientras dictas un mensaje."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide écoute le micro pendant que vous dictez un message."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जब आप कोई संदेश डिक्टेट करते हैं, तब Coincide माइक्रोफ़ोन सुनता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide mendengarkan mikrofon saat Anda mendiktekan pesan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide ascolta il microfono mentre detti un messaggio."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideは、メッセージを音声入力している間マイクの音声を聞き取ります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide는 메시지를 받아쓰는 동안 마이크를 듣습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide luistert naar de microfoon terwijl je een bericht dicteert."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide słucha mikrofonu, gdy dyktujesz wiadomość."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide escuta o microfone enquanto você dita uma mensagem."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide слушает микрофон, пока вы диктуете сообщение."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide, siz bir mesajı dikte ederken mikrofonu dinler."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide слухає мікрофон, поки ви диктуєте повідомлення."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide nghe micrô trong lúc bạn đọc một tin nhắn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 会在你听写消息时使用麦克风收听。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 會在你聽寫訊息時使用麥克風收音。"
+          }
+        }
+      }
+    },
+    "NSSpeechRecognitionUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide wandelt dein Diktat mit der Spracherkennung von Apple auf diesem Mac in Text um."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincide turns your dictation into text with Apple’s speech recognition on this Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide convierte tu dictado en texto con el reconocimiento de voz de Apple en este Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide convierte tu dictado en texto con el reconocimiento de voz de Apple en esta Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide convertit votre dictée en texte grâce à la reconnaissance vocale d’Apple sur ce Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide इस Mac पर Apple के स्पीच रिकग्निशन से आपके डिक्टेशन को टेक्स्ट में बदलता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide mengubah dikte Anda menjadi teks dengan pengenalan ucapan Apple di Mac ini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide trasforma la tua dettatura in testo con il riconoscimento vocale di Apple su questo Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideは、このMac上のAppleの音声認識を使って音声入力をテキストに変換します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide는 이 Mac에서 Apple의 음성 인식을 사용하여 받아쓰기를 텍스트로 변환합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide zet je dictaat om in tekst met de spraakherkenning van Apple op deze Mac."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide zamienia Twoje dyktowanie na tekst za pomocą rozpoznawania mowy Apple na tym Macu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide transforma seu ditado em texto com o reconhecimento de fala da Apple neste Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide преобразует диктовку в текст с помощью распознавания речи Apple на этом Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide, bu Mac'teki Apple konuşma tanıma özelliğiyle diktenizi metne dönüştürür."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide перетворює диктування на текст за допомогою розпізнавання мовлення Apple на цьому Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide chuyển lời đọc chính tả của bạn thành văn bản bằng tính năng nhận dạng giọng nói của Apple trên máy Mac này."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 会使用这台 Mac 上的 Apple 语音识别将你的听写内容转换为文字。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 會使用這台 Mac 上的 Apple 語音辨識，將你的聽寫內容轉換為文字。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

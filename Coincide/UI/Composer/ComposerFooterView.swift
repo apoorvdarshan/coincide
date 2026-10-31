@@ -2,7 +2,7 @@ import AppKit
 
 /// The composer's bottom row: agent and model, effort, speed, access, what sending does while the agent works
 /// (Queue, Steer or Interrupt) and Build/Plan on the leading side;
-/// attach, the usage and context meters and send/stop on the trailing side. Labels collapse to symbols,
+/// attach, dictation, the usage and context meters and send/stop on the trailing side. Labels collapse to symbols,
 /// least important first, when the composer is too narrow for them.
 final class ComposerFooterView: NSView {
     let modelButton = ComposerControlButton()
@@ -12,6 +12,10 @@ final class ComposerFooterView: NSView {
     let followUpButton = ComposerControlButton()
     let modeButton = ComposerControlButton()
     let attachButton = ComposerControlButton()
+    /// Dictation (Settings › Voice); hidden when Voice is off.
+    let micButton = ComposerControlButton()
+    /// The level meter, time and cancel button while dictating.
+    let dictationIndicator = ComposerDictationIndicator()
     let usageMeter = ComposerUsageMeter()
     let contextMeter = ComposerContextMeter()
     let stopButton = ComposerSendButton()
@@ -30,10 +34,13 @@ final class ComposerFooterView: NSView {
         for view in [modelButton, effortButton, speedButton, accessButton, followUpButton, modeButton] {
             leadingControls.addArrangedSubview(view)
         }
-        for view in [attachButton, usageMeter, contextMeter, stopButton, implementButton, sendButton] {
+        for view in [dictationIndicator, attachButton, micButton, usageMeter, contextMeter, stopButton, implementButton, sendButton] {
             trailingControls.addArrangedSubview(view)
         }
         trailingControls.setCustomSpacing(2, after: attachButton)
+        trailingControls.setCustomSpacing(2, after: micButton)
+        trailingControls.setCustomSpacing(4, after: dictationIndicator)
+        dictationIndicator.isHidden = true
         trailingControls.setCustomSpacing(2, after: usageMeter)
         usageMeter.isHidden = true
 
@@ -49,6 +56,7 @@ final class ComposerFooterView: NSView {
         attachButton.configure(title: "", symbolName: "paperclip", chevron: false)
         attachButton.toolTip = String(localized: "Attach images or files")
         attachButton.setAccessibilityLabel(String(localized: "Attach images or files"))
+        micButton.configure(title: "", symbolName: "mic", chevron: false)
 
         for stack in [leadingControls, trailingControls] {
             stack.translatesAutoresizingMaskIntoConstraints = false

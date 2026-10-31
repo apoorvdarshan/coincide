@@ -2,6 +2,7 @@
 
 Coincide ports the design and behavior of T3 Code, and some prompts and wording are adapted from it. The terminal uses SwiftTerm.
 Computer Use runs Cua Driver, bundled unmodified in `Coincide.app/Contents/Helpers`.
+Dictation with Whisper on the Mac uses WhisperKit.
 
 ## T3 Code
 
@@ -61,6 +62,38 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
 LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+## WhisperKit
+
+https://github.com/argmaxinc/WhisperKit, version 1.1.1 (its WhisperKit and ArgmaxCore libraries), used under the MIT
+License. Parts of ArgmaxCore derive from Hugging Face's swift-transformers, under the Apache License 2.0. Coincide
+shows both, with WhisperKit's NOTICES file, in Settings › About (`Coincide/Resources/WhisperKit-LICENSE.txt`). No
+Whisper model ships with Coincide: models download from huggingface.co/argmaxinc/whisperkit-coreml (MIT) and
+OpenAI's tokenizers (Apache 2.0) only when the user asks in Settings › Voice.
+
+```
+MIT License
+
+Copyright (c) 2024 argmax, inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ## Cua Driver

@@ -50,6 +50,7 @@ struct SettingsRootView: View {
         case .section(.instructions): InstructionsSettingsView()
         case .section(.archive): ArchiveSettingsView()
         case .section(.keyboard): KeyboardSettingsView(model: model)
+        case .section(.voice): VoiceSettingsView(model: model)
         case .section(.browser): BrowserSettingsView()
         case .section(.computerUse): ComputerUseSettingsView()
         case .section(.appshots): AppshotsSettingsView()
@@ -81,6 +82,7 @@ private struct SettingsSidebar: View {
                     row(.instructions)
                     row(.archive)
                     row(.keyboard)
+                    row(.voice)
                     row(.browser)
                     row(.computerUse)
                     row(.appshots)
@@ -158,6 +160,7 @@ extension SettingsSection {
         case .instructions: .teal
         case .archive: .brown
         case .keyboard: Color(nsColor: .darkGray)
+        case .voice: .red
         case .browser: .cyan
         case .computerUse: .blue
         case .appshots: .orange
@@ -219,6 +222,7 @@ struct SettingsSearchResults: View {
 
     static func entries(kinds: [ProviderKind]) -> [SettingsSearchEntry] {
         let general = SettingsPane.section(.general)
+        let voice = SettingsPane.section(.voice)
         var entries: [SettingsSearchEntry] = [
             SettingsSearchEntry(title: String(localized: "Usage"), pane: .section(.usage),
                 keywords: [String(localized: "Account limits"), String(localized: "Tokens"), String(localized: "Cost"),
@@ -376,6 +380,48 @@ struct SettingsSearchResults: View {
             SettingsSearchEntry(
                 title: String(localized: "Keyboard shortcuts"), pane: .section(.keyboard),
                 keywords: [String(localized: "Keybindings"), String(localized: "Hotkeys")]),
+            SettingsSearchEntry(
+                title: SettingsSection.voice.title, pane: voice, setting: .voiceEnabled,
+                keywords: [
+                    String(localized: "Dictation"), String(localized: "Speech to text"), String(localized: "Microphone"),
+                    String(localized: "Voice input"), "dictate", "speech", "voice", "mic",
+                ]),
+            SettingsSearchEntry(
+                title: String(localized: "Dictation engine"), pane: voice, setting: .voiceEngine,
+                keywords: [
+                    String(localized: "Speech recognition"), String(localized: "On device"), "Apple", "OpenAI", "Groq", "Whisper",
+                    "WhisperKit",
+                ]),
+            SettingsSearchEntry(
+                title: String(localized: "Dictation language"), pane: voice, setting: .voiceLanguage,
+                keywords: [String(localized: "Language"), String(localized: "Automatic"), String(localized: "Locale")]),
+            SettingsSearchEntry(
+                title: String(localized: "Dictation keyboard shortcut"), pane: voice, setting: .voiceShortcut,
+                keywords: [
+                    String(localized: "Push to talk"), String(localized: "Hold to talk"), String(localized: "Tap to toggle"),
+                    "Fn", "🌐", String(localized: "Globe key"), String(localized: "Hotkey"),
+                ]),
+            SettingsSearchEntry(
+                title: String(localized: "Send when I stop"), pane: voice, setting: .voiceSendWhenStopped,
+                keywords: [String(localized: "Auto-send"), String(localized: "Dictation")]),
+            SettingsSearchEntry(
+                title: String(localized: "Microphone"), pane: voice, setting: .voiceMicrophone,
+                keywords: [String(localized: "Input device"), String(localized: "Test microphone"), String(localized: "Level")]),
+            SettingsSearchEntry(
+                title: String(localized: "OpenAI API key for dictation"), pane: voice, setting: .voiceOpenAI,
+                keywords: [
+                    "OpenAI", "gpt-transcribe", "gpt-4o-transcribe", "whisper-1", "Codex", String(localized: "API key"),
+                    String(localized: "Bring your own key"), "BYOK",
+                ]),
+            SettingsSearchEntry(
+                title: String(localized: "Groq API key for dictation"), pane: voice, setting: .voiceGroq,
+                keywords: ["Groq", "whisper-large-v3", "whisper-large-v3-turbo", String(localized: "API key"), "BYOK"]),
+            SettingsSearchEntry(
+                title: String(localized: "Whisper models"), pane: voice, setting: .voiceWhisper,
+                keywords: [
+                    "Whisper", "WhisperKit", String(localized: "Offline"), String(localized: "Download"), "tiny", "base", "small",
+                    "large-v3-turbo", String(localized: "Local model"),
+                ]),
             SettingsSearchEntry(
                 title: String(localized: "Browser"), pane: .section(.browser),
                 keywords: [
