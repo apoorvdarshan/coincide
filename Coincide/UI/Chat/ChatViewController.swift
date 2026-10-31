@@ -217,6 +217,11 @@ final class ChatViewController: NSViewController {
         composer.showPicker(picker)
     }
 
+    /// Edit › Dictate and the command palette's dictation command.
+    func toggleDictation() { composer.toggleDictation() }
+    var canDictate: Bool { composer.canDictate }
+    var isDictating: Bool { composer.isDictating }
+
     // MARK: Composer settings
 
     /// The composer's model choice, from the command palette: switches agent when the model is another's.

@@ -19,6 +19,8 @@ struct ComposerView: View {
     /// Where a message sent while the turn runs goes, when the user picked other than the Mac's setting.
     @State private var delivery: String?
     @AppStorage("composer.returnSends") private var returnSends = true
+    /// Dictation with Apple's on-device recognition.
+    @State private var dictation = RemoteDictation()
     @FocusState private var focused: Bool
 
     private var draft: Binding<ComposerDraft> {
@@ -34,6 +36,7 @@ struct ComposerView: View {
         VStack(alignment: .leading, spacing: 4) {
             if !suggestions.isEmpty, completionWord != nil { suggestionList }
             if !draft.wrappedValue.images.isEmpty { attachmentStrip }
+            if dictation.isActive { DictationBar(dictation: dictation) }
             TextField(placeholder, text: draft.text, axis: .vertical)
                 .lineLimit(1...8)
                 .focused($focused)
@@ -61,6 +64,7 @@ struct ComposerView: View {
                     followUpMenu.layoutValue(key: ComposerFooterRole.self, value: .pinned)
                 }
                 attachMenu.layoutValue(key: ComposerFooterRole.self, value: .fixed)
+                DictationButton(dictation: dictation, draft: draft.text).layoutValue(key: ComposerFooterRole.self, value: .fixed)
                 sendButton.layoutValue(key: ComposerFooterRole.self, value: .fixed)
             }
         }
@@ -95,6 +99,19 @@ struct ComposerView: View {
         }
         .onChange(of: photos) { _, items in
             Task { await importPhotos(items) }
+        }
+        // A transcript belongs to the thread it was spoken in.
+        .onChange(of: model.id) { dictation.cancel() }
+        .onDisappear { dictation.cancel() }
+        .alert(
+            "Dictation stopped", isPresented: Binding(get: { dictation.error != nil }, set: { if !$0 { dictation.error = nil } })
+        ) {
+            if dictation.needsSettings, let url = URL(string: UIApplication.openSettingsURLString) {
+                Button("Open Settings") { UIApplication.shared.open(url) }
+            }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(dictation.error ?? "")
         }
         .disabled(!client.isConnected)
     }
@@ -243,7 +260,7 @@ struct ComposerView: View {
             .keyboardShortcut(".", modifiers: .command)
             .accessibilityLabel(Text("Stop"))
         } else {
-            let enabled = !draft.wrappedValue.isEmpty && !isSending
+            let enabled = !draft.wrappedValue.isEmpty && !isSending && !dictation.isActive
             Button {
                 send(alternate: model.turn.isRunning && followUp != (client.server?.followUpBehavior ?? "steer"))
             } label: {

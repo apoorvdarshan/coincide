@@ -239,6 +239,17 @@
         }
       }
     },
+    "NSMicrophoneUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincide Remote listens to the microphone while you dictate a message."
+          }
+        }
+      }
+    },
     "NSPhotoLibraryAddUsageDescription" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -473,6 +484,17 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Coincide Remote 會將你選擇的照片附加到訊息中。"
+          }
+        }
+      }
+    },
+    "NSSpeechRecognitionUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coincide Remote turns your dictation into text with Apple’s speech recognition on this device."
           }
         }
       }

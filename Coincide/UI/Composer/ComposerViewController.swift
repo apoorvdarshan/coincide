@@ -96,6 +96,18 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private var flagsMonitor: Any?
     /// The alternate send's modifiers are held: send does the other of the follow-up behavior.
     private var alternateHeld = false
+    /// Dictation into this composer (Settings › Voice).
+    private lazy var dictation = DictationController(store: store)
+    /// The dictation shortcut, installed only while Settings › Voice › Keyboard shortcut is on.
+    private let dictationShortcut = DictationShortcutMonitor()
+    /// Where the transcript goes, while dictating.
+    private var dictationInsertion: DictationInsertion?
+    /// The thread dictation started in.
+    private var dictationThreadID: UUID?
+    /// The selection dictation replaces, and its text, to put back if dictation is cancelled.
+    private var dictationOriginal: (range: NSRange, text: String)?
+    /// The composer is changing its own text for dictation; the user's edits wait until dictation ends.
+    private var applyingDictation = false
 
     init(
         store: AppStore = .shared, registry: ProviderRegistry = .shared, runner: ThreadRunner = .shared,
@@ -257,6 +269,11 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         footer.modeButton.action = #selector(toggleInteractionMode)
         footer.attachButton.target = self
         footer.attachButton.action = #selector(chooseAttachments)
+        footer.micButton.target = self
+        footer.micButton.action = #selector(micClicked)
+        footer.dictationIndicator.cancelButton.target = self
+        footer.dictationIndicator.cancelButton.action = #selector(cancelDictationClicked)
+        wireDictation()
         footer.sendButton.target = self
         footer.sendButton.action = #selector(sendClicked)
         footer.stopButton.target = self
@@ -353,6 +370,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
             }
         }
         refreshUsageLimits()
+        refreshDictationShortcut()
     }
 
     override func viewDidDisappear() {
@@ -361,6 +379,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         if let threadID { saveDraft(to: threadID) }
         if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
         flagsMonitor = nil
+        dictationShortcut.uninstall()
+        dictation.cancel()
         usageClock?.invalidate()
         usageClock = nil
     }
@@ -480,6 +500,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
     private var thread: ChatThread? { threadID.flatMap { store.thread($0) } }
 
     private func leave(_ id: UUID?) {
+        // A transcript belongs to the thread it was spoken in, so dictation ends with it.
+        dictation.cancel()
         guard let id else { return }
         saveDraft(to: id)
         if !attachments.isEmpty { parkedAttachments[id] = attachments }
@@ -555,6 +577,8 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         textView.font = Theme.bodyFont
         refreshStopToolTip()
         updateTextHeight()
+        refreshDictationControls()
+        refreshDictationShortcut()
     }
 
     /// The footer's tooltips name the menu commands' shortcuts, which the user can change. Send's and the queue's
@@ -591,7 +615,7 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
         textView.isEditable = enabled
         for control in [
             footer.modelButton, footer.effortButton, footer.speedButton, footer.accessButton, footer.followUpButton,
-            footer.modeButton, footer.attachButton,
+            footer.modeButton, footer.attachButton, footer.micButton,
         ] {
             control.isEnabled = enabled
         }
@@ -1016,6 +1040,11 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     func undoManager(for view: NSTextView) -> UndoManager? { editUndoManager }
 
+    /// While dictating, only the transcript changes the text: pastes and drops wait until dictation ends.
+    func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        !dictation.isActive || applyingDictation
+    }
+
     private func updateTextHeight() {
         guard let textHeight else { return }
         let windowHeight = view.window?.contentLayoutRect.height ?? 800
@@ -1083,6 +1112,11 @@ final class ComposerViewController: NSViewController, NSTextViewDelegate {
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if dictation.isActive {
+            // Escape cancels dictation; other keys wait until it's done, so they don't land inside the transcript.
+            if event.keyCode == 53 { dictation.cancel() } else if !flags.contains(.command) { NSSound.beep() }
+            return event.keyCode == 53 || !flags.contains(.command)
+        }
         switch event.keyCode {
         case 36, 76:  // Return, Enter
             guard flags.contains(.command), !textView.hasMarkedText() else { return false }
@@ -1900,5 +1934,177 @@ private final class ComposerDropStack: NSStackView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         onDrop?(sender.draggingPasteboard) ?? false
+    }
+}
+
+// MARK: - Dictation
+
+extension ComposerViewController {
+    fileprivate func wireDictation() {
+        dictation.onStateChange = { [weak self] state in self?.dictationStateChanged(state) }
+        dictation.onLevel = { [weak self] level in self?.footer.dictationIndicator.setLevel(level) }
+        dictation.onPartial = { [weak self] text in self?.showDictated(text, final: false) }
+        dictation.onFinish = { [weak self] text, send in self?.finishDictation(text, send: send) }
+        dictation.onCancel = { [weak self] in self?.dropDictatedText() }
+        dictation.onError = { [weak self] error in self?.showDictationError(error) }
+        dictationShortcut.onAction = { [weak self] action in
+            guard let self else { return }
+            switch action {
+            case .start: startDictation()
+            case .stop: dictation.stop()
+            case .cancel: dictation.cancel()
+            case .none, .scheduleHoldCheck: break
+            }
+        }
+    }
+
+    /// The microphone shows while Settings › Voice is on, and reads as on while dictating.
+    fileprivate func refreshDictationControls() {
+        let voice = store.settings.voice
+        footer.micButton.isHidden = !voice.isEnabled
+        footer.micButton.isActive = dictation.isActive
+        footer.micButton.configure(title: "", symbolName: dictation.isActive ? "mic.fill" : "mic", chevron: false)
+        let title = dictation.isActive ? String(localized: "Stop dictating") : String(localized: "Dictate")
+        let keys = voice.shortcutEnabled ? voice.shortcut.displayString : nil
+        footer.micButton.toolTip = keys.map { String(localized: "\(title) (\($0))") } ?? title
+        footer.micButton.setAccessibilityLabel(title)
+        if !voice.isEnabled { dictation.cancel() }
+    }
+
+    /// Installs the shortcut's key monitor while it's on and the composer is in a window; removes it otherwise.
+    fileprivate func refreshDictationShortcut() {
+        let voice = store.settings.voice
+        guard voice.isEnabled, voice.shortcutEnabled, let window = view.window else {
+            dictationShortcut.uninstall()
+            return
+        }
+        dictationShortcut.install(window: window, shortcut: voice.shortcut, mode: voice.shortcutMode, isRecording: dictation.isActive)
+    }
+
+    @objc fileprivate func micClicked() {
+        toggleDictation()
+    }
+
+    @objc fileprivate func cancelDictationClicked() {
+        dictation.cancel()
+        focus()
+    }
+
+    /// Starts or stops dictation, for Edit › Dictate and the command palette.
+    func toggleDictation() {
+        if dictation.isActive { dictation.stop() } else { startDictation() }
+    }
+
+    var canDictate: Bool { threadID != nil && store.settings.voice.isEnabled && textView.isEditable }
+    /// Whether the dictation shortcut's key monitor is installed; for tests.
+    var isDictationShortcutInstalled: Bool { dictationShortcut.isInstalled }
+    var isDictating: Bool { dictation.isActive }
+
+    fileprivate func startDictation() {
+        guard canDictate, !dictation.isActive else {
+            if !dictation.isActive { dictationShortcut.recordingEnded() }
+            return
+        }
+        suggestions.hide()
+        focus()
+        let selection = textView.selectedRange()
+        dictationThreadID = threadID
+        dictationOriginal = (selection, (textView.string as NSString).substring(with: selection))
+        dictationInsertion = DictationInsertion(text: textView.string, selection: selection)
+        dictation.start()
+    }
+
+    fileprivate func dictationStateChanged(_ state: DictationController.State) {
+        footer.dictationIndicator.isHidden = state == .idle
+        footer.dictationIndicator.show(state)
+        if state == .idle { dictationShortcut.recordingEnded() } else { dictationShortcut.recordingStarted() }
+        refreshDictationControls()
+        footer.needsLayout = true
+    }
+
+    /// Shows the transcript at the caret, in place of the last partial. Partials aren't undone one by one: the final
+    /// text is a single undoable insertion.
+    fileprivate func showDictated(_ text: String, final: Bool) {
+        guard threadID == dictationThreadID, var insertion = dictationInsertion, let edit = insertion.update(text) else { return }
+        guard NSMaxRange(edit.range) <= (textView.string as NSString).length else { return }
+        dictationInsertion = insertion
+        applyingDictation = true
+        defer { applyingDictation = false }
+        if final {
+            textView.insertText(edit.replacement, replacementRange: edit.range)
+        } else {
+            replaceWithoutUndo(edit.range, with: edit.replacement)
+        }
+        textView.setSelectedRange(insertion.caret)
+        textView.scrollRangeToVisible(insertion.caret)
+        updateTextHeight()
+    }
+
+    fileprivate func finishDictation(_ text: String, send: Bool) {
+        guard threadID == dictationThreadID, let original = dictationOriginal else { return endDictationText() }
+        // Put back what was there, then insert the final text as one edit, so undo takes the whole dictation back.
+        restoreOriginalText()
+        dictationInsertion = DictationInsertion(text: textView.string, selection: original.range)
+        showDictated(text, final: true)
+        endDictationText()
+        textChanged()
+        // Sending is opt-in (Settings › Voice › Send when I stop); by default the text waits for the user.
+        if send { primaryAction() }
+    }
+
+    /// Takes partial text back out when dictation is cancelled or fails.
+    fileprivate func dropDictatedText() {
+        if threadID == dictationThreadID { restoreOriginalText() }
+        endDictationText()
+        textChanged()
+    }
+
+    private func endDictationText() {
+        dictationInsertion = nil
+        dictationOriginal = nil
+        dictationThreadID = nil
+    }
+
+    /// Replaces the partial transcript with the text dictation started from (the selection, or nothing).
+    private func restoreOriginalText() {
+        guard let insertion = dictationInsertion, let original = dictationOriginal, !insertion.inserted.isEmpty else { return }
+        let string = textView.string as NSString
+        guard NSMaxRange(insertion.range) <= string.length, string.substring(with: insertion.range) == insertion.inserted else {
+            return
+        }
+        applyingDictation = true
+        replaceWithoutUndo(insertion.range, with: original.text)
+        applyingDictation = false
+        textView.setSelectedRange(original.range)
+        dictationInsertion = DictationInsertion(text: textView.string, selection: original.range)
+    }
+
+    private func replaceWithoutUndo(_ range: NSRange, with text: String) {
+        editUndoManager.disableUndoRegistration()
+        defer { editUndoManager.enableUndoRegistration() }
+        guard textView.shouldChangeText(in: range, replacementString: text) else { return }
+        textView.textStorage?.replaceCharacters(in: range, with: text)
+        textView.didChangeText()
+    }
+
+    fileprivate func showDictationError(_ error: DictationError) {
+        guard let window = view.window, window.attachedSheet == nil else { return }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Dictation stopped")
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: String(localized: "OK"))
+        if error.opensSystemSettings {
+            alert.addButton(withTitle: String(localized: "Open System Settings"))
+        } else if error != .nothingHeard {
+            alert.addButton(withTitle: String(localized: "Voice Settings…"))
+        }
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertSecondButtonReturn else { return }
+            switch error {
+            case .microphoneDenied: DictationController.openMicrophoneSettings()
+            case .speechRecognitionDenied: DictationController.openSpeechRecognitionSettings()
+            default: SettingsWindowController.shared.show(section: .voice)
+            }
+        }
     }
 }

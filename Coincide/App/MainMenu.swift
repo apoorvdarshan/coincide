@@ -107,6 +107,8 @@ final class MainMenu: NSObject, NSMenuDelegate {
             item(
                 String(localized: "Add Selection to Composer"), #selector(MainWindowController.addSelectionToComposer(_:)),
                 .addToComposer))
+        // Coincide's own dictation (Settings › Voice), apart from macOS's Start Dictation, which AppKit adds below.
+        menu.addItem(item(String(localized: "Dictate"), #selector(MainWindowController.toggleDictation(_:))))
         menu.addItem(.separator())
 
         let find = NSMenu(title: String(localized: "Find"))

@@ -17,6 +17,12 @@ packages:
     # package plug-ins only after an interactive trust prompt or with -skipPackagePluginValidation, so every xcodebuild
     # in scripts/ and .github/ passes that flag. Review the plug-in again before moving this pin.
     exactVersion: 1.99.2
+  # Whisper on the Mac for dictation (Settings › Voice), on Core ML: argmaxinc/WhisperKit, MIT. Only its WhisperKit
+  # product is linked (with its ArgmaxCore); it has no package plug-ins, and swift-argument-parser is resolved for its CLI
+  # but not built. No models are bundled: the user downloads one in Settings › Voice (WhisperModelManager).
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    exactVersion: 1.1.1
   # The remote protocol, pairing and theme palettes, shared by the Mac app and Coincide Remote on iOS.
   CoincideRemoteKit:
     path: CoincideRemoteKit
@@ -207,6 +213,8 @@ targets:
         embed: false
       - package: SwiftTerm
       - package: CoincideRemoteKit
+      - package: WhisperKit
+        product: WhisperKit
     postBuildScripts:
       - name: Embed update helper
         script: /usr/bin/install -m 755 "$BUILT_PRODUCTS_DIR/CoincideUpdater" "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/CoincideUpdater"
@@ -291,6 +299,9 @@ targets:
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Coincide lets Coincide Remote on your iPhone or iPad connect over the local network.
         # Settings › Computer Use: the bundled helper runs as Coincide's child, so macOS asks on Coincide's behalf.
         INFOPLIST_KEY_NSAppleEventsUsageDescription: Coincide lets the agents you allow in Settings › Computer Use control other apps.
+        # Dictation in the composer (Settings › Voice), asked for the first time the user dictates.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: Coincide listens to the microphone while you dictate a message.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Coincide turns your dictation into text with Apple’s speech recognition on this Mac.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # Empty unless Local.xcconfig sets it, with a provisioning profile that grants what the file asks for:
         # Coincide/CoincideCloudKit.entitlements (the iCloud container) turns on lock-screen alerts for Coincide Remote,
@@ -318,6 +329,9 @@ targets:
       - path: CoincideRemote
         excludes:
           - Info.plist
+      # Dictation: the Mac's microphone capture and Apple speech recognition, and where the transcript goes in the text.
+      - path: Coincide/Voice/Shared
+      - path: CoincideKit/Voice/DictationInsertion.swift
     dependencies:
       - package: CoincideRemoteKit
     settings:
@@ -338,6 +352,9 @@ targets:
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Coincide Remote finds and connects to Coincide on your Macs over the local network.
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Coincide Remote attaches the photos you pick to your messages.
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Coincide Remote saves the pictures you choose to your photo library.
+        # Dictation in the composer, asked for the first time the user taps the microphone.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: Coincide Remote listens to the microphone while you dictate a message.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Coincide Remote turns your dictation into text with Apple’s speech recognition on this device.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES

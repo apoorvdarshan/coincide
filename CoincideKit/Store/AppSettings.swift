@@ -209,6 +209,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Models the user never uses (T3 Code's hidden models), left out of the model picker. Settings › Models shows
     /// them again.
     public var hiddenModels: [ModelReference]
+    /// Settings › Voice: dictation in the composer.
+    public var voice: VoiceSettings
 
     public nonisolated init() {
         defaultSelection = ModelSelection(provider: .claude, modelID: "default")
@@ -261,6 +263,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         usageBrowserSignIn = []
         favoriteModels = []
         hiddenModels = []
+        voice = VoiceSettings()
     }
 
     public nonisolated func settings(for provider: ProviderKind) -> ProviderSettings {
@@ -329,6 +332,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         // Models of agents this version does not know are skipped, not the whole list.
         favoriteModels = container.lenientArray(ModelReference.self, forKey: .favoriteModels)
         hiddenModels = container.lenientArray(ModelReference.self, forKey: .hiddenModels)
+        voice = value(.voice, defaults.voice)
     }
 }
 

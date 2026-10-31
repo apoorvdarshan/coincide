@@ -76,6 +76,18 @@ struct AboutSettingsView: View {
                 } label: {
                     Text("SwiftTerm License").pointerCursorRow()
                 }
+                Text("Dictation with Whisper on this Mac uses WhisperKit by Argmax under the MIT License.")
+                AboutLink(
+                    symbol: "waveform", color: .red, title: "WhisperKit", detail: "github.com/argmaxinc/WhisperKit",
+                    url: "https://github.com/argmaxinc/WhisperKit")
+                DisclosureGroup("WhisperKit License") {
+                    Text(verbatim: Self.bundledLicense("WhisperKit-LICENSE", missing: String(localized: "WhisperKit license could not be loaded.")))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 6)
+                }
                 Text("Computer Use uses Cua Driver by Cua AI under the MIT License.")
                 AboutLink(
                     symbol: "desktopcomputer", color: .blue, title: "Cua Driver", detail: "github.com/trycua/cua",

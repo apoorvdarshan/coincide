@@ -134,6 +134,16 @@ struct PaletteCatalog {
                 id: "action:edit-instructions", title: String(localized: "Edit Instructions"), icon: symbol("text.book.closed"),
                 keywords: ["instructions", "agents.md", "claude.md", "gemini.md", "rules", "memory", "prompt"],
                 behavior: .run { window?.editInstructions(nil) }))
+        if store.settings.voice.isEnabled, let chat = window?.splitController.content.chat, chat.canDictate || chat.isDictating {
+            let voice = store.settings.voice
+            items.append(
+                PaletteItem(
+                    id: "action:dictate", title: chat.isDictating ? String(localized: "Stop Dictating") : String(localized: "Dictate"),
+                    icon: symbol(chat.isDictating ? "mic.fill" : "mic"),
+                    trailing: voice.shortcutEnabled ? voice.shortcut.displayString : nil,
+                    keywords: ["dictate", "dictation", "voice", "speech", "microphone", "talk", "speak", "transcribe"],
+                    behavior: .run { [weak chat] in chat?.toggleDictation() }))
+        }
         if let split = window?.splitController {
             items.append(
                 PaletteItem(
@@ -267,6 +277,7 @@ struct PaletteCatalog {
             (.models, String(localized: "Model Settings"), "cpu", ["models", "effort", "custom", "default"]),
             (.instructions, String(localized: "Global Instructions"), "text.book.closed", ["agents.md", "claude.md", "rules", "memory"]),
             (.keyboard, String(localized: "Keyboard Shortcuts"), "keyboard", ["shortcuts", "keybindings", "keys"]),
+            (.voice, String(localized: "Voice Settings"), "mic", ["dictation", "voice", "speech", "microphone", "whisper", "transcription"]),
             (.about, String(localized: "About Coincide"), "info.circle", ["version", "license", "credits"]),
         ]
         return sections.map { section, title, icon, keywords in

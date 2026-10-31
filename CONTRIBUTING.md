@@ -46,7 +46,7 @@ Builds are signed ad hoc by default. If your agent configuration lives in a prot
 - Swift 6 with strict concurrency. The app target defaults to `@MainActor` isolation; CoincideKit defaults to `nonisolated` and states isolation explicitly (`@MainActor` on stores, the registry, the runner and sessions). Keep it that way.
 - Put logic in CoincideKit, where it can be unit tested, and keep `Coincide/` to UI.
 - Follow the patterns already used next to the code you change. A new provider follows the shape of the existing ones in `CoincideKit/Providers/`.
-- Discuss new dependencies in an issue first. Coincide has one package dependency (SwiftTerm) and aims to keep it that way.
+- Discuss new dependencies in an issue first. Coincide has two package dependencies, SwiftTerm (the terminal) and WhisperKit (Whisper dictation on the Mac, with no bundled models), and aims to keep it that way.
 
 ## Tests
 
