@@ -237,6 +237,13 @@ public enum RemoteRequest: Hashable, Sendable {
     case saveBot(RemoteBotDraft)
     /// Deletes a bot; its conversations stay as chats unless `deletesConversations`. An older Mac answers `unsupported`.
     case deleteBot(botID: UUID, deletesConversations: Bool)
+    /// The Mac's Settings, described page by page (`RemoteSettingsSnapshot`). Answers `settings`, then sends a
+    /// `settings` event whenever they change. An older Mac answers `unsupported`.
+    case settings
+    /// Changes one setting by its row's key. Answers the updated `settings`.
+    case changeSetting(key: String, value: RemoteSettingValue)
+    /// Runs a row's action, or brings up its place on the Mac for one that finishes there. Answers `settings`.
+    case settingsAction(key: String)
 
     /// The request's name on the wire.
     public var name: String {
@@ -267,6 +274,9 @@ public enum RemoteRequest: Hashable, Sendable {
         case .newBotConversation: "newBotConversation"
         case .saveBot: "saveBot"
         case .deleteBot: "deleteBot"
+        case .settings: "settings"
+        case .changeSetting: "changeSetting"
+        case .settingsAction: "settingsAction"
         }
     }
 }
@@ -288,6 +298,8 @@ private struct RequestBody: Codable {
     var action: RemoteThreadAction?
     var botID: UUID?
     var deletesConversations: Bool?
+    var key: String?
+    var value: RemoteSettingValue?
 }
 
 public enum RemoteProtocolError: Error, Equatable, Sendable {
@@ -379,6 +391,11 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case "deleteBot":
             let f = try fields()
             request = .deleteBot(botID: try need(f.botID, "botID"), deletesConversations: f.deletesConversations ?? false)
+        case "settings": request = .settings
+        case "changeSetting":
+            let f = try fields()
+            request = .changeSetting(key: try need(f.key, "key"), value: try need(f.value, "value"))
+        case "settingsAction": request = .settingsAction(key: try need(try fields().key, "key"))
         default: throw RemoteProtocolError.unsupported(type)
         }
     }
@@ -396,7 +413,11 @@ public struct RemoteClientMessage: Hashable, Sendable, Codable {
         case .updateSettings(let settings): try container.encode(settings, forKey: .body); return
         case .presence(let presence): try container.encode(presence, forKey: .body); return
         case .saveBot(let draft): try container.encode(draft, forKey: .body); return
-        case .ping, .usageLimits: return
+        case .ping, .usageLimits, .settings: return
+        case .changeSetting(let key, let value):
+            f.key = key
+            f.value = value
+        case .settingsAction(let key): f.key = key
         case .newBotConversation(let botID): f.botID = botID
         case .deleteBot(let botID, let deletesConversations):
             f.botID = botID
@@ -457,6 +478,8 @@ public enum RemoteResult: Hashable, Sendable {
     case usage([RemoteUsage])
     /// A bot the phone saved. Only a phone that asked (`saveBot`) ever gets it.
     case bot(UUID)
+    /// The Mac's Settings. Only a phone that asked (`settings`) ever gets it.
+    case settings(RemoteSettingsSnapshot)
 
     var name: String {
         switch self {
@@ -471,6 +494,7 @@ public enum RemoteResult: Hashable, Sendable {
         case .diff: "diff"
         case .usage: "usage"
         case .bot: "bot"
+        case .settings: "settings"
         }
     }
 }
@@ -496,6 +520,8 @@ public enum RemoteEvent: Hashable, Sendable {
     case notify(RemoteNotification)
     /// The user saw the thread somewhere: remove what was posted about it.
     case clearNotifications(threadID: UUID)
+    /// The Mac's Settings changed, sent only to a phone that asked for them. An older phone ignores it.
+    case settings(RemoteSettingsSnapshot)
 
     var name: String {
         switch self {
@@ -508,6 +534,7 @@ public enum RemoteEvent: Hashable, Sendable {
         case .revoked: "revoked"
         case .notify: "notify"
         case .clearNotifications: "clearNotifications"
+        case .settings: "settings"
         }
     }
 }
@@ -586,6 +613,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case "diff": result = .diff(try body(RemoteDiff.self))
             case "usage": result = .usage(try body(ValueBody<[RemoteUsage]>.self).value)
             case "bot": result = .bot(try body(ValueBody<UUID>.self).value)
+            case "settings": result = .settings(try body(RemoteSettingsSnapshot.self))
             default:
                 self = .unknown(type)
                 return
@@ -607,6 +635,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case "revoked": self = .event(.revoked)
             case "notify": self = .event(.notify(try body(RemoteNotification.self)))
             case "clearNotifications": self = .event(.clearNotifications(threadID: try body(ValueBody<UUID>.self).value))
+            case "settings": self = .event(.settings(try body(RemoteSettingsSnapshot.self)))
             default: self = .unknown(type)
             }
         default:
@@ -638,6 +667,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case .diff(let diff): try container.encode(diff, forKey: .body)
             case .usage(let usage): try container.encode(ValueBody(value: usage), forKey: .body)
             case .bot(let id): try container.encode(ValueBody(value: id), forKey: .body)
+            case .settings(let snapshot): try container.encode(snapshot, forKey: .body)
             }
         case .event(let event):
             try container.encode("event", forKey: .kind)
@@ -653,6 +683,7 @@ public enum RemoteServerMessage: Hashable, Sendable, Codable {
             case .revoked: break
             case .notify(let notification): try container.encode(notification, forKey: .body)
             case .clearNotifications(let threadID): try container.encode(ValueBody(value: threadID), forKey: .body)
+            case .settings(let snapshot): try container.encode(snapshot, forKey: .body)
             }
         case .unknown(let type):
             try container.encode("unknown", forKey: .kind)

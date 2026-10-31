@@ -25,6 +25,10 @@ final class RemoteClient {
     private(set) var phase = Phase.idle
     private(set) var mac: SavedMac?
     private(set) var server: RemoteServerInfo?
+    /// The Mac's Settings, once asked for; they stay current through `settings` events.
+    private(set) var macSettings: RemoteSettingsSnapshot?
+    /// The Mac is too old to share its Settings.
+    private(set) var macSettingsUnsupported = false
     private(set) var workspace = RemoteWorkspace()
     var includesArchived = false {
         didSet { if includesArchived != oldValue { Task { await refreshWorkspace() } } }
@@ -450,6 +454,8 @@ final class RemoteClient {
             threads[id]?.isRemoved = true
         case .notify(let notification):
             onNotify?(notification)
+        case .settings(let snapshot):
+            macSettings = snapshot
         case .clearNotifications(let threadID):
             onClearNotifications?(threadID)
         case .revoked:
@@ -578,6 +584,27 @@ final class RemoteClient {
     func deleteBot(_ botID: UUID, deletingConversations: Bool) async {
         guard await performNewer(.deleteBot(botID: botID, deletesConversations: deletingConversations)) != nil else { return }
         await refreshWorkspace()
+    }
+
+    /// Asks for the Mac's Settings, which then stay current.
+    func loadMacSettings() async {
+        guard isConnected else { return }
+        do {
+            if case .settings(let snapshot) = try await request(.settings) {
+                macSettings = snapshot
+                macSettingsUnsupported = false
+            }
+        } catch let error as RemoteError where error.code == .unsupported {
+            macSettingsUnsupported = true
+        } catch {}
+    }
+
+    func changeMacSetting(_ key: String, to value: RemoteSettingValue) async {
+        if case .settings(let snapshot)? = await performNewer(.changeSetting(key: key, value: value)) { macSettings = snapshot }
+    }
+
+    func performMacSettingsAction(_ key: String) async {
+        if case .settings(let snapshot)? = await performNewer(.settingsAction(key: key)) { macSettings = snapshot }
     }
 
     /// Runs a request an older Mac may not know, saying so plainly when it doesn't.
