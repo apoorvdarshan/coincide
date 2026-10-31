@@ -118,7 +118,7 @@ struct SidebarOrderingTests {
 
     private func bot(_ name: String, created: TimeInterval) -> Bot {
         Bot(
-            name: name, avatar: BotAvatar(shape: .pebble, tint: .sage), persona: "",
+            name: name, avatar: BotAvatar(shape: .croissant, tint: .sage), persona: "",
             selection: ModelSelection(provider: .claude, modelID: "default"), createdAt: base.addingTimeInterval(created))
     }
 

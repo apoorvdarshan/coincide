@@ -5,15 +5,15 @@ import CoincideKit
 /// with, and the folder they run in. Shown as a sheet; nothing is saved until Save.
 final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate {
     var onSave: ((Bot) -> Void)?
-    private var draft: Bot
+    private(set) var draft: Bot
     private let isNew: Bool
     private let store: AppStore
     private let registry: ProviderRegistry
 
     private let preview = BotAvatarView(size: 56)
-    private let nameField = ThemedTextField(placeholder: String(localized: "Name"))
+    let nameField = ThemedTextField(placeholder: String(localized: "Name"))
     private let persona = NSTextView()
-    private var shapeButtons: [BotChoiceButton] = []
+    private(set) var shapeButtons: [BotChoiceButton] = []
     private var tintButtons: [BotChoiceButton] = []
     private let modelButton = ComposerControlButton()
     private let accessButton = ComposerControlButton()
@@ -37,13 +37,14 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    /// A fresh bot on the user's default agent, in a look none of their bots has yet when one is left.
-    private static func newBot(store: AppStore, registry: ProviderRegistry) -> Bot {
-        let used = Set(store.bots.map(\.avatar))
-        let looks = BotAvatar.Shape.allCases.flatMap { shape in BotAvatar.Tint.allCases.map { BotAvatar(shape: shape, tint: $0) } }
-        let avatar = looks.filter { !used.contains($0) }.randomElement() ?? looks.randomElement()!
+    /// A fresh bot on the user's default agent: a character none of their bots is yet when one is left, in its own color
+    /// and with its name.
+    static func newBot(store: AppStore, registry: ProviderRegistry) -> Bot {
+        let used = Set(store.bots.map(\.avatar.shape))
+        let characters = BotAvatar.Shape.allCases
+        let character = characters.filter { !used.contains($0) }.randomElement() ?? characters.randomElement()!
         return Bot(
-            name: "", avatar: avatar, persona: "",
+            name: character.defaultName, avatar: BotAvatar(character: character), persona: "",
             selection: registry.usableSelection(preferring: store.settings.defaultSelection),
             accessMode: store.settings.defaultAccessMode)
     }
@@ -193,10 +194,11 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
 
     private func refresh() {
         preview.avatar = draft.avatar
+        // Each character shows in its own color, the chosen one in the bot's.
         for button in shapeButtons {
             guard case .shape(let shape) = button.kind else { continue }
-            button.tint = draft.avatar.tint
             button.isChosen = shape == draft.avatar.shape
+            button.tint = button.isChosen ? draft.avatar.tint : shape.defaultTint
         }
         for button in tintButtons {
             guard case .tint(let tint) = button.kind else { continue }
@@ -258,9 +260,13 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) { draft.persona = persona.string }
 
-    @objc private func pickShape(_ sender: BotChoiceButton) {
-        guard case .shape(let shape) = sender.kind else { return }
-        draft.avatar.shape = shape
+    /// A character comes in its own color, and brings its name while the bot still has the previous character's (or
+    /// none); a name the user wrote stays.
+    @objc func pickShape(_ sender: BotChoiceButton) {
+        guard case .shape(let shape) = sender.kind, shape != draft.avatar.shape else { return }
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty || name == draft.avatar.shape.defaultName { nameField.stringValue = shape.defaultName }
+        draft.avatar = BotAvatar(character: shape)
         refresh()
     }
 
@@ -317,8 +323,8 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
     @objc private func cancel() { dismiss(nil) }
 }
 
-/// One choice in the editor's avatar picker: a body shape, drawn in the chosen tint, or a tint swatch. The chosen one
-/// is ringed in the theme's accent.
+/// One choice in the editor's avatar picker: a character, drawn in `tint`, or a tint swatch. The chosen one is ringed in
+/// the theme's accent.
 final class BotChoiceButton: NSButton {
     enum Kind {
         case shape(BotAvatar.Shape)
