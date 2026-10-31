@@ -412,13 +412,14 @@ final class ThreadTitleView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func set(title: String, subtitle: String, avatar: BotAvatar? = nil) {
+    /// `detail` shows only in the tooltip, such as a bot's personality.
+    func set(title: String, subtitle: String, avatar: BotAvatar? = nil, detail: String? = nil) {
         avatarView.isHidden = avatar == nil
         if let avatar { avatarView.avatar = avatar }
         titleLabel.stringValue = title
         subtitleLabel.stringValue = subtitle
         subtitleLabel.isHidden = subtitle.isEmpty
-        toolTip = subtitle.isEmpty ? title : "\(title)\n\(subtitle)"
+        toolTip = [title, subtitle, detail ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
         setAccessibilityLabel(subtitle.isEmpty ? title : "\(title), \(subtitle)")
     }
 }

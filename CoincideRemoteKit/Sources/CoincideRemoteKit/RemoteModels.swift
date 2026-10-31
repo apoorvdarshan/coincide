@@ -77,11 +77,14 @@ public struct RemoteWorkspace: Codable, Hashable, Sendable {
     public var pinnedOrder: [UUID]
     /// How the Mac's sidebar sorts and cuts its lists. Nil from an older Mac.
     public var sidebar: RemoteSidebarOptions?
+    /// The personality presets the Mac's bots can take, by id (`BotPersonalityPreset.id`). Nil from a Mac older than
+    /// bot personalities, which can't give a bot one, so the phone offers none.
+    public var botPersonalityPresets: [String]?
 
     public init(
         projects: [RemoteProject] = [], threads: [RemoteThreadSummary] = [], bots: [RemoteBot]? = nil,
         providers: [RemoteProvider] = [], sections: [String] = ["pinned", "projects", "chats"], pinnedOrder: [UUID] = [],
-        sidebar: RemoteSidebarOptions? = nil
+        sidebar: RemoteSidebarOptions? = nil, botPersonalityPresets: [String]? = nil
     ) {
         self.projects = projects
         self.threads = threads
@@ -90,6 +93,7 @@ public struct RemoteWorkspace: Codable, Hashable, Sendable {
         self.sections = sections
         self.pinnedOrder = pinnedOrder
         self.sidebar = sidebar
+        self.botPersonalityPresets = botPersonalityPresets
     }
 }
 
@@ -150,11 +154,13 @@ public struct RemoteBot: Codable, Hashable, Sendable, Identifiable {
     public var interactionMode: String?
     /// The folder its conversations run in, abbreviated with `~`; nil for the home folder.
     public var folder: String?
+    /// How it talks and behaves. Nil when it has no personality, and from a Mac older than personalities.
+    public var personality: RemoteBotPersonality?
 
     public init(
         id: UUID, name: String, projectID: UUID? = nil, threadIDs: [UUID] = [], avatar: RemoteBotAvatar? = nil,
         persona: String? = nil, selection: RemoteSelection? = nil, accessMode: String? = nil, interactionMode: String? = nil,
-        folder: String? = nil
+        folder: String? = nil, personality: RemoteBotPersonality? = nil
     ) {
         self.id = id
         self.name = name
@@ -166,6 +172,25 @@ public struct RemoteBot: Codable, Hashable, Sendable, Identifiable {
         self.accessMode = accessMode
         self.interactionMode = interactionMode
         self.folder = folder
+        self.personality = personality
+    }
+}
+
+/// A bot's personality, as the Mac saves it (`BotPersonality`): a preset by id, or the user's own description.
+public struct RemoteBotPersonality: Codable, Hashable, Sendable {
+    /// A preset's id; nil for the user's own description.
+    public var preset: String?
+    /// The user's own description, used when there is no preset. The Mac keeps it while a preset is chosen.
+    public var custom: String?
+
+    public init(preset: String? = nil, custom: String? = nil) {
+        self.preset = preset
+        self.custom = custom
+    }
+
+    /// Neither a preset nor a description: no personality, which is how the phone asks the Mac to remove one.
+    public var isEmpty: Bool {
+        (preset ?? "").isEmpty && (custom ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -201,10 +226,14 @@ public struct RemoteBotDraft: Codable, Hashable, Sendable {
     public var effort: String?
     public var accessMode: String?
     public var interactionMode: String?
+    /// The personality; an empty one removes it. Nil keeps the bot's, as from a phone older than personalities (a new
+    /// bot then has none).
+    public var personality: RemoteBotPersonality?
 
     public init(
         id: UUID? = nil, name: String, avatar: RemoteBotAvatar, persona: String = "", provider: String? = nil,
-        modelID: String? = nil, effort: String? = nil, accessMode: String? = nil, interactionMode: String? = nil
+        modelID: String? = nil, effort: String? = nil, accessMode: String? = nil, interactionMode: String? = nil,
+        personality: RemoteBotPersonality? = nil
     ) {
         self.id = id
         self.name = name
@@ -215,6 +244,7 @@ public struct RemoteBotDraft: Codable, Hashable, Sendable {
         self.effort = effort
         self.accessMode = accessMode
         self.interactionMode = interactionMode
+        self.personality = personality
     }
 }
 

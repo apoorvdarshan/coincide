@@ -1,17 +1,21 @@
 import Foundation
 
-/// A friendly, always-there assistant: a saved preset over a thread's agent, model and modes, with a name, an avatar
-/// and standing instructions (its persona). Each bot keeps its conversations in the Bots container
-/// (`AppStore.botsProject`), the way chats live in Chats, and runs them in its own folder, the home folder unless the
-/// user picked another. Its persona reaches the agent as system or developer instructions at the start of each native
-/// session (`AgentLaunch.instructions`), or in a block in front of the first message for agents without such a
-/// channel (`Bot.instructionsBlock`); it never appears in the transcript.
+/// A friendly, always-there assistant: a saved preset over a thread's agent, model and modes, with a name, an avatar,
+/// a personality (how it talks and behaves) and standing instructions (its persona: its job). Each bot keeps its
+/// conversations in the Bots container (`AppStore.botsProject`), the way chats live in Chats, and runs them in its own
+/// folder, the home folder unless the user picked another. Its personality and persona reach the agent together
+/// (`instructions`) as system or developer instructions at the start of each native session
+/// (`AgentLaunch.instructions`), or in a block in front of the first message for agents without such a channel
+/// (`Bot.instructionsBlock`); they never appear in the transcript.
 public struct Bot: Codable, Hashable, Sendable, Identifiable {
     public var id: UUID
     public var name: String
     public var avatar: BotAvatar
-    /// What the bot is like and how it works, in the user's words.
+    /// What the bot does and how it works, in the user's words: its job. Shown as Instructions.
     public var persona: String
+    /// How it talks and behaves: a preset or the user's own description. Nil for none, as bots from before
+    /// personalities have.
+    public var personality: BotPersonality?
     /// The agent, account, model, effort and speed its new conversations start with.
     public var selection: ModelSelection
     public var accessMode: AccessMode
@@ -23,14 +27,15 @@ public struct Bot: Codable, Hashable, Sendable, Identifiable {
     public var starterID: String?
 
     public nonisolated init(
-        id: UUID = UUID(), name: String, avatar: BotAvatar, persona: String, selection: ModelSelection,
-        accessMode: AccessMode = .approval, interactionMode: InteractionMode = .build, folder: String? = nil,
-        createdAt: Date = Date(), starterID: String? = nil
+        id: UUID = UUID(), name: String, avatar: BotAvatar, persona: String, personality: BotPersonality? = nil,
+        selection: ModelSelection, accessMode: AccessMode = .approval, interactionMode: InteractionMode = .build,
+        folder: String? = nil, createdAt: Date = Date(), starterID: String? = nil
     ) {
         self.id = id
         self.name = name
         self.avatar = avatar
         self.persona = persona
+        self.personality = personality
         self.selection = selection
         self.accessMode = accessMode
         self.interactionMode = interactionMode
@@ -47,6 +52,7 @@ public struct Bot: Codable, Hashable, Sendable, Identifiable {
         name = container.lenient(String.self, forKey: .name) ?? String(localized: "Bot")
         avatar = container.lenient(BotAvatar.self, forKey: .avatar) ?? BotAvatar(character: .alien)
         persona = container.lenient(String.self, forKey: .persona) ?? ""
+        personality = container.lenient(BotPersonality.self, forKey: .personality).flatMap { $0.isEmpty ? nil : $0 }
         selection =
             container.lenient(ModelSelection.self, forKey: .selection) ?? ModelSelection(provider: .claude, modelID: "default")
         accessMode = container.lenient(AccessMode.self, forKey: .accessMode) ?? .approval
@@ -84,22 +90,43 @@ public struct Bot: Codable, Hashable, Sendable, Identifiable {
         return trimmed.isEmpty ? String(localized: "Bot") : trimmed
     }
 
-    /// What the agent is told at the start of a session: who it is and the user's instructions. Written in English for
-    /// the agent, as Coincide's other agent-facing text is. Nil when there is nothing to say.
+    /// The most of the persona the agent is told, in characters.
+    public nonisolated static let personaLimit = 20_000
+    /// The most the agent is told in all, in characters. The introduction, the personality (at most
+    /// `BotPersonalityPreset.customLimit`), the persona (at most `personaLimit`) and their labels fit within it; only a
+    /// very long name could reach it.
+    public nonisolated static let instructionsLimit = 25_000
+
+    /// What the agent is told at the start of a session: who it is, then its personality and its job (the persona),
+    /// personality first, each under a heading. Written in English for the agent, as Coincide's other agent-facing
+    /// text is. A bot without a personality is told just what it was told before personalities. Nil when there is
+    /// nothing to say.
     public nonisolated var instructions: String? {
-        let persona = persona.trimmingCharacters(in: .whitespacesAndNewlines)
-        let intro =
+        let persona = String(persona.trimmingCharacters(in: .whitespacesAndNewlines).prefix(Self.personaLimit))
+        let who =
             "You are \(displayName), one of the user's bots in Coincide, a desktop app for working with coding agents. "
-            + "Each bot is an ongoing conversation with its own personality and job. Stay in character, keep replies "
-            + "friendly and to the point, and ask before doing anything destructive or hard to undo."
-        return persona.isEmpty ? intro : intro + "\n\n" + persona
+            + "Each bot is an ongoing conversation with its own personality and job."
+        guard let personality = personality?.prompt else {
+            let intro =
+                who + " Stay in character, keep replies friendly and to the point, and ask before doing anything "
+                + "destructive or hard to undo."
+            return String((persona.isEmpty ? intro : intro + "\n\n" + persona).prefix(Self.instructionsLimit))
+        }
+        // The personality sets the tone, so the introduction no longer does.
+        var text =
+            who + " Stay in character, and ask before doing anything destructive or hard to undo.\n\n"
+            + "## Personality\n"
+            + "How you talk and behave. It shapes your tone and manner only: your instructions, the user's requests and "
+            + "your safety rules always come first.\n\n" + personality
+        if !persona.isEmpty { text += "\n\n## Instructions\nYour job, in the user's words.\n\n" + persona }
+        return String(text.prefix(Self.instructionsLimit))
     }
 
     /// The instructions as a block in front of the first message, for agents with no channel for them. Delimited so
     /// the agent reads them as standing context rather than the user's request.
     public nonisolated var instructionsBlock: String? {
         guard let instructions else { return nil }
-        // The persona is the user's own text; a stray closing tag must not end the block early.
+        // The personality and persona are the user's own text; a stray closing tag must not end the block early.
         let body = instructions.replacingOccurrences(of: "</bot_instructions>", with: "</bot-instructions>")
         return """
             <bot_instructions>
@@ -116,6 +143,63 @@ public struct Bot: Codable, Hashable, Sendable, Identifiable {
         let path = url.standardizedFileURL.resolvingSymlinksInPath().path
         let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.resolvingSymlinksInPath().path
         return path == home || path == "/" || path == "/Users"
+    }
+}
+
+/// How a bot talks and behaves, apart from its job (`Bot.persona`): one of Coincide's presets
+/// (`BotPersonalityPreset`) or the user's own description.
+public struct BotPersonality: Codable, Hashable, Sendable {
+    /// A preset's id; nil for the user's own description. One this version doesn't have is kept but unused, so a bot
+    /// from a newer version keeps it until the user picks another.
+    public var presetID: String?
+    /// The user's own description, used when there is no preset. Kept while a preset is chosen, so switching back
+    /// to Custom finds it again.
+    public var custom: String
+
+    public nonisolated init(presetID: String? = nil, custom: String = "") {
+        self.presetID = presetID
+        self.custom = custom
+    }
+
+    public nonisolated static func preset(_ id: String) -> BotPersonality { BotPersonality(presetID: id) }
+
+    public nonisolated static func custom(_ text: String) -> BotPersonality { BotPersonality(custom: text) }
+
+    /// Anything this version cannot read reads as nothing: no preset, no description.
+    public nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        presetID = container.lenient(String.self, forKey: .presetID).flatMap { $0.isEmpty ? nil : $0 }
+        custom = container.lenient(String.self, forKey: .custom) ?? ""
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case presetID = "preset"
+        case custom
+    }
+
+    /// The preset, when it is one and this version has it.
+    public nonisolated var preset: BotPersonalityPreset? { BotPersonalityPreset.preset(id: presetID) }
+
+    /// The description the user wrote, trimmed and within `BotPersonalityPreset.customLimit`.
+    public nonisolated var customText: String {
+        String(custom.trimmingCharacters(in: .whitespacesAndNewlines).prefix(BotPersonalityPreset.customLimit))
+    }
+
+    /// What the agent is told: the preset's prompt or the user's description. Nil when that is nothing: an empty
+    /// description, or a preset this version doesn't have (the bot then talks as one without a personality would).
+    public nonisolated var prompt: String? {
+        if presetID != nil { return preset?.prompt }
+        let text = customText
+        return text.isEmpty ? nil : text
+    }
+
+    /// Neither a preset nor a description: no personality at all.
+    public nonisolated var isEmpty: Bool { presetID == nil && customText.isEmpty }
+
+    /// Its name as shown beside the bot: the preset's, or Custom. Nil when there is none this version can name.
+    public nonisolated var displayName: String? {
+        if presetID != nil { return preset?.name }
+        return customText.isEmpty ? nil : String(localized: "Custom", comment: "A bot personality the user wrote")
     }
 }
 
@@ -167,6 +251,11 @@ public struct BotAvatar: Codable, Hashable, Sendable {
             }
         }
 
+        /// The personality a new bot with this character is offered (`BotPersonalityPreset.defaultID`).
+        public nonisolated var defaultPersonality: BotPersonality? {
+            BotPersonalityPreset.defaultID(forCharacter: rawValue).map(BotPersonality.preset)
+        }
+
         /// Default names a character had before names were plain ASCII, so a bot still carrying one is renamed.
         nonisolated static let formerDefaultNames: [Shape: String] = [.brulee: "Br\u{FB}l\u{E9}e"]
     }
@@ -204,6 +293,9 @@ public struct BotStarter: Sendable {
     public var name: String
     public var avatar: BotAvatar
     public var persona: String
+    /// The personality it comes with: its character's (`BotAvatar.Shape.defaultPersonality`) in the current lineup,
+    /// none in the first, from before personalities.
+    public var personality: BotPersonality?
     /// Starters that change files or settings ask first, whatever the user's default.
     public var asksForApproval: Bool
     /// Names it was offered under before, so a bot still carrying one counts as untouched (`isUntouched`).
@@ -231,7 +323,7 @@ public struct BotStarter: Sendable {
         [
             BotStarter(
                 id: "brulee", name: BotAvatar.Shape.brulee.defaultName, avatar: BotAvatar(character: .brulee),
-                persona: everydayHelper, asksForApproval: false)
+                persona: everydayHelper, personality: BotAvatar.Shape.brulee.defaultPersonality, asksForApproval: false)
         ]
     }
 
@@ -281,16 +373,17 @@ public struct BotStarter: Sendable {
         ]
     }
 
-    /// Whether a bot is still just as this starter made it: its name, instructions, look and folder unchanged.
+    /// Whether a bot is still just as this starter made it: its name, instructions, personality, look and folder
+    /// unchanged.
     nonisolated func isUntouched(_ bot: Bot) -> Bool {
         bot.starterID == id && (bot.name == name || formerNames.contains(bot.name)) && bot.persona == persona
-            && bot.avatar == avatar && (bot.folder ?? "").isEmpty
+            && bot.personality == personality && bot.avatar == avatar && (bot.folder ?? "").isEmpty
     }
 
     /// A bot made from this starter, running on the user's default agent.
     public nonisolated func makeBot(selection: ModelSelection, accessMode: AccessMode, createdAt: Date = Date()) -> Bot {
         Bot(
-            name: name, avatar: avatar, persona: persona, selection: selection,
+            name: name, avatar: avatar, persona: persona, personality: personality, selection: selection,
             accessMode: asksForApproval ? .approval : accessMode, createdAt: createdAt, starterID: id)
     }
 }
