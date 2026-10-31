@@ -46,4 +46,27 @@ struct GeneralSettingsTests {
         #expect(model.pane == .section(.general))
         #expect(model.reveal?.setting == .numberFormat)
     }
+
+    @Test func keepingTitlesUpToDateIsFoundSavedAndRestoredToOff() throws {
+        let entries = SettingsSearchResults.entries(kinds: [])
+        for query in ["keep titles up to date", "titles", "refresh", "rename"] {
+            #expect(entries.contains { $0.setting == .threadTitleUpdates && $0.matches(query) }, "Missing search alias: \(query)")
+        }
+        let entry = try #require(entries.first { $0.setting == .threadTitleUpdates })
+        #expect(entry.pane == .section(.general))
+
+        let folder = TemporaryDirectory("general-thread-title-updates")
+        let store = AppStore(directory: folder.url)
+        let model = SettingsModel(store: store, registry: ProviderRegistry(store: store, providers: []))
+        let updates = model.binding(\.updatesThreadTitles)
+        #expect(!updates.wrappedValue && store.settings.generatesThreadTitles)
+        updates.wrappedValue = true
+        store.flush()
+        #expect(AppStore(directory: folder.url).settings.updatesThreadTitles)
+
+        model.navigate(to: entry.pane, reveal: entry.setting)
+        #expect(model.reveal?.setting == .threadTitleUpdates)
+        model.update { GeneralSettingsView.restoreDefaults(in: &$0) }
+        #expect(!store.settings.updatesThreadTitles && store.settings.generatesThreadTitles)
+    }
 }

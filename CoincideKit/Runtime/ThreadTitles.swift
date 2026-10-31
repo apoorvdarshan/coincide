@@ -3,17 +3,23 @@ import Foundation
 /// Names a new thread from its first message with the user's own agent, as T3 Code does, so it can be recognized
 /// weeks later. Until the agent answers, and when it can't, the thread keeps the start of the message.
 ///
-/// The agent looks at the title again twice in the thread's life (`TitleRefresh`): once its first reply shows what a
-/// short first message was about, and after the fifth turn, when the thread may have moved on. Each look sends only
-/// the title and a few hundred characters of the conversation, and keeps the title when it still fits. A thread the
-/// user named is never titled by the agent again.
+/// Naming ends with one look at the title once the first reply shows what a short first message was about
+/// (`TitleRefresh.firstReply`). Only when the user keeps titles up to date (`AppSettings.updatesThreadTitles`) does
+/// the agent look again, every few turns and minutes of a thread in use, much as Claude Code renames a session as its
+/// topic moves on. Every look follows a turn the user started that just completed: never a launch, a timer or an idle
+/// thread. Each sends only the title and a few hundred characters of the conversation, and keeps the title when it
+/// still fits. A thread the user named is never titled by the agent again.
 @MainActor
 enum ThreadTitles {
     /// How long the agent may take before the thread keeps its title.
     static var timeout: TimeInterval = 90
 
-    /// The user turns after which the agent looks at the title a second time.
-    static let laterRefreshTurns = 5
+    /// Naming's look comes only while a thread is within this many turns.
+    static let namingTurns = 5
+    /// While titles are kept up to date: the turns and the time between looks, and the most looks a thread gets.
+    static let updateTurns = 5
+    static let updateInterval: TimeInterval = 10 * 60
+    static let maximumUpdates = 12
 
     /// How much of each part of the conversation a refresh sends.
     nonisolated static let refreshTitleLimit = 100
@@ -22,6 +28,11 @@ enum ThreadTitles {
 
     /// First titles being asked for, so a refresh waits for its thread's first title rather than racing it.
     private static var firstTitles: [UUID: Task<Void, Never>] = [:]
+    /// Threads with a look under way, so a thread never has two at once.
+    private static var refreshing: Set<UUID> = []
+
+    /// Whether the agent is looking at the thread's title again right now.
+    static func isRefreshing(_ threadID: UUID) -> Bool { refreshing.contains(threadID) }
 
     /// Asks the agent for a first title in the background (see `generate`).
     static func start(
@@ -64,44 +75,68 @@ enum ThreadTitles {
 
     // MARK: Refreshes
 
-    /// After a turn completed: has the agent look at the title again when a refresh is due, in the background.
-    /// Returns the refresh it started.
+    /// After a turn the user started completed: has the agent look at the title again when a look is due, in the
+    /// background. Returns the look it started.
     @discardableResult
-    static func refreshIfDue(threadID: UUID, store: AppStore, registry: ProviderRegistry) -> TitleRefresh? {
-        guard store.settings.generatesThreadTitles, let thread = store.thread(threadID),
-            let due = dueRefresh(for: thread, isFork: store.lineage(of: threadID) != nil),
+    static func refreshIfDue(threadID: UUID, store: AppStore, registry: ProviderRegistry, now: Date = Date()) -> TitleRefresh? {
+        guard store.settings.generatesThreadTitles, !refreshing.contains(threadID), let thread = store.thread(threadID),
+            let due = dueRefresh(
+                for: thread, isFork: store.lineage(of: threadID) != nil, updates: store.settings.updatesThreadTitles,
+                now: now),
             let cwd = store.workingDirectory(for: threadID),
             let parts = RefreshParts(thread)
         else { return nil }
         // Counted when asked, so a relaunch, a failure or a quick next turn never asks twice.
-        store.updateThread(threadID) { $0.titleRefreshes = ($0.titleRefreshes ?? []) + [due] }
+        let turns = thread.items.count(where: \.opensUserTurn)
+        store.updateThread(threadID) {
+            $0.titleRefreshes = ($0.titleRefreshes ?? []) + [due]
+            $0.titleCheckTurns = turns
+            $0.titleCheckedAt = now
+        }
+        refreshing.insert(threadID)
         let selection = titleSelection(for: thread.selection, registry: registry)
         let first = firstTitles[threadID]
         Task {
+            defer { refreshing.remove(threadID) }
             // The first title, still on its way, is the one to look at.
             await first?.value
-            guard store.settings.generatesThreadTitles, let summary = store.summary(threadID), !summary.isTitleCustom
-            else { return }
+            guard wants(due, store: store), let summary = store.summary(threadID), !summary.isTitleCustom else { return }
             let title = summary.title
             let reply = await AgentPrompt.run(
                 refreshPrompt(title: title, parts: parts), selection: selection, cwd: cwd, timeout: timeout,
                 registry: registry)
+            // Turned off while the agent thought: the answer is dropped.
+            guard wants(due, store: store) else { return }
             apply(reply, to: threadID, replacing: title, store: store)
         }
         return due
     }
 
-    /// The refresh a thread is due after a completed turn, if any: the first after its first completed turn, the
-    /// second after its fifth, each once. None for a thread the user named or an archived one.
+    /// Whether the settings still ask for this look.
+    private static func wants(_ refresh: TitleRefresh, store: AppStore) -> Bool {
+        store.settings.generatesThreadTitles && (refresh != .update || store.settings.updatesThreadTitles)
+    }
+
+    /// The look a thread is due after a turn the user started completed, if any. None for a thread the user named or
+    /// an archived one.
     ///
-    /// A thread from before refreshes (`titleRefreshes` is nil) joins in at its next completed turn, never at launch:
-    /// it gets the first look then if it has not reached its fifth turn, and otherwise only the later one. Imports
-    /// and forks (`isFork`) came with their messages and the titles that went with them, and keep those.
-    static func dueRefresh(for thread: ChatThread, isFork: Bool) -> TitleRefresh? {
+    /// Naming's look (`firstReply`) comes at the first completed turn, once, while the thread is within its first
+    /// `namingTurns`. With `updates` on, another (`update`) comes once `updateTurns` more turns and `updateInterval`
+    /// have passed since the last look, up to `maximumUpdates`, so a thread nobody writes in is never looked at.
+    ///
+    /// A thread from before looks were counted (`titleRefreshes` is nil) joins in at its next completed turn, never at
+    /// launch. Imports and forks (`isFork`) came with their messages and the titles that went with them, and keep those.
+    static func dueRefresh(for thread: ChatThread, isFork: Bool, updates: Bool, now: Date) -> TitleRefresh? {
         guard !thread.isTitleCustom, !thread.isArchived else { return nil }
         guard let done = thread.titleRefreshes ?? (thread.importedSession == nil && !isFork ? [] : nil) else { return nil }
-        let due: TitleRefresh = thread.items.count(where: \.opensUserTurn) >= laterRefreshTurns ? .fifthTurn : .firstReply
-        return done.contains(due) ? nil : due
+        let turns = thread.items.count(where: \.opensUserTurn)
+        if !done.contains(.firstReply), !done.contains(.fifthTurn), turns < namingTurns { return .firstReply }
+        guard updates, done.count(where: { $0 == .update }) < maximumUpdates else { return nil }
+        // Without a recorded look: naming's came at the first turn, an older version's at the fifth.
+        let last = thread.titleCheckTurns ?? (done.contains(.fifthTurn) ? namingTurns : done.contains(.firstReply) ? 1 : 0)
+        guard turns - last >= updateTurns else { return nil }
+        if let checked = thread.titleCheckedAt, now.timeIntervalSince(checked) < updateInterval { return nil }
+        return .update
     }
 
     /// What a refresh tells the agent about the thread, each part trimmed.

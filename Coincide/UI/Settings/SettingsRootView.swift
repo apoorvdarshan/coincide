@@ -278,6 +278,12 @@ struct SettingsSearchResults: View {
                 title: String(localized: "Name threads with the agent"), pane: general, setting: .threadTitles,
                 keywords: [String(localized: "Titles"), String(localized: "Rename"), String(localized: "AI")]),
             SettingsSearchEntry(
+                title: String(localized: "Keep titles up to date"), pane: general, setting: .threadTitleUpdates,
+                keywords: [
+                    String(localized: "Titles"), String(localized: "Rename"), String(localized: "Refresh"),
+                    String(localized: "Automatic"),
+                ]),
+            SettingsSearchEntry(
                 title: String(localized: "Notifications"), pane: general, setting: .notifications,
                 keywords: [String(localized: "Background"), String(localized: "Alerts")]),
             SettingsSearchEntry(

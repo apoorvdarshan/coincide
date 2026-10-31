@@ -148,9 +148,15 @@ struct GeneralSettingsView: View {
                     .settingsRevealable(.newThreadChat, highlighted: highlighted)
                     Toggle(isOn: model.binding(\.generatesThreadTitles)) {
                         Text("Name threads with the agent")
-                        Text("The thread's agent titles it from your first message with its quickest model, and may refresh the title as the thread develops. Threads you rename keep your name.")
+                        Text("The thread's agent titles it from your first message and its first reply, with its quickest model. Threads you rename keep your name.")
                     }
                     .settingsRevealable(.threadTitles, highlighted: highlighted)
+                    Toggle(isOn: model.binding(\.updatesThreadTitles)) {
+                        Text("Keep titles up to date")
+                        Text("While you use a thread, the agent checks its title every few turns and updates it if the thread has moved on. Each check is a small request; idle threads are never checked.")
+                    }
+                    .disabled(!model.settings.generatesThreadTitles)
+                    .settingsRevealable(.threadTitleUpdates, highlighted: highlighted)
                 }
 
                 Section("Notifications") {
@@ -271,6 +277,7 @@ struct GeneralSettingsView: View {
         settings.sendOnReturn = defaults.sendOnReturn
         settings.followUpBehavior = defaults.followUpBehavior
         settings.generatesThreadTitles = defaults.generatesThreadTitles
+        settings.updatesThreadTitles = defaults.updatesThreadTitles
         settings.newThreadStartsChat = defaults.newThreadStartsChat
         settings.resumesAfterUsageLimit = defaults.resumesAfterUsageLimit
         settings.showReasoning = defaults.showReasoning
