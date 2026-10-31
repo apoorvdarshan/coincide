@@ -384,7 +384,7 @@ struct PaletteCatalogTests {
 
     @Test func settingsSectionsAreListed() {
         let items = PaletteCatalog(windowController: nil).settings()
-        #expect(items.map(\.id) == ["setting:general", "setting:providers", "setting:models", "setting:instructions", "setting:keyboard", "setting:about"])
+        #expect(items.map(\.id) == ["setting:general", "setting:providers", "setting:models", "setting:instructions", "setting:keyboard", "setting:voice", "setting:about"])
         #expect(items.allSatisfy { $0.subtitle == "Settings" })
     }
 
