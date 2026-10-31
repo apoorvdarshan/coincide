@@ -123,6 +123,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Coincide draws the agent's cursor on whichever display it acts on (Cua Driver's own overlay covers only the main
     /// display, trycua/cua#5336).
     public var computerUseShowsAgentCursor: Bool
+    /// Keep Awake: the Mac never sleeps, closing the lid included (`AlwaysOnController`). The lid watcher reads it
+    /// from settings.json too.
+    public var alwaysOn: AlwaysOnSettings
     /// ⌘Q quits only when held or pressed twice (`QuitShortcutGuard`); a single press shows a hint. Quitting from the
     /// menu, the Dock, logging out or AppleScript is never held up.
     public var holdToQuit: Bool
@@ -208,6 +211,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         commandLineControl = true
         computerUseEnabled = false
         computerUseShowsAgentCursor = true
+        alwaysOn = AlwaysOnSettings()
         holdToQuit = true
         opensLinksInDefaultBrowser = false
         generatesThreadTitles = true
@@ -266,6 +270,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         commandLineControl = value(.commandLineControl, defaults.commandLineControl)
         computerUseEnabled = value(.computerUseEnabled, defaults.computerUseEnabled)
         computerUseShowsAgentCursor = value(.computerUseShowsAgentCursor, defaults.computerUseShowsAgentCursor)
+        alwaysOn = value(.alwaysOn, defaults.alwaysOn)
         holdToQuit = value(.holdToQuit, defaults.holdToQuit)
         opensLinksInDefaultBrowser = value(.opensLinksInDefaultBrowser, defaults.opensLinksInDefaultBrowser)
         generatesThreadTitles = value(.generatesThreadTitles, defaults.generatesThreadTitles)

@@ -58,6 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ProjectScripts.shared.start()
         // The coincide command-line tool's socket, and the tool on agents' PATH (Settings › General › Command Line).
         CommandLineControl.shared.start()
+        // Settings › General › Keep Awake: starts its lid watcher again if launchd lost it. Never asks for a password.
+        AlwaysOnController.shared.startAtLaunch()
         // Keeps the instruction masters' iCloud Drive and Git copies in step.
         InstructionCopySyncer.shared.start()
         ThreadSnooze.shared.start()

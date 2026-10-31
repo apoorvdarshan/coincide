@@ -72,6 +72,11 @@ struct AboutSettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 6)
                 }
+                Text("Keep Awake comes from macbook-24x7-agents, which keeps a MacBook running agents with the lid closed.")
+                AboutLink(
+                    symbol: "moon.zzz.fill", color: .orange, title: "macbook-24x7-agents",
+                    detail: "github.com/apoorvdarshan/macbook-24x7-agents",
+                    url: "https://github.com/apoorvdarshan/macbook-24x7-agents")
             }
 
             if let copyright = Bundle.main.object(forInfoDictionaryKey: "NSHumanReadableCopyright") as? String {
