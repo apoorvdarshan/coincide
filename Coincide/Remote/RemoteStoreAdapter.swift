@@ -34,6 +34,14 @@ final class RemoteStoreAdapter {
         var move: (UUID, UUID) -> Void
         /// The Mac sidebar's sorting and section order.
         var layout: () -> Layout
+        /// Saves the sidebar's sorting and threads per project, and redraws the Mac's sidebar.
+        var updateLayout: (Layout) -> Void = { _ in }
+        /// Whether the turn a user message opened has a checkpoint that can put files back (thread, message).
+        var canRestore: (UUID, UUID) -> Bool = { _, _ in false }
+        /// Puts files back the way they were before the turn a user message opened (thread, message).
+        var restore: (UUID, UUID) async throws -> Void = { _, _ in
+            throw RemoteError(.notAllowed, String(localized: "Files can’t be put back for this message."))
+        }
 
         struct Layout {
             var sections: [String] = SidebarSection.defaultOrder.map(\.rawValue)
@@ -42,6 +50,8 @@ final class RemoteStoreAdapter {
             var threadSort = ThreadSort.recentActivity
             var chatSort = ThreadSort.recentActivity
             var botSort = BotSort.manual
+            /// Threads per project before "Show more": nil fits the sidebar, 0 shows all.
+            var threadsPerProject: Int?
         }
 
         static var live: Services {
@@ -82,8 +92,22 @@ final class RemoteStoreAdapter {
                     let ui = UIState.shared.values
                     return Layout(
                         sections: SidebarOrdering.sectionOrder(saved: ui.sidebarSections).map(\.rawValue), pinned: ui.pinnedThreads,
-                        projectSort: ui.projectSort, threadSort: ui.threadSort, chatSort: ui.chatSort, botSort: ui.botSort)
-                })
+                        projectSort: ui.projectSort, threadSort: ui.threadSort, chatSort: ui.chatSort, botSort: ui.botSort,
+                        threadsPerProject: ui.sidebarThreadsPerProject)
+                },
+                updateLayout: { layout in
+                    UIState.shared.update { ui in
+                        if ui.botSort != layout.botSort { ui.choseBotSort = true }
+                        ui.projectSort = layout.projectSort
+                        ui.threadSort = layout.threadSort
+                        ui.chatSort = layout.chatSort
+                        ui.botSort = layout.botSort
+                        ui.sidebarThreadsPerProject = layout.threadsPerProject
+                    }
+                    NotificationCenter.default.post(name: .coincideSidebarLayoutChanged, object: nil)
+                },
+                canRestore: { CheckpointService.shared.canRestore(threadID: $0, userItemID: $1) },
+                restore: { try await CheckpointService.shared.restore(threadID: $0, toBefore: $1) })
         }
     }
 
@@ -112,6 +136,11 @@ final class RemoteStoreAdapter {
     /// Moves threads between the project's folder and worktrees (`RemoteCheckouts`): the app's own, or one over a test
     /// store.
     lazy var worktrees: WorktreeService = store === AppStore.shared ? .shared : WorktreeService(store: store, git: .shared)
+    /// The scheduled tasks (`RemoteSchedules`): the app's own, or ones over a test store.
+    lazy var schedules: ScheduledTasks =
+        store === AppStore.shared ? .shared : ScheduledTasks(store: store, registry: registry, runner: runner)
+    /// Git actions running for a thread's folder, by thread, with their current step (`RemoteGit`).
+    var gitProgress: [UUID: String] = [:]
     let registry: ProviderRegistry
     let services: Services
     private var token: ObservationToken?
@@ -169,6 +198,11 @@ final class RemoteStoreAdapter {
 
     private func emit(_ change: Change) {
         for handler in handlers.values { handler(change) }
+    }
+
+    /// Tells the phones the sidebar changed, for changes kept outside the store (its order, scheduled tasks).
+    func emitWorkspaceChange() {
+        emit(.workspace)
     }
 
     private func handle(_ change: StoreChange) {
@@ -239,7 +273,7 @@ final class RemoteStoreAdapter {
                     interactionMode: bot.interactionMode.rawValue,
                     folder: bot.folder.map { ($0 as NSString).abbreviatingWithTildeInPath })
             }, providers: providers(), sections: layout.sections,
-            pinnedOrder: pinned)
+            pinnedOrder: pinned, sidebar: Self.sidebarOptions(layout))
     }
 
     func summary(_ thread: ThreadSummary) -> RemoteThreadSummary {
@@ -499,7 +533,7 @@ final class RemoteStoreAdapter {
 
     // MARK: Actions
 
-    private func requireThread(_ id: UUID) throws -> ThreadSummary {
+    func requireThread(_ id: UUID) throws -> ThreadSummary {
         guard let thread = store.summary(id) else { throw RemoteError(.notFound, String(localized: "That thread no longer exists.")) }
         return thread
     }

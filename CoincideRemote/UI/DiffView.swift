@@ -40,6 +40,12 @@ struct DiffView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(theme.content)
+            // The thread's uncommitted changes carry the Mac diff panel's actions.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if request.turnID == nil {
+                    GitActionsBar(threadID: request.threadID) { Task { await load() } }
+                }
+            }
             .navigationTitle(diff?.title ?? (request.turnID == nil ? String(localized: "Uncommitted Changes") : String(localized: "Turn Changes")))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -48,14 +54,17 @@ struct DiffView: View {
                 }
             }
         }
-        .task {
-            do {
-                if case .diff(let result) = try await client.request(.diff(threadID: request.threadID, turnID: request.turnID), timeout: .seconds(60)) {
-                    diff = result
-                }
-            } catch {
-                self.error = (error as? RemoteError)?.message ?? error.localizedDescription
+        .task { await load() }
+    }
+
+    private func load() async {
+        do {
+            if case .diff(let result) = try await client.request(.diff(threadID: request.threadID, turnID: request.turnID), timeout: .seconds(60)) {
+                diff = result
+                error = nil
             }
+        } catch {
+            self.error = (error as? RemoteError)?.message ?? error.localizedDescription
         }
     }
 }

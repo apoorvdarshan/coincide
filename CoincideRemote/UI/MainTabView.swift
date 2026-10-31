@@ -206,7 +206,7 @@ struct ProjectsView: View {
         .refreshable { await client.refreshWorkspace() }
         .navigationTitle("Projects")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { ThreadFilterMenu(projects: projects) }
+            ToolbarItem(placement: .topBarTrailing) { ThreadFilterMenu(projects: projects, sorts: .projects) }
         }
     }
 
@@ -219,11 +219,13 @@ struct ProjectsView: View {
                 .frame(minHeight: 36)
                 .sidebarRow()
         } else {
-            let all = showsAll.contains(project.id) || threads.count <= Self.threadLimit + 1
-            let visible = all ? threads : Array(threads.prefix(Self.threadLimit))
+            // With no limit (All) every thread shows; a single extra thread shows rather than "Show 1 more".
+            let limit = SidebarSortMenus.threadLimit(client.workspace.sidebar) ?? threads.count
+            let all = showsAll.contains(project.id) || threads.count <= limit + 1
+            let visible = all ? threads : Array(threads.prefix(limit))
             ForEach(visible) { thread in ThreadLink(thread: thread, isNested: true) }
             if !all {
-                let hidden = Array(threads.dropFirst(Self.threadLimit))
+                let hidden = Array(threads.dropFirst(limit))
                 Button { withAnimation(motion) { _ = showsAll.insert(project.id) } } label: {
                     SidebarNote(
                         text: String(localized: "Show \(hidden.count) more"), symbol: "chevron.down",
@@ -233,7 +235,7 @@ struct ProjectsView: View {
                 }
                 .buttonStyle(SidebarRowButtonStyle())
                 .sidebarRow()
-            } else if showsAll.contains(project.id), threads.count > Self.threadLimit + 1 {
+            } else if showsAll.contains(project.id), threads.count > limit + 1 {
                 Button { withAnimation(motion) { _ = showsAll.remove(project.id) } } label: {
                     SidebarNote(text: String(localized: "Show less"), symbol: "chevron.up")
                         .padding(.leading, ProjectRow.nestedIndent)
@@ -271,6 +273,8 @@ struct ProjectRow: View {
     @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
     @ScaledMetric(relativeTo: .callout) private var chevronWidth: CGFloat = 14
+    @State private var sheet: ProjectSheet?
+    @State private var removing: RemoteProject?
 
     /// How far a project's threads sit in, so their marks line up under its folder.
     static let nestedIndent: CGFloat = 22
@@ -305,7 +309,23 @@ struct ProjectRow: View {
                     isExpanded ? String(localized: "Collapse \(project.name)") : String(localized: "Expand \(project.name)"),
                     systemImage: isExpanded ? "chevron.up" : "chevron.down")
             }
+            // As the Mac's project menu: its pull requests, the defaults of its new threads, and removing it.
+            Divider()
+            Button { sheet = .pullRequests } label: { Label("Pull Requests", systemImage: "arrow.triangle.pull") }
+            Button { sheet = .defaults } label: { Label("Project Defaults…", systemImage: "slider.horizontal.3") }
+            Divider()
+            Button(role: .destructive) { removing = project } label: {
+                Label("Remove from Coincide…", systemImage: "folder.badge.minus")
+            }
+            .disabled(!client.isConnected)
         }
+        .sheet(item: $sheet) { sheet in
+            switch sheet {
+            case .defaults: ProjectDefaultsView(project: project)
+            case .pullRequests: PullRequestsView(project: project)
+            }
+        }
+        .modifier(ProjectRemoval(project: $removing))
         .swipeActions(edge: .trailing) {
             Button { Task { await newThread() } } label: {
                 Label("New Thread", systemImage: "square.and.pencil")

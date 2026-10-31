@@ -250,6 +250,8 @@ struct ThreadView: View {
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
+    /// The usage-limit banner over the composer, as the Mac shows it.
+    @State private var usageWarning: RemoteUsageWarning?
 
     var body: some View {
         let blocks = TranscriptBlock.build(
@@ -305,9 +307,11 @@ struct ThreadView: View {
             VStack(spacing: 8) {
                 WaitingBanner(model: model)
                 QueueStrip(model: model)
+                UsageWarningBanner(model: model, warning: $usageWarning)
                 ComposerView(model: model)
                 CheckoutRow(summary: model.summary)
             }
+            .modifier(UsageWarningPolling(model: model, warning: $usageWarning))
             .frame(maxWidth: 860)
             .padding(.horizontal, 10)
             .padding(.top, 4)

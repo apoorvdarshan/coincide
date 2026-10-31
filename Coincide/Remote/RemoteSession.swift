@@ -330,6 +330,42 @@ final class RemoteSession {
             case .setProjectExpanded(let projectID, let expanded):
                 try adapter.setProjectExpanded(projectID, expanded: expanded)
                 respond(id, .ok)
+            case .forkThread(let fork):
+                respond(id, .thread(try adapter.forkThread(fork)))
+            case .rewindOptions(let reference):
+                respond(id, .rewindOptions(try adapter.rewindOptions(reference)))
+            case .rewind(let rewind):
+                run(id) { .rewind(try await $0.rewind(rewind)) }
+            case .composerNotice(let threadID):
+                respond(id, .composerNotice(try adapter.composerNotice(threadID)))
+            case .usageWarningAction(let command):
+                respond(id, .composerNotice(try adapter.perform(command)))
+            case .setSidebarOptions(let options):
+                try adapter.setSidebarOptions(options)
+                respond(id, .ok)
+            case .projectDefaults(let projectID):
+                respond(id, .projectDefaults(try adapter.projectDefaults(projectID)))
+            case .saveProjectDefaults(let defaults):
+                respond(id, .projectDefaults(try adapter.saveProjectDefaults(defaults)))
+            case .removeProject(let projectID):
+                try adapter.removeProject(projectID)
+                respond(id, .ok)
+            case .scheduledTasks:
+                respond(id, .scheduledTasks(adapter.scheduledTasks()))
+            case .saveScheduledTask(let draft):
+                respond(id, .scheduledTasks(try adapter.saveScheduledTask(draft)))
+            case .scheduledTaskAction(let command):
+                respond(id, .scheduledTasks(try adapter.perform(command)))
+            case .gitState(let threadID):
+                run(id) { .gitState(try await $0.gitState(threadID)) }
+            case .gitAction(let action):
+                run(id) { .gitAction(try await $0.gitAction(action)) }
+            case .pullRequests(let query):
+                run(id) { .pullRequests(try await $0.pullRequests(query)) }
+            case .pullRequest(let reference):
+                run(id) { .pullRequest(try await $0.pullRequest(reference)) }
+            case .pullRequestAction(let command):
+                run(id) { try await $0.perform(command) }
             case .showThread(let threadID):
                 guard isLocal else { throw RemoteError(.unsupported, "Unsupported request “showThread”.") }
                 guard adapter.hasThread(threadID) else { throw notFound }
@@ -338,6 +374,14 @@ final class RemoteSession {
             }
         } catch {
             fail(id, Self.remote(error))
+        }
+    }
+
+    /// Answers a request that waits on git, a checkpoint or another slow call, without holding up the others.
+    private func run(_ id: String, _ work: @escaping @MainActor (RemoteStoreAdapter) async throws -> RemoteResult) {
+        Task { [weak self] in
+            guard let self else { return }
+            do { self.respond(id, try await work(self.adapter)) } catch { self.fail(id, Self.remote(error)) }
         }
     }
 

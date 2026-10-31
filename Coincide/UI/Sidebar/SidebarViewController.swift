@@ -206,6 +206,8 @@ final class SidebarViewController: NSViewController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(inboxChanged), name: ThreadInbox.didChange, object: nil)
         NotificationCenter.default.addObserver(
+            self, selector: #selector(layoutChanged), name: .coincideSidebarLayoutChanged, object: nil)
+        NotificationCenter.default.addObserver(
             self, selector: #selector(activityChanged(_:)), name: .coincideThreadActivityChanged, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(hideJumpHints), name: NSApplication.didResignActiveNotification, object: nil)
@@ -1695,6 +1697,12 @@ extension SidebarViewController: NSMenuDelegate {
     }
 
     @objc private func inboxChanged() {
+        rebuild()
+    }
+
+    /// The phone changed how the sidebar sorts or how many threads a project shows.
+    @objc private func layoutChanged() {
+        expandedLists.removeAll()
         rebuild()
     }
 

@@ -144,7 +144,7 @@ enum DemoData {
                             speeds: [RemoteSpeed(id: "priority", name: "Fast")])
                     ]),
             ],
-            pinnedOrder: [])
+            pinnedOrder: [], sidebar: old ? nil : RemoteSidebarOptions(threadsPerProject: has("FewThreads") ? 2 : nil))
     }
 
     /// The Mac's Settings as its catalog (`RemoteSettingsCatalog`) describes them, abridged.
@@ -417,6 +417,72 @@ enum DemoData {
                 RemoteBranch(name: "main", isCurrent: true), RemoteBranch(name: "remote-duo-ipad-layout"),
                 RemoteBranch(name: "remote-settings-polish", isCheckedOutElsewhere: true), RemoteBranch(name: "origin/main", isRemote: true),
             ])
+    }
+
+    /// `-CoincideRemoteDemoUsageWarning`: the composer's usage-limit banner, offering to resume at the reset.
+    static var composerNotice: RemoteComposerNotice {
+        guard has("UsageWarning") else { return RemoteComposerNotice() }
+        return RemoteComposerNotice(
+            usageWarning: RemoteUsageWarning(
+                key: "demo", text: "Claude Code 5-hour limit reached. It resets in 1 hr 12 min.", fraction: 1, canResumeAtReset: true))
+    }
+
+    /// Two scheduled tasks in the demo project: one daily, one paused weekly that failed last time.
+    static var scheduledTasks: RemoteScheduledTasks {
+        let calendar = Calendar.current
+        let tomorrow = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: Date().addingTimeInterval(86_400)) ?? Date()
+        return RemoteScheduledTasks(tasks: [
+            RemoteScheduledTask(
+                id: UUID(uuidString: "5C4ED01E-0000-4000-8000-000000000001")!, name: "Morning dependency check", projectID: projectID,
+                prompt: "Check for outdated Swift packages and open a PR for safe updates.",
+                recurrence: RemoteTaskRecurrence(kind: .daily, hour: 9, minute: 0), state: .scheduled, stateText: "Scheduled",
+                scheduleText: "Daily", nextRunAt: tomorrow, lastRunAt: Date().addingTimeInterval(-15 * 3600), lastThreadID: threadID),
+            RemoteScheduledTask(
+                id: UUID(uuidString: "5C4ED01E-0000-4000-8000-000000000002")!, name: "Weekly release notes", projectID: otherProjectID,
+                prompt: "Draft release notes from this week's merged pull requests.",
+                recurrence: RemoteTaskRecurrence(kind: .weekly, hour: 17, minute: 30, weekday: 6), isPaused: true, state: .failed,
+                stateText: "Failed · Paused", scheduleText: "Weekly", lastRunAt: Date().addingTimeInterval(-3 * 86_400),
+                lastMessage: "Claude Code exited before replying."),
+        ])
+    }
+
+    /// The demo thread's folder: two changes to commit on a feature branch with an open pull request.
+    static var gitState: RemoteGitState {
+        RemoteGitState(
+            isRepository: true, branch: "remote-image-previews", upstream: "origin/remote-image-previews", ahead: 1,
+            changedFiles: 2, hasRemote: true, canCommit: true, canPush: true, canPull: false,
+            pullRequest: RemotePullRequest(
+                number: 161, title: "Coincide Remote: bot characters in their own colors", url: "https://github.com/apoorvdarshan/coincide/pull/161",
+                state: .open, checks: .pending))
+    }
+
+    static var pullRequests: RemotePullRequestList {
+        RemotePullRequestList(items: [
+            RemotePullRequest(
+                number: 161, title: "Coincide Remote: bot characters in their own colors, pictures in bounds", url: "https://github.com",
+                author: "apoorvdarshan", headBranch: "remote-bot-picker-media", baseBranch: "main", checks: .pending,
+                review: .reviewRequired, updatedAt: Date().addingTimeInterval(-600)),
+            RemotePullRequest(
+                number: 158, title: "Settings › Models and Browser on the phone", url: "https://github.com", author: "apoorvdarshan",
+                headBranch: "remote-settings-polish", baseBranch: "main", checks: .passing, review: .approved,
+                updatedAt: Date().addingTimeInterval(-7200)),
+            RemotePullRequest(
+                number: 152, title: "Draft: terminal focus on click", url: "https://github.com", author: "brulee",
+                headBranch: "terminal-focus", baseBranch: "main", isDraft: true, checks: .failing, updatedAt: Date().addingTimeInterval(-86_400)),
+        ])
+    }
+
+    static var pullRequestDetail: RemotePullRequestDetail {
+        RemotePullRequestDetail(
+            pullRequest: pullRequests.items[1],
+            body: "Brings **Settings › Models** and **Browser** to the phone.\n\n- Favorites and hidden models\n- Private sessions",
+            checks: [
+                .init(name: "Build and test", status: "success"), .init(name: "CodeQL", status: "success"),
+                .init(name: "Dependency review", status: "skipped"),
+            ],
+            mergeability: "mergeable", additions: 812, deletions: 96, changedFiles: 14,
+            reviews: [.init(author: "brulee", state: "APPROVED", body: "Looks great on the Duo.")], canMerge: true,
+            mergeMethods: ["merge", "squash"])
     }
 
     /// An instruction file's text, for the document editor.

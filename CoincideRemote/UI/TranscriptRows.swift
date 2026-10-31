@@ -10,33 +10,57 @@ struct TranscriptBlockView: View {
         case .item(let item): ItemView(item: item, threadID: model.id)
         case .work(let items): WorkGroup(items: items, model: model)
         case .changes(let turnID, let files): ChangesCard(threadID: model.id, turnID: turnID, files: files)
-        case .footer(let item): ReplyFooter(item: item)
+        case .footer(let item): ReplyFooter(item: item, threadID: model.id)
         }
     }
 }
 
-/// Under a finished turn's reply, as on the Mac: the agent in its color, the model, and when it answered.
+/// Under a finished turn's reply, as on the Mac: the agent in its color, the model, and when it answered, with "Fork from
+/// Here" at its end, as the Mac's "Fork from this response" under a reply.
 struct ReplyFooter: View {
     let item: RemoteItem
+    let threadID: UUID
     @Environment(RemoteClient.self) private var client
+    @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
+    @State private var forking = false
 
     var body: some View {
         let provider = item.provider ?? ""
         let model = item.modelID.flatMap { id in client.provider(provider)?.models.first { $0.id == id }?.name } ?? item.modelID
         HStack(spacing: 8) {
-            Text(AgentLogo.name(provider))
-                .fontWeight(.medium)
-                .foregroundStyle(theme.agent(provider))
-            if let model { Text(model).foregroundStyle(theme.secondaryInk) }
-            Text((item.completedAt ?? item.createdAt).formatted(date: .omitted, time: .shortened))
-                .foregroundStyle(theme.tertiaryInk)
+            HStack(spacing: 8) {
+                Text(AgentLogo.name(provider))
+                    .fontWeight(.medium)
+                    .foregroundStyle(theme.agent(provider))
+                if let model { Text(model).foregroundStyle(theme.secondaryInk) }
+                Text((item.completedAt ?? item.createdAt).formatted(date: .omitted, time: .shortened))
+                    .foregroundStyle(theme.tertiaryInk)
+            }
+            .accessibilityElement(children: .combine)
+            Spacer(minLength: 0)
+            Button {
+                forking = true
+                Task {
+                    if let fork = await client.forkThread(threadID, through: item.id) { navigator.push(.thread(fork)) }
+                    forking = false
+                }
+            } label: {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.footnote)
+                    .foregroundStyle(theme.tertiaryInk)
+                    .frame(width: 44, height: 28)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .disabled(forking || !client.isConnected)
+            .accessibilityLabel(Text("Fork from Here"))
+            .accessibilityHint(Text("Starts a new thread with the conversation up to this reply"))
         }
         .font(.footnote)
         .lineLimit(1)
         .padding(.leading, 15)
         .padding(.top, -6)
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -105,7 +129,9 @@ struct AgentRail: View {
 struct UserMessage: View {
     let item: RemoteItem
     let threadID: UUID
+    @Environment(RemoteClient.self) private var client
     @Environment(\.theme) private var theme
+    @State private var rewinding: RemoteRewindOptions?
 
     private var alignment: HorizontalAlignment { theme.userMessagesOnLeft ? .leading : .trailing }
 
@@ -122,10 +148,10 @@ struct UserMessage: View {
                 }
                 if !item.text.isEmpty || !extras.isEmpty || item.steered || !hasPictures {
                     VStack(alignment: alignment, spacing: 6) {
+                        // Copied from the message's menu, which also edits from here.
                         if !item.text.isEmpty {
                             Text(item.text)
                                 .foregroundStyle(theme.ink)
-                                .textSelection(.enabled)
                         }
                         ForEach(Array(extras.enumerated()), id: \.offset) { _, extra in
                             Label(extra.1, systemImage: extra.0)
@@ -145,10 +171,58 @@ struct UserMessage: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contextMenu {
+                if !item.text.isEmpty {
+                    Button { UIPasteboard.general.string = item.text } label: { Label("Copy", systemImage: "doc.on.doc") }
+                }
+                // The Mac's "Edit from Here…" on a message: not while the agent works, nor on a message sent into a turn.
+                if !item.steered {
+                    Button { Task { await askToRewind() } } label: { Label("Edit from Here…", systemImage: "pencil") }
+                        .disabled(client.summary(threadID)?.isRunning == true || !client.isConnected)
+                }
+            }
             if theme.userMessagesOnLeft { Spacer(minLength: 40) }
         }
         // The pictures stay their own buttons, to open them full screen.
         .accessibilityElement(children: .contain)
+        .confirmationDialog(
+            "Edit from here?", isPresented: Binding(get: { rewinding != nil }, set: { if !$0 { rewinding = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let options = rewinding {
+                if options.canRevertFiles {
+                    Button("Revert and Keep Changes") { rewind(revertingFiles: false) }
+                    Button("Revert Files Too", role: .destructive) { rewind(revertingFiles: true) }
+                } else {
+                    Button("Edit from Here") { rewind(revertingFiles: false) }
+                }
+            }
+            Button("Cancel", role: .cancel) { rewinding = nil }
+        } message: {
+            if rewinding?.canRevertFiles == true {
+                Text(
+                    "The conversation is rewound to before this message, which returns to the composer. “Revert Files Too” also puts files back the way they were before it, undoing any edits since."
+                )
+            } else {
+                Text("The conversation is rewound to before this message, which returns to the composer. Files on disk are not changed.")
+            }
+        }
+    }
+
+    /// Asks the Mac what rewinding can do, then asks the user, as the Mac's "Edit from here?" does.
+    private func askToRewind() async {
+        guard let options = await client.rewindOptions(threadID, itemID: item.id) else { return }
+        guard !options.isRunning else {
+            client.notice = String(localized: "Stop the agent before editing an earlier message.")
+            return
+        }
+        rewinding = options
+    }
+
+    private func rewind(revertingFiles: Bool) {
+        rewinding = nil
+        Task { await client.rewind(threadID, to: item.id, revertingFiles: revertingFiles) }
     }
 }
 

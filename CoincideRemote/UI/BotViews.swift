@@ -147,6 +147,12 @@ struct BotsView: View {
         .refreshable { await client.refreshWorkspace() }
         .navigationTitle("Bots")
         .toolbar {
+            // The Bots header's options on the Mac: how bots are sorted.
+            if client.workspace.sidebar != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu { SidebarSortMenus(kind: .bots) } label: { Label("Sort Bots By", systemImage: "arrow.up.arrow.down") }
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { editing = .new } label: { Label("New Bot", systemImage: "plus") }
                     .disabled(!client.isConnected || client.workspace.bots == nil)
