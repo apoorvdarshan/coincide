@@ -1,8 +1,8 @@
 import AppKit
 import CoincideKit
 
-/// Creates or edits a bot: its look, name and instructions, the agent, model and modes its new conversations start
-/// with, and the folder they run in. Shown as a sheet; nothing is saved until Save.
+/// Creates or edits a bot: its look, name, personality and instructions, the agent, model and modes its new
+/// conversations start with, and the folder they run in. Shown as a sheet; nothing is saved until Save.
 final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate {
     var onSave: ((Bot) -> Void)?
     private(set) var draft: Bot
@@ -13,6 +13,13 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
     private let preview = BotAvatarView(size: 56)
     let nameField = ThemedTextField(placeholder: String(localized: "Name"))
     private let persona = NSTextView()
+    /// The width of the sheet's content, inside its margins.
+    private static let contentWidth: CGFloat = 480
+    private(set) lazy var personality = BotPersonalitySection(personality: draft.personality, width: Self.contentWidth)
+    /// Holds the content, so a sheet taller than the screen scrolls.
+    let scroll = NSScrollView()
+    /// The tallest the sheet gets: the screen's room below the window's title bar, with a margin.
+    static var maximumHeight: CGFloat { max(420, (NSScreen.main?.visibleFrame.height ?? 900) - 120) }
     private(set) var shapeButtons: [BotChoiceButton] = []
     private var tintButtons: [BotChoiceButton] = []
     private let modelButton = ComposerControlButton()
@@ -39,14 +46,15 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    /// A fresh bot on the user's default agent: a character none of their bots is yet when one is left, in its own color
-    /// and with its name.
+    /// A fresh bot on the user's default agent: a character none of their bots is yet when one is left, in its own
+    /// color, with its name and its personality.
     static func newBot(store: AppStore, registry: ProviderRegistry) -> Bot {
         let used = Set(store.bots.map(\.avatar.shape))
         let characters = BotAvatar.Shape.allCases
         let character = characters.filter { !used.contains($0) }.randomElement() ?? characters.randomElement()!
         return Bot(
             name: character.defaultName, avatar: BotAvatar(character: character), persona: "",
+            personality: character.defaultPersonality,
             selection: registry.usableSelection(preferring: store.settings.defaultSelection),
             accessMode: store.settings.defaultAccessMode)
     }
@@ -113,7 +121,15 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
         personaScroll.layer?.borderColor = Theme.surfaceBorder.cgColor
         personaScroll.heightAnchor.constraint(equalToConstant: 120).isActive = true
         let personaHint = hint(String(
-            localized: "Who the bot is and how it works. Its agent gets this at the start of each session; it never shows in the conversation."))
+            localized: "What the bot does and how it works. Its agent gets this and the personality at the start of each session; neither shows in the conversation."))
+
+        personality.onChange = { [weak self] in
+            guard let self else { return }
+            draft.personality = personality.result
+        }
+        // Edits reach the bot's conversations as instructions do (`BotActions.save`).
+        let personalityHint = hint(String(
+            localized: "How the bot talks and behaves, apart from its job. A change reaches its conversations with their next message."))
 
         modelDetail.font = .systemFont(ofSize: 11)
         modelDetail.textColor = .secondaryLabelColor
@@ -148,6 +164,7 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
         let stack = NSStackView(views: [
             heading, subtitle, identity,
             label(String(localized: "Look")), shapes, tints,
+            label(String(localized: "Personality")), personality, personalityHint,
             label(String(localized: "Instructions")), personaScroll, personaHint,
             label(String(localized: "Agent")), agentRow, modelDetailRow,
             label(String(localized: "Folder")), folderRow, folderHint, buttons,
@@ -160,19 +177,38 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
         stack.setCustomSpacing(16, after: identity)
         stack.setCustomSpacing(10, after: shapes)
         stack.setCustomSpacing(16, after: tints)
+        stack.setCustomSpacing(8, after: personality)
+        stack.setCustomSpacing(16, after: personalityHint)
         stack.setCustomSpacing(16, after: personaHint)
         stack.setCustomSpacing(16, after: modelDetailRow)
         stack.setCustomSpacing(20, after: folderHint)
-        stack.widthAnchor.constraint(equalToConstant: 520).isActive = true
-        for child in [subtitle, identity, personaScroll, personaHint, folderRow, folderHint, buttons] {
+        stack.widthAnchor.constraint(equalToConstant: Self.contentWidth + 40).isActive = true
+        for child in [subtitle, identity, personality, personalityHint, personaScroll, personaHint, folderRow, folderHint, buttons] {
             child.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
         }
         let root = SolidBackgroundView(color: Theme.contentBackground)
+        // As tall as its content, unless that is more than the screen has room for: then it scrolls.
+        let document = BotEditorDocumentView()
         stack.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(stack)
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(stack)
+        scroll.documentView = document
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .noBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(scroll)
+        let fits = scroll.heightAnchor.constraint(equalTo: document.heightAnchor)
+        // Below the labels' resistance to compression, so the content is never squeezed to fit; it scrolls instead.
+        fits.priority = .init(500)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor), stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: root.topAnchor), stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor), stack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: document.topAnchor), stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: root.topAnchor), scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            fits, scroll.heightAnchor.constraint(lessThanOrEqualToConstant: Self.maximumHeight),
         ])
         view = root
         refresh()
@@ -267,11 +303,12 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
     func textDidChange(_ notification: Notification) { draft.persona = persona.string }
 
     /// A character comes in its own color, and brings its name while the bot still has the previous character's (or
-    /// none); a name the user wrote stays.
+    /// none); a name the user wrote stays. Its personality comes along the same way, unless the user picked one.
     @objc func pickShape(_ sender: BotChoiceButton) {
         guard case .shape(let shape) = sender.kind, shape != draft.avatar.shape else { return }
         let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.isEmpty || name == draft.avatar.shape.defaultName { nameField.stringValue = shape.defaultName }
+        personality.suggest(for: shape, replacing: draft.avatar.shape)
         draft.avatar = BotAvatar(character: shape)
         refresh()
     }
@@ -322,11 +359,17 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
         guard !name.isEmpty else { return }
         draft.name = name
         draft.persona = persona.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft.personality = personality.result
         onSave?(draft)
         dismiss(nil)
     }
 
     @objc private func cancel() { dismiss(nil) }
+}
+
+/// The editor's content in its scroll view, laid out top down so it starts at the top.
+final class BotEditorDocumentView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 /// One choice in the editor's avatar picker: a character, drawn in `tint`, or a tint swatch. The chosen one is ringed in

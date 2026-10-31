@@ -703,6 +703,7 @@ final class SidebarViewController: NSViewController {
         let latest = conversations.first
         let status = strongestStatus(of: conversations.map(\.id)) ?? .idle
         var lines = [bot.displayName]
+        if let personality = bot.personality?.displayName { lines.append(String(localized: "Personality: \(personality)")) }
         if let latest { lines.append(latest.title) }
         lines.append("\(bot.selection.provider.displayName) · \(ProviderRegistry.shared.displayName(for: bot.selection))")
         lines.append((bot.workingDirectory.path as NSString).abbreviatingWithTildeInPath)

@@ -213,7 +213,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         if window.title != title { window.title = title }
         if window.subtitle != subtitle { window.subtitle = subtitle }
-        threadTitle.set(title: title, subtitle: subtitle, avatar: bot?.avatar)
+        threadTitle.set(
+            title: title, subtitle: subtitle, avatar: bot?.avatar,
+            detail: bot?.personality?.displayName.map { String(localized: "Personality: \($0)") })
         if window.representedURL != folder { window.representedURL = folder }
     }
 

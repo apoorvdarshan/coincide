@@ -332,6 +332,9 @@ targets:
       # Dictation: the Mac's microphone capture and Apple speech recognition, and where the transcript goes in the text.
       - path: Coincide/Voice/Shared
       - path: CoincideKit/Voice/DictationInsertion.swift
+      # The bot personality presets, the same file CoincideKit builds, so the phone offers the Mac's presets with
+      # their text and localizes their names in its own catalog.
+      - path: CoincideKit/Models/BotPersonalityPreset.swift
     dependencies:
       - package: CoincideRemoteKit
     settings:

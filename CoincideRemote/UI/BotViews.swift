@@ -287,8 +287,10 @@ struct BotConversationsView: View {
                 VStack(spacing: 10) {
                     BotAvatarImage(avatar: bot.avatar, size: 88, name: bot.name)
                     Text(bot.name).font(.title3.weight(.semibold)).foregroundStyle(theme.ink)
-                    if let model = bot.selection?.modelName {
-                        Text(model).font(.footnote).foregroundStyle(theme.secondaryInk)
+                    // Its model and, quietly beside it, its personality, as the Mac shows in the bot's tooltip.
+                    let details = [bot.selection?.modelName, Self.personalityName(bot.personality)].compactMap(\.self)
+                    if !details.isEmpty {
+                        Text(details.joined(separator: " · ")).font(.footnote).foregroundStyle(theme.secondaryInk)
                     }
                     Button("New Conversation") {
                         Task { if let id = await client.newBotConversation(botID) { navigator.push(.thread(id)) } }
@@ -316,6 +318,13 @@ struct BotConversationsView: View {
             }
         }
         .sheet(item: $editing) { target in BotEditorView(target: target) }
+    }
+
+    /// A personality's name: its preset's, or Custom. Nil for none, and for a preset this phone doesn't have.
+    static func personalityName(_ personality: RemoteBotPersonality?) -> String? {
+        guard let personality, !personality.isEmpty else { return nil }
+        if let preset = personality.preset, !preset.isEmpty { return BotPersonalityPreset.preset(id: preset)?.name }
+        return String(localized: "Custom", comment: "A bot personality the user wrote")
     }
 }
 
@@ -369,6 +378,7 @@ struct BotEditorView: View {
     @Environment(\.theme) private var theme
     @State private var look = BotEditorLook(character: .brulee)
     @State private var persona = ""
+    @State private var personality = BotEditorPersonality(editing: nil)
     @State private var provider: String?
     @State private var modelID: String?
     @State private var fullAccess = false
@@ -382,9 +392,19 @@ struct BotEditorView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Group { fields }
-                    .themedCards(theme)
+            ScrollViewReader { proxy in
+                Form {
+                    Group { fields }
+                        .themedCards(theme)
+                }
+                #if DEBUG
+                // Screenshots of the personality section: `-CoincideRemoteDemoBotEditorScroll personality`.
+                .task {
+                    guard DemoData.isEnabled, let target = DemoData.value(after: "-CoincideRemoteDemoBotEditorScroll") else { return }
+                    try? await Task.sleep(for: .milliseconds(400))
+                    proxy.scrollTo(target, anchor: .top)
+                }
+                #endif
             }
             .scrollContentBackground(.hidden)
             .background(theme.isDark ? theme.content : theme.sidebar)
@@ -401,6 +421,11 @@ struct BotEditorView: View {
             .onChange(of: provider) { old, new in
                 guard loaded, old != new else { return }
                 modelID = client.provider(new ?? "")?.models.first?.id
+            }
+            // As on the Mac: a new character brings its personality until the user picks one.
+            .onChange(of: look.character) { old, new in
+                guard loaded, old != new else { return }
+                personality.suggest(for: new.rawValue, replacing: old.rawValue, defaultID: BotPersonalityPreset.defaultID(forCharacter:))
             }
         }
     }
@@ -457,8 +482,13 @@ struct BotEditorView: View {
                     }
                     .padding(.vertical, 4)
                 }
+                // A Mac older than personalities can't give a bot one.
+                if let offered = client.workspace.botPersonalityPresets {
+                    BotPersonalitySection(personality: $personality, offered: offered)
+                        .id("personality")
+                }
                 Section {
-                    TextField("What it’s like and how it works", text: $persona, axis: .vertical)
+                    TextField("What it does and how it works", text: $persona, axis: .vertical)
                         .lineLimit(4...12)
                 } header: {
                     Text("Instructions")
@@ -488,6 +518,7 @@ struct BotEditorView: View {
             let character = bot.avatar?.artCharacter ?? fallback?.0 ?? .alien
             look = BotEditorLook(character: character, tint: bot.avatar?.artTint ?? character.defaultTint, name: bot.name)
             persona = bot.persona ?? ""
+            personality = BotEditorPersonality(editing: bot.personality)
             provider = bot.selection?.provider
             modelID = bot.selection?.modelID
             fullAccess = bot.accessMode == "fullAccess"
@@ -505,6 +536,11 @@ struct BotEditorView: View {
             if let character = BotArtwork.Character(rawValue: raw) { look.pick(character) }
         }
         #endif
+        // A new bot's personality is its character's, as on the Mac.
+        if existing == nil {
+            personality = BotEditorPersonality(
+                newBotAs: look.character.rawValue, defaultID: BotPersonalityPreset.defaultID(forCharacter:))
+        }
         DispatchQueue.main.async { loaded = true }
     }
 
@@ -516,7 +552,8 @@ struct BotEditorView: View {
             id: original?.id, name: look.name, avatar: RemoteBotAvatar(look.character, look.tint), persona: persona,
             provider: provider == original?.selection?.provider && modelID == original?.selection?.modelID ? nil : provider,
             modelID: provider == original?.selection?.provider && modelID == original?.selection?.modelID ? nil : modelID,
-            accessMode: fullAccess ? "fullAccess" : "approval")
+            accessMode: fullAccess ? "fullAccess" : "approval",
+            personality: client.workspace.botPersonalityPresets == nil ? nil : personality.draft)
         if await client.saveBot(draft) != nil { dismiss() }
     }
 

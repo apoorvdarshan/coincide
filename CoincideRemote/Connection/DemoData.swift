@@ -123,11 +123,12 @@ enum DemoData {
                     id: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!, name: "Brulee", projectID: botsID,
                     threadIDs: [bruleeThreadID], avatar: old ? nil : RemoteBotAvatar(.brulee, .rose),
                     persona: old ? nil : "Friendly and brief.", selection: old ? nil : claude, accessMode: old ? nil : "approval",
-                    interactionMode: old ? nil : "build"),
+                    interactionMode: old ? nil : "build", personality: old ? nil : RemoteBotPersonality(preset: "cheerful")),
                 RemoteBot(
                     id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!, name: old ? "Researcher" : "Teddy", projectID: botsID,
                     avatar: old ? nil : RemoteBotAvatar(.teddy, .caramel), selection: old ? nil : codex,
-                    accessMode: old ? nil : "approval", interactionMode: old ? nil : "build"),
+                    accessMode: old ? nil : "approval", interactionMode: old ? nil : "build",
+                    personality: old ? nil : RemoteBotPersonality(preset: "mentor")),
             ],
             providers: [
                 RemoteProvider(
@@ -144,7 +145,8 @@ enum DemoData {
                             speeds: [RemoteSpeed(id: "priority", name: "Fast")])
                     ]),
             ],
-            pinnedOrder: [], sidebar: old ? nil : RemoteSidebarOptions(threadsPerProject: has("FewThreads") ? 2 : nil))
+            pinnedOrder: [], sidebar: old ? nil : RemoteSidebarOptions(threadsPerProject: has("FewThreads") ? 2 : nil),
+            botPersonalityPresets: old ? nil : BotPersonalityPreset.all.map(\.id))
     }
 
     /// The Mac's Settings as its catalog (`RemoteSettingsCatalog`) describes them, abridged.

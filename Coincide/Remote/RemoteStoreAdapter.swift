@@ -271,9 +271,10 @@ final class RemoteStoreAdapter {
                     avatar: RemoteBotAvatar(character: bot.avatar.shape.rawValue, tint: bot.avatar.tint.rawValue),
                     persona: bot.persona, selection: selection(bot.selection), accessMode: bot.accessMode.rawValue,
                     interactionMode: bot.interactionMode.rawValue,
-                    folder: bot.folder.map { ($0 as NSString).abbreviatingWithTildeInPath })
+                    folder: bot.folder.map { ($0 as NSString).abbreviatingWithTildeInPath },
+                    personality: bot.personality.map { RemoteBotPersonality(preset: $0.presetID, custom: $0.custom.isEmpty ? nil : $0.custom) })
             }, providers: providers(), sections: layout.sections,
-            pinnedOrder: pinned, sidebar: Self.sidebarOptions(layout))
+            pinnedOrder: pinned, sidebar: Self.sidebarOptions(layout), botPersonalityPresets: BotPersonalityPreset.all.map(\.id))
     }
 
     func summary(_ thread: ThreadSummary) -> RemoteThreadSummary {
@@ -796,20 +797,24 @@ final class RemoteStoreAdapter {
             }
             selection.effort = effort
         }
+        let personality = try draft.personality.map(Self.personality)
         let trimmed = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = trimmed.isEmpty ? shape.defaultName : String(trimmed.prefix(80))
-        let persona = String(draft.persona.prefix(20_000))
+        let persona = String(draft.persona.prefix(Bot.personaLimit))
         guard let original = existing else {
+            // A phone older than personalities offers none, so its new bot has none.
             let bot = store.addBot(
                 Bot(
-                    name: name, avatar: BotAvatar(shape: shape, tint: tint), persona: persona, selection: selection,
-                    accessMode: access ?? .approval, interactionMode: interaction ?? .build))
+                    name: name, avatar: BotAvatar(shape: shape, tint: tint), persona: persona, personality: personality ?? nil,
+                    selection: selection, accessMode: access ?? .approval, interactionMode: interaction ?? .build))
             return bot.id
         }
         var edited = original
         edited.name = name
         edited.avatar = BotAvatar(shape: shape, tint: tint)
         edited.persona = persona
+        // A phone older than personalities sends none, and the bot keeps its own.
+        if let personality { edited.personality = personality }
         edited.selection = selection
         if let access { edited.accessMode = access }
         if let interaction { edited.interactionMode = interaction }
@@ -831,6 +836,18 @@ final class RemoteStoreAdapter {
             }
         }
         return original.id
+    }
+
+    /// The personality a phone asks for, checked as the Mac's editor allows it: a preset this Mac has, or a description
+    /// within `BotPersonalityPreset.customLimit`. An empty one is none.
+    static func personality(_ remote: RemoteBotPersonality) throws -> BotPersonality? {
+        let preset = remote.preset.flatMap { $0.isEmpty ? nil : $0 }
+        if let preset, BotPersonalityPreset.preset(id: preset) == nil {
+            throw RemoteError(.badRequest, String(localized: "This Mac doesn’t know that personality."))
+        }
+        let personality = BotPersonality(
+            presetID: preset, custom: String((remote.custom ?? "").prefix(BotPersonalityPreset.customLimit)))
+        return personality.isEmpty ? nil : personality
     }
 
     /// Deletes a bot. Its conversations stop and stay as chats, or are deleted with it when asked, as on the Mac.
