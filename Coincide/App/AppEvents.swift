@@ -18,6 +18,9 @@ extension Notification.Name {
     /// Attaches context to the composer's message, from the terminal or the diff. Handled by the composer.
     /// userInfo["threadID"]: UUID, ["context"]: MessageContext
     static let coincideAddComposerContext = Notification.Name("coincide.addComposerContext")
+    /// Attaches images already saved in the attachments folder (an appshot) to the composer's message. Handled by the
+    /// composer. userInfo["threadID"]: UUID, ["images"]: [ComposerAttachment]
+    static let coincideAddComposerImages = Notification.Name("coincide.addComposerImages")
     /// Writes `#123` into the composer, as picking the pull request from the `#` list does. Handled by the composer.
     /// userInfo["pullRequest"]: PullRequestSummary
     static let coincideMentionPullRequest = Notification.Name("coincide.mentionPullRequest")
@@ -59,6 +62,12 @@ enum AppEvents {
     static func addToComposer(_ context: MessageContext, threadID: UUID) {
         NotificationCenter.default.post(
             name: .coincideAddComposerContext, object: nil, userInfo: ["threadID": threadID, "context": context])
+    }
+
+    /// Adds `images`, already in the attachments folder, to the message being written in `threadID`.
+    static func addToComposer(images: [ComposerAttachment], threadID: UUID) {
+        NotificationCenter.default.post(
+            name: .coincideAddComposerImages, object: nil, userInfo: ["threadID": threadID, "images": images])
     }
 
     static func post(_ name: Notification.Name, _ info: [String: Any] = [:]) {

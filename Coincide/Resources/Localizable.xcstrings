@@ -3531,6 +3531,9 @@
         }
       }
     },
+    "%@ doesn’t allow capturing this window" : {
+
+    },
     "%@ encrypts cookies with a key in your Keychain. macOS will ask whether Coincide may use “%@”; choose Allow to import cookies. The key is used once, on this Mac, and isn’t kept." : {
       "localizations" : {
         "de" : {
@@ -4668,6 +4671,9 @@
           }
         }
       }
+    },
+    "%@ is in use by another app" : {
+
     },
     "%@ is not installed or could not be found on PATH." : {
       "localizations" : {
@@ -22584,6 +22590,9 @@
         }
       }
     },
+    "A shortcut works in every app, and needs no Accessibility access." : {
+
+    },
     "A subagent has a question" : {
       "localizations" : {
         "de" : {
@@ -29142,6 +29151,9 @@
         }
       }
     },
+    "Adds the text the app makes available in that window, read through Accessibility, as a card beside the picture." : {
+
+    },
     "Admin API key" : {
       "localizations" : {
         "de" : {
@@ -35201,6 +35213,9 @@
           }
         }
       }
+    },
+    "Allow Screen Recording in Settings › Appshots" : {
+
     },
     "Allow agents to use this Mac" : {
       "localizations" : {
@@ -42990,6 +43005,18 @@
         }
       }
     },
+    "Appshot of %@" : {
+
+    },
+    "Appshot of %@ added" : {
+
+    },
+    "Appshots" : {
+
+    },
+    "Appshots never send anything on their own: the picture waits in the composer until you send your message. If you used a thread in the last minute, the appshot goes there; otherwise it starts a new chat." : {
+
+    },
     "Archive" : {
       "localizations" : {
         "de" : {
@@ -48926,6 +48953,12 @@
         }
       }
     },
+    "Both Command keys" : {
+
+    },
+    "Both ⌘ keys" : {
+
+    },
     "Bots" : {
       "localizations" : {
         "de" : {
@@ -54133,6 +54166,15 @@
           }
         }
       }
+    },
+    "Capture" : {
+
+    },
+    "Capture the frontmost window of the app you’re using and attach it to a chat in Coincide, ready for your question." : {
+
+    },
+    "Capture the window you’re working in and ask an agent about it." : {
+
     },
     "Caramel" : {
       "localizations" : {
@@ -72961,6 +73003,9 @@
           }
         }
       }
+    },
+    "Coincide captures only the frontmost window, never the whole screen or other windows. It skips its own windows, windows that ask not to be captured, and apps where you’re typing a password. Captures are kept with Coincide’s other attachments on this Mac, and agents see them only when you send them." : {
+
     },
     "Coincide closed before the task finished. Open its thread to continue." : {
       "localizations" : {
@@ -101669,6 +101714,9 @@
           }
         }
       }
+    },
+    "Custom shortcut" : {
+
     },
     "Customize Toolbar…" : {
       "localizations" : {
@@ -137422,6 +137470,9 @@
         }
       }
     },
+    "Include the window’s text" : {
+
+    },
     "Include usage from outside Coincide" : {
       "localizations" : {
         "de" : {
@@ -146906,6 +146957,9 @@
         }
       }
     },
+    "Last appshot" : {
+
+    },
     "Last checked %@" : {
       "localizations" : {
         "de" : {
@@ -148474,6 +148528,15 @@
         }
       }
     },
+    "Lets Coincide capture the frontmost window. Appshots never capture the whole screen." : {
+
+    },
+    "Lets Coincide notice both ⌘ keys while you use other apps, and read the window’s text." : {
+
+    },
+    "Lets Coincide notice both ⌘ keys while you use other apps." : {
+
+    },
     "Lets Coincide read app controls, click and type." : {
       "localizations" : {
         "de" : {
@@ -148585,6 +148648,9 @@
           }
         }
       }
+    },
+    "Lets Coincide read the window’s text." : {
+
     },
     "License" : {
       "localizations" : {
@@ -178081,6 +178147,9 @@
         }
       }
     },
+    "No window to capture" : {
+
+    },
     "None" : {
       "localizations" : {
         "de" : {
@@ -180096,6 +180165,9 @@
           }
         }
       }
+    },
+    "Not needed with a custom shortcut and without the window’s text." : {
+
     },
     "Not read yet." : {
       "localizations" : {
@@ -199482,6 +199554,9 @@
         }
       }
     },
+    "Press the left and right ⌘ keys together, without other keys." : {
+
+    },
     "Press the new shortcut. Delete removes it; Escape cancels." : {
       "localizations" : {
         "de" : {
@@ -201163,6 +201238,9 @@
           }
         }
       }
+    },
+    "Privacy" : {
+
     },
     "Private preview · cookies are cleared when Coincide quits" : {
       "localizations" : {
@@ -211472,6 +211550,12 @@
         }
       }
     },
+    "Ready: press %@" : {
+
+    },
+    "Ready: press both ⌘ keys" : {
+
+    },
     "Reasoning" : {
       "localizations" : {
         "de" : {
@@ -212703,6 +212787,9 @@
           }
         }
       }
+    },
+    "Record a shortcut" : {
+
     },
     "Recording. Type the new shortcut." : {
       "localizations" : {
@@ -247096,6 +247183,9 @@
         }
       }
     },
+    "Skipped: %@ is taking a password" : {
+
+    },
     "Sky" : {
       "localizations" : {
         "de" : {
@@ -260445,6 +260535,12 @@
         }
       }
     },
+    "Take an appshot" : {
+
+    },
+    "Take an appshot with" : {
+
+    },
     "Takes %@ from %@." : {
       "localizations" : {
         "de" : {
@@ -268756,6 +268852,9 @@
           }
         }
       }
+    },
+    "The appshot couldn’t be saved." : {
+
     },
     "The archive contains an unexpected, unsafe, or incorrectly sized member." : {
       "localizations" : {
@@ -281082,6 +281181,9 @@
           }
         }
       }
+    },
+    "The window closed before Coincide could capture it." : {
+
     },
     "The working tree matches the last commit." : {
       "localizations" : {
@@ -294357,6 +294459,9 @@
         }
       }
     },
+    "Turn on Appshots" : {
+
+    },
     "Turn on checkpoints in Settings to see each turn's changes." : {
       "localizations" : {
         "de" : {
@@ -301771,6 +301876,9 @@
         }
       }
     },
+    "Use ⌘ or ⌃ with a key, such as ⌃⌥⌘S." : {
+
+    },
     "Used" : {
       "comment" : "Usage shows what is used of each limit",
       "localizations" : {
@@ -305100,6 +305208,9 @@
         }
       }
     },
+    "Waiting for Screen Recording access" : {
+
+    },
     "Waiting for iCloud Drive to download the copy." : {
       "localizations" : {
         "de" : {
@@ -307787,6 +307898,12 @@
           }
         }
       }
+    },
+    "Window text" : {
+
+    },
+    "Window text from %@" : {
+
     },
     "With the lid closed, give it airflow. While sleep is disabled, Apple menu › Sleep does nothing. Turn Keep Awake off here before you delete Coincide." : {
       "localizations" : {
@@ -317886,6 +318003,9 @@
           }
         }
       }
+    },
+    "the app" : {
+
     },
     "the page" : {
       "localizations" : {

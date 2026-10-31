@@ -123,6 +123,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Coincide draws the agent's cursor on whichever display it acts on (Cua Driver's own overlay covers only the main
     /// display, trycua/cua#5336).
     public var computerUseShowsAgentCursor: Bool
+    /// Settings › Appshots: both ⌘ keys (or a shortcut) capture the frontmost window of another app into a chat. Off by
+    /// default, and then no key is watched.
+    public var appshots: AppshotSettings
     /// Keep Awake: the Mac never sleeps, closing the lid included (`AlwaysOnController`). The lid watcher reads it
     /// from settings.json too.
     public var alwaysOn: AlwaysOnSettings
@@ -222,6 +225,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         commandLineControl = true
         computerUseEnabled = false
         computerUseShowsAgentCursor = true
+        appshots = AppshotSettings()
         alwaysOn = AlwaysOnSettings()
         holdToQuit = true
         opensLinksInDefaultBrowser = false
@@ -285,6 +289,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         commandLineControl = value(.commandLineControl, defaults.commandLineControl)
         computerUseEnabled = value(.computerUseEnabled, defaults.computerUseEnabled)
         computerUseShowsAgentCursor = value(.computerUseShowsAgentCursor, defaults.computerUseShowsAgentCursor)
+        appshots = value(.appshots, defaults.appshots)
         alwaysOn = value(.alwaysOn, defaults.alwaysOn)
         holdToQuit = value(.holdToQuit, defaults.holdToQuit)
         opensLinksInDefaultBrowser = value(.opensLinksInDefaultBrowser, defaults.opensLinksInDefaultBrowser)

@@ -69,6 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PreviewSessions.shared.start()
         // Settings › Computer Use: each thread's private connection to the bundled computer-use helper.
         ComputerUseController.shared.start()
+        // Settings › Appshots: watches for both ⌘ keys (or the user's shortcut) only while it's on.
+        AppshotController.shared.start()
         // Settings › Usage may read sites the user turned on with their sign-in in the shared browser profile.
         BrowserUsageBridge.connect()
         AppUpdates.shared.start()
@@ -128,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CommandLineControl.shared.stop()
         PreviewSessions.shared.stop()
         ComputerUseController.shared.shutdown()
+        AppshotController.shared.shutdown()
         ThreadRunner.shared.shutdownAll()
         AgentHostController.shared.prepareToQuit()
         AppStore.shared.flush()

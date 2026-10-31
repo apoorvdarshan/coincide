@@ -175,7 +175,7 @@ enum HandoffChecks {
         (0..<input.int(in: 0...4)).map { index -> MessageContext in
             let text = input.text(contextTexts, maxPieces: 4)
             let content: MessageContext.Content
-            switch input.int(in: 0...3) {
+            switch input.int(in: 0...4) {
             case 0:
                 content = .quote(.init(text: text, provider: input.bool() ? input.pick(ProviderKind.allCases) : nil))
             case 1:
@@ -189,6 +189,10 @@ enum HandoffChecks {
                     .init(
                         path: "a b/c.swift", lineStart: input.int(in: 1...9), lineEnd: input.int(in: 1...9),
                         isBeforeChange: input.bool(), diff: input.text(contextTexts, maxPieces: 3), comment: text))
+            case 3:
+                // Another app's window text is untrusted: it must not close the block either.
+                content = .windowText(
+                    .init(app: "Safari", title: input.bool() ? input.text(contextTexts, maxPieces: 2) : nil, text: text))
             default:
                 content = .file(.init(path: input.pick(["/tmp/a b/spec.pdf", "/tmp/notes.txt", "relative.md", ""])))
             }
