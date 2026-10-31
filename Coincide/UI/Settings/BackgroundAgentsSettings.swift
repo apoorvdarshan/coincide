@@ -73,7 +73,7 @@ struct BackgroundAgentsRows: View {
                     localized: "The agent host from Coincide \(version) keeps its agents running, and gives way to this version’s once they finish.")
                 : String(localized: "They keep working after Coincide quits. The agent host exits once nothing runs.")
         case .connecting:
-            String(localized: "Until it answers, new agents start in Coincide.")
+            String(localized: "New agents wait a few seconds for it to answer before they start in Coincide.")
         case .inApp(let reason):
             switch reason {
             case .turnedOff:
@@ -90,7 +90,8 @@ struct BackgroundAgentsRows: View {
             case .registrationFailed(let message):
                 String(localized: "macOS couldn’t start the agent host: \(message)")
             case .unreachable:
-                String(localized: "The agent host didn’t answer, so agents stop when Coincide quits. Coincide tries again when it next opens.")
+                String(
+                    localized: "The agent host didn’t answer. Coincide keeps trying; until it gets through, new agents run in Coincide and stop when it quits.")
             case .incompatibleHostBusy:
                 String(
                     localized: "An agent host from another version of Coincide still runs agents. New agents run in Coincide until those finish.")

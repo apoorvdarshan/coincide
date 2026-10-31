@@ -153,6 +153,9 @@ public struct AgentHostSessionInfo: Codable, Sendable, Hashable {
     /// The background work the session last reported (`AgentEvent.backgroundWork`), which the app shows again: the
     /// event that reported it may be one the app applied before it quit. Nil from a host older than this field.
     public var backgroundTasks: [BackgroundTask]?
+    /// In a `start` reply: the session already ran, so the start attached to it instead of launching a second
+    /// process. The app then catches up on its log. Nil from a host older than this field.
+    public var attachedToRunning: Bool?
 
     public nonisolated init(
         key: AgentSessionKey, isLive: Bool, sessionID: String?, supportsSteering: Bool, hasBackgroundWork: Bool,

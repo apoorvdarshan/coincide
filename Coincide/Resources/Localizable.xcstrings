@@ -184366,6 +184366,118 @@
         }
       }
     },
+    "New agents wait a few seconds for it to answer before they start in Coincide." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neue Agenten warten einige Sekunden auf eine Antwort, bevor sie in Coincide starten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los agentes nuevos esperan unos segundos a que responda antes de iniciarse en Coincide."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los agentes nuevos esperan unos segundos a que responda antes de iniciarse en Coincide."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les nouveaux agents attendent quelques secondes sa réponse avant de démarrer dans Coincide."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "नए एजेंट Coincide में शुरू होने से पहले कुछ सेकंड उसके जवाब का इंतज़ार करते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agen baru menunggu beberapa detik hingga host merespons sebelum dimulai di Coincide."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I nuovi agenti attendono qualche secondo una risposta prima di avviarsi in Coincide."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新しいエージェントは、Coincideで開始する前に数秒間応答を待ちます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "새 에이전트는 Coincide에서 시작하기 전에 몇 초 동안 응답을 기다립니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nieuwe agents wachten een paar seconden op een antwoord voordat ze in Coincide starten."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nowi agenci czekają kilka sekund na odpowiedź, zanim uruchomią się w Coincide."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Novos agentes esperam alguns segundos por uma resposta antes de iniciar no Coincide."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Новые агенты несколько секунд ждут ответа, прежде чем запуститься в Coincide."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yeni ajanlar, Coincide'da başlamadan önce yanıt için birkaç saniye bekler."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нові агенти кілька секунд чекають на відповідь, перш ніж запуститися в Coincide."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent mới chờ vài giây để tiến trình agent nền phản hồi rồi mới khởi động trong Coincide."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新智能体会先等待几秒钟让它响应，然后才在 Coincide 中启动。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新的代理程式會先等待幾秒讓它回應，然後才在 Coincide 中啟動。"
+          }
+        }
+      }
+    },
     "New branches are made in the project’s own folder." : {
       "localizations" : {
         "de" : {
@@ -290614,114 +290726,114 @@
         }
       }
     },
-    "The agent host didn’t answer, so agents stop when Coincide quits. Coincide tries again when it next opens." : {
+    "The agent host didn’t answer. Coincide keeps trying; until it gets through, new agents run in Coincide and stop when it quits." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Der Agent-Host hat nicht geantwortet, daher stoppen Agenten, wenn Coincide beendet wird. Coincide versucht es beim nächsten Öffnen erneut."
+            "value" : "Der Agent-Host hat nicht geantwortet. Coincide versucht es weiter; bis dahin laufen neue Agenten in Coincide und stoppen, wenn Coincide beendet wird."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El host de agentes no ha respondido, así que los agentes se detendrán al salir de Coincide. Coincide lo volverá a intentar la próxima vez que se abra."
+            "value" : "El host de agentes no ha respondido. Coincide lo sigue intentando; hasta que lo consiga, los agentes nuevos se ejecutan en Coincide y se detienen al salir de Coincide."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "El host de agentes no respondió, así que los agentes se detendrán al salir de Coincide. Coincide lo volverá a intentar la próxima vez que se abra."
+            "value" : "El host de agentes no respondió. Coincide lo sigue intentando; hasta que lo logre, los agentes nuevos se ejecutan en Coincide y se detienen al salir de Coincide."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "L'hôte d'agents n'a pas répondu : les agents s'arrêteront donc à la fermeture de Coincide. Coincide réessaiera à sa prochaine ouverture."
+            "value" : "L'hôte d'agents n'a pas répondu. Coincide continue d'essayer ; d'ici là, les nouveaux agents s'exécutent dans Coincide et s'arrêtent à sa fermeture."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "एजेंट होस्ट ने जवाब नहीं दिया, इसलिए Coincide बंद होने पर एजेंट रुक जाएँगे। अगली बार खुलने पर Coincide फिर कोशिश करेगा।"
+            "value" : "एजेंट होस्ट ने जवाब नहीं दिया। Coincide कोशिश करता रहता है; जब तक जुड़ नहीं जाता, नए एजेंट Coincide में चलते हैं और उसके बंद होने पर रुक जाते हैं।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Host agen tidak merespons, jadi agen berhenti saat Coincide ditutup. Coincide mencoba lagi saat dibuka berikutnya."
+            "value" : "Host agen tidak merespons. Coincide terus mencoba; sampai berhasil, agen baru berjalan di Coincide dan berhenti saat Coincide ditutup."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "L'host degli agenti non ha risposto, quindi gli agenti si fermeranno quando esci da Coincide. Coincide riproverà alla prossima apertura."
+            "value" : "L'host degli agenti non ha risposto. Coincide continua a provare; finché non ci riesce, i nuovi agenti vengono eseguiti in Coincide e si fermano quando esci da Coincide."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "エージェントホストが応答しなかったため、Coincideを終了するとエージェントは停止します。Coincideは次に開いたときに再試行します。"
+            "value" : "エージェントホストが応答しませんでした。Coincideは再試行を続けます。接続できるまで、新しいエージェントはCoincide内で実行され、Coincideを終了すると停止します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "에이전트 호스트가 응답하지 않아 Coincide를 종료하면 에이전트가 중지됩니다. Coincide는 다음에 열릴 때 다시 시도합니다."
+            "value" : "에이전트 호스트가 응답하지 않았습니다. Coincide가 계속 시도합니다. 연결될 때까지 새 에이전트는 Coincide에서 실행되며 Coincide를 종료하면 중지됩니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "De agenthost reageerde niet, dus agents stoppen wanneer Coincide stopt. Coincide probeert het opnieuw wanneer het weer wordt geopend."
+            "value" : "De agenthost reageerde niet. Coincide blijft het proberen; tot dat lukt, draaien nieuwe agents in Coincide en stoppen ze wanneer Coincide stopt."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Host agentów nie odpowiedział, więc agenci zatrzymają się po zamknięciu Coincide. Coincide spróbuje ponownie przy następnym otwarciu."
+            "value" : "Host agentów nie odpowiedział. Coincide wciąż próbuje; dopóki się nie połączy, nowi agenci działają w Coincide i zatrzymują się po jego zamknięciu."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O host de agentes não respondeu, então os agentes param quando o Coincide for encerrado. O Coincide tentará novamente na próxima vez que for aberto."
+            "value" : "O host de agentes não respondeu. O Coincide continua tentando; até conseguir, novos agentes rodam no Coincide e param quando ele é encerrado."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Хост агентов не ответил, поэтому агенты остановятся при выходе из Coincide. Coincide повторит попытку при следующем открытии."
+            "value" : "Хост агентов не ответил. Coincide продолжает попытки; пока не получится, новые агенты работают в Coincide и останавливаются при выходе из него."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ajan sunucusu yanıt vermedi, bu yüzden Coincide kapandığında ajanlar durur. Coincide bir sonraki açılışta yeniden dener."
+            "value" : "Ajan sunucusu yanıt vermedi. Coincide denemeye devam ediyor; bağlanana kadar yeni ajanlar Coincide'da çalışır ve Coincide kapandığında durur."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Хост агентів не відповів, тож агенти зупиняться після виходу з Coincide. Coincide спробує знову під час наступного відкриття."
+            "value" : "Хост агентів не відповів. Coincide і далі пробує; доки не вдасться, нові агенти працюють у Coincide й зупиняються після виходу з нього."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Tiến trình agent nền không phản hồi, nên agent sẽ dừng khi thoát Coincide. Coincide sẽ thử lại vào lần mở tiếp theo."
+            "value" : "Tiến trình agent nền không phản hồi. Coincide vẫn tiếp tục thử; cho đến khi kết nối được, agent mới chạy trong Coincide và dừng khi thoát Coincide."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "智能体主机没有响应，因此 Coincide 退出时智能体会停止。Coincide 下次打开时会重试。"
+            "value" : "智能体主机没有响应。Coincide 会继续尝试；在连接成功之前，新智能体在 Coincide 中运行，退出 Coincide 时会停止。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "代理程式主機沒有回應，因此 Coincide 結束時代理程式會停止。Coincide 下次打開時會再試一次。"
+            "value" : "代理程式主機沒有回應。Coincide 會繼續嘗試；在連線成功之前，新的代理程式會在 Coincide 中執行，結束 Coincide 時會停止。"
           }
         }
       }
@@ -309449,6 +309561,342 @@
         }
       }
     },
+    "This agent is still running in Coincide, so it can’t be started a second time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Agent läuft noch in Coincide und kann daher nicht ein zweites Mal gestartet werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este agente sigue ejecutándose en Coincide, así que no se puede iniciar una segunda vez."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este agente sigue ejecutándose en Coincide, así que no se puede iniciar una segunda vez."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cet agent s'exécute encore dans Coincide : il ne peut donc pas être démarré une seconde fois."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह एजेंट अभी भी Coincide में चल रहा है, इसलिए इसे दूसरी बार शुरू नहीं किया जा सकता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agen ini masih berjalan di Coincide, jadi tidak dapat dimulai untuk kedua kalinya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questo agente è ancora in esecuzione in Coincide, quindi non può essere avviato una seconda volta."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このエージェントはまだCoincide内で実行中のため、2回目を開始することはできません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 에이전트는 아직 Coincide에서 실행 중이므로 두 번 시작할 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze agent draait nog in Coincide en kan dus niet een tweede keer worden gestart."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten agent nadal działa w Coincide, więc nie można uruchomić go drugi raz."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este agente ainda está rodando no Coincide, então não pode ser iniciado uma segunda vez."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот агент всё ещё работает в Coincide, поэтому его нельзя запустить второй раз."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu ajan hâlâ Coincide'da çalışıyor, bu yüzden ikinci kez başlatılamaz."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей агент досі працює в Coincide, тож його не можна запустити вдруге."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent này vẫn đang chạy trong Coincide, nên không thể khởi động lần thứ hai."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此智能体仍在 Coincide 中运行，因此无法再次启动。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此代理程式仍在 Coincide 中執行，因此無法再啟動一次。"
+          }
+        }
+      }
+    },
+    "This agent is still running in Coincide’s agent host, which Coincide can’t reach right now. Coincide shows its work once it reconnects, or once the agent finishes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Agent läuft noch im Agent-Host von Coincide, den Coincide gerade nicht erreicht. Coincide zeigt seine Arbeit, sobald die Verbindung wieder steht oder der Agent fertig ist."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este agente sigue ejecutándose en el host de agentes de Coincide, al que Coincide no puede acceder ahora. Coincide mostrará su trabajo cuando vuelva a conectarse o cuando el agente termine."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este agente sigue ejecutándose en el host de agentes de Coincide, al que Coincide no puede acceder ahora. Coincide mostrará su trabajo cuando se vuelva a conectar o cuando el agente termine."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cet agent s'exécute encore dans l'hôte d'agents de Coincide, que Coincide ne peut pas joindre pour l'instant. Coincide affichera son travail dès qu'il se reconnectera ou que l'agent aura terminé."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह एजेंट अभी भी Coincide के एजेंट होस्ट में चल रहा है, जिस तक Coincide अभी नहीं पहुँच पा रहा। फिर से जुड़ने पर या एजेंट का काम पूरा होने पर Coincide उसका काम दिखाएगा।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agen ini masih berjalan di host agen Coincide, yang saat ini tidak dapat dijangkau Coincide. Coincide menampilkan pekerjaannya setelah terhubung kembali, atau setelah agen selesai."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questo agente è ancora in esecuzione nell'host degli agenti di Coincide, che al momento Coincide non riesce a raggiungere. Coincide ne mostrerà il lavoro non appena si riconnette o quando l'agente avrà finito."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このエージェントはまだCoincideのエージェントホストで実行中ですが、Coincideは現在そこに接続できません。再接続するか、エージェントが終了すると、Coincideがその作業を表示します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 에이전트는 아직 Coincide의 에이전트 호스트에서 실행 중이지만 지금은 Coincide가 호스트에 연결할 수 없습니다. 다시 연결되거나 에이전트가 끝나면 Coincide가 작업 내용을 보여 줍니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze agent draait nog in de agenthost van Coincide, die Coincide nu niet kan bereiken. Coincide toont het werk zodra de verbinding terug is, of zodra de agent klaar is."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten agent nadal działa w hoście agentów Coincide, z którym Coincide nie może się teraz połączyć. Coincide pokaże jego pracę po ponownym połączeniu albo gdy agent skończy."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este agente ainda está rodando no host de agentes do Coincide, que o Coincide não consegue alcançar agora. O Coincide mostrará o trabalho dele assim que se reconectar ou quando o agente terminar."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот агент всё ещё работает в хосте агентов Coincide, к которому Coincide сейчас не может подключиться. Coincide покажет его работу, как только переподключится или агент закончит."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu ajan hâlâ Coincide'ın ajan sunucusunda çalışıyor ve Coincide şu anda ona ulaşamıyor. Coincide yeniden bağlandığında ya da ajan bitirdiğinde çalışmasını gösterir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей агент досі працює в хості агентів Coincide, до якого Coincide зараз не може під’єднатися. Coincide покаже його роботу, щойно під’єднається знову або агент завершить."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent này vẫn đang chạy trong tiến trình agent nền của Coincide, mà hiện Coincide không kết nối được. Coincide sẽ hiển thị công việc của nó khi kết nối lại, hoặc khi agent hoàn tất."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此智能体仍在 Coincide 的智能体主机中运行，但 Coincide 目前无法连接到它。重新连接后或智能体完成后，Coincide 会显示它的工作。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此代理程式仍在 Coincide 的代理程式主機中執行，但 Coincide 目前無法連線到它。重新連線後或代理程式完成後，Coincide 會顯示它的工作。"
+          }
+        }
+      }
+    },
+    "This agent session is already running in another thread." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Agentensitzung läuft bereits in einem anderen Thread."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta sesión del agente ya se está ejecutando en otro hilo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta sesión del agente ya se está ejecutando en otro hilo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette session d'agent s'exécute déjà dans un autre fil."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह एजेंट सत्र पहले से किसी दूसरे थ्रेड में चल रहा है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sesi agen ini sudah berjalan di thread lain."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questa sessione dell'agente è già in esecuzione in un altro thread."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このエージェントセッションはすでに別のスレッドで実行中です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 에이전트 세션은 이미 다른 스레드에서 실행 중입니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze agentsessie draait al in een andere thread."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ta sesja agenta działa już w innym wątku."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta sessão de agente já está rodando em outro tópico."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот сеанс агента уже работает в другом треде."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu ajan oturumu zaten başka bir konuşmada çalışıyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей сеанс агента вже працює в іншому треді."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Phiên agent này đang chạy trong một luồng khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此智能体会话已在另一个线程中运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此代理程式工作階段已在另一個對話串中執行。"
+          }
+        }
+      }
+    },
     "This branch has no upstream yet. Push it first." : {
       "localizations" : {
         "de" : {
@@ -324288,118 +324736,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "立即顯示"
-          }
-        }
-      }
-    },
-    "Until it answers, new agents start in Coincide." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Bis er antwortet, starten neue Agenten in Coincide."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Hasta que responda, los nuevos agentes se inician en Coincide."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Hasta que responda, los nuevos agentes se inician en Coincide."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Tant qu'il ne répond pas, les nouveaux agents démarrent dans Coincide."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "जब तक यह जवाब नहीं देता, नए एजेंट Coincide में शुरू होते हैं।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Hingga host agen merespons, agen baru dimulai di Coincide."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Finché non risponde, i nuovi agenti vengono avviati in Coincide."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "応答があるまで、新しいエージェントはCoincide内で開始されます。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "응답할 때까지 새 에이전트는 Coincide에서 시작됩니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Totdat hij reageert, starten nieuwe agents in Coincide."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Dopóki nie odpowie, nowi agenci uruchamiają się w Coincide."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Até ele responder, novos agentes iniciam no Coincide."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Пока он не ответит, новые агенты запускаются в Coincide."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Yanıt verene kadar yeni ajanlar Coincide içinde başlar."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Доки він не відповість, нові агенти запускаються в Coincide."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Cho đến khi tiến trình phản hồi, agent mới sẽ khởi động trong Coincide."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "在它响应之前，新智能体将在 Coincide 中启动。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "在它回應之前，新的代理程式會在 Coincide 中啟動。"
           }
         }
       }

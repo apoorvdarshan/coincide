@@ -97,6 +97,18 @@ public final class AgentHostClient {
         for request in info.pendingQuestions { session.deliver(.userInputRequested(request)) }
     }
 
+    /// A `start` the host answered by attaching to the session it already ran (`attachedToRunning`): the app catches
+    /// up on what it logged since the app last applied, instead of a second process starting.
+    func catchUp(_ session: RemoteAgentSession, startedAs info: AgentHostSessionInfo) async {
+        guard sessions[session.key] === session else { return }
+        // Events pushed since the start went out are newer still; replaying older ones over them would apply some twice.
+        guard applied[session.key] == nil else { return }
+        applied[session.key] = info.acknowledgedSequence
+        backlogEnd[session.key] = info.lastSequence
+        guard info.lastSequence > info.acknowledgedSequence else { return }
+        _ = try? await transport.perform(.attach(key: session.key, after: info.acknowledgedSequence))
+    }
+
     /// What an adopted session runs in the background. A host older than the list only says whether it runs
     /// anything, which shows as one unnamed task until the session reports its work again.
     nonisolated static func backgroundTasks(of info: AgentHostSessionInfo) -> [BackgroundTask] {
@@ -320,6 +332,11 @@ public final class RemoteAgentSession: DetachableAgentSession, BackgroundWorkRep
         case .started(let info):
             sessionID = info.sessionID ?? sessionID
             supportsSteering = info.supportsSteering
+            if info.attachedToRunning == true {
+                hasBackgroundWork = info.hasBackgroundWork
+                if info.isTurnActive { isTurnPending = true }
+                await client?.catchUp(self, startedAs: info)
+            }
         case .failure(let message):
             throw AgentError.providerError(message)
         default:

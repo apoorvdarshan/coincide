@@ -186,6 +186,17 @@ public final class ThreadRunner {
     /// Makes the sessions that run in the background agent host while the app uses one (`AgentHostClient`), so they
     /// outlive the app. Nil, or a nil result, runs the session in the app.
     public var hostedSession: ((_ threadID: UUID, _ launch: AgentLaunch, _ account: ProviderAccount) -> AgentSession?)?
+    /// Says where a new session runs (`AgentSessionRoute`), waiting briefly for an agent host that is being connected
+    /// to. Nil decides from `hostedSession` alone. `runningElsewhere` fails the turn instead of starting a second
+    /// process for a session the host still runs.
+    public var sessionRoute: ((AgentSessionKey) async -> AgentSessionRoute)?
+    /// Locks the sessions that run in the app, so neither the agent host nor a later run of the app starts them a
+    /// second time while they run (`AgentSessionLocks`). Nil runs without.
+    public var sessionLocks: AgentSessionLocks?
+    /// The build named in the app's locks.
+    public var build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+    /// The locks of the sessions that run in the app, with the session each belongs to.
+    private var inAppLeases: [UUID: [ProviderKind: (session: ObjectIdentifier, lease: AgentSessionLease)]] = [:]
 
     public init(store: AppStore, registry: ProviderRegistry) {
         self.store = store
@@ -706,6 +717,7 @@ public final class ThreadRunner {
         let live = sessions[threadID]?.removeValue(forKey: provider)
         let launching = launches[threadID]?.removeValue(forKey: provider)
         liveSessionIDs[threadID]?[provider] = nil
+        releaseInAppLease(threadID, provider)
         guard live != nil || launching != nil else { return }
         setBackgroundWork([], threadID: threadID, provider: provider)
         live?.shutdown()
@@ -816,9 +828,13 @@ public final class ThreadRunner {
                 }
             }
         }
+        let key = AgentSessionKey(threadID: threadID, provider: provider)
+        let route = await sessionRoute?(key)
         // Another send may have started (or finished starting) the session while this one waited.
         if let existing = sessions[threadID]?[provider] { return existing }
         if let launch = launches[threadID]?[provider] { return try await join(launch, threadID, provider) }
+        // A process the app can't reach still runs it: resuming it here would answer the thread twice.
+        if route == .runningElsewhere { throw AgentHostError.runningElsewhere(.host) }
         guard let thread = store.thread(threadID) else { throw AgentError.notRunning }
         // The thread may have moved to another account while the environment was read; the next send starts that one.
         let resumed = thread.sessions[provider].flatMap { $0.account == account ? $0.sessionID : nil }
@@ -827,8 +843,17 @@ public final class ThreadRunner {
             resumeSessionID: resumed, selection: thread.selection,
             accessMode: thread.accessMode, interactionMode: thread.interactionMode,
             instructions: provider.takesSessionInstructions ? thread.botID.flatMap { store.bot($0) }?.instructions : nil)
-        let session =
-            hostedSession?(threadID, launch, registry.account(account, of: provider)) ?? factory.makeSession(launch)
+        let hosted = route == .startInApp ? nil : hostedSession?(threadID, launch, registry.account(account, of: provider))
+        var lease: AgentSessionLease?
+        if hosted == nil, let sessionLocks {
+            switch sessionLocks.acquire(key, sessionID: resumed, owner: AgentSessionOwner(role: .app, build: build)) {
+            case .acquired(let acquired): lease = acquired
+            case .heldElsewhere(let owner): throw AgentHostError.runningElsewhere(owner?.role)
+            case .unavailable: break
+            }
+        }
+        let session = hosted ?? factory.makeSession(launch)
+        if let lease { inAppLeases[threadID, default: [:]][provider] = (ObjectIdentifier(session), lease) }
         launchedAccess[threadID, default: [:]][provider] = launch.accessMode
         launchedAccounts[threadID, default: [:]][provider] = account
         session.onEvent = { [weak self, weak session] event in
@@ -840,6 +865,20 @@ public final class ThreadRunner {
         lastActivity[threadID, default: [:]][provider] = Date()
         noteSlowStart(of: session, threadID: threadID, provider: provider)
         return try await join(Launch(session: session, task: task), threadID, provider)
+    }
+
+    /// Lets go of the lock of the session that ran in the app, once it is gone; `session` limits it to that one.
+    private func releaseInAppLease(_ threadID: UUID, _ provider: ProviderKind, of session: AgentSession? = nil) {
+        guard let held = inAppLeases[threadID]?[provider] else { return }
+        if let session, held.session != ObjectIdentifier(session) { return }
+        inAppLeases[threadID]?[provider] = nil
+        held.lease.release()
+    }
+
+    /// Locks the provider session the app runs, now its ID is known.
+    private func claimInAppSession(_ id: String, _ threadID: UUID, _ provider: ProviderKind, of session: AgentSession) {
+        guard let held = inAppLeases[threadID]?[provider], held.session == ObjectIdentifier(session) else { return }
+        held.lease.claim(sessionID: id)
     }
 
     /// How long an agent may take to start before the thread explains the likely reasons.
@@ -873,6 +912,7 @@ public final class ThreadRunner {
                 launches[threadID]?[provider] = nil
                 launch.session.shutdown()
             }
+            releaseInAppLease(threadID, provider, of: launch.session)
             throw error
         }
         if launches[threadID]?[provider]?.session === launch.session {
@@ -954,6 +994,7 @@ public final class ThreadRunner {
         switch event {
         case .sessionStarted(let id):
             liveSessionIDs[threadID, default: [:]][provider] = id
+            claimInAppSession(id, threadID, provider, of: session)
             let account = launchedAccount(threadID, provider)
             store.updateThread(threadID) { thread in
                 let previous = thread.sessions[provider]
@@ -966,6 +1007,7 @@ public final class ThreadRunner {
 
         case .sessionContinued(let id):
             liveSessionIDs[threadID, default: [:]][provider] = id
+            claimInAppSession(id, threadID, provider, of: session)
             let account = launchedAccount(threadID, provider)
             store.updateThread(threadID) { thread in
                 let previous = thread.sessions[provider]
@@ -1111,6 +1153,7 @@ public final class ThreadRunner {
             finishTurn(threadID, turn.userItemID, outcome: outcome)
         case .sessionExited(let error):
             let wasLive = sessions[threadID]?[provider] === session
+            releaseInAppLease(threadID, provider, of: session)
             if wasLive {
                 setBackgroundWork([], threadID: threadID, provider: provider)
                 sessions[threadID]?[provider] = nil

@@ -27,11 +27,22 @@ extension AgentHostTransport {
 public enum AgentHostError: LocalizedError, Sendable {
     case disconnected
     case unreadableReply
+    /// The agent session runs in another process (`AgentSessionLocks`), which this one must not start a second time.
+    case runningElsewhere(AgentSessionOwner.Role?)
+    /// The provider session already runs in the host for another thread.
+    case runningInAnotherThread
 
     public nonisolated var errorDescription: String? {
         switch self {
         case .disconnected: String(localized: "Lost the connection to Coincide’s agent host.")
         case .unreadableReply: String(localized: "Coincide’s agent host sent a reply this version can’t read.")
+        case .runningElsewhere(.app):
+            String(localized: "This agent is still running in Coincide, so it can’t be started a second time.")
+        case .runningElsewhere:
+            String(
+                localized: "This agent is still running in Coincide’s agent host, which Coincide can’t reach right now. Coincide shows its work once it reconnects, or once the agent finishes.")
+        case .runningInAnotherThread:
+            String(localized: "This agent session is already running in another thread.")
         }
     }
 }
@@ -126,15 +137,45 @@ public final class XPCAgentHostTransport: NSObject, AgentHostTransport, AgentHos
         (connection?.remoteObjectProxy as? AgentHostXPC)?.retireWhenIdle()
     }
 
+    /// How a hello at launch went.
+    public enum HelloOutcome {
+        case welcome(AgentHostWelcome)
+        /// The connection failed or the reply was unreadable. Among the causes: macOS refused the host's signature
+        /// because an update replaced its files while it ran (`retireUnverifiedHost`).
+        case refused
+        /// No answer in time: the host may be starting, or busy.
+        case timedOut
+    }
+
     /// The hello for launch, before any window shows, waiting at most `timeout` seconds. The app needs to know
     /// which threads the host still runs agents for before it reads their transcripts.
-    public func helloSynchronously(_ hello: AgentHostHello, timeout: TimeInterval) -> AgentHostWelcome? {
-        guard let connection, let data = try? AgentHostWire.encode(hello) else { return nil }
+    public func helloSynchronously(_ hello: AgentHostHello, timeout: TimeInterval) -> HelloOutcome {
+        guard let connection, let data = try? AgentHostWire.encode(hello) else { return .refused }
         let box = ReplyBox()
         let proxy = connection.remoteObjectProxyWithErrorHandler { @Sendable _ in box.finish(nil) } as? AgentHostXPC
         proxy?.hello(data) { @Sendable reply in box.finish(reply) }
-        guard let reply = box.wait(timeout: timeout) else { return nil }
-        return try? AgentHostWire.decode(AgentHostWelcome.self, from: reply)
+        switch box.wait(timeout: timeout) {
+        case .timedOut:
+            return .timedOut
+        case .finished(let reply):
+            guard let reply, let welcome = try? AgentHostWire.decode(AgentHostWelcome.self, from: reply) else { return .refused }
+            return .welcome(welcome)
+        }
+    }
+
+    /// Asks whatever answers on the host's Mach service to exit once nothing runs in it, without checking its
+    /// signature, which is what refused it. For a host the app could not accept: a host whose files an update replaced
+    /// while it ran no longer passes macOS's signature check, so the app can't use it, and each attempt to connect
+    /// would keep it from ever exiting idle. The message carries no data, so nothing reaches a host that isn't ours.
+    public static func retireUnverifiedHost(machServiceName: String = AgentHostIdentity.machServiceName) {
+        let connection = NSXPCConnection(machServiceName: machServiceName, options: [])
+        connection.remoteObjectInterface = NSXPCInterface(with: AgentHostXPC.self)
+        connection.resume()
+        (connection.remoteObjectProxyWithErrorHandler { @Sendable _ in } as? AgentHostXPC)?.retireWhenIdle()
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            connection.invalidate()
+        }
     }
 
     public func acknowledgeSynchronously(_ acknowledgements: [AgentSessionKey: Int], timeout: TimeInterval) {
@@ -145,7 +186,7 @@ public final class XPCAgentHostTransport: NSObject, AgentHostTransport, AgentHos
             let box = ReplyBox()
             let proxy = connection.remoteObjectProxyWithErrorHandler { @Sendable _ in box.finish(nil) } as? AgentHostXPC
             proxy?.perform(data) { @Sendable reply in box.finish(reply) }
-            guard box.wait(timeout: max(0, deadline.timeIntervalSinceNow)) != nil else { return }
+            guard case .finished(_?) = box.wait(timeout: max(0, deadline.timeIntervalSinceNow)) else { return }
         }
     }
 
@@ -201,11 +242,17 @@ public final class XPCAgentHostTransport: NSObject, AgentHostTransport, AgentHos
             semaphore.signal()
         }
 
-        nonisolated func wait(timeout: TimeInterval) -> Data? {
-            guard semaphore.wait(timeout: .now() + timeout) == .success else { return nil }
+        enum Outcome {
+            /// The reply, or nil when the error handler ran instead.
+            case finished(Data?)
+            case timedOut
+        }
+
+        nonisolated func wait(timeout: TimeInterval) -> Outcome {
+            guard semaphore.wait(timeout: .now() + timeout) == .success else { return .timedOut }
             lock.lock()
             defer { lock.unlock() }
-            return data
+            return .finished(data)
         }
     }
 }

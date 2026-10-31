@@ -62,6 +62,8 @@ public final class AgentHostCore {
         var pendingApprovals: [ApprovalRequest] = []
         var pendingQuestions: [UserInputRequest] = []
         var backgroundTasks: [BackgroundTask] = []
+        /// The locks that tell other processes this host runs the session (`AgentSessionLocks`).
+        var lease: AgentSessionLease?
 
         init(key: AgentSessionKey, log: AgentEventLog, thread: AgentHostThreadInfo) {
             self.key = key
@@ -85,6 +87,8 @@ public final class AgentHostCore {
 
     private let logs: AgentEventLogStore
     private let makeSession: SessionFactory
+    /// Who runs which session across processes; nil runs without (tests that don't need them).
+    public let locks: AgentSessionLocks?
     private var hosted: [AgentSessionKey: Hosted] = [:]
     private var clients: [ObjectIdentifier: Client] = [:]
     private var idleSince: Date?
@@ -92,16 +96,20 @@ public final class AgentHostCore {
 
     public init(
         logDirectory: URL, build: String, version: String, lifecycle: AgentHostLifecycle = AgentHostLifecycle(),
-        now: Date = Date(), makeSession: @escaping SessionFactory
+        locks: AgentSessionLocks? = nil, now: Date = Date(), makeSession: @escaping SessionFactory
     ) {
         logs = AgentEventLogStore(directory: logDirectory)
         self.build = build
         self.version = version
         self.lifecycle = lifecycle
+        self.locks = locks
         self.makeSession = makeSession
         // Sessions an earlier run left are gone with its processes. Their logs stay until the app catches up;
         // one that did not end cleanly is ended now, so the app settles the turn it was running.
         for key in logs.existingKeys() {
+            // Unless another host process still runs it (one macOS started outside launchd, say): its log is that
+            // host's to write, and ending it here would end a turn that goes on.
+            if let owner = locks?.owner(of: key), owner.role == .host { continue }
             let log = logs.open(key)
             // Without a session, a log the app has applied entirely has nothing left to give.
             guard !log.backlog.isEmpty else {
@@ -199,6 +207,8 @@ public final class AgentHostCore {
                 record.starting?.cancel()
                 record.session?.shutdown()
                 record.session = nil
+                record.lease?.release()
+                record.lease = nil
                 logs.remove(record.log)
             }
             evaluateLifecycle()
@@ -239,15 +249,42 @@ public final class AgentHostCore {
     ) async -> AgentHostReply {
         // The app gets this session's events from now on; anything older it caught up on when it connected.
         client.attached.insert(key)
+        // A second launch of a running session attaches to it: one process per thread's session, ever.
         if let record = hosted[key], record.session != nil {
             record.thread = thread
             if let starting = record.starting {
                 do { try await starting.value } catch { return .failure(error.localizedDescription) }
             }
-            return hosted[key]?.session == nil ? notRunning : .started(info(record))
+            guard hosted[key]?.session != nil else { return notRunning }
+            var running = info(record)
+            running.attachedToRunning = true
+            return .started(running)
         }
-        guard let session = makeSession(launch, account) else { return .failure(AgentError.notInstalled(key.provider).localizedDescription) }
+        // The provider session runs here already, for another thread: a second process would answer in both.
+        if let resumed = launch.resumeSessionID,
+            hosted.values.contains(where: { other in
+                other.key != key && other.key.provider == key.provider && other.session != nil
+                    && (other.session?.sessionID == resumed || other.lease?.owner.sessionID == resumed)
+            })
+        {
+            return .failure(AgentHostError.runningInAnotherThread.localizedDescription)
+        }
+        var lease: AgentSessionLease?
+        if let locks {
+            switch locks.acquire(key, sessionID: launch.resumeSessionID, owner: AgentSessionOwner(role: .host, build: build)) {
+            case .acquired(let acquired): lease = acquired
+            case .heldElsewhere(let owner): return .failure(AgentHostError.runningElsewhere(owner?.role).localizedDescription)
+            // Without the lock folder the host still runs agents, as it did before it had locks.
+            case .unavailable: break
+            }
+        }
+        guard let session = makeSession(launch, account) else {
+            lease?.release()
+            return .failure(AgentError.notInstalled(key.provider).localizedDescription)
+        }
         let record = hosted[key] ?? Hosted(key: key, log: logs.open(key), thread: thread)
+        record.lease?.release()
+        record.lease = lease
         record.thread = thread
         record.session = session
         record.turnActive = false
@@ -267,6 +304,8 @@ public final class AgentHostCore {
             if record.session === session {
                 record.starting = nil
                 record.session = nil
+                record.lease?.release()
+                record.lease = nil
                 session.shutdown()
                 if record.log.backlog.isEmpty, hosted[key] === record {
                     logs.remove(record.log)
@@ -305,12 +344,17 @@ public final class AgentHostCore {
             record.pendingQuestions = []
         case .backgroundWork(let tasks):
             record.backgroundTasks = tasks
+        case .sessionStarted(let id), .sessionContinued(let id):
+            // Now known, the provider session is locked too, so nothing resumes it while it runs here.
+            record.lease?.claim(sessionID: id)
         case .sessionExited:
             record.turnActive = false
             record.pendingApprovals = []
             record.pendingQuestions = []
             record.backgroundTasks = []
             record.session = nil
+            record.lease?.release()
+            record.lease = nil
         default:
             break
         }
