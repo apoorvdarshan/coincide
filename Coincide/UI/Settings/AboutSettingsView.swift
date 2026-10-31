@@ -60,6 +60,18 @@ struct AboutSettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 6)
                 }
+                Text("The terminal uses SwiftTerm by Miguel de Icaza under the MIT License.")
+                AboutLink(
+                    symbol: "terminal", color: .gray, title: "SwiftTerm", detail: "github.com/migueldeicaza/SwiftTerm",
+                    url: "https://github.com/migueldeicaza/SwiftTerm")
+                DisclosureGroup("SwiftTerm License") {
+                    Text(verbatim: Self.bundledLicense("SwiftTerm-LICENSE", missing: String(localized: "SwiftTerm license could not be loaded.")))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 6)
+                }
                 Text("Computer Use uses Cua Driver by Cua AI under the MIT License.")
                 AboutLink(
                     symbol: "desktopcomputer", color: .blue, title: "Cua Driver", detail: "github.com/trycua/cua",
@@ -106,9 +118,14 @@ struct AboutSettingsView: View {
     }
 
     private static var cuaDriverLicense: String {
-        guard let url = Bundle.main.url(forResource: "CuaDriver-LICENSE", withExtension: "txt"),
+        bundledLicense("CuaDriver-LICENSE", missing: String(localized: "Cua Driver license could not be loaded."))
+    }
+
+    /// A license text shipped in the app's resources as `name`.txt, or `missing` when it isn't there.
+    private static func bundledLicense(_ name: String, missing: String) -> String {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "txt"),
             let text = try? String(contentsOf: url, encoding: .utf8)
-        else { return String(localized: "Cua Driver license could not be loaded.") }
+        else { return missing }
         return text
     }
 

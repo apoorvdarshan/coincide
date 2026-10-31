@@ -1,6 +1,7 @@
 import AppKit
 import CoincideKit
 import SwiftTerm
+import Synchronization
 
 /// One shell in a pseudo-terminal. It keeps running while its view is off screen.
 final class TerminalSession {
@@ -215,18 +216,34 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
     /// Relative link paths resolve against this, normally the shell's directory.
     var linkDirectory: () -> URL = { FileManager.default.homeDirectoryForCurrentUser }
 
+    /// Whether the terminal should draw with Metal, read when it joins a window and when settings change. Tests replace it.
+    static var prefersGPURendering: () -> Bool = { AppStore.shared.settings.terminalGPURendering }
+
+    private var delegateProxy: ShellTerminalDelegate?
+    private var settingsObservation: ObservationToken?
+
     init(font: NSFont) {
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 320), font: font, options: TerminalOptions(scrollback: 10_000))
         // SwiftTerm's local-process view answers OSC 52 clipboard queries with the system clipboard and
         // lets output replace it, so any program shown here (a remote host over ssh included) could read
-        // or overwrite the clipboard unasked. Ignore OSC 52 entirely, as T3 Code's terminal does. A handler
-        // registered here runs instead of the built-in one for the view's whole life: the parser is never
-        // recreated, not even by a reset.
-        getTerminal().registerOscHandler(code: 52) { _ in }
+        // or overwrite the clipboard unasked. Ignore OSC 52 entirely, as T3 Code's terminal does: the view's
+        // delegate is a stand-in that passes every other call on to the view and leaves the clipboard ones to
+        // SwiftTerm's defaults, which do nothing.
+        let proxy = ShellTerminalDelegate(view: self)
+        delegateProxy = proxy
+        terminalDelegate = proxy
+        // SwiftTerm parses output on its I/O thread; a batch only tells the session to look at the shell again.
+        let signal = OutputSignal()
+        setProcessOutputHandler { [weak self] in
+            signal.post { self?.onOutput?() }
+        }
         // Option composes characters as everywhere else on the Mac; the keys that need Meta are mapped below.
         optionAsMetaKey = false
         TerminalTheme.apply(to: self)
         setAccessibilityLabel(String(localized: "Terminal"))
+        settingsObservation = AppStore.shared.observe { [weak self] change in
+            if change == .settings { self?.updateRenderer() }
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -241,9 +258,23 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
         }
     }
 
-    override func dataReceived(slice: ArraySlice<UInt8>) {
-        super.dataReceived(slice: slice)
-        onOutput?()
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateRenderer()
+    }
+
+    /// Draws with SwiftTerm's Metal renderer while Settings › General › GPU rendering is on, and with Core Graphics
+    /// when it is off or Metal can't start here (no device, or a pipeline that fails to build). Metal starts once the
+    /// view is in a window, as SwiftTerm requires; leaving the window keeps the renderer for when it comes back.
+    func updateRenderer() {
+        let wanted = Self.prefersGPURendering()
+        guard wanted != isUsingMetalRenderer, !wanted || window != nil else { return }
+        do {
+            try setUseMetal(wanted)
+        } catch {
+            // Core Graphics keeps drawing. Turning Metal off mid-frame reports the renderer busy; try once more then.
+            if !wanted { DispatchQueue.main.async { [weak self] in try? self?.setUseMetal(false) } }
+        }
     }
 
     override func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
@@ -262,27 +293,32 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
         TerminalLinks.open(link, relativeTo: linkDirectory(), from: window)
     }
 
-    override func bell(source: Terminal) {
-        guard window != nil, !isHiddenOrHasHiddenAncestor else { return }
-        super.bell(source: source)
-    }
+    /// A bell from a terminal the user can't see (a background tab, a hidden panel) stays silent.
+    var canRingBell: Bool { window != nil && !isHiddenOrHasHiddenAncestor }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         ThemedContextMenu.show(contextMenu?(), for: event, in: window)
     }
 
-    /// The selected text with the buffer lines it spans, counting from 1, or nil when nothing is selected.
-    func selectedLines() -> (text: String, first: Int, last: Int)? {
-        guard selectionActive, let text = getSelection(), text.contains(where: { !$0.isWhitespace }), let selection else {
-            return nil
-        }
-        let rows = [selection.start.row, selection.end.row]
-        return (text, (rows.min() ?? 0) + 1, (rows.max() ?? 0) + 1)
+    /// The selected text with the buffer lines it spans, counting from 1, or nil when nothing is selected. SwiftTerm no
+    /// longer exposes the selection's rows, so they are found by matching the text against the buffer; they are nil
+    /// when the text appears more than once or spans a wrapped line.
+    func selectedLines() -> (text: String, first: Int?, last: Int?)? {
+        guard let text = selectedText else { return nil }
+        let buffer = String(decoding: getBufferAsData(), as: UTF8.self)
+        let rows = TerminalSelectionRows.locate(text, in: buffer)
+        return (text, rows.map { $0.lowerBound + 1 }, rows.map { $0.upperBound + 1 })
     }
 
     var addToComposerTitle: String { String(localized: "Add Selection to Composer") }
 
-    var canAddSelectionToComposer: Bool { onAddSelection != nil && selectedLines() != nil }
+    /// The selection's text, or nil when nothing but whitespace is selected.
+    var selectedText: String? {
+        guard selectionActive, let text = getSelection(), text.contains(where: { !$0.isWhitespace }) else { return nil }
+        return text
+    }
+
+    var canAddSelectionToComposer: Bool { onAddSelection != nil && selectedText != nil }
 
     func addSelectionToComposer() {
         onAddSelection?()
@@ -312,7 +348,16 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
     func handleKeyDown(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        let editsLine = process.running && !hasMarkedText() && getTerminal().keyboardEnhancementFlags.isEmpty
+        let editsLine = process.running && !hasMarkedText() && keyboardEnhancementFlags.isEmpty
+
+        // SwiftTerm drops input to a process that isn't running, so typing before the shell starts or after it exits
+        // reaches the session here: held until the shell starts, or Return to restart it.
+        if !process.running, let onInputWhileStopped, flags.isDisjoint(with: [.command, .control]), !hasMarkedText(),
+            let typed = Self.typedBytes(event)
+        {
+            onInputWhileStopped(typed[...])
+            return true
+        }
 
         switch (flags, Int(event.keyCode)) {
         case ([.command, .option], Self.leftArrow), ([.command, .option], Self.upArrow):
@@ -391,11 +436,121 @@ final class ShellTerminalView: LocalProcessTerminalView, ComposerSelectionSource
         return item
     }
 
+    /// The text a key press types, as the shell would receive it; nil for arrows, function keys and the like.
+    static func typedBytes(_ event: NSEvent) -> [UInt8]? {
+        guard let characters = event.characters, !characters.isEmpty,
+            !characters.unicodeScalars.contains(where: { (0xF700...0xF8FF).contains($0.value) })
+        else { return nil }
+        return Array(characters.utf8)
+    }
+
     private static let leftArrow = 123
     private static let rightArrow = 124
     private static let downArrow = 125
     private static let upArrow = 126
     private static let deleteKey = 51
+}
+
+/// `ShellTerminalView`'s SwiftTerm delegate. It passes every call on to the view except the OSC 52 clipboard ones,
+/// which fall to SwiftTerm's defaults: a copy does nothing and a read is refused. The Kitty clipboard protocol stays
+/// off too, as SwiftTerm leaves it unless a host opts in.
+final class ShellTerminalDelegate: TerminalViewDelegate {
+    private weak var view: ShellTerminalView?
+
+    init(view: ShellTerminalView) {
+        self.view = view
+    }
+
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        view?.sizeChanged(source: source, newCols: newCols, newRows: newRows)
+    }
+
+    func setTerminalTitle(source: TerminalView, title: String) {
+        view?.setTerminalTitle(source: source, title: title)
+    }
+
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        view?.hostCurrentDirectoryUpdate(source: source, directory: directory)
+    }
+
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        view?.send(source: source, data: data)
+    }
+
+    func scrolled(source: TerminalView, position: Double) {
+        view?.scrolled(source: source, position: position)
+    }
+
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        view?.requestOpenLink(source: source, link: link, params: params)
+    }
+
+    func bell(source: TerminalView) {
+        if view?.canRingBell == true { NSSound.beep() }
+    }
+
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
+        view?.rangeChanged(source: source, startY: startY, endY: endY)
+    }
+
+    func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {
+        view?.programStatusChanged(source: source, records: records)
+    }
+}
+
+/// Coalesces SwiftTerm's output notifications, which arrive for every parsed batch on its I/O thread, into one
+/// main-thread call at a time, so a flood of output never queues a flood of main-thread work.
+nonisolated final class OutputSignal: Sendable {
+    private let pending = Mutex(false)
+
+    func post(_ body: @escaping @MainActor @Sendable () -> Void) {
+        let isFirst = pending.withLock { pending in
+            defer { pending = true }
+            return !pending
+        }
+        guard isFirst else { return }
+        DispatchQueue.main.async {
+            self.pending.withLock { $0 = false }
+            MainActor.assumeIsolated { body() }
+        }
+    }
+}
+
+/// Finds the buffer rows a terminal selection covers from its text, for the line numbers sent with it.
+enum TerminalSelectionRows {
+    /// The zero-based rows of `buffer` (one per line) that `selection` spans, counting blank lines it starts or ends
+    /// with. Found only when unambiguous: the selection's first non-blank line ends a row, its middle lines are whole
+    /// rows and its last starts a row (trailing spaces aside), or a single line lies within one row, at exactly one
+    /// place in the buffer. Nil otherwise, such as for text selected across a line the terminal wrapped.
+    nonisolated static func locate(_ selection: String, in buffer: String) -> ClosedRange<Int>? {
+        let lines = Self.lines(selection)
+        guard let first = lines.firstIndex(where: { !$0.isEmpty }), let last = lines.lastIndex(where: { !$0.isEmpty })
+        else { return nil }
+        let core = Array(lines[first...last])
+        var rows = Self.lines(buffer)
+        if rows.last?.isEmpty == true { rows.removeLast() }
+        guard core.count <= rows.count else { return nil }
+        var match: Int?
+        for start in 0...(rows.count - core.count) where matches(core, rows[start..<start + core.count]) {
+            guard match == nil else { return nil }
+            match = start
+        }
+        guard let match, match >= first else { return nil }
+        return (match - first)...(match + core.count - 1 + (lines.count - 1 - last))
+    }
+
+    private nonisolated static func matches(_ core: [String], _ rows: ArraySlice<String>) -> Bool {
+        let rows = Array(rows)
+        guard core.count > 1 else { return rows[0].contains(core[0]) }
+        guard rows[0].hasSuffix(core[0]), rows[rows.count - 1].hasPrefix(core[core.count - 1]) else { return false }
+        return core[1..<core.count - 1].elementsEqual(rows[1..<rows.count - 1])
+    }
+
+    private nonisolated static func lines(_ text: String) -> [String] {
+        text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { String($0.reversed().drop { $0 == " " || $0 == "\t" }.reversed()) }
+    }
 }
 
 /// Sends key events aimed at a focused terminal through `ShellTerminalView.handleKeyDown` before the

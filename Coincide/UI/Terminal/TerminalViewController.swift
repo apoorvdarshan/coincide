@@ -323,7 +323,7 @@ final class TerminalViewController: NSViewController {
         menu.addItem(
             item(
                 terminal.addToComposerTitle, #selector(addTerminalSelectionToComposer(_:)), "", session: session,
-                enabled: threadID != nil && terminal.selectedLines() != nil))
+                enabled: threadID != nil && terminal.selectedText != nil))
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Clear"), #selector(clearTerminal(_:)), "k", session: session))
         if terminal.isScrolledUp {
