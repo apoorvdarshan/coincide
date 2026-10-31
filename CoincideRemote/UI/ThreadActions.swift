@@ -58,6 +58,10 @@ struct ThreadActionsMenu: View {
         Button { navigator.diff = .init(threadID: thread.id, turnID: nil) } label: {
             Label("Uncommitted Changes", systemImage: "plus.forwardslash.minus")
         }
+        // As the Mac's menu: the id the `coincide` command line takes.
+        Button { UIPasteboard.general.string = thread.id.uuidString } label: {
+            Label("Copy Thread ID", systemImage: "doc.on.doc")
+        }
         Divider()
         Button(role: .destructive) { navigator.deleting = thread } label: {
             Label("Delete…", systemImage: "trash")

@@ -15,19 +15,34 @@ enum NotificationRoute: Equatable {
     case none
 }
 
-/// The user at this Mac: whether Coincide is in front, how long since any input, and the thread on screen.
+/// The user at this Mac: whether Coincide is in front, how long since any input, the thread on screen, and whether the
+/// screen is locked or asleep (then nobody is at it, however recent the last input).
 struct MacActivity: Equatable {
     var isAppActive: Bool
     /// Seconds since the last keyboard, mouse or trackpad input in any app.
     var idleSeconds: TimeInterval
     var visibleThreadID: UUID?
+    var isScreenLocked = false
+    var isDisplayAsleep = false
+
+    /// Someone at the Mac: input within `threshold`, on an unlocked, awake screen.
+    func isUserActive(threshold: TimeInterval = NotificationRouting.macIdleThreshold) -> Bool {
+        idleSeconds < threshold && !isScreenLocked && !isDisplayAsleep
+    }
 
     static func current(visibleThreadID: UUID?) -> MacActivity {
         // Any input event type; reading it needs no permission.
         let anyInput = CGEventType(rawValue: UInt32.max) ?? .null
         let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput)
-        return MacActivity(isAppActive: NSApp.isActive, idleSeconds: idle, visibleThreadID: visibleThreadID)
+        let session = CGSessionCopyCurrentDictionary() as? [String: Any]
+        let locked = session?["CGSSessionScreenIsLocked"] as? Bool ?? false
+        return MacActivity(
+            isAppActive: NSApp.isActive, idleSeconds: idle, visibleThreadID: visibleThreadID, isScreenLocked: locked,
+            isDisplayAsleep: CGDisplayIsAsleep(CGMainDisplayID()) != 0)
     }
+
+    /// What connected phones hear (`RemoteMacPresence`), so they stay quiet while the user is here.
+    var remote: RemoteMacPresence { RemoteMacPresence(isActive: isUserActive(), idleSeconds: idleSeconds) }
 }
 
 /// A connected phone's latest presence, as the Mac keeps it.
@@ -65,8 +80,9 @@ struct PushTarget: Codable, Equatable {
 
 /// Decides where an alert goes. A pure function of what the Mac knows, so the whole table is tested.
 ///
-/// - A phone in front, with the Mac idle (or touched less recently than the phone), gets it in the app.
-/// - The Mac in use gets it, as before Coincide Remote: nothing on the phone, which shows the thread's state anyway.
+/// - The Mac in use (input in the last two minutes, unlocked and awake) gets it, even with a phone in front: an iPhone
+///   notification would reach the Mac anyway through iPhone Mirroring, so it would show twice.
+/// - A phone in front, with the Mac idle, locked or asleep, gets it in the app.
 /// - Neither in use: a phone that turned on lock-screen alerts and was in use lately gets it through CloudKit;
 ///   otherwise the Mac does.
 /// - The device that would show it stays quiet when it has the thread open and on screen; nothing else does instead.
@@ -81,15 +97,12 @@ enum NotificationRouting {
         pushAvailable: Bool = false, now: Date, idleThreshold: TimeInterval = macIdleThreshold,
         pushRecency: TimeInterval = pushRecency
     ) -> NotificationRoute {
-        let macIsActive = mac.idleSeconds < idleThreshold
         let macRoute: NotificationRoute = mac.isAppActive && mac.visibleThreadID == threadID ? .none : .mac
+        if mac.isUserActive(threshold: idleThreshold) { return macRoute }
         let foreground = devices.filter { $0.isForeground(at: now) }
         if let phone = foreground.max(by: { $0.lastInteraction < $1.lastInteraction }) {
-            // Both in use: whichever was touched last.
-            if macIsActive, now.addingTimeInterval(-mac.idleSeconds) >= phone.lastInteraction { return macRoute }
             return phone.openThreadID == threadID ? .none : .device(phone.deviceID)
         }
-        if macIsActive { return macRoute }
         if let target = pushTarget(
             pushTargets, connected: devices, pushAvailable: pushAvailable, now: now, recency: pushRecency)
         {

@@ -58,6 +58,9 @@ struct AlertsCoordinator: ViewModifier {
         alerts.openThread = { [navigator] id in navigator.selection = id }
         alerts.onChange = { [client] in client.sendPresence() }
         client.onNotify = { [alerts] in alerts.deliver($0) }
+        alerts.macKeepsQuiet = { [client] in
+            RemoteMacPresence.keepsPhoneQuiet(client.macPresence, receivedAt: client.macPresenceReceivedAt, now: Date())
+        }
         client.onClearNotifications = { [alerts] in alerts.clear($0) }
         client.onPaired = { [alerts] server in
             guard server.notifies != false else { return }

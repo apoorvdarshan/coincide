@@ -243,10 +243,10 @@ struct SettingsPaneView: View {
             if id == "document", DemoData.isEnabled {
                 SettingsDocumentEditor(key: "instructions.file./Users/apoorv/.config/coincide/AGENTS.md", title: "~/.config/coincide/AGENTS.md")
             } else {
-                MacSettingsPageView(pageID: id)
+                MacPaneView(pageID: id)
             }
             #else
-            MacSettingsPageView(pageID: id)
+            MacPaneView(pageID: id)
             #endif
         }
     }
@@ -495,9 +495,14 @@ struct NotificationsSection: View {
             if let server = client.server, server.notifies == false {
                 Text("\(server.name) has notifications turned off, so it sends none here either.")
             } else {
-                UIDevice.current.userInterfaceIdiom == .pad
-                    ? Text("While you’re using this iPad and not your Mac, alerts come here instead. When it’s locked, they come through your iCloud account, only if you turn that on.")
-                    : Text("While you’re using this iPhone and not your Mac, alerts come here instead. When it’s locked, they come through your iCloud account, only if you turn that on.")
+                VStack(alignment: .leading, spacing: 6) {
+                    UIDevice.current.userInterfaceIdiom == .pad
+                        ? Text("While you’re using this iPad and not your Mac, alerts come here instead. When it’s locked, they come through your iCloud account, only if you turn that on.")
+                        : Text("While you’re using this iPhone and not your Mac, alerts come here instead. When it’s locked, they come through your iCloud account, only if you turn that on.")
+                    UIDevice.current.userInterfaceIdiom == .pad
+                        ? Text("When you’re at your Mac, Coincide notifies there instead of your iPad, so nothing shows twice.")
+                        : Text("When you’re at your Mac, Coincide notifies there instead of your iPhone, so nothing shows twice.")
+                }
             }
         }
         .task { await alerts.refreshAuthorization() }
@@ -537,55 +542,112 @@ struct ThemeSwatchLabel: View {
     }
 }
 
-struct UsageView: View {
+/// Search in Settings, as the Mac's Settings search: the panes whose names match, then each matching setting with the
+/// pane and section it's in. Tapping one opens its pane in Settings.
+struct SettingsSearchResults: View {
+    let query: String
     @Environment(RemoteClient.self) private var client
+    @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
-    @State private var usage: [RemoteUsage]?
 
-    var body: some View {
-        List {
-            if let usage {
-                if usage.isEmpty {
-                    Text("No agent has reported its usage limits yet.").foregroundStyle(theme.secondaryInk)
-                }
-                ForEach(usage) { entry in
-                    Section {
-                        ForEach(entry.windows) { window in
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text(window.label)
-                                    Spacer()
-                                    Text("\(Int(window.usedPercent.rounded()))%").monospacedDigit()
-                                }
-                                ProgressView(value: min(max(window.usedPercent, 0), 100), total: 100)
-                                    .tint(window.usedPercent >= 90 ? .red : window.usedPercent >= 70 ? .orange : theme.accent)
-                                if let reset = window.resetsAt {
-                                    Text("Resets \(reset.formatted(.relative(presentation: .named)))")
-                                        .font(.caption).foregroundStyle(theme.secondaryInk)
-                                }
-                            }
-                            .accessibilityElement(children: .combine)
-                        }
-                    } header: {
-                        HStack(spacing: 6) {
-                            AgentLogo(provider: entry.provider, size: 14)
-                            Text(entry.accountName.map { "\(entry.providerName) · \($0)" } ?? entry.providerName)
-                        }
-                    }
-                    .themedCards(theme)
-                }
-            } else {
-                ProgressView()
-            }
-        }
-        .scrollContentBackground(.hidden)
-        .background(theme.isDark ? theme.content : theme.sidebar)
-        .navigationTitle("Usage Limits")
-        .refreshable { await load() }
-        .task { await load() }
+    private struct Pane: Identifiable {
+        var pane: SettingsPane
+        var title: String
+        var symbol: String
+        var color: String
+        var id: String { "\(pane)" }
     }
 
-    private func load() async {
-        if case .usage(let result)? = await client.perform(.usageLimits) { usage = result }
+    private struct Hit: Identifiable {
+        var pane: SettingsPane
+        var title: String
+        var place: String
+        var id: String
+    }
+
+    var body: some View {
+        let search = SearchMatch(query)
+        let panes = allPanes.filter { search.isEmpty || search.matches($0.title) }
+        let hits = search.isEmpty ? [] : settingHits(search)
+        List {
+            if !panes.isEmpty {
+                SidebarHeader(Text("Panes")).sidebarRow()
+                ForEach(panes) { pane in
+                    Button { open(pane.pane) } label: {
+                        SettingsTileLabel(title: pane.title, symbol: pane.symbol, color: pane.color)
+                    }
+                    .buttonStyle(SidebarRowButtonStyle())
+                    .sidebarRow()
+                }
+            }
+            if !hits.isEmpty {
+                SidebarHeader(Text("Settings")).sidebarRow()
+                ForEach(hits) { hit in
+                    Button { open(hit.pane) } label: {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(hit.title).font(.callout).foregroundStyle(theme.ink).lineLimit(2)
+                            Text(hit.place).font(.caption).foregroundStyle(theme.secondaryInk).lineLimit(1)
+                        }
+                        .padding(.vertical, 4)
+                        .accessibilityElement(children: .combine)
+                    }
+                    .buttonStyle(SidebarRowButtonStyle())
+                    .sidebarRow()
+                }
+            }
+        }
+        .sidebarList(theme)
+        .overlay {
+            if !search.isEmpty, panes.isEmpty, hits.isEmpty { ContentUnavailableView.search(text: query) }
+        }
+        .navigationTitle("Settings")
+    }
+
+    private var allPanes: [Pane] {
+        var panes = [
+            Pane(pane: .macs, title: String(localized: "Macs"), symbol: "laptopcomputer", color: "gray"),
+            Pane(pane: .appearance, title: String(localized: "Appearance"), symbol: "paintpalette.fill", color: "indigo"),
+            Pane(pane: .notifications, title: String(localized: "Notifications"), symbol: "bell.badge.fill", color: "red"),
+            Pane(pane: .keyboard, title: String(localized: "Hardware Keyboard"), symbol: "keyboard.fill", color: "gray"),
+        ]
+        for page in client.macSettings?.pages ?? [] where page.group != .detail && page.group != .unknown {
+            panes.append(Pane(pane: .mac(page.id), title: page.title, symbol: page.symbol, color: page.color))
+        }
+        panes.append(Pane(pane: .about, title: String(localized: "About"), symbol: "info.circle.fill", color: "gray"))
+        return panes
+    }
+
+    /// Settings whose title or description matches, in every pane the Mac described (an agent's models included).
+    private func settingHits(_ search: SearchMatch) -> [Hit] {
+        var hits: [Hit] = []
+        for page in client.macSettings?.pages ?? [] {
+            for section in page.sections {
+                for row in section.rows where row.kind != .unknown && search.matches(row.title, row.detail ?? "") {
+                    let place = [page.title, section.title].compactMap(\.self).joined(separator: " › ")
+                    hits.append(Hit(pane: .mac(page.id), title: row.title, place: place, id: row.id))
+                }
+            }
+        }
+        return Array(hits.prefix(60))
+    }
+
+    private func open(_ pane: SettingsPane) {
+        navigator.settingsPane = pane
+        navigator.searchText = ""
+        navigator.tab = .settings
+    }
+}
+
+/// One of the Mac's panes: Usage draws its dashboard with the pane's options under it; the rest are forms of rows.
+struct MacPaneView: View {
+    let pageID: String
+    @Environment(RemoteClient.self) private var client
+
+    var body: some View {
+        if pageID == "usage" {
+            UsageDashboardView(page: client.macSettings?.page("usage"))
+        } else {
+            MacSettingsPageView(pageID: pageID)
+        }
     }
 }

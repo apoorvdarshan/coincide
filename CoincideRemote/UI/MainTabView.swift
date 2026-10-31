@@ -28,12 +28,17 @@ struct MainTabView: View {
             Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
                 SettingsView(isSplit: isSplit)
             }
+            // The search button at the end of the tab bar grows into a field there and filters the tab it was
+            // tapped from, in place, as the Mac sidebar's search filters its lists. Cancel goes back to that tab.
             Tab(value: AppTab.search, role: .search) {
-                stack(.search) { SearchView() }
+                stack(.search) { SearchInPlace() }
             }
         }
         .tabViewStyle(.sidebarAdaptable)
         .tabBarMinimizeBehavior(.onScrollDown)
+        .onChange(of: navigator.tab) { _, tab in
+            if tab != .search { navigator.searchText = "" }
+        }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onAppear {
             navigator.isSplit = isSplit
@@ -139,6 +144,8 @@ struct MainTabView: View {
 /// The Mac sidebar's Pinned and Projects sections: each project expands in place to show its threads, and remembers
 /// whether it's open, together with the Mac.
 struct ProjectsView: View {
+    /// Search's words: projects by name, threads by title. Empty shows the sidebar as it is.
+    var query = ""
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
@@ -151,9 +158,17 @@ struct ProjectsView: View {
     static let threadLimit = 6
 
     var body: some View {
-        let filter = ThreadFilter(showsHidden: showsHidden, keeping: navigator.selection)
+        let search = SearchMatch(query)
+        // Search finds snoozed and settled threads too, as on the Mac.
+        let filter = ThreadFilter(showsHidden: showsHidden || !search.isEmpty, keeping: navigator.selection)
         let projects = client.workspace.projects.filter { !$0.isChats }
-        let pinned = pinnedThreads(filter)
+        let pinned = pinnedThreads(filter).filter { search.isEmpty || search.matches($0.title) }
+        let shown = projects.compactMap { project -> (RemoteProject, [RemoteThreadSummary])? in
+            let all = filter.visible(client.workspace.threads.filter { $0.projectID == project.id && !$0.isPinned })
+            if search.isEmpty || search.matches(project.name) { return (project, all) }
+            let matching = all.filter { search.matches($0.title) }
+            return matching.isEmpty ? nil : (project, matching)
+        }
         List {
             ConnectionStatusRow()
             if !pinned.isEmpty {
@@ -166,9 +181,9 @@ struct ProjectsView: View {
             if !pinned.isEmpty, !projects.isEmpty {
                 SidebarHeader(Text("Projects")).sidebarRow()
             }
-            ForEach(projects) { project in
-                let threads = filter.visible(client.workspace.threads.filter { $0.projectID == project.id && !$0.isPinned })
-                let isExpanded = client.isExpanded(project)
+            ForEach(shown, id: \.0.id) { project, threads in
+                // Searching opens every project that matched, so its threads show.
+                let isExpanded = !search.isEmpty || client.isExpanded(project)
                 ProjectRow(project: project, isExpanded: isExpanded, hiddenStatus: isExpanded ? nil : SidebarStatus.strongest(threads)) {
                     toggle(project)
                 }
@@ -177,7 +192,9 @@ struct ProjectsView: View {
         }
         .sidebarList(theme)
         .overlay {
-            if projects.isEmpty, pinned.isEmpty, client.isConnected {
+            if !search.isEmpty, shown.isEmpty, pinned.isEmpty {
+                ContentUnavailableView.search(text: query)
+            } else if projects.isEmpty, pinned.isEmpty, client.isConnected {
                 ContentUnavailableView {
                     Label("No Projects", systemImage: "folder")
                 } description: {
@@ -189,7 +206,7 @@ struct ProjectsView: View {
         .refreshable { await client.refreshWorkspace() }
         .navigationTitle("Projects")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { ThreadFilterMenu() }
+            ToolbarItem(placement: .topBarTrailing) { ThreadFilterMenu(projects: projects) }
         }
     }
 
@@ -312,6 +329,8 @@ struct ProjectRow: View {
 
 /// Chats: threads that belong to no project.
 struct ChatsView: View {
+    /// Search's words, matching titles. Empty shows every chat.
+    var query = ""
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
@@ -319,15 +338,19 @@ struct ChatsView: View {
 
     var body: some View {
         let chatsIDs = Set(client.workspace.projects.filter(\.isChats).map(\.id))
-        let threads = ThreadFilter(showsHidden: showsHidden, keeping: navigator.selection)
+        let search = SearchMatch(query)
+        let threads = ThreadFilter(showsHidden: showsHidden || !search.isEmpty, keeping: navigator.selection)
             .visible(client.workspace.threads.filter { chatsIDs.contains($0.projectID) })
+            .filter { search.isEmpty || search.matches($0.title) }
         List {
             ConnectionStatusRow()
             ForEach(threads) { thread in ThreadLink(thread: thread) }
         }
         .sidebarList(theme)
         .overlay {
-            if threads.isEmpty, client.isConnected {
+            if !search.isEmpty, threads.isEmpty {
+                ContentUnavailableView.search(text: query)
+            } else if threads.isEmpty, client.isConnected {
                 ContentUnavailableView {
                     Label("No Chats", systemImage: "bubble.left.and.bubble.right")
                 } description: {
@@ -359,47 +382,79 @@ struct ChatsView: View {
 
 // MARK: Search
 
-/// Finds any thread or bot by name. With nothing typed, the latest threads.
-struct SearchView: View {
-    @Environment(RemoteClient.self) private var client
+/// The search button's page, which is the tab it was tapped from, filtered in place: bots by name and conversation,
+/// projects by name with their matching threads, chats by title, settings by pane and setting. Cancel goes back.
+struct SearchInPlace: View {
     @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var focused: Bool
 
     var body: some View {
         @Bindable var navigator = navigator
-        let query = navigator.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let bots = (client.workspace.bots ?? []).filter { !query.isEmpty && $0.name.localizedStandardContains(query) }
-        let threads = matches(query)
-        List {
-            if !bots.isEmpty {
-                SidebarHeader(Text("Bots")).sidebarRow()
-                ForEach(bots) { bot in BotLink(bot: bot) }
-            }
-            if !threads.isEmpty {
-                SidebarHeader(query.isEmpty ? Text("Recent") : Text("Threads")).sidebarRow()
-                ForEach(threads) { thread in ThreadLink(thread: thread, place: place(of: thread)) }
+        Group {
+            switch navigator.browsingTab {
+            case .bots: BotsView(query: navigator.searchText)
+            case .chats: ChatsView(query: navigator.searchText)
+            case .settings: SettingsSearchResults(query: navigator.searchText)
+            case .projects, .search: ProjectsView(query: navigator.searchText)
             }
         }
-        .sidebarList(theme)
-        .overlay {
-            if !query.isEmpty, bots.isEmpty, threads.isEmpty {
-                ContentUnavailableView.search(text: query)
+        // The field takes the tab bar's place at the bottom, rising with the keyboard; no field at the top of the page.
+        .toolbarVisibility(.hidden, for: .tabBar)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(theme.secondaryInk).accessibilityHidden(true)
+                    TextField(text: $navigator.searchText) { prompt }
+                        .focused($focused)
+                        .submitLabel(.search)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .foregroundStyle(theme.ink)
+                        .tint(theme.accent)
+                    if !navigator.searchText.isEmpty {
+                        Button { navigator.searchText = "" } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(theme.tertiaryInk)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text("Clear"))
+                    }
+                }
+                .padding(.horizontal, 16)
+                .frame(minHeight: 48)
+                .glassEffect(.regular.interactive(), in: .capsule)
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(theme.ink)
+                        .frame(width: 48, height: 48)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: .circle)
+                .accessibilityLabel(Text("Close Search"))
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
         }
-        .navigationTitle("Search")
-        .searchable(text: $navigator.searchText, prompt: "Threads and bots")
+        .onAppear { focused = true }
     }
 
-    private func place(of thread: RemoteThreadSummary) -> String? {
-        guard let project = client.project(thread.projectID), !project.isChats else { return nil }
-        return project.name
+    private var prompt: Text {
+        switch navigator.browsingTab {
+        case .bots: Text("Search Bots")
+        case .chats: Text("Search Chats")
+        case .settings: Text("Search Settings")
+        case .projects, .search: Text("Search Projects and Threads")
+        }
     }
 
-    private func matches(_ query: String) -> [RemoteThreadSummary] {
-        let all = client.workspace.threads
-        guard !query.isEmpty else {
-            return Array(all.filter { !$0.isHidden }.sorted { $0.updatedAt > $1.updatedAt }.prefix(15))
-        }
-        return all.filter { $0.title.localizedStandardContains(query) }.sorted { $0.updatedAt > $1.updatedAt }
+    /// Back to the tab that was filtered, as it was.
+    private func close() {
+        focused = false
+        navigator.searchText = ""
+        withAnimation(reduceMotion ? nil : .snappy) { navigator.tab = navigator.browsingTab }
     }
 }

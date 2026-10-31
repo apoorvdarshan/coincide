@@ -13,6 +13,8 @@ struct ThreadFilter {
 
 /// The lists' filter menu: snoozed and settled threads, and archived ones.
 struct ThreadFilterMenu: View {
+    /// Projects the menu can expand or collapse together, as the Mac's sidebar options do.
+    var projects: [RemoteProject] = []
     @Environment(RemoteClient.self) private var client
     @AppStorage("sidebar.showsHidden") private var showsHidden = false
 
@@ -20,6 +22,15 @@ struct ThreadFilterMenu: View {
         Menu {
             Toggle("Show Snoozed and Settled", isOn: $showsHidden)
             Toggle("Show Archived", isOn: Bindable(client).includesArchived)
+            if !projects.isEmpty {
+                Divider()
+                Button { for project in projects { client.setExpanded(project, true) } } label: {
+                    Label("Expand All Projects", systemImage: "chevron.down")
+                }
+                Button { for project in projects { client.setExpanded(project, false) } } label: {
+                    Label("Collapse All Projects", systemImage: "chevron.up")
+                }
+            }
         } label: {
             Label("Filter", systemImage: showsHidden || client.includesArchived
                 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")

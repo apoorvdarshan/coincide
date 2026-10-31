@@ -25,26 +25,144 @@ struct ThreadContainer: View {
     }
 }
 
-/// Under the composer, as on the Mac: where the thread works (its folder or a worktree) and its branch.
+/// Under the composer, as on the Mac (`BranchToolbarView`): where the thread works and its branch. Before the first
+/// message the thread can move between the project's folder, a new worktree and a previous one; in the project's folder
+/// it can switch or create branches; a new worktree picks the branch it starts from. Read only from an older Mac.
 struct CheckoutRow: View {
     let summary: RemoteThreadSummary?
     @Environment(RemoteClient.self) private var client
     @Environment(\.theme) private var theme
+    @State private var checkout: RemoteCheckout?
+    @State private var isChanging = false
+    @State private var namesBranch = false
+    @State private var newBranch = ""
 
     var body: some View {
         if let summary, client.project(summary.projectID)?.isChats == false {
             HStack(spacing: 12) {
-                Label(summary.hasWorktree ? String(localized: "Worktree") : String(localized: "Local checkout"), systemImage: "folder")
-                    .lineLimit(1)
+                workspace
                 Spacer(minLength: 8)
-                if let branch = summary.branch, !branch.isEmpty {
-                    Label(branch, systemImage: "arrow.triangle.branch").lineLimit(1).truncationMode(.middle)
-                }
+                if isChanging { ProgressView().controlSize(.mini) }
+                branch(summary)
             }
             .font(.caption.weight(.medium))
             .foregroundStyle(theme.secondaryInk)
             .padding(.horizontal, 14)
-            .accessibilityElement(children: .combine)
+            .task(id: "\(summary.id)|\(summary.branch ?? "")|\(summary.hasWorktree)|\(summary.isRunning)") {
+                checkout = await client.checkout(summary.id)
+            }
+            .alert("New Branch", isPresented: $namesBranch) {
+                TextField("Branch name", text: $newBranch)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button("Create") { change(.createBranch(newBranch), in: summary.id) }
+                    .disabled(newBranch.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("A new branch from the one the folder is on, checked out in the project’s folder.")
+            }
+        }
+    }
+
+    private var workspaceTitle: String {
+        switch checkout?.workspace {
+        case .newWorktree: String(localized: "New worktree")
+        case .worktree: String(localized: "Worktree")
+        case .local, .unknown: String(localized: "Local checkout")
+        case nil: summary?.hasWorktree == true ? String(localized: "Worktree") : String(localized: "Local checkout")
+        }
+    }
+
+    @ViewBuilder private var workspace: some View {
+        if let checkout, checkout.canChangeWorkspace, let summary {
+            Menu {
+                Picker("Where the thread works", selection: Binding(get: { checkout.workspace }, set: { workspace in
+                    change(workspace == .local ? .useLocal : .useNewWorktree, in: summary.id)
+                })) {
+                    Label("Local Checkout", systemImage: "folder").tag(RemoteCheckout.Workspace.local)
+                    Label("New Worktree", systemImage: "folder.badge.plus").tag(RemoteCheckout.Workspace.newWorktree)
+                }
+                if checkout.hasPreviousWorktree {
+                    Button { change(.usePreviousWorktree, in: summary.id) } label: {
+                        Label(
+                            checkout.previousWorktreeBranch.map { String(localized: "Previous Worktree (\($0))") }
+                                ?? String(localized: "Previous Worktree"),
+                            systemImage: "clock.arrow.circlepath")
+                    }
+                }
+            } label: {
+                menuLabel(workspaceTitle, symbol: checkout.workspace == .newWorktree ? "folder.badge.plus" : "folder")
+            }
+            .disabled(isChanging || !client.isConnected)
+            .accessibilityLabel(Text("Where the thread works: \(workspaceTitle)"))
+        } else {
+            Label(workspaceTitle, systemImage: "folder").lineLimit(1)
+        }
+    }
+
+    @ViewBuilder private func branch(_ summary: RemoteThreadSummary) -> some View {
+        let title = checkout?.baseBranch.map { String(localized: "From \($0)") } ?? checkout?.branch ?? summary.branch ?? ""
+        if let checkout, checkout.canPickBranch, !checkout.branches.isEmpty {
+            Menu {
+                let local = checkout.branches.filter { !$0.isRemote }
+                let remote = checkout.branches.filter(\.isRemote)
+                Section(checkout.baseBranch != nil ? String(localized: "Start the worktree from") : String(localized: "Switch to")) {
+                    ForEach(local) { branch in branchButton(branch, checkout: checkout, threadID: summary.id) }
+                }
+                if !remote.isEmpty {
+                    Menu(String(localized: "Remote Branches")) {
+                        ForEach(remote) { branch in branchButton(branch, checkout: checkout, threadID: summary.id) }
+                    }
+                }
+                if checkout.canCreateBranch {
+                    Divider()
+                    Button {
+                        newBranch = ""
+                        namesBranch = true
+                    } label: {
+                        Label("New Branch…", systemImage: "plus")
+                    }
+                }
+            } label: {
+                menuLabel(title, symbol: "arrow.triangle.branch")
+            }
+            .disabled(isChanging || !client.isConnected)
+            .accessibilityLabel(Text("Branch: \(title)"))
+        } else if !title.isEmpty {
+            Label(title, systemImage: "arrow.triangle.branch").lineLimit(1).truncationMode(.middle)
+                .accessibilityLabel(Text("Branch: \(title)"))
+        }
+    }
+
+    private func branchButton(_ branch: RemoteBranch, checkout: RemoteCheckout, threadID: UUID) -> some View {
+        let isChosen = checkout.baseBranch.map { $0 == branch.name } ?? branch.isCurrent
+        return Button { change(.pickBranch(branch.name), in: threadID) } label: {
+            if isChosen {
+                Label(branch.name, systemImage: "checkmark")
+            } else if branch.isCheckedOutElsewhere {
+                Label(branch.name, systemImage: "folder.badge.questionmark")
+            } else {
+                Text(branch.name)
+            }
+        }
+    }
+
+    /// A borderless menu in the row's quiet style, with a full-height touch target that doesn't make the row taller.
+    private func menuLabel(_ title: String, symbol: String) -> some View {
+        HStack(spacing: 4) {
+            Label(title, systemImage: symbol).lineLimit(1).truncationMode(.middle)
+            Image(systemName: "chevron.down").font(.caption2.weight(.semibold)).foregroundStyle(theme.tertiaryInk)
+        }
+        .padding(.vertical, 12)
+        .contentShape(.rect)
+        .padding(.vertical, -12)
+    }
+
+    private func change(_ action: RemoteCheckoutAction, in threadID: UUID) {
+        isChanging = true
+        Task {
+            if let updated = await client.changeCheckout(threadID, action) { checkout = updated }
+            isChanging = false
         }
     }
 }

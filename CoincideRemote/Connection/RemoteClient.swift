@@ -39,6 +39,9 @@ final class RemoteClient {
     var drafts: [UUID: ComposerDraft] = [:]
     /// A message to show briefly, such as a failed action.
     var notice: String?
+    /// Whether the user is at the Mac, as it last said, and when: while they are, alerts stay off this phone.
+    @ObservationIgnored private(set) var macPresence: RemoteMacPresence?
+    @ObservationIgnored private(set) var macPresenceReceivedAt: Date?
     /// Projects expanded or collapsed on this phone, kept for a Mac that doesn't remember it.
     private var localExpansion: [UUID: Bool] = RemoteClient.savedExpansion()
     /// Projects whose change the Mac hasn't confirmed yet, so an older snapshot doesn't undo it meanwhile.
@@ -477,6 +480,9 @@ final class RemoteClient {
             macSettings = snapshot
         case .clearNotifications(let threadID):
             onClearNotifications?(threadID)
+        case .macPresence(let presence):
+            macPresence = presence
+            macPresenceReceivedAt = Date()
         case .revoked:
             if let mac {
                 saved.deleteToken(for: mac.serverID)
@@ -672,6 +678,23 @@ final class RemoteClient {
 
     func changeMacSetting(_ key: String, to value: RemoteSettingValue) async {
         if case .settings(let snapshot)? = await performNewer(.changeSetting(key: key, value: value)) { macSettings = snapshot }
+    }
+
+    /// Where a thread works and its branches, or nil from a Mac too old to say (the row then stays read only).
+    func checkout(_ threadID: UUID) async -> RemoteCheckout? {
+        #if DEBUG
+        if DemoData.isEnabled { return DemoData.checkout }
+        #endif
+        guard isConnected, case .checkout(let checkout)? = try? await request(.checkout(threadID: threadID), timeout: .seconds(15))
+        else { return nil }
+        return checkout
+    }
+
+    /// Changes where a thread works or its branch; the updated checkout, or nil with the Mac's reason as a notice.
+    func changeCheckout(_ threadID: UUID, _ action: RemoteCheckoutAction) async -> RemoteCheckout? {
+        guard case .checkout(let checkout)? = await performNewer(.changeCheckout(threadID: threadID, action: action)) else { return nil }
+        await refreshWorkspace()
+        return checkout
     }
 
     /// A settings document's text, such as an instruction file. Throws what the Mac said, for the editor to show.

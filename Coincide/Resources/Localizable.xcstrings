@@ -22976,6 +22976,118 @@
         }
       }
     },
+    "A thread moves to another folder only before its first message." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein Thread wechselt nur vor seiner ersten Nachricht in einen anderen Ordner."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un hilo solo se mueve a otra carpeta antes de su primer mensaje."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un hilo solo se mueve a otra carpeta antes de su primer mensaje."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un fil ne change de dossier qu’avant son premier message."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कोई थ्रेड अपना पहला संदेश भेजने से पहले ही दूसरे फ़ोल्डर में जा सकता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utas hanya bisa pindah ke folder lain sebelum pesan pertamanya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un thread si sposta in un’altra cartella solo prima del primo messaggio."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スレッドが別のフォルダに移れるのは最初のメッセージを送る前だけです。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "스레드는 첫 메시지를 보내기 전에만 다른 폴더로 옮길 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Een thread verhuist alleen vóór het eerste bericht naar een andere map."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wątek można przenieść do innego folderu tylko przed pierwszą wiadomością."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Um tópico só muda de pasta antes da primeira mensagem."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Тред можно перенести в другую папку только до первого сообщения."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir iş parçacığı yalnızca ilk iletisinden önce başka bir klasöre taşınabilir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Тред можна перенести в іншу папку лише до першого повідомлення."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Một luồng chỉ chuyển sang thư mục khác trước tin nhắn đầu tiên."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "线程只能在发送第一条消息前移到其他文件夹。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "執行緒只能在傳送第一則訊息前移到其他檔案夾。"
+          }
+        }
+      }
+    },
     "A thread needs a name." : {
       "localizations" : {
         "de" : {
@@ -167994,6 +168106,118 @@
         }
       }
     },
+    "New branches are made in the project’s own folder." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neue Branches entstehen im Projektordner selbst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las ramas nuevas se crean en la carpeta del propio proyecto."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las ramas nuevas se crean en la carpeta del propio proyecto."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les nouvelles branches se créent dans le dossier du projet lui-même."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "नई ब्रांच प्रोजेक्ट के अपने फ़ोल्डर में बनती हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cabang baru dibuat di folder proyek itu sendiri."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I nuovi branch si creano nella cartella del progetto."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新しいブランチはプロジェクトのフォルダで作成されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "새 브랜치는 프로젝트 폴더에서 만들어집니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nieuwe branches maak je in de projectmap zelf."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nowe gałęzie tworzy się w folderze samego projektu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Novos branches são criados na própria pasta do projeto."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Новые ветки создаются в папке самого проекта."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yeni dallar projenin kendi klasöründe oluşturulur."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Нові гілки створюються в папці самого проєкту."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhánh mới được tạo trong chính thư mục của dự án."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新分支在项目自己的文件夹中创建。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "新分支會在專案本身的檔案夾中建立。"
+          }
+        }
+      }
+    },
     "New conversation" : {
       "localizations" : {
         "de" : {
@@ -262131,6 +262355,118 @@
         }
       }
     },
+    "That isn’t a branch name git accepts." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diesen Branch-Namen akzeptiert git nicht."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git no acepta ese nombre de rama."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git no acepta ese nombre de rama."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git n’accepte pas ce nom de branche."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git इस ब्रांच नाम को स्वीकार नहीं करता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git tidak menerima nama cabang itu."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git non accetta questo nome di branch."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "そのブランチ名はgitで使用できません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git에서 허용하지 않는 브랜치 이름입니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die branchnaam accepteert git niet."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git nie akceptuje takiej nazwy gałęzi."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O git não aceita esse nome de branch."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git не принимает такое имя ветки."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git bu dal adını kabul etmiyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git не приймає таку назву гілки."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git không chấp nhận tên nhánh đó."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git 不接受这个分支名称。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "git 不接受這個分支名稱。"
+          }
+        }
+      }
+    },
     "That preview is no longer available." : {
       "localizations" : {
         "de" : {
@@ -281195,6 +281531,118 @@
         }
       }
     },
+    "There’s no branch named “%@” here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hier gibt es keinen Branch namens „%@“."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aquí no hay ninguna rama llamada «%@»."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aquí no hay ninguna rama llamada “%@”."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il n’y a aucune branche nommée « %@ » ici."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यहाँ “%@” नाम की कोई ब्रांच नहीं है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidak ada cabang bernama “%@” di sini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qui non c’è nessun branch chiamato “%@”."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ここに“%@”という名前のブランチはありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "여기에는 “%@”(이)라는 브랜치가 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Er is hier geen branch met de naam ‘%@’."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie ma tu gałęzi o nazwie „%@”."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não há nenhum branch chamado “%@” aqui."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Здесь нет ветки с именем «%@»."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Burada “%@” adlı bir dal yok."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Тут немає гілки з назвою «%@»."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không có nhánh nào tên “%@” ở đây."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "这里没有名为“%@”的分支。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "這裡沒有名為「%@」的分支。"
+          }
+        }
+      }
+    },
     "There’s no executable file at this path." : {
       "localizations" : {
         "de" : {
@@ -286356,6 +286804,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "此對話在 %1$@ 上開始；檔案夾目前在 %2$@ 上。"
+          }
+        }
+      }
+    },
+    "This thread’s branch can’t be changed here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Branch dieses Threads kann hier nicht geändert werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La rama de este hilo no se puede cambiar aquí."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La rama de este hilo no se puede cambiar aquí."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La branche de ce fil ne peut pas être modifiée ici."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस थ्रेड की ब्रांच यहाँ नहीं बदली जा सकती।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cabang utas ini tidak dapat diubah di sini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il branch di questo thread non si può cambiare qui."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このスレッドのブランチはここでは変更できません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 스레드의 브랜치는 여기서 변경할 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De branch van deze thread kan hier niet worden gewijzigd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gałęzi tego wątku nie można tu zmienić."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O branch deste tópico não pode ser alterado aqui."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ветку этого треда здесь изменить нельзя."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu iş parçacığının dalı burada değiştirilemez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Гілку цього треду тут змінити не можна."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không thể đổi nhánh của luồng này ở đây."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "这个线程的分支无法在这里更改。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "這個執行緒的分支無法在這裡變更。"
           }
         }
       }
@@ -303532,6 +304092,118 @@
         }
       }
     },
+    "Wait for the turn to finish before changing the checkout." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Warte, bis der Turn fertig ist, bevor du den Checkout änderst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Espera a que termine el turno antes de cambiar la copia."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Espera a que termine el turno antes de cambiar la copia."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Attendez la fin du tour avant de modifier la copie de travail."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "चेकआउट बदलने से पहले टर्न पूरा होने दें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tunggu hingga giliran selesai sebelum mengubah checkout."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aspetta che il turno finisca prima di cambiare la copia di lavoro."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "チェックアウトを変更する前に、ターンが終わるまでお待ちください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "체크아웃을 변경하기 전에 턴이 끝날 때까지 기다리세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wacht tot de beurt klaar is voordat je de checkout wijzigt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zaczekaj na koniec tury, zanim zmienisz kopię roboczą."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Espere o turno terminar antes de alterar o checkout."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дождитесь окончания хода, прежде чем менять рабочую копию."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Çalışma kopyasını değiştirmeden önce turun bitmesini bekleyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дочекайтеся завершення ходу, перш ніж змінювати робочу копію."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy chờ lượt kết thúc trước khi thay đổi bản checkout."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请等待本轮结束后再更改检出。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "請等待本輪結束後再變更取出。"
+          }
+        }
+      }
+    },
     "Waiting for Accessibility access" : {
       "localizations" : {
         "de" : {
@@ -317651,6 +318323,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "「%@」已在另一個工作樹中簽出。"
+          }
+        }
+      }
+    },
+    "“%@” is checked out in another worktree. Git can check a branch out in only one folder at a time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "„%@“ ist in einem anderen Worktree ausgecheckt. Git kann einen Branch nur in einem Ordner gleichzeitig auschecken."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "«%@» está extraída en otro árbol de trabajo. Git solo puede extraer una rama en una carpeta a la vez."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” está extraída en otro árbol de trabajo. Git solo puede extraer una rama en una carpeta a la vez."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "« %@ » est extraite dans un autre arbre de travail. Git ne peut extraire une branche que dans un seul dossier à la fois."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” किसी दूसरे वर्कट्री में चेक आउट है। Git एक ब्रांच को एक समय में केवल एक फ़ोल्डर में चेक आउट कर सकता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” di-checkout di worktree lain. Git hanya dapat checkout sebuah cabang di satu folder pada satu waktu."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” è estratto in un altro worktree. Git può estrarre un branch in una sola cartella alla volta."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@”は別のワークツリーでチェックアウトされています。Gitは1つのブランチを同時に1つのフォルダでしかチェックアウトできません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@”은(는) 다른 워크트리에 체크아웃되어 있습니다. Git은 한 번에 하나의 폴더에서만 브랜치를 체크아웃할 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "‘%@’ is uitgecheckt in een andere worktree. Git kan een branch maar in één map tegelijk uitchecken."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "„%@” jest pobrana w innym drzewie roboczym. Git może pobrać gałąź tylko w jednym folderze naraz."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” está em checkout em outra worktree. O Git só faz checkout de um branch em uma pasta por vez."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "«%@» извлечена в другом рабочем дереве. Git может извлечь ветку только в одной папке одновременно."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” başka bir çalışma ağacında kullanıma alınmış. Git bir dalı aynı anda yalnızca bir klasörde kullanıma alabilir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "«%@» отримано в іншому робочому дереві. Git може отримати гілку лише в одній папці одночасно."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” đang được checkout trong một worktree khác. Git chỉ có thể checkout một nhánh trong một thư mục tại một thời điểm."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@”已在另一个工作树中检出。Git 一次只能在一个文件夹中检出同一分支。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "「%@」已在另一個工作樹中取出。Git 一次只能在一個檔案夾中取出同一分支。"
           }
         }
       }

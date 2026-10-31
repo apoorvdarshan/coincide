@@ -84,6 +84,8 @@ enum BotOpening {
 
 /// The Mac's bots: tap one to talk to it.
 struct BotsView: View {
+    /// Search's words, matching a bot's name or its conversations' titles. Empty shows every bot.
+    var query = ""
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
@@ -91,7 +93,10 @@ struct BotsView: View {
     @State private var deleting: RemoteBot?
 
     var body: some View {
-        let bots = client.workspace.bots ?? []
+        let search = SearchMatch(query)
+        let bots = (client.workspace.bots ?? []).filter { bot in
+            search.isEmpty || search.matches(bot.name) || bot.threadIDs.contains { client.summary($0).map { search.matches($0.title) } ?? false }
+        }
         List {
             ConnectionStatusRow()
             ForEach(bots) { bot in
@@ -112,7 +117,9 @@ struct BotsView: View {
         }
         .sidebarList(theme)
         .overlay {
-            if bots.isEmpty, client.isConnected {
+            if !search.isEmpty, bots.isEmpty {
+                ContentUnavailableView.search(text: query)
+            } else if bots.isEmpty, client.isConnected {
                 ContentUnavailableView {
                     // The Mac's own characters, not a stock symbol: the bot a new one starts as.
                     VStack(spacing: 12) {

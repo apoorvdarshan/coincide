@@ -308,6 +308,25 @@ final class RemoteSession {
                         self.respond(id, .completions(try await self.adapter.completions(threadID, trigger: trigger, query: query)))
                     } catch { self.fail(id, Self.remote(error)) }
                 }
+            case .usageDashboard(let query):
+                Task { [weak self] in
+                    guard let self else { return }
+                    self.respond(id, .usageDashboard(await self.adapter.usageDashboard(query)))
+                }
+            case .checkout(let threadID):
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        self.respond(id, .checkout(try await self.adapter.checkout(threadID)))
+                    } catch { self.fail(id, Self.remote(error)) }
+                }
+            case .changeCheckout(let threadID, let action):
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        self.respond(id, .checkout(try await self.adapter.changeCheckout(threadID, action)))
+                    } catch { self.fail(id, Self.remote(error)) }
+                }
             case .setProjectExpanded(let projectID, let expanded):
                 try adapter.setProjectExpanded(projectID, expanded: expanded)
                 respond(id, .ok)
@@ -460,6 +479,12 @@ final class RemoteSession {
         guard case .authenticated = state, presence != nil, transport != nil else { return false }
         send(.event(.notify(notification)))
         return true
+    }
+
+    /// Tells this phone whether the user is at the Mac, so it keeps its notifications to itself while they are.
+    func sendMacPresence(_ presence: RemoteMacPresence) {
+        guard case .authenticated = state else { return }
+        send(.event(.macPresence(presence)))
     }
 
     private func respond(_ id: String, _ result: RemoteResult) {

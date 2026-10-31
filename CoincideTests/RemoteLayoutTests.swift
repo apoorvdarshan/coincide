@@ -95,4 +95,20 @@ struct RemoteLayoutTests {
         expectWellFormed(footer, width: 330)
         #expect(footer.size.height == CGFloat(footer.chips.map(\.line).max()! + 1) * 70)
     }
+
+    // MARK: Search
+
+    /// The search button filters the open tab as the Mac sidebar's search does: every word, any order, any case and
+    /// accent; empty matches everything.
+    @Test func searchMatchesEveryWordInAnyOrderCaseAndAccent() {
+        #expect(SearchMatch("").isEmpty)
+        #expect(SearchMatch("  ").isEmpty)
+        #expect(SearchMatch("push").matches("Run git push for the remote branch"))
+        #expect(SearchMatch("REMOTE push").matches("Run git push for the remote branch"))
+        #expect(!SearchMatch("push pull").matches("Run git push for the remote branch"))
+        #expect(SearchMatch("brulee").matches("Brûlée"))
+        // A word may match any of the texts given: a project's name or its thread's title.
+        #expect(SearchMatch("coincide push").matches("coincide", "Run git push"))
+        #expect(!SearchMatch("fud push").matches("coincide", "Run git push"))
+    }
 }
