@@ -287,6 +287,13 @@ final class RemoteSession {
                 let snapshot = adapter.settingsSnapshot()
                 lastSettings = snapshot
                 respond(id, .settings(snapshot))
+            case .media(let threadID, let itemID, let index, let full):
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        self.respond(id, .media(try await self.adapter.media(threadID, itemID: itemID, index: index, full: full)))
+                    } catch { self.fail(id, Self.remote(error)) }
+                }
             case .setProjectExpanded(let projectID, let expanded):
                 try adapter.setProjectExpanded(projectID, expanded: expanded)
                 respond(id, .ok)

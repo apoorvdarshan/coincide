@@ -1,6 +1,8 @@
+import AppKit
 import CoincideRemoteKit
 import CryptoKit
 import Foundation
+import ImageIO
 import Security
 import Testing
 
@@ -61,6 +63,8 @@ struct RemoteProtocolTests {
             .settingsAction(key: "computerUse.open"),
             .setProjectExpanded(projectID: item, expanded: false),
             .setProjectExpanded(projectID: item, expanded: true),
+            .media(threadID: thread, itemID: item, index: 2, full: false),
+            .media(threadID: thread, itemID: item, index: 0, full: true),
         ]
         for request in requests {
             let decoded = try roundTrip(RemoteClientMessage(id: "1", request: request))
@@ -640,6 +644,64 @@ struct RemoteSessionTests {
         #expect(info.replyTypeface == "system")
         #expect(!info.usesSerifReplies)
         #expect(info.userMessageSide == "right")
+    }
+
+    /// A PNG of `width`×`height` written to `url`.
+    private func writePNG(_ url: URL, width: Int, height: Int) throws {
+        let context = try #require(
+            CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(CGColor(srgbRed: 0.2, green: 0.5, blue: 0.9, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let image = try #require(context.makeImage())
+        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+    }
+
+    @Test func thePhoneSeesOnlyTheMediaAnItemReferencesDownsampled() async throws {
+        let fixture = fixture("remote-media")
+        let store = fixture.store
+        let thread = store.createThread(in: fixture.project.id)
+        let attachment = fixture.folder.url.appendingPathComponent("shot.png")
+        try writePNG(attachment, width: 3000, height: 1500)
+        try writePNG(fixture.folder.url.appendingPathComponent("chart.png"), width: 200, height: 100)
+        let user = TranscriptItem(kind: .user, text: "Look", attachments: [attachment.path])
+        store.append(user, to: thread.id)
+        let reply = TranscriptItem(kind: .assistant, text: "Here it is: ![Chart](chart.png) and [the song](song.mp3)")
+        store.append(reply, to: thread.id)
+        let tool = TranscriptItem(kind: .tool, text: "![x](chart.png)")
+        store.append(tool, to: thread.id)
+
+        let transcript = try #require(fixture.adapter.transcript(thread.id, limit: 10))
+        #expect(transcript.items[0].media == [RemoteMedia(index: 0, kind: .image, label: "shot.png")])
+        #expect(transcript.items[1].media?.map(\.kind) == [.image, .audio])
+        #expect(transcript.items[1].media?.first?.label == "Chart")
+        // Tool output isn't previewed, as on the Mac.
+        #expect(transcript.items[2].media == nil)
+
+        let thumbnail = try await fixture.adapter.media(thread.id, itemID: user.id, index: 0, full: false)
+        #expect(max(thumbnail.width, thumbnail.height) == RemoteMediaData.thumbnailPixels)
+        #expect(!thumbnail.isFull)
+        let full = try await fixture.adapter.media(thread.id, itemID: user.id, index: 0, full: true)
+        #expect(max(full.width, full.height) == RemoteMediaData.fullPixels)
+        #expect(NSImage(data: full.data) != nil)
+        let small = try await fixture.adapter.media(thread.id, itemID: reply.id, index: 0, full: true)
+        #expect(small.width == 200)
+
+        // Nothing past what the item lists, nothing from items that show no previews, and no audio bytes.
+        await #expect(throws: RemoteError.self) { try await fixture.adapter.media(thread.id, itemID: user.id, index: 1, full: false) }
+        await #expect(throws: RemoteError.self) { try await fixture.adapter.media(thread.id, itemID: tool.id, index: 0, full: false) }
+        await #expect(throws: RemoteError.self) { try await fixture.adapter.media(thread.id, itemID: reply.id, index: 1, full: false) }
+        await #expect(throws: RemoteError.self) { try await fixture.adapter.media(UUID(), itemID: user.id, index: 0, full: false) }
+
+        let result = RemoteServerMessage.response(id: "m", result: .media(thumbnail))
+        let decoded = try RemoteProtocol.makeDecoder().decode(RemoteServerMessage.self, from: RemoteProtocol.makeEncoder().encode(result))
+        #expect(decoded == result)
+        // An older Mac's items carry no media; a kind a newer Mac adds reads as unknown.
+        let newer = #"{"index":0,"kind":"model3d","label":"Chair"}"#
+        #expect(try RemoteProtocol.makeDecoder().decode(RemoteMedia.self, from: Data(newer.utf8)).kind == .unknown)
     }
 
     @Test func backgroundTasksReachThePhoneWithTheTurnAndStayShort() throws {

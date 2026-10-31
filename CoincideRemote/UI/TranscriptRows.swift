@@ -48,12 +48,26 @@ struct ItemView: View {
     var body: some View {
         switch item.kind {
         case .user:
-            UserMessage(item: item)
+            VStack(alignment: theme.userMessagesOnLeft ? .leading : .trailing, spacing: 6) {
+                // The pictures the user attached, above their message as in Messages.
+                if item.media?.isEmpty == false {
+                    MediaStrip(item: item, threadID: threadID, alignment: theme.userMessagesOnLeft ? .leading : .trailing)
+                        .padding(theme.userMessagesOnLeft ? .trailing : .leading, 40)
+                        .frame(maxWidth: .infinity, alignment: theme.userMessagesOnLeft ? .leading : .trailing)
+                }
+                if !item.text.isEmpty || item.media == nil || item.context?.isEmpty == false || item.steered {
+                    UserMessage(item: item)
+                }
+            }
         case .assistant:
             HStack(alignment: .top, spacing: 12) {
                 AgentRail(provider: item.provider)
-                MarkdownText(text: item.text, font: theme.serifReplies ? .system(.body, design: .serif) : .body)
-                    .fontDesign(theme.serifReplies ? .serif : .default)
+                VStack(alignment: .leading, spacing: 10) {
+                    MarkdownText(text: item.text, font: theme.serifReplies ? .system(.body, design: .serif) : .body)
+                        .fontDesign(theme.serifReplies ? .serif : .default)
+                    // Images, video, audio and pages the reply shows, as the Mac previews them under it.
+                    if item.media?.isEmpty == false { MediaStrip(item: item, threadID: threadID) }
+                }
             }
         case .plan:
             Card(tint: theme.accent) {
@@ -110,7 +124,9 @@ struct UserMessage: View {
                         .foregroundStyle(theme.ink)
                         .textSelection(.enabled)
                 }
-                let extras = (item.attachments ?? []).map { ("photo", $0) } + (item.context ?? []).map { ("text.quote", $0) }
+                // Attachments show as pictures when the Mac sends previews; an older Mac sends only their names.
+                let names = item.media == nil ? (item.attachments ?? []) : []
+                let extras = names.map { ("photo", $0) } + (item.context ?? []).map { ("text.quote", $0) }
                 if !extras.isEmpty {
                     ForEach(Array(extras.enumerated()), id: \.offset) { _, extra in
                         Label(extra.1, systemImage: extra.0)
