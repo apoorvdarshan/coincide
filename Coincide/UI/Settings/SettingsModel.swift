@@ -37,6 +37,7 @@ nonisolated enum SettingsRowID: String, Hashable, Sendable {
     case branchPrefix
     case idleTimeout
     case backgroundAgents
+    case keepAwake
     case remote
     case commandLine
 }

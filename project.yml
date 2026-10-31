@@ -80,6 +80,24 @@ targets:
         PRODUCT_MODULE_NAME: CoincideCLI
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.cli
         SKIP_INSTALL: YES
+  # The lid watcher for Settings › General › Keep Awake (CoincideAlwaysOn/main.swift), embedded in
+  # Coincide.app/Contents/Helpers. launchd runs it at login while Keep Awake is on. It shares only CoincideKit/AlwaysOn.
+  CoincideAlwaysOn:
+    type: tool
+    platform: macOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    sources:
+      - path: CoincideAlwaysOn
+      - path: CoincideKit/AlwaysOn
+    settings:
+      base:
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+        PRODUCT_NAME: coincide-always-on
+        PRODUCT_MODULE_NAME: CoincideAlwaysOn
+        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.always-on
+        SKIP_INSTALL: YES
   # The background agent host (see AgentHostProtocol.swift): a LaunchAgent inside Coincide.app that owns agent
   # sessions so they outlive the app. An app bundle without a Dock icon, so it can post notifications.
   CoincideAgentHost:
@@ -145,6 +163,9 @@ targets:
       - target: CoincideCLI
         link: false
         embed: false
+      - target: CoincideAlwaysOn
+        link: false
+        embed: false
       - package: SwiftTerm
       - package: CoincideRemoteKit
     postBuildScripts:
@@ -174,6 +195,15 @@ targets:
           - $(SRCROOT)/Vendor/CuaDriver/cua-driver
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/cua-driver
+      # Where com.apoorvdarshan.coincide.always-on.plist's BundleProgram points.
+      - name: Embed lid watcher
+        script: |
+          /bin/mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
+          /usr/bin/install -m 755 "$BUILT_PRODUCTS_DIR/coincide-always-on" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/coincide-always-on"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/coincide-always-on
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/coincide-always-on
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide

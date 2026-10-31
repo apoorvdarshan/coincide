@@ -11468,6 +11468,242 @@
         }
       }
     },
+    "%@. Idle sleep on the charger: %@; on battery: %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Ruhezustand bei Inaktivität am Netzteil: %2$@; mit Batterie: %3$@."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@. Idle sleep on the charger: %2$@; on battery: %3$@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Reposo por inactividad con el cargador: %2$@; con batería: %3$@."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Reposo por inactividad con el cargador: %2$@; con batería: %3$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Suspension d’inactivité sur secteur : %2$@ ; sur batterie : %3$@."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. चार्जर पर निष्क्रिय स्लीप: %2$@; बैटरी पर: %3$@."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Tidur saat diam di pengisi daya: %2$@; di baterai: %3$@."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Stop per inattività con l’alimentatore: %2$@; a batteria: %3$@."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@。電源アダプタ使用時のアイドルスリープ：%2$@、バッテリー使用時：%3$@。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. 전원 어댑터 사용 시 유휴 잠자기: %2$@, 배터리 사용 시: %3$@."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Sluimer bij inactiviteit op de lader: %2$@; op de batterij: %3$@."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Uśpienie przy bezczynności na zasilaczu: %2$@; na baterii: %3$@."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Repouso por inatividade no carregador: %2$@; na bateria: %3$@."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Сон при бездействии от сети: %2$@; от аккумулятора: %3$@."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Şarj aletindeyken boşta uyku: %2$@; pildeyken: %3$@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Сон у разі бездіяльності від мережі: %2$@; від акумулятора: %3$@."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Ngủ khi không dùng lúc cắm sạc: %2$@; dùng pin: %3$@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@。使用电源适配器时的闲置睡眠：%2$@；使用电池时：%3$@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@。使用電源轉換器時的閒置睡眠：%2$@；使用電池時：%3$@。"
+          }
+        }
+      }
+    },
+    "%@. Idle sleep: %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Ruhezustand bei Inaktivität: %2$@."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@. Idle sleep: %2$@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Reposo por inactividad: %2$@."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Reposo por inactividad: %2$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Suspension d’inactivité : %2$@."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. निष्क्रिय स्लीप: %2$@."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Tidur saat diam: %2$@."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Stop per inattività: %2$@."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@。アイドルスリープ：%2$@。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. 유휴 잠자기: %2$@."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Sluimer bij inactiviteit: %2$@."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Uśpienie przy bezczynności: %2$@."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Repouso por inatividade: %2$@."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Сон при бездействии: %2$@."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Boşta uyku: %2$@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Сон у разі бездіяльності: %2$@."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@. Ngủ khi không dùng: %2$@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@。闲置睡眠：%2$@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@。閒置睡眠：%2$@。"
+          }
+        }
+      }
+    },
     "%@: %@" : {
 
     },
@@ -30414,6 +30650,118 @@
         }
       }
     },
+    "Agents keep working with the lid closed: the Mac never sleeps, and the display turns off when the lid closes. Turning it on or off asks for your password." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agenten arbeiten bei geschlossenem Deckel weiter: Der Mac geht nie in den Ruhezustand, und das Display schaltet sich beim Schließen des Deckels aus. Ein- und Ausschalten fragt nach deinem Passwort."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los agentes siguen trabajando con la tapa cerrada: el Mac nunca entra en reposo y la pantalla se apaga al cerrar la tapa. Activarlo o desactivarlo pide tu contraseña."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los agentes siguen trabajando con la tapa cerrada: el Mac nunca entra en reposo y la pantalla se apaga al cerrar la tapa. Activarlo o desactivarlo pide tu contraseña."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les agents continuent de travailler écran rabattu : le Mac ne se suspend jamais et l’écran s’éteint quand vous le rabattez. L’activer ou le désactiver demande votre mot de passe."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ढक्कन बंद होने पर भी एजेंट काम करते रहते हैं: Mac कभी स्लीप नहीं करता, और ढक्कन बंद होने पर डिस्प्ले बंद हो जाता है। इसे चालू या बंद करने पर आपका पासवर्ड मांगा जाता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agen tetap bekerja dengan penutup tertutup: Mac tidak pernah tidur, dan layar mati saat penutup ditutup. Menyalakan atau mematikannya meminta kata sandi Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gli agenti continuano a lavorare con il coperchio chiuso: il Mac non va mai in stop e lo schermo si spegne quando chiudi il coperchio. Attivarlo o disattivarlo richiede la password."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "蓋を閉じてもエージェントは作業を続けます。Macはスリープせず、蓋を閉じるとディスプレイがオフになります。オンとオフの切り替えにはパスワードが必要です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "덮개를 닫아도 에이전트가 계속 작업합니다. Mac은 잠자기에 들어가지 않고, 덮개를 닫으면 디스플레이가 꺼집니다. 켜고 끌 때 암호가 필요합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agents blijven werken met de klep dicht: de Mac gaat nooit in sluimer en het scherm gaat uit als de klep dichtgaat. Aan- of uitzetten vraagt om je wachtwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agenci pracują dalej przy zamkniętej pokrywie: Mac nigdy się nie usypia, a ekran gaśnie po zamknięciu pokrywy. Włączanie i wyłączanie wymaga hasła."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os agentes continuam trabalhando com a tampa fechada: o Mac nunca entra em repouso e a tela se apaga quando a tampa fecha. Ativar ou desativar pede sua senha."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Агенты продолжают работать с закрытой крышкой: Mac никогда не уходит в сон, а дисплей выключается при закрытии крышки. Включение и выключение требует пароль."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajanlar kapak kapalıyken çalışmaya devam eder: Mac hiç uyumaz ve kapak kapanınca ekran kapanır. Açmak veya kapatmak parolanızı ister."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Агенти працюють і з закритою кришкою: Mac ніколи не засинає, а дисплей вимикається, коли кришка закривається. Увімкнення й вимкнення потребує пароля."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agent tiếp tục làm việc khi gập nắp: máy Mac không bao giờ ngủ, và màn hình tắt khi gập nắp. Bật hoặc tắt sẽ yêu cầu mật khẩu của bạn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "合上盖子后智能体继续工作：Mac 从不睡眠，合上盖子时显示器关闭。开启或关闭都需要输入密码。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "闔上螢幕後代理程式繼續工作：Mac 永不睡眠，闔上螢幕時顯示器會關閉。開啟或關閉都需要輸入密碼。"
+          }
+        }
+      }
+    },
     "Agents run commands and edit files without asking." : {
       "localizations" : {
         "de" : {
@@ -32880,6 +33228,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "允許 Coincide Remote"
+          }
+        }
+      }
+    },
+    "Allow Coincide in Login Items to watch the lid" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide in den Anmeldeobjekten erlauben, um den Deckel zu überwachen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite Coincide en Ítems de inicio para vigilar la tapa"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permite Coincide en Ítems de inicio para vigilar la tapa"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autorisez Coincide dans Ouverture pour surveiller l’écran rabattu"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ढक्कन पर नज़र रखने के लिए लॉगिन आइटम में Coincide को अनुमति दें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Izinkan Coincide di Item Masuk untuk memantau penutup"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consenti Coincide in Elementi login per controllare il coperchio"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "蓋を監視するにはログイン項目でCoincideを許可してください"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "덮개를 감시하려면 로그인 항목에서 Coincide를 허용하세요"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sta Coincide toe in Inlogonderdelen om de klep in de gaten te houden"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zezwól na Coincide w Rzeczach otwieranych podczas logowania, aby śledzić pokrywę"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permita o Coincide em Itens de Início para vigiar a tampa"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешите Coincide в «Объектах входа», чтобы следить за крышкой"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kapağı izlemek için Giriş Öğeleri'nde Coincide'a izin verin"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозвольте Coincide в «Елементах входу», щоб стежити за кришкою"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho phép Coincide trong Mục đăng nhập để theo dõi nắp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在登录项中允许 Coincide 以监测盖子"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在登入項目中允許 Coincide 以監看螢幕開合"
           }
         }
       }
@@ -35574,6 +36034,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "此網站一律允許"
+          }
+        }
+      }
+    },
+    "Always on" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Immer an"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Siempre activo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Siempre activo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toujours actif"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "हमेशा चालू"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Selalu aktif"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sempre attivo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "常時オン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "항상 켜짐"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Altijd aan"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zawsze włączony"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sempre ativo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Всегда включен"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Her zaman açık"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Завжди увімкнено"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Luôn bật"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "始终开启"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "永遠開啟"
           }
         }
       }
@@ -39948,6 +40520,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "適用於此專案中的新對話。現有對話保留各自的設定。"
+          }
+        }
+      }
+    },
+    "Apply Again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erneut anwenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Volver a aplicar"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Volver a aplicar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appliquer à nouveau"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "फिर से लागू करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Terapkan Lagi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Applica di nuovo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "もう一度適用"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "다시 적용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opnieuw toepassen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zastosuj ponownie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aplicar de novo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Применить снова"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yeniden Uygula"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Застосувати знову"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Áp dụng lại"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再次应用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再次套用"
           }
         }
       }
@@ -44700,6 +45384,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "餘額"
+          }
+        }
+      }
+    },
+    "Battery" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batterie"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batería"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batería"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batterie"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बैटरी"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baterai"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batteria"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "バッテリー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "배터리"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Batterij"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bateria"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bateria"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Аккумулятор"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pil"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Акумулятор"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pin"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电池"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電池"
           }
         }
       }
@@ -52096,6 +52892,118 @@
         }
       }
     },
+    "Changes idle sleep only for the charger. While Keep Awake is on, the Mac doesn’t sleep on battery either, lid closed included." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ändert den Ruhezustand bei Inaktivität nur am Netzteil. Solange „Wach halten“ an ist, geht der Mac auch mit Batterie nicht in den Ruhezustand, auch nicht bei geschlossenem Deckel."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo cambia el reposo por inactividad con el cargador. Mientras Mantener activo esté activado, el Mac tampoco entra en reposo con batería, ni con la tapa cerrada."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo cambia el reposo por inactividad con el cargador. Mientras Mantener activo esté activado, el Mac tampoco entra en reposo con batería, ni con la tapa cerrada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ne modifie la suspension d’inactivité que sur secteur. Tant que Garder éveillé est activé, le Mac ne se suspend pas non plus sur batterie, écran rabattu compris."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "निष्क्रिय स्लीप केवल चार्जर पर बदलता है। जब तक जागृत रखें चालू है, Mac बैटरी पर भी स्लीप नहीं करता, ढक्कन बंद होने पर भी नहीं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hanya mengubah tidur saat diam di pengisi daya. Selama Tetap Terjaga aktif, Mac juga tidak tidur saat memakai baterai, termasuk dengan penutup tertutup."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cambia lo stop per inattività solo con l’alimentatore. Finché Mantieni attivo è attivo, il Mac non va in stop nemmeno a batteria, anche con il coperchio chiuso."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電源アダプタ使用時のアイドルスリープだけを変更します。「スリープさせない」がオンの間は、バッテリー使用時も蓋を閉じてもMacはスリープしません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "전원 어댑터 사용 시의 유휴 잠자기만 변경합니다. 깨어 있기가 켜져 있는 동안에는 배터리 사용 시에도, 덮개를 닫아도 Mac이 잠자기에 들어가지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wijzigt sluimer bij inactiviteit alleen op de lader. Zolang Wakker houden aan staat, gaat de Mac ook op de batterij niet in sluimer, ook niet met de klep dicht."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zmienia uśpienie przy bezczynności tylko na zasilaczu. Gdy Nie usypiaj jest włączone, Mac nie usypia się też na baterii, również przy zamkniętej pokrywie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Muda o repouso por inatividade só no carregador. Enquanto Manter Ativo estiver ligado, o Mac também não entra em repouso na bateria, nem com a tampa fechada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Меняет сон при бездействии только при работе от сети. Пока включено «Не спать», Mac не уходит в сон и от аккумулятора, в том числе с закрытой крышкой."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Boşta uykuyu yalnızca şarj aletindeyken değiştirir. Uyanık Tut açıkken Mac pildeyken de uyumaz, kapak kapalıyken bile."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Змінює сон у разі бездіяльності лише від мережі. Поки увімкнено «Не спати», Mac не засинає й від акумулятора, зокрема з закритою кришкою."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chỉ thay đổi chế độ ngủ khi không dùng lúc cắm sạc. Khi Giữ thức đang bật, máy Mac cũng không ngủ khi dùng pin, kể cả khi gập nắp."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "仅更改使用电源适配器时的闲置睡眠。保持唤醒开启时，Mac 使用电池时也不会睡眠，合上盖子也一样。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "僅變更使用電源轉換器時的閒置睡眠。保持喚醒開啟時，Mac 使用電池時也不會睡眠，闔上螢幕也一樣。"
+          }
+        }
+      }
+    },
     "Changes requested" : {
       "localizations" : {
         "de" : {
@@ -58364,6 +59272,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "支援 Chrome、Safari 和 Apple 密碼、Firefox、1Password 和 Bitwarden 的匯出檔案。登入資訊會作為 Coincide 儲存的登入資訊存入鑰匙圈。"
+          }
+        }
+      }
+    },
+    "Clamshell" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zugeklappt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modo clamshell"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modo clamshell"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Écran rabattu"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ढक्कन बंद"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Penutup tertutup"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coperchio chiuso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "クラムシェル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "덮개 닫힘"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klep dicht"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zamknięta pokrywa"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tampa fechada"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Закрытая крышка"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kapak kapalı"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Закрита кришка"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gập nắp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "合盖"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "闔上螢幕"
           }
         }
       }
@@ -69748,6 +70768,118 @@
         }
       }
     },
+    "Coincide couldn’t read this Mac’s sleep settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide konnte die Ruhezustand-Einstellungen dieses Macs nicht lesen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide no pudo leer los ajustes de reposo de este Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide no pudo leer los ajustes de reposo de este Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide n’a pas pu lire les réglages de suspension de ce Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide इस Mac की स्लीप सेटिंग नहीं पढ़ सका।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide tidak dapat membaca pengaturan tidur Mac ini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide non è riuscito a leggere le impostazioni di stop di questo Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このMacのスリープ設定を読み取れませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 Mac의 잠자기 설정을 읽을 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide kon de sluimerinstellingen van deze Mac niet lezen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide nie może odczytać ustawień uśpienia tego Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide não conseguiu ler os ajustes de repouso deste Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide не удалось прочитать настройки сна этого Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide bu Mac'in uyku ayarlarını okuyamadı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide не вдалося прочитати налаштування сну цього Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide không đọc được cài đặt ngủ của máy Mac này."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 无法读取这台 Mac 的睡眠设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 無法讀取這部 Mac 的睡眠設定。"
+          }
+        }
+      }
+    },
     "Coincide doesn’t have Accessibility access yet. Ask the user to allow it in Settings › Computer Use." : {
       "localizations" : {
         "de" : {
@@ -71536,6 +72668,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Coincide 用量：未回報方案限額"
+          }
+        }
+      }
+    },
+    "Coincide wants to keep this Mac awake, even with the lid closed, so agents keep working." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide möchte diesen Mac wach halten, auch bei geschlossenem Deckel, damit Agenten weiterarbeiten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide quiere mantener este Mac activo, incluso con la tapa cerrada, para que los agentes sigan trabajando."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide quiere mantener este Mac activo, incluso con la tapa cerrada, para que los agentes sigan trabajando."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide veut garder ce Mac éveillé, même écran rabattu, pour que les agents continuent de travailler."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide इस Mac को जागृत रखना चाहता है, ढक्कन बंद होने पर भी, ताकि एजेंट काम करते रहें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide ingin menjaga Mac ini tetap terjaga, bahkan dengan penutup tertutup, agar agen tetap bekerja."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide vuole mantenere attivo questo Mac, anche con il coperchio chiuso, perché gli agenti continuino a lavorare."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントが作業を続けられるよう、Coincideは蓋を閉じてもこのMacをスリープさせないようにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 계속 작업할 수 있도록 Coincide가 덮개를 닫아도 이 Mac을 깨어 있게 하려고 합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide wil deze Mac wakker houden, ook met de klep dicht, zodat agents blijven werken."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide chce nie dopuścić do uśpienia tego Maca, także przy zamkniętej pokrywie, aby agenci pracowali dalej."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide quer manter este Mac ativo, mesmo com a tampa fechada, para que os agentes continuem trabalhando."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide хочет не давать этому Mac уходить в сон, даже с закрытой крышкой, чтобы агенты продолжали работать."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide, ajanlar çalışmaya devam etsin diye bu Mac'i kapak kapalıyken bile uyanık tutmak istiyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide хоче не давати цьому Mac засинати, навіть із закритою кришкою, щоб агенти працювали далі."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide muốn giữ máy Mac này thức, kể cả khi gập nắp, để agent tiếp tục làm việc."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 想让这台 Mac 保持唤醒，即使合上盖子也是如此，以便智能体继续工作。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 想讓這部 Mac 保持喚醒，即使闔上螢幕也一樣，讓代理程式繼續工作。"
+          }
+        }
+      }
+    },
+    "Coincide wants to turn sleep back on for this Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide möchte den Ruhezustand für diesen Mac wieder einschalten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide quiere volver a activar el reposo de este Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide quiere volver a activar el reposo de este Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide veut réactiver la suspension de ce Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide इस Mac के लिए स्लीप फिर से चालू करना चाहता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide ingin menyalakan kembali tidur untuk Mac ini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide vuole riattivare lo stop per questo Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "CoincideはこのMacのスリープを元に戻そうとしています。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide가 이 Mac의 잠자기를 다시 켜려고 합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide wil sluimer voor deze Mac weer aanzetten."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide chce ponownie włączyć usypianie tego Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide quer voltar a ativar o repouso deste Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide хочет снова включить сон для этого Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide bu Mac için uykuyu yeniden açmak istiyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide хоче знову ввімкнути сон для цього Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide muốn bật lại chế độ ngủ cho máy Mac này."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 想为这台 Mac 重新开启睡眠。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 想為這部 Mac 重新開啟睡眠。"
           }
         }
       }
@@ -103162,6 +104518,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "已撤銷"
+          }
+        }
+      }
+    },
+    "Display" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Display"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pantalla"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pantalla"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Écran"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "डिस्प्ले"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Layar"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schermo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ディスプレイ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "디스플레이"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Scherm"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ekran"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tela"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дисплей"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ekran"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дисплей"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Màn hình"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "显示器"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "顯示器"
           }
         }
       }
@@ -136854,6 +138322,118 @@
         }
       }
     },
+    "Its lid watcher runs from %@. Switching stops it and removes its LaunchAgent and script, keeps its options, and leaves the sleep settings as they are." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seine Deckelüberwachung läuft von %@. Beim Wechsel wird sie beendet, ihr LaunchAgent und Skript werden entfernt, ihre Optionen übernommen und die Ruhezustand-Einstellungen bleiben unverändert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Su vigilante de la tapa se ejecuta desde %@. Al cambiar, se detiene, se eliminan su LaunchAgent y su script, se conservan sus opciones y los ajustes de reposo quedan como están."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Su vigilante de la tapa se ejecuta desde %@. Al cambiar, se detiene, se eliminan su LaunchAgent y su script, se conservan sus opciones y los ajustes de reposo quedan como están."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sa surveillance de l’écran rabattu s’exécute depuis %@. Basculer l’arrête, supprime son LaunchAgent et son script, conserve ses options et laisse les réglages de suspension tels quels."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इसका ढक्कन वॉचर %@ से चलता है। बदलने पर यह रुक जाता है, इसका LaunchAgent और स्क्रिप्ट हटा दिए जाते हैं, इसके विकल्प रखे जाते हैं, और स्लीप सेटिंग जैसी हैं वैसी रहती हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pemantau penutupnya berjalan dari %@. Beralih akan menghentikannya, menghapus LaunchAgent dan skripnya, mempertahankan opsinya, dan membiarkan pengaturan tidur apa adanya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il suo controllo del coperchio è eseguito da %@. Il passaggio lo interrompe, rimuove il suo LaunchAgent e il suo script, mantiene le sue opzioni e lascia le impostazioni di stop come sono."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "その蓋の監視は%@から実行されています。切り替えるとそれを停止し、LaunchAgentとスクリプトを削除し、オプションを引き継ぎ、スリープ設定はそのままにします。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 프로그램의 덮개 감시는 %@에서 실행됩니다. 전환하면 이를 중지하고 LaunchAgent와 스크립트를 제거하며, 옵션은 유지하고 잠자기 설정은 그대로 둡니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De klepbewaking ervan draait vanaf %@. Overstappen stopt die, verwijdert de LaunchAgent en het script, behoudt de opties en laat de sluimerinstellingen zoals ze zijn."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jego strażnik pokrywy działa z %@. Przełączenie zatrzymuje go, usuwa jego LaunchAgent i skrypt, zachowuje jego opcje i pozostawia ustawienia uśpienia bez zmian."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O vigia da tampa dele roda a partir de %@. Trocar o encerra, remove o LaunchAgent e o script dele, mantém as opções e deixa os ajustes de repouso como estão."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Его наблюдатель за крышкой запускается из %@. Переход останавливает его, удаляет его LaunchAgent и скрипт, сохраняет его параметры и оставляет настройки сна как есть."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kapak izleyicisi %@ konumundan çalışıyor. Geçiş onu durdurur, LaunchAgent'ını ve betiğini kaldırır, seçeneklerini korur ve uyku ayarlarını olduğu gibi bırakır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Його спостерігач за кришкою запускається з %@. Перехід зупиняє його, видаляє його LaunchAgent і скрипт, зберігає його параметри й залишає налаштування сну як є."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình theo dõi nắp của nó chạy từ %@. Chuyển đổi sẽ dừng nó, xóa LaunchAgent và tập lệnh của nó, giữ các tùy chọn và để nguyên cài đặt ngủ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "它的盖子监测从 %@ 运行。切换会停止它，移除它的 LaunchAgent 和脚本，保留它的选项，并保持睡眠设置不变。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "它的螢幕開合監看從 %@ 執行。切換會停止它，移除它的 LaunchAgent 和腳本，保留它的選項，並維持睡眠設定不變。"
+          }
+        }
+      }
+    },
     "Jump to Bottom" : {
       "localizations" : {
         "de" : {
@@ -137074,6 +138654,566 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "跳至最新"
+          }
+        }
+      }
+    },
+    "Keep Awake" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wach halten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener activo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener activo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder éveillé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जागृत रखें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tetap Terjaga"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantieni attivo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スリープさせない"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "깨어 있기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wakker houden"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie usypiaj"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter Ativo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не спать"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyanık Tut"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не спати"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ thức"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持唤醒"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持喚醒"
+          }
+        }
+      }
+    },
+    "Keep Awake comes from macbook-24x7-agents, which keeps a MacBook running agents with the lid closed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "„Wach halten“ stammt von macbook-24x7-agents, das ein MacBook bei geschlossenem Deckel Agenten ausführen lässt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener activo proviene de macbook-24x7-agents, que mantiene un MacBook ejecutando agentes con la tapa cerrada."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener activo proviene de macbook-24x7-agents, que mantiene un MacBook ejecutando agentes con la tapa cerrada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder éveillé vient de macbook-24x7-agents, qui permet à un MacBook d’exécuter des agents écran rabattu."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जागृत रखें macbook-24x7-agents से आया है, जो ढक्कन बंद होने पर भी MacBook पर एजेंट चलाता रहता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tetap Terjaga berasal dari macbook-24x7-agents, yang membuat MacBook menjalankan agen dengan penutup tertutup."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantieni attivo deriva da macbook-24x7-agents, che fa eseguire agenti a un MacBook con il coperchio chiuso."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "「スリープさせない」は、蓋を閉じたMacBookでエージェントを動かし続けるmacbook-24x7-agentsに基づいています。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "깨어 있기는 덮개를 닫은 MacBook에서 에이전트를 계속 실행하는 macbook-24x7-agents에서 왔습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wakker houden komt van macbook-24x7-agents, waarmee een MacBook agents draait met de klep dicht."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie usypiaj pochodzi z macbook-24x7-agents, który pozwala MacBookowi uruchamiać agentów przy zamkniętej pokrywie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter Ativo vem do macbook-24x7-agents, que mantém um MacBook rodando agentes com a tampa fechada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "«Не спать» взято из macbook-24x7-agents, который позволяет MacBook запускать агентов с закрытой крышкой."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyanık Tut, bir MacBook'un kapak kapalıyken ajan çalıştırmasını sağlayan macbook-24x7-agents'tan gelir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "«Не спати» походить із macbook-24x7-agents, який дає MacBook запускати агентів із закритою кришкою."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ thức đến từ macbook-24x7-agents, giúp MacBook chạy agent khi gập nắp."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持唤醒来自 macbook-24x7-agents，它让 MacBook 合上盖子后继续运行智能体。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持喚醒來自 macbook-24x7-agents，它讓 MacBook 闔上螢幕後繼續執行代理程式。"
+          }
+        }
+      }
+    },
+    "Keep Awake didn’t turn on: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "„Wach halten“ wurde nicht eingeschaltet: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener activo no se activó: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener activo no se activó: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder éveillé ne s’est pas activé : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जागृत रखें चालू नहीं हुआ: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tetap Terjaga tidak menyala: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantieni attivo non si è attivato: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "「スリープさせない」をオンにできませんでした：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "깨어 있기를 켜지 못했습니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wakker houden is niet aangegaan: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie usypiaj nie zostało włączone: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter Ativo não foi ligado: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "«Не спать» не включилось: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyanık Tut açılmadı: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "«Не спати» не ввімкнулося: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ thức chưa bật: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持唤醒未开启：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持喚醒未開啟：%@"
+          }
+        }
+      }
+    },
+    "Keep Awake is still on. macOS needs your password to turn sleep back on." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "„Wach halten“ ist noch an. macOS braucht dein Passwort, um den Ruhezustand wieder einzuschalten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener activo sigue activado. macOS necesita tu contraseña para volver a activar el reposo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener activo sigue activado. macOS necesita tu contraseña para volver a activar el reposo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder éveillé est toujours activé. macOS a besoin de votre mot de passe pour réactiver la suspension."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जागृत रखें अभी भी चालू है। स्लीप फिर से चालू करने के लिए macOS को आपका पासवर्ड चाहिए।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tetap Terjaga masih aktif. macOS memerlukan kata sandi Anda untuk menyalakan kembali tidur."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantieni attivo è ancora attivo. macOS ha bisogno della password per riattivare lo stop."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "「スリープさせない」はオンのままです。スリープを元に戻すにはmacOSにパスワードが必要です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "깨어 있기가 아직 켜져 있습니다. 잠자기를 다시 켜려면 macOS에 암호가 필요합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wakker houden staat nog aan. macOS heeft je wachtwoord nodig om sluimer weer aan te zetten."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie usypiaj jest nadal włączone. macOS potrzebuje hasła, aby ponownie włączyć usypianie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter Ativo continua ligado. O macOS precisa da sua senha para voltar a ativar o repouso."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "«Не спать» всё ещё включено. macOS нужен ваш пароль, чтобы снова включить сон."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyanık Tut hâlâ açık. macOS'in uykuyu yeniden açmak için parolanıza ihtiyacı var."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "«Не спати» досі ввімкнено. macOS потрібен ваш пароль, щоб знову ввімкнути сон."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ thức vẫn đang bật. macOS cần mật khẩu của bạn để bật lại chế độ ngủ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持唤醒仍处于开启状态。macOS 需要你的密码才能重新开启睡眠。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持喚醒仍為開啟。macOS 需要你的密碼才能重新開啟睡眠。"
+          }
+        }
+      }
+    },
+    "Keep Awake is still on: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "„Wach halten“ ist noch an: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener activo sigue activado: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener activo sigue activado: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder éveillé est toujours activé : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जागृत रखें अभी भी चालू है: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tetap Terjaga masih aktif: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantieni attivo è ancora attivo: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "「スリープさせない」はオンのままです：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "깨어 있기가 아직 켜져 있습니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wakker houden staat nog aan: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie usypiaj jest nadal włączone: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter Ativo continua ligado: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "«Не спать» всё ещё включено: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyanık Tut hâlâ açık: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "«Не спати» досі ввімкнено: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ thức vẫn đang bật: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持唤醒仍处于开启状态：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "保持喚醒仍為開啟：%@"
           }
         }
       }
@@ -137526,6 +139666,230 @@
         }
       }
     },
+    "Keep displays off while the lid is closed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Displays bei geschlossenem Deckel aus lassen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener las pantallas apagadas con la tapa cerrada"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener las pantallas apagadas con la tapa cerrada"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder les écrans éteints quand le Mac est rabattu"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ढक्कन बंद होने पर डिस्प्ले बंद रखें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Biarkan layar mati saat penutup tertutup"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantieni spenti gli schermi con il coperchio chiuso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "蓋を閉じている間はディスプレイをオフのままにする"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "덮개가 닫혀 있는 동안 디스플레이 꺼진 상태 유지"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schermen uit houden met de klep dicht"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie włączaj ekranów przy zamkniętej pokrywie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter as telas apagadas com a tampa fechada"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не включать дисплеи при закрытой крышке"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kapak kapalıyken ekranları kapalı tut"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не вмикати дисплеї з закритою кришкою"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ màn hình tắt khi gập nắp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "合上盖子时保持显示器关闭"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "闔上螢幕時讓顯示器保持關閉"
+          }
+        }
+      }
+    },
+    "Keep it plugged in: on battery the Mac runs until the battery is empty. With the lid closed, give it airflow. While this is on, Apple menu › Sleep does nothing. Turn it off here before you delete Coincide." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lass ihn am Netzteil: Mit Batterie läuft der Mac, bis sie leer ist. Sorge bei geschlossenem Deckel für Luftzufuhr. Solange dies an ist, bewirkt Apple-Menü › Ruhezustand nichts. Schalte es hier aus, bevor du Coincide löschst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantenlo enchufado: con batería, el Mac funciona hasta que se agota. Con la tapa cerrada, déjale ventilación. Mientras esté activado, menú Apple › Reposo no hace nada. Desactívalo aquí antes de eliminar Coincide."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantenlo enchufado: con batería, el Mac funciona hasta que se agota. Con la tapa cerrada, déjale ventilación. Mientras esté activado, menú Apple › Reposo no hace nada. Desactívalo aquí antes de eliminar Coincide."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laissez-le branché : sur batterie, le Mac fonctionne jusqu’à ce qu’elle soit vide. Écran rabattu, laissez-le respirer. Tant que c’est activé, menu Pomme › Suspendre n’a aucun effet. Désactivez-le ici avant de supprimer Coincide."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इसे प्लग इन रखें: बैटरी पर Mac तब तक चलता है जब तक बैटरी खत्म न हो जाए। ढक्कन बंद होने पर हवा आने-जाने दें। जब तक यह चालू है, Apple मेनू › स्लीप कुछ नहीं करता। Coincide हटाने से पहले इसे यहाँ बंद करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Biarkan tercolok: dengan baterai, Mac berjalan sampai baterai habis. Saat penutup tertutup, beri aliran udara. Selama ini aktif, menu Apple › Tidur tidak berfungsi. Matikan di sini sebelum Anda menghapus Coincide."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tienilo collegato: a batteria il Mac funziona finché non si scarica. Con il coperchio chiuso, lascialo arieggiare. Finché è attivo, menu Apple › Stop non fa nulla. Disattivalo qui prima di eliminare Coincide."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電源につないでおいてください。バッテリーでは空になるまで動き続けます。蓋を閉じたら通気を確保してください。オンの間はアップルメニュー › スリープは何もしません。Coincideを削除する前にここでオフにしてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "전원에 연결해 두세요. 배터리로는 다 떨어질 때까지 작동합니다. 덮개를 닫았을 때는 통풍이 되게 하세요. 켜져 있는 동안 Apple 메뉴 › 잠자기는 작동하지 않습니다. Coincide를 삭제하기 전에 여기에서 끄세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Houd hem aan de lader: op de batterij draait de Mac tot die leeg is. Geef hem met de klep dicht ventilatie. Zolang dit aan staat, doet Apple-menu › Sluimer niets. Zet het hier uit voordat je Coincide verwijdert."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trzymaj go podłączonego: na baterii Mac działa, aż się rozładuje. Przy zamkniętej pokrywie zapewnij mu przepływ powietrza. Gdy to jest włączone, menu Apple › Uśpij nic nie robi. Wyłącz to tutaj przed usunięciem Coincide."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deixe na tomada: na bateria, o Mac funciona até ela acabar. Com a tampa fechada, deixe-o ventilado. Enquanto isto estiver ligado, menu Apple › Repouso não faz nada. Desligue aqui antes de apagar o Coincide."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Держите его подключённым: от аккумулятора Mac работает, пока тот не разрядится. С закрытой крышкой обеспечьте ему вентиляцию. Пока это включено, меню Apple › Режим сна ничего не делает. Выключите это здесь перед удалением Coincide."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prize takılı tutun: pildeyken Mac pil bitene kadar çalışır. Kapak kapalıyken hava almasını sağlayın. Bu açıkken Apple menüsü › Uyu hiçbir şey yapmaz. Coincide'ı silmeden önce burada kapatın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Тримайте його підключеним: від акумулятора Mac працює, доки той не розрядиться. З закритою кришкою забезпечте вентиляцію. Поки це ввімкнено, меню Apple › Сон нічого не робить. Вимкніть це тут, перш ніж видаляти Coincide."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy cắm sạc: khi dùng pin, máy Mac chạy đến khi hết pin. Khi gập nắp, hãy để máy thông thoáng. Khi tính năng này bật, menu Apple › Ngủ không có tác dụng. Hãy tắt nó tại đây trước khi xóa Coincide."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请保持接通电源：使用电池时，Mac 会一直运行到电量耗尽。合上盖子时，请保持通风。开启期间，苹果菜单 › 睡眠不起作用。删除 Coincide 前请在这里将其关闭。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "請保持接上電源：使用電池時，Mac 會一直執行到電量耗盡。闔上螢幕時，請保持通風。開啟期間，蘋果選單 › 睡眠不會有作用。刪除 Coincide 前請在這裡將其關閉。"
+          }
+        }
+      }
+    },
     "Keep its conversations as chats, or delete them with the bot. Deleted conversations can be restored with Undo until Coincide quits. Files on your Mac are not changed." : {
       "localizations" : {
         "de" : {
@@ -137970,6 +140334,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "保留副本"
+          }
+        }
+      }
+    },
+    "Keep this Mac awake 24/7" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diesen Mac rund um die Uhr wach halten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener este Mac activo 24/7"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantener este Mac activo 24/7"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder ce Mac éveillé 24 h/24"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस Mac को 24/7 जागृत रखें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jaga Mac ini tetap terjaga 24/7"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mantieni attivo questo Mac 24/7"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このMacを24時間スリープさせない"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 Mac을 24시간 깨어 있게 하기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze Mac 24/7 wakker houden"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie usypiaj tego Maca 24/7"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter este Mac ativo 24/7"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не давать этому Mac спать 24/7"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu Mac'i 7/24 uyanık tut"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не давати цьому Mac спати 24/7"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Giữ máy Mac này thức 24/7"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "让这台 Mac 全天候保持唤醒"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "讓這部 Mac 全天候保持喚醒"
           }
         }
       }
@@ -139208,6 +141684,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "鍵盤快速鍵"
+          }
+        }
+      }
+    },
+    "Keyboard or mouse input can’t keep an external display awake: it goes dark again within two seconds." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tastatur oder Maus können ein externes Display nicht wach halten: Es wird innerhalb von zwei Sekunden wieder dunkel."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El teclado o el ratón no pueden mantener activa una pantalla externa: se apaga de nuevo en dos segundos."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El teclado o el mouse no pueden mantener activa una pantalla externa: se apaga de nuevo en dos segundos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le clavier ou la souris ne peuvent pas garder un écran externe allumé : il s’éteint à nouveau en deux secondes."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कीबोर्ड या माउस किसी बाहरी डिस्प्ले को चालू नहीं रख सकते: वह दो सेकंड के अंदर फिर से बंद हो जाता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Papan ketik atau tetikus tidak dapat membuat layar eksternal tetap menyala: layar akan gelap lagi dalam dua detik."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tastiera o mouse non possono tenere acceso uno schermo esterno: si spegne di nuovo entro due secondi."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "キーボードやマウスで外部ディスプレイをオンのままにはできません。2秒以内に再び暗くなります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "키보드나 마우스로 외장 디스플레이를 켜 둘 수 없습니다. 2초 안에 다시 꺼집니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toetsenbord of muis kunnen een extern scherm niet wakker houden: het wordt binnen twee seconden weer donker."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klawiatura ani mysz nie utrzymają włączonego zewnętrznego ekranu: zgaśnie ponownie w ciągu dwóch sekund."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Teclado ou mouse não conseguem manter uma tela externa acesa: ela se apaga de novo em dois segundos."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Клавиатура или мышь не смогут держать внешний дисплей включённым: он снова погаснет в течение двух секунд."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klavye veya fare harici bir ekranı açık tutamaz: iki saniye içinde yeniden kararır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Клавіатура чи миша не втримають зовнішній дисплей увімкненим: він знову згасне протягом двох секунд."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bàn phím hoặc chuột không thể giữ màn hình ngoài sáng: nó sẽ tối lại trong vòng hai giây."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "键盘或鼠标无法让外接显示器保持点亮：它会在两秒内再次变暗。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "鍵盤或滑鼠無法讓外接顯示器保持亮著：它會在兩秒內再次變暗。"
           }
         }
       }
@@ -141784,6 +144372,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "授權"
+          }
+        }
+      }
+    },
+    "Lid" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deckel"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tapa"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tapa"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Écran rabattu"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ढक्कन"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Penutup"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coperchio"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "蓋"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "덮개"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klep"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pokrywa"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tampa"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Крышка"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kapak"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Кришка"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nắp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "盖子"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "螢幕上蓋"
           }
         }
       }
@@ -157048,6 +159748,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "移到行首或行尾"
+          }
+        }
+      }
+    },
+    "Mute sound while the lid is closed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ton bei geschlossenem Deckel stummschalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Silenciar el sonido con la tapa cerrada"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Silenciar el sonido con la tapa cerrada"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Couper le son quand le Mac est rabattu"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ढक्कन बंद होने पर आवाज़ म्यूट करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bisukan suara saat penutup tertutup"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Disattiva l’audio con il coperchio chiuso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "蓋を閉じている間は消音する"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "덮개가 닫혀 있는 동안 음소거"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geluid dempen met de klep dicht"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wycisz dźwięk przy zamkniętej pokrywie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Silenciar o som com a tampa fechada"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выключать звук при закрытой крышке"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kapak kapalıyken sesi kapat"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вимикати звук із закритою кришкою"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tắt tiếng khi gập nắp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "合上盖子时静音"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "闔上螢幕時靜音"
           }
         }
       }
@@ -175026,6 +177838,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "只能儲存網頁的登入資訊。"
+          }
+        }
+      }
+    },
+    "Only while charging" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nur beim Laden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo mientras se carga"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo mientras se carga"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seulement en charge"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "केवल चार्ज होते समय"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hanya saat mengisi daya"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo in carica"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "充電中のみ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "충전 중에만"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alleen tijdens opladen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tylko podczas ładowania"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Só enquanto carrega"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Только при зарядке"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yalnızca şarj olurken"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Лише під час заряджання"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chỉ khi đang sạc"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "仅在充电时"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "僅在充電時"
           }
         }
       }
@@ -236602,6 +239526,678 @@
         }
       }
     },
+    "Sleep" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ruhezustand"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reposo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reposo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Suspension"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्लीप"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidur"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stop"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スリープ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "잠자기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sluimer"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uśpienie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Repouso"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сон"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyku"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сон"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ngủ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "睡眠"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "睡眠"
+          }
+        }
+      }
+    },
+    "Sleep disabled: no" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ruhezustand deaktiviert: nein"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reposo desactivado: no"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reposo desactivado: no"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Suspension désactivée : non"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्लीप अक्षम: नहीं"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidur dinonaktifkan: tidak"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stop disattivato: no"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スリープ無効：いいえ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "잠자기 비활성화: 아니요"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sluimer uitgeschakeld: nee"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usypianie wyłączone: nie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Repouso desativado: não"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сон отключён: нет"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyku devre dışı: hayır"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сон вимкнено: ні"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã tắt chế độ ngủ: không"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "睡眠已停用：否"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "睡眠已停用：否"
+          }
+        }
+      }
+    },
+    "Sleep disabled: yes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ruhezustand deaktiviert: ja"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reposo desactivado: sí"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reposo desactivado: sí"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Suspension désactivée : oui"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्लीप अक्षम: हाँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidur dinonaktifkan: ya"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stop disattivato: sì"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スリープ無効：はい"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "잠자기 비활성화: 예"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sluimer uitgeschakeld: ja"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usypianie wyłączone: tak"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Repouso desativado: sim"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сон отключён: да"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyku devre dışı: evet"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сон вимкнено: так"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã tắt chế độ ngủ: có"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "睡眠已停用：是"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "睡眠已停用：是"
+          }
+        }
+      }
+    },
+    "Sleep is disabled outside Coincide" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ruhezustand ist außerhalb von Coincide deaktiviert"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El reposo está desactivado fuera de Coincide"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El reposo está desactivado fuera de Coincide"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La suspension est désactivée en dehors de Coincide"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्लीप Coincide के बाहर अक्षम है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidur dinonaktifkan di luar Coincide"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lo stop è disattivato al di fuori di Coincide"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide以外でスリープが無効になっています"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 밖에서 잠자기가 비활성화되었습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sluimer is buiten Coincide uitgeschakeld"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usypianie jest wyłączone poza Coincide"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O repouso está desativado fora do Coincide"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сон отключён вне Coincide"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyku Coincide dışında devre dışı bırakılmış"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сон вимкнено поза Coincide"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chế độ ngủ bị tắt bên ngoài Coincide"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "睡眠已在 Coincide 之外停用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "睡眠已在 Coincide 之外停用"
+          }
+        }
+      }
+    },
+    "Sleep is off, but the lid watcher didn’t start: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Ruhezustand ist aus, aber die Deckelüberwachung ist nicht gestartet: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El reposo está desactivado, pero el vigilante de la tapa no se inició: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El reposo está desactivado, pero el vigilante de la tapa no se inició: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La suspension est désactivée, mais la surveillance de l’écran rabattu n’a pas démarré : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्लीप बंद है, लेकिन ढक्कन वॉचर शुरू नहीं हुआ: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidur mati, tetapi pemantau penutup tidak berjalan: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lo stop è disattivato, ma il controllo del coperchio non è partito: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スリープはオフですが、蓋の監視が起動しませんでした：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "잠자기는 꺼졌지만 덮개 감시가 시작되지 않았습니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sluimer is uit, maar de klepbewaking is niet gestart: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usypianie jest wyłączone, ale strażnik pokrywy się nie uruchomił: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O repouso está desligado, mas o vigia da tampa não iniciou: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сон выключен, но наблюдатель за крышкой не запустился: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyku kapalı ama kapak izleyicisi başlamadı: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сон вимкнено, але спостерігач за кришкою не запустився: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chế độ ngủ đã tắt, nhưng trình theo dõi nắp chưa khởi động: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "睡眠已关闭，但盖子监测未启动：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "睡眠已關閉，但螢幕開合監看未啟動：%@"
+          }
+        }
+      }
+    },
+    "Sleep settings unavailable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ruhezustand-Einstellungen nicht verfügbar"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajustes de reposo no disponibles"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajustes de reposo no disponibles"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Réglages de suspension indisponibles"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "स्लीप सेटिंग उपलब्ध नहीं"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pengaturan tidur tidak tersedia"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impostazioni di stop non disponibili"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "スリープ設定を取得できません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "잠자기 설정을 사용할 수 없음"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sluimerinstellingen niet beschikbaar"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ustawienia uśpienia niedostępne"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajustes de repouso indisponíveis"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Настройки сна недоступны"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uyku ayarları kullanılamıyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Налаштування сну недоступні"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không có cài đặt ngủ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "睡眠设置不可用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法取得睡眠設定"
+          }
+        }
+      }
+    },
     "Smart Copy/Paste" : {
       "localizations" : {
         "de" : {
@@ -245806,6 +249402,118 @@
         }
       }
     },
+    "Switch from macbook-24x7-agents first, so only one lid watcher runs." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wechsle zuerst von macbook-24x7-agents, damit nur eine Deckelüberwachung läuft."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cambia primero desde macbook-24x7-agents para que solo funcione un vigilante de la tapa."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cambia primero desde macbook-24x7-agents para que solo funcione un vigilante de la tapa."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quittez d’abord macbook-24x7-agents, pour qu’une seule surveillance de l’écran rabattu fonctionne."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पहले macbook-24x7-agents से बदलें, ताकि केवल एक ढक्कन वॉचर चले।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beralih dulu dari macbook-24x7-agents, agar hanya satu pemantau penutup yang berjalan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passa prima da macbook-24x7-agents, così funziona un solo controllo del coperchio."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "蓋の監視が1つだけ動くよう、先にmacbook-24x7-agentsから切り替えてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "덮개 감시가 하나만 실행되도록 먼저 macbook-24x7-agents에서 전환하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stap eerst over van macbook-24x7-agents, zodat er maar één klepbewaking draait."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Najpierw przełącz się z macbook-24x7-agents, aby działał tylko jeden strażnik pokrywy."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Troque primeiro do macbook-24x7-agents, para que só um vigia da tampa rode."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Сначала перейдите с macbook-24x7-agents, чтобы работал только один наблюдатель за крышкой."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yalnızca bir kapak izleyicisi çalışsın diye önce macbook-24x7-agents'tan geçiş yapın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Спершу перейдіть із macbook-24x7-agents, щоб працював лише один спостерігач за кришкою."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy chuyển từ macbook-24x7-agents trước, để chỉ một trình theo dõi nắp chạy."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请先从 macbook-24x7-agents 切换，以便只运行一个盖子监测。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "請先從 macbook-24x7-agents 切換，讓只有一個螢幕開合監看在執行。"
+          }
+        }
+      }
+    },
     "Switch or create a branch" : {
       "localizations" : {
         "de" : {
@@ -246586,6 +250294,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "切換至建置模式"
+          }
+        }
+      }
+    },
+    "Switch to Coincide" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zu Coincide wechseln"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cambiar a Coincide"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cambiar a Coincide"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passer à Coincide"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide पर बदलें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beralih ke Coincide"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passa a Coincide"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideに切り替える"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide로 전환"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Overstappen naar Coincide"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przełącz na Coincide"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trocar para o Coincide"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перейти на Coincide"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide'a Geç"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Перейти на Coincide"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chuyển sang Coincide"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "切换到 Coincide"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "切換到 Coincide"
           }
         }
       }
@@ -256471,6 +260291,118 @@
         }
       }
     },
+    "The battery setting didn’t change: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Batterie-Einstellung wurde nicht geändert: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El ajuste de la batería no cambió: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El ajuste de la batería no cambió: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le réglage de la batterie n’a pas changé : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "बैटरी सेटिंग नहीं बदली: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pengaturan baterai tidak berubah: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’impostazione della batteria non è cambiata: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "バッテリーの設定は変更されませんでした：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "배터리 설정이 변경되지 않았습니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De batterij-instelling is niet gewijzigd: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ustawienie baterii nie zostało zmienione: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O ajuste da bateria não mudou: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Настройка аккумулятора не изменилась: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pil ayarı değişmedi: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Налаштування акумулятора не змінилося: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cài đặt pin không thay đổi: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "电池设置未更改：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "電池設定未變更：%@"
+          }
+        }
+      }
+    },
     "The bot and its instructions will be removed. Files on your Mac are not changed." : {
       "localizations" : {
         "de" : {
@@ -260281,6 +264213,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "上次檢查失敗。"
+          }
+        }
+      }
+    },
+    "The lid watcher isn’t running" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Deckelüberwachung läuft nicht"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El vigilante de la tapa no se está ejecutando"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El vigilante de la tapa no se está ejecutando"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La surveillance de l’écran rabattu ne fonctionne pas"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ढक्कन वॉचर नहीं चल रहा"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pemantau penutup tidak berjalan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il controllo del coperchio non è in esecuzione"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "蓋の監視が実行されていません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "덮개 감시가 실행되고 있지 않습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De klepbewaking draait niet"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Strażnik pokrywy nie działa"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O vigia da tampa não está rodando"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Наблюдатель за крышкой не запущен"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kapak izleyicisi çalışmıyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Спостерігач за кришкою не працює"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình theo dõi nắp không chạy"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "盖子监测未运行"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "螢幕開合監看未在執行"
           }
         }
       }
@@ -269360,6 +273404,342 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "這台 Mac 已無法辨識此裝置。請重新配對。"
+          }
+        }
+      }
+    },
+    "This Mac sleeps as usual" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Mac geht wie gewohnt in den Ruhezustand"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este Mac entra en reposo como siempre"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este Mac entra en reposo como siempre"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce Mac se suspend normalement"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह Mac सामान्य रूप से स्लीप करता है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac ini tidur seperti biasa"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questo Mac va in stop come sempre"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このMacは通常どおりスリープします"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 Mac은 평소처럼 잠자기에 들어갑니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze Mac gaat gewoon in sluimer"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten Mac usypia się jak zwykle"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este Mac entra em repouso normalmente"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот Mac уходит в сон как обычно"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu Mac her zamanki gibi uyuyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей Mac засинає як зазвичай"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Máy Mac này ngủ như bình thường"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "这台 Mac 照常睡眠"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "這部 Mac 照常睡眠"
+          }
+        }
+      }
+    },
+    "This Mac stays awake" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Mac bleibt wach"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este Mac se mantiene activo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este Mac se mantiene activo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce Mac reste éveillé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह Mac जागृत रहता है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac ini tetap terjaga"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questo Mac resta attivo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このMacはスリープしません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 Mac은 깨어 있습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze Mac blijft wakker"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten Mac nie usypia się"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este Mac continua ativo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот Mac не уходит в сон"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu Mac uyanık kalıyor"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей Mac не засинає"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Máy Mac này luôn thức"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "这台 Mac 保持唤醒"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "這部 Mac 保持喚醒"
+          }
+        }
+      }
+    },
+    "This Mac stays awake, lid closed too" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Mac bleibt wach, auch bei geschlossenem Deckel"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este Mac se mantiene activo, también con la tapa cerrada"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este Mac se mantiene activo, también con la tapa cerrada"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce Mac reste éveillé, même rabattu"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह Mac जागृत रहता है, ढक्कन बंद होने पर भी"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac ini tetap terjaga, juga dengan penutup tertutup"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questo Mac resta attivo, anche con il coperchio chiuso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このMacは蓋を閉じてもスリープしません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 Mac은 덮개를 닫아도 깨어 있습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze Mac blijft wakker, ook met de klep dicht"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten Mac nie usypia się, także przy zamkniętej pokrywie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este Mac continua ativo, também com a tampa fechada"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот Mac не уходит в сон, даже с закрытой крышкой"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu Mac uyanık kalıyor, kapak kapalıyken de"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей Mac не засинає, навіть із закритою кришкою"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Máy Mac này luôn thức, kể cả khi gập nắp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "这台 Mac 保持唤醒，合上盖子也一样"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "這部 Mac 保持喚醒，闔上螢幕也一樣"
           }
         }
       }
@@ -279715,6 +284095,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "在「設定 › Cursor」中開啟「顯示帳號用量」以讀取方案限額。"
+          }
+        }
+      }
+    },
+    "Turn the display off when the lid closes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Display beim Schließen des Deckels ausschalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apagar la pantalla al cerrar la tapa"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apagar la pantalla al cerrar la tapa"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Éteindre l’écran quand le Mac est rabattu"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ढक्कन बंद होने पर डिस्प्ले बंद करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Matikan layar saat penutup ditutup"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Spegni lo schermo quando chiudi il coperchio"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "蓋を閉じたらディスプレイをオフにする"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "덮개를 닫으면 디스플레이 끄기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Scherm uitzetten als de klep dichtgaat"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wyłącz ekran po zamknięciu pokrywy"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apagar a tela quando a tampa fechar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выключать дисплей при закрытии крышки"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kapak kapanınca ekranı kapat"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вимикати дисплей, коли кришка закривається"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tắt màn hình khi gập nắp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "合上盖子时关闭显示器"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "闔上螢幕時關閉顯示器"
           }
         }
       }
@@ -294948,6 +299440,118 @@
         }
       }
     },
+    "Your mute setting comes back when you open the lid." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Stummschaltung kehrt zurück, wenn du den Deckel öffnest."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu ajuste de silencio vuelve al abrir la tapa."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu ajuste de silencio vuelve al abrir la tapa."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Votre réglage du son revient quand vous ouvrez l’écran."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ढक्कन खोलने पर आपकी म्यूट सेटिंग वापस आ जाती है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pengaturan bisu Anda kembali saat Anda membuka penutup."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’audio torna com’era quando apri il coperchio."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "蓋を開けると消音の設定が元に戻ります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "덮개를 열면 음소거 설정이 원래대로 돌아옵니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Je dempinstelling komt terug als je de klep opent."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Twoje ustawienie wyciszenia wraca po otwarciu pokrywy."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seu ajuste de silêncio volta quando você abre a tampa."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ваша настройка звука вернётся, когда вы откроете крышку."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sessiz ayarınız kapağı açtığınızda geri gelir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ваше налаштування звуку повернеться, коли ви відкриєте кришку."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cài đặt tắt tiếng của bạn sẽ trở lại khi bạn mở nắp."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打开盖子后会恢复你的静音设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "打開螢幕後會恢復你的靜音設定。"
+          }
+        }
+      }
+    },
     "Your organization disabled fast mode, so Claude Code ran at standard speed." : {
       "localizations" : {
         "de" : {
@@ -298556,6 +303160,118 @@
         }
       }
     },
+    "macOS didn’t change the sleep settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS hat die Ruhezustand-Einstellungen nicht geändert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS no cambió los ajustes de reposo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS no cambió los ajustes de reposo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS n’a pas modifié les réglages de suspension."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS ने स्लीप सेटिंग नहीं बदलीं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS tidak mengubah pengaturan tidur."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS non ha cambiato le impostazioni di stop."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOSはスリープ設定を変更しませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS가 잠자기 설정을 변경하지 않았습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS heeft de sluimerinstellingen niet gewijzigd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS nie zmienił ustawień uśpienia."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O macOS não mudou os ajustes de repouso."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS не изменила настройки сна."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS uyku ayarlarını değiştirmedi."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS не змінила налаштування сну."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS không thay đổi cài đặt ngủ."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS 未更改睡眠设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS 未變更睡眠設定。"
+          }
+        }
+      }
+    },
     "macOS protects %@’s data, and only you can let Coincide read it: macOS doesn’t let apps turn on Full Disk Access themselves. Coincide opens the list for you; drag Coincide in and turn it on. If macOS offers Quit & Reopen, choose it and this window comes back." : {
       "localizations" : {
         "de" : {
@@ -298899,6 +303615,230 @@
         }
       }
     },
+    "macbook-24x7-agents couldn’t be removed: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents konnte nicht entfernt werden: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo eliminar macbook-24x7-agents: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo eliminar macbook-24x7-agents: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de supprimer macbook-24x7-agents : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents हटाया नहीं जा सका: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents tidak dapat dihapus: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossibile rimuovere macbook-24x7-agents: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agentsを削除できませんでした：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents를 제거할 수 없습니다: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents kon niet worden verwijderd: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie można usunąć macbook-24x7-agents: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível remover o macbook-24x7-agents: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не удалось удалить macbook-24x7-agents: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents kaldırılamadı: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Не вдалося видалити macbook-24x7-agents: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không thể xóa macbook-24x7-agents: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法移除 macbook-24x7-agents：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法移除 macbook-24x7-agents：%@"
+          }
+        }
+      }
+    },
+    "macbook-24x7-agents is installed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents ist installiert"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents está instalado"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents está instalado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents est installé"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents इंस्टॉल है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents terpasang"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents è installato"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agentsがインストールされています"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents가 설치되어 있습니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents is geïnstalleerd"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents jest zainstalowany"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents está instalado"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents установлен"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents yüklü"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macbook-24x7-agents установлено"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã cài đặt macbook-24x7-agents"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已安装 macbook-24x7-agents"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已安裝 macbook-24x7-agents"
+          }
+        }
+      }
+    },
     "model-id" : {
       "localizations" : {
         "de" : {
@@ -299007,6 +303947,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "模型 ID"
+          }
+        }
+      }
+    },
+    "never" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "nie"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "nunca"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "nunca"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "jamais"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कभी नहीं"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "tidak pernah"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "mai"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "しない"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "안 함"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "nooit"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "nigdy"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "nunca"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "никогда"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "hiçbir zaman"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ніколи"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "không bao giờ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "永不"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "永不"
           }
         }
       }
@@ -299854,6 +304906,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "執行了 1 個其他動作"
+          }
+        }
+      }
+    },
+    "pmset didn’t answer." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset hat nicht geantwortet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset no respondió."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset no respondió."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset n’a pas répondu."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset ने जवाब नहीं दिया।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset tidak menjawab."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset non ha risposto."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmsetが応答しませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset이 응답하지 않았습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset gaf geen antwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset nie odpowiedział."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O pmset não respondeu."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset не ответил."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset yanıt vermedi."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset не відповів."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset không phản hồi."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset 没有响应。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "pmset 沒有回應。"
           }
         }
       }
