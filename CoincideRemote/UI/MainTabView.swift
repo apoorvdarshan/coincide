@@ -16,7 +16,8 @@ struct MainTabView: View {
     var body: some View {
         @Bindable var navigator = navigator
         TabView(selection: $navigator.tab) {
-            Tab("Bots", systemImage: "face.smiling", value: AppTab.bots) {
+            // The bot character's own symbol (`coincide.bot`, from scripts/bot-symbol.swift): Coincide's alien.
+            Tab("Bots", image: "coincide.bot", value: AppTab.bots) {
                 stack(.bots) { BotsView() }
             }
             Tab("Projects", systemImage: "folder", value: AppTab.projects) {
