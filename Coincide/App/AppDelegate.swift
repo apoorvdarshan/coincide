@@ -1,5 +1,6 @@
 import AppKit
 import CoincideKit
+import CoincideRemoteKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var mainWindow: MainWindowController?
@@ -180,5 +181,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showSettings(_ sender: Any?) {
         SettingsWindowController.shared.show()
+    }
+
+    /// The Help menu's links: the menu item's `CommunityLink`.
+    @objc func openCommunityLink(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let link = CommunityLink(rawValue: raw) else { return }
+        link.open()
     }
 }
