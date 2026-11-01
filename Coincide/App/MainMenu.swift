@@ -249,15 +249,19 @@ final class MainMenu: NSObject, NSMenuDelegate {
         return menu
     }
 
-    /// Report an Issue… and Request a Feature…, which open the GitHub issue forms (`CommunityLink`). macOS puts its
-    /// help search above them.
+    /// Help & Community (`CommunityLink`): help and reports, Discord and the source code, then the developer's accounts,
+    /// then contact and legal pages. macOS puts its help search above them.
     private func helpMenu(_ appDelegate: AppDelegate) -> NSMenu {
         let menu = NSMenu(title: String(localized: "Help"))
-        for link in CommunityLink.allCases {
-            let entry = item(link.command.title, #selector(AppDelegate.openCommunityLink(_:)), link.command)
-            entry.target = appDelegate
-            entry.representedObject = link.rawValue
-            menu.addItem(entry)
+        for group in CommunityLink.Group.allCases {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            for link in CommunityLink.links(in: group) {
+                let action = #selector(AppDelegate.openCommunityLink(_:))
+                let entry = link.command.map { item(link.menuTitle, action, $0) } ?? item(link.menuTitle, action)
+                entry.target = appDelegate
+                entry.representedObject = link.rawValue
+                menu.addItem(entry)
+            }
         }
         return menu
     }

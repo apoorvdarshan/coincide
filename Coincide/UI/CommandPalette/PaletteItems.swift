@@ -252,8 +252,8 @@ struct PaletteCatalog {
         for link in CommunityLink.allCases {
             items.append(
                 PaletteItem(
-                    id: "help:\(link.rawValue)", title: link.command.title, subtitle: String(localized: "Help"),
-                    icon: symbol(link.symbol), trailing: keys(link.command), keywords: link.keywords,
+                    id: "help:\(link.rawValue)", title: link.menuTitle, subtitle: String(localized: "Help"),
+                    icon: symbol(link.symbol), trailing: link.command.flatMap(keys), keywords: link.keywords,
                     behavior: .run { link.open() }))
         }
         return (core, items)

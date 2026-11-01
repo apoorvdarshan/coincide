@@ -14,6 +14,9 @@ enum MacSettingsLabel {
         case "blue": .blue
         case "orange": .orange
         case "red": .red
+        case "pink": .pink
+        case "yellow": .yellow
+        case "black": .black
         default: .gray
         }
     }

@@ -183,7 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindowController.shared.show()
     }
 
-    /// Help › Report an Issue… and Request a Feature…: the menu item's `CommunityLink`.
+    /// The Help menu's links: the menu item's `CommunityLink`.
     @objc func openCommunityLink(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let link = CommunityLink(rawValue: raw) else { return }
         link.open()

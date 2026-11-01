@@ -132,13 +132,15 @@ struct SettingsSidebar: View {
 }
 
 /// A pane's colored tile and title, as in the Mac Settings sidebar: an agent's own mark for a provider's pane, and the
-/// provider's status dot. A row that opens a web page instead of a pane ends with an arrow.
+/// provider's status dot. A row that opens a web page instead of a pane ends with an arrow, after the account or address
+/// it opens when that is worth showing.
 struct SettingsTileLabel: View {
     let title: String
     var logo: String?
     let symbol: String
     let color: String
     var status: String?
+    var detail: String?
     var opensLink = false
     @Environment(\.theme) private var theme
     @ScaledMetric(relativeTo: .callout) private var tile: CGFloat = 26
@@ -169,6 +171,12 @@ struct SettingsTileLabel: View {
             if let status {
                 StatusDot(color: MacSettingsLabel.statusColor(status))
                     .accessibilityLabel(Text(MacSettingsLabel.statusLabel(status)))
+            }
+            if let detail {
+                Text(verbatim: detail)
+                    .font(.footnote)
+                    .foregroundStyle(theme.secondaryInk)
+                    .lineLimit(1)
             }
             if opensLink {
                 Image(systemName: "arrow.up.right")

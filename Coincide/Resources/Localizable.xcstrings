@@ -50104,6 +50104,118 @@
         }
       }
     },
+    "Ask in the help channel on Discord" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Frag im Hilfe-Kanal auf Discord"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pregunta en el canal de ayuda de Discord"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pregunta en el canal de ayuda de Discord"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Posez votre question dans le salon d’aide sur Discord"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord पर सहायता चैनल में पूछें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tanyakan di kanal bantuan di Discord"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chiedi nel canale di aiuto su Discord"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord のヘルプチャンネルで質問"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord 도움말 채널에서 질문하기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vraag het in het helpkanaal op Discord"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zapytaj na kanale pomocy na Discordzie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pergunte no canal de ajuda do Discord"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Спросите в канале помощи в Discord"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord'daki yardım kanalında sorun"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запитайте в каналі допомоги в Discord"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hỏi trong kênh trợ giúp trên Discord"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Discord 的帮助频道提问"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Discord 的求助頻道提問"
+          }
+        }
+      }
+    },
     "Asks before running commands and changing files." : {
       "localizations" : {
         "de" : {
@@ -82880,6 +82992,118 @@
         }
       }
     },
+    "Coincide is open source under the MIT License" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide ist Open Source unter der MIT-Lizenz"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide es de código abierto con la licencia MIT"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide es de código abierto con la licencia MIT"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide est open source sous licence MIT"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide MIT लाइसेंस के तहत ओपन सोर्स है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide bersifat sumber terbuka dengan Lisensi MIT"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide è open source con licenza MIT"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide は MIT ライセンスのオープンソースです"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide는 MIT 라이선스의 오픈 소스입니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide is open source onder de MIT-licentie"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide jest otwartoźródłowy na licencji MIT"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide é de código aberto sob a Licença MIT"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide — проект с открытым исходным кодом под лицензией MIT"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide, MIT Lisansı ile açık kaynaktır"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide — проєкт із відкритим кодом за ліцензією MIT"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide là mã nguồn mở theo Giấy phép MIT"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 以 MIT 许可证开源"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 以 MIT 授權條款開放原始碼"
+          }
+        }
+      }
+    },
     "Coincide is running. The update has not been installed." : {
       "localizations" : {
         "de" : {
@@ -92178,6 +92402,342 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Console 支出"
+          }
+        }
+      }
+    },
+    "Contact" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontakt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contacto"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contacto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contact"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "संपर्क"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontak"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contatti"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "連絡先"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "문의"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contact"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontakt"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contato"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Связаться"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İletişim"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зв’язатися"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Liên hệ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "联系"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "聯絡"
+          }
+        }
+      }
+    },
+    "Contact & Legal" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontakt & Rechtliches"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contacto y aspectos legales"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contacto y aspectos legales"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contact et mentions légales"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "संपर्क और कानूनी"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontak & Legal"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contatti e note legali"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "連絡先と法的情報"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "문의 및 법적 고지"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contact en juridisch"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontakt i informacje prawne"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contato e Informações Legais"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Контакты и правовая информация"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İletişim ve Yasal"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Контакти та правова інформація"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Liên hệ & Pháp lý"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "联系与法律信息"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "聯絡與法律資訊"
+          }
+        }
+      }
+    },
+    "Contact: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontakt: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contacto: %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contacto: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contact : %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "संपर्क: %@"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontak: %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contatti: %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "連絡先：%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "문의: %@"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contact: %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kontakt: %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contato: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Связаться: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İletişim: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Зв’язатися: %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Liên hệ: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "联系：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "聯絡：%@"
           }
         }
       }
@@ -119555,6 +120115,230 @@
         }
       }
     },
+    "Discord" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord"
+          }
+        }
+      }
+    },
+    "Discord channel links open once you’ve joined the server. Reports sent there with /bug or /feature become public GitHub issues and need no GitHub account. GitHub issues are public too; a bug report starts with only your versions of Coincide and macOS filled in." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Links zu Discord-Kanälen öffnen sich, sobald du dem Server beigetreten bist. Meldungen, die dort mit /bug oder /feature gesendet werden, werden zu öffentlichen GitHub-Issues und brauchen kein GitHub-Konto. Auch GitHub-Issues sind öffentlich; in einem Fehlerbericht sind nur deine Versionen von Coincide und macOS vorausgefüllt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los enlaces a canales de Discord se abren cuando te unes al servidor. Los informes enviados allí con /bug o /feature se convierten en incidencias públicas de GitHub y no necesitan una cuenta de GitHub. Las incidencias de GitHub también son públicas; un informe de error solo incluye de antemano tus versiones de Coincide y macOS."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los enlaces a canales de Discord se abren cuando te unes al servidor. Los reportes enviados allí con /bug o /feature se convierten en issues públicos de GitHub y no necesitan una cuenta de GitHub. Los issues de GitHub también son públicos; un reporte de error solo incluye de antemano tus versiones de Coincide y macOS."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les liens vers les salons Discord s’ouvrent une fois que vous avez rejoint le serveur. Les signalements envoyés avec /bug ou /feature deviennent des tickets GitHub publics et ne nécessitent aucun compte GitHub. Les tickets GitHub sont aussi publics ; un rapport de bug ne contient au départ que vos versions de Coincide et de macOS."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord चैनल लिंक सर्वर से जुड़ने के बाद खुलते हैं। वहाँ /bug या /feature से भेजी गई रिपोर्ट सार्वजनिक GitHub इश्यू बन जाती हैं और उनके लिए GitHub खाते की ज़रूरत नहीं होती। GitHub इश्यू भी सार्वजनिक होते हैं; बग रिपोर्ट में पहले से केवल आपके Coincide और macOS के संस्करण भरे होते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tautan kanal Discord terbuka setelah Anda bergabung ke server. Laporan yang dikirim di sana dengan /bug atau /feature menjadi isu GitHub publik dan tidak memerlukan akun GitHub. Isu GitHub juga bersifat publik; laporan bug hanya terisi versi Coincide dan macOS Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "I link ai canali Discord si aprono dopo che sei entrato nel server. Le segnalazioni inviate lì con /bug o /feature diventano issue pubbliche su GitHub e non richiedono un account GitHub. Anche le issue su GitHub sono pubbliche; una segnalazione di bug contiene in partenza solo le tue versioni di Coincide e macOS."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord のチャンネルリンクは、サーバーに参加すると開けます。そこで /bug または /feature を使って送った報告は公開の GitHub Issue になり、GitHub アカウントは不要です。GitHub の Issue も公開されます。バグ報告には Coincide と macOS のバージョンだけがあらかじめ入力されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord 채널 링크는 서버에 참여한 후에 열립니다. 그곳에서 /bug 또는 /feature로 보낸 보고는 공개 GitHub 이슈가 되며 GitHub 계정이 필요하지 않습니다. GitHub 이슈도 공개되며, 버그 보고서에는 Coincide와 macOS 버전만 미리 입력됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Links naar Discord-kanalen werken zodra je lid bent van de server. Meldingen die je daar met /bug of /feature stuurt, worden openbare GitHub-issues en vereisen geen GitHub-account. Issues op GitHub zijn ook openbaar; een bugrapport bevat vooraf alleen je versies van Coincide en macOS."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Linki do kanałów Discorda działają po dołączeniu do serwera. Zgłoszenia wysłane tam przez /bug lub /feature stają się publicznymi zgłoszeniami na GitHubie i nie wymagają konta GitHub. Zgłoszenia na GitHubie też są publiczne; raport o błędzie zawiera na start tylko Twoje wersje Coincide i macOS."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os links de canais do Discord abrem depois que você entra no servidor. Relatos enviados lá com /bug ou /feature viram issues públicas no GitHub e não exigem conta no GitHub. Issues no GitHub também são públicas; um relatório de bug vem preenchido apenas com suas versões do Coincide e do macOS."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ссылки на каналы Discord открываются после того, как вы вступите на сервер. Отчёты, отправленные там через /bug или /feature, становятся публичными задачами на GitHub и не требуют аккаунта GitHub. Задачи на GitHub тоже публичны; в отчёте об ошибке заранее указаны только ваши версии Coincide и macOS."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord kanal bağlantıları sunucuya katıldıktan sonra açılır. Orada /bug veya /feature ile gönderilen raporlar herkese açık GitHub sorun kayıtlarına dönüşür ve GitHub hesabı gerektirmez. GitHub sorun kayıtları da herkese açıktır; hata raporunda yalnızca Coincide ve macOS sürümleriniz önceden doldurulur."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Посилання на канали Discord відкриваються, щойно ви приєднаєтеся до сервера. Звіти, надіслані там через /bug або /feature, стають публічними задачами на GitHub і не потребують облікового запису GitHub. Задачі на GitHub теж публічні; у звіті про помилку заздалегідь вказано лише ваші версії Coincide і macOS."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Liên kết kênh Discord sẽ mở được sau khi bạn tham gia máy chủ. Báo cáo gửi ở đó bằng /bug hoặc /feature sẽ trở thành issue công khai trên GitHub và không cần tài khoản GitHub. Issue trên GitHub cũng công khai; báo cáo lỗi chỉ điền sẵn phiên bản Coincide và macOS của bạn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "加入服务器后即可打开 Discord 频道链接。在那里用 /bug 或 /feature 提交的报告会成为公开的 GitHub 议题，无需 GitHub 账户。GitHub 议题同样公开；错误报告只会预先填入你的 Coincide 和 macOS 版本。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "加入伺服器後即可打開 Discord 頻道連結。在那裡用 /bug 或 /feature 送出的回報會成為公開的 GitHub 議題，不需要 GitHub 帳號。GitHub 議題同樣公開；錯誤回報只會預先填入你的 Coincide 和 macOS 版本。"
+          }
+        }
+      }
+    },
     "Dismiss" : {
       "localizations" : {
         "de" : {
@@ -136041,6 +136825,230 @@
         }
       }
     },
+    "Fill in the bug report form on GitHub, or use /bug in the bug reports channel on Discord. Channel links work once you’ve joined the server. Reports sent on Discord become public GitHub issues and need no GitHub account." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Füll das Formular für Fehlerberichte auf GitHub aus oder nutze /bug im Kanal für Fehlerberichte auf Discord. Kanal-Links funktionieren, sobald du dem Server beigetreten bist. Auf Discord gesendete Meldungen werden zu öffentlichen GitHub-Issues und brauchen kein GitHub-Konto."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rellena el formulario de informe de errores en GitHub o usa /bug en el canal de informes de errores de Discord. Los enlaces a canales funcionan cuando te unes al servidor. Los informes enviados en Discord se convierten en incidencias públicas de GitHub y no necesitan una cuenta de GitHub."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Completa el formulario de reporte de errores en GitHub o usa /bug en el canal de reportes de errores de Discord. Los enlaces a canales funcionan cuando te unes al servidor. Los reportes enviados en Discord se convierten en issues públicos de GitHub y no necesitan una cuenta de GitHub."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Remplissez le formulaire de rapport de bug sur GitHub, ou utilisez /bug dans le salon des rapports de bugs sur Discord. Les liens vers les salons fonctionnent une fois que vous avez rejoint le serveur. Les signalements envoyés sur Discord deviennent des tickets GitHub publics et ne nécessitent aucun compte GitHub."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub पर बग रिपोर्ट फ़ॉर्म भरें, या Discord पर बग रिपोर्ट चैनल में /bug का उपयोग करें। चैनल लिंक सर्वर से जुड़ने के बाद काम करते हैं। Discord पर भेजी गई रिपोर्ट सार्वजनिक GitHub इश्यू बन जाती हैं और उनके लिए GitHub खाते की ज़रूरत नहीं होती।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Isi formulir laporan bug di GitHub, atau gunakan /bug di kanal laporan bug di Discord. Tautan kanal berfungsi setelah Anda bergabung ke server. Laporan yang dikirim di Discord menjadi isu GitHub publik dan tidak memerlukan akun GitHub."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compila il modulo di segnalazione bug su GitHub, oppure usa /bug nel canale delle segnalazioni di bug su Discord. I link ai canali funzionano dopo che sei entrato nel server. Le segnalazioni inviate su Discord diventano issue pubbliche su GitHub e non richiedono un account GitHub."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub のバグ報告フォームに記入するか、Discord のバグ報告チャンネルで /bug を使ってください。チャンネルリンクはサーバーに参加すると使えます。Discord で送った報告は公開の GitHub Issue になり、GitHub アカウントは不要です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub에서 버그 보고 양식을 작성하거나 Discord의 버그 보고 채널에서 /bug를 사용하세요. 채널 링크는 서버에 참여한 후에 작동합니다. Discord에서 보낸 보고는 공개 GitHub 이슈가 되며 GitHub 계정이 필요하지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vul het bugrapportformulier op GitHub in, of gebruik /bug in het kanaal voor bugrapporten op Discord. Kanaallinks werken zodra je lid bent van de server. Meldingen via Discord worden openbare GitHub-issues en vereisen geen GitHub-account."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wypełnij formularz zgłoszenia błędu na GitHubie albo użyj /bug na kanale zgłoszeń błędów na Discordzie. Linki do kanałów działają po dołączeniu do serwera. Zgłoszenia wysłane na Discordzie stają się publicznymi zgłoszeniami na GitHubie i nie wymagają konta GitHub."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preencha o formulário de relatório de bug no GitHub ou use /bug no canal de relatórios de bugs do Discord. Os links de canais funcionam depois que você entra no servidor. Relatos enviados no Discord viram issues públicas no GitHub e não exigem conta no GitHub."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Заполните форму отчёта об ошибке на GitHub или используйте /bug в канале отчётов об ошибках в Discord. Ссылки на каналы работают после вступления на сервер. Отчёты, отправленные в Discord, становятся публичными задачами на GitHub и не требуют аккаунта GitHub."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub'da hata raporu formunu doldurun veya Discord'daki hata raporları kanalında /bug komutunu kullanın. Kanal bağlantıları sunucuya katıldıktan sonra çalışır. Discord'da gönderilen raporlar herkese açık GitHub sorun kayıtlarına dönüşür ve GitHub hesabı gerektirmez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Заповніть форму звіту про помилку на GitHub або скористайтеся /bug у каналі звітів про помилки в Discord. Посилання на канали працюють, щойно ви приєднаєтеся до сервера. Звіти, надіслані в Discord, стають публічними задачами на GitHub і не потребують облікового запису GitHub."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Điền biểu mẫu báo lỗi trên GitHub, hoặc dùng /bug trong kênh báo lỗi trên Discord. Liên kết kênh hoạt động sau khi bạn tham gia máy chủ. Báo cáo gửi trên Discord sẽ trở thành issue công khai trên GitHub và không cần tài khoản GitHub."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 GitHub 上填写错误报告表单，或在 Discord 的错误报告频道使用 /bug。加入服务器后频道链接才能使用。在 Discord 上提交的报告会成为公开的 GitHub 议题，无需 GitHub 账户。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 GitHub 上填寫錯誤回報表單，或在 Discord 的錯誤回報頻道使用 /bug。加入伺服器後頻道連結才能使用。在 Discord 上送出的回報會成為公開的 GitHub 議題，不需要 GitHub 帳號。"
+          }
+        }
+      }
+    },
+    "Fill in the feature request form on GitHub, or use /feature in the feature requests channel on Discord. Channel links work once you’ve joined the server. Requests sent on Discord become public GitHub issues and need no GitHub account." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Füll das Formular für Funktionswünsche auf GitHub aus oder nutze /feature im Kanal für Funktionswünsche auf Discord. Kanal-Links funktionieren, sobald du dem Server beigetreten bist. Auf Discord gesendete Wünsche werden zu öffentlichen GitHub-Issues und brauchen kein GitHub-Konto."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rellena el formulario de solicitud de funciones en GitHub o usa /feature en el canal de solicitudes de funciones de Discord. Los enlaces a canales funcionan cuando te unes al servidor. Las solicitudes enviadas en Discord se convierten en incidencias públicas de GitHub y no necesitan una cuenta de GitHub."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Completa el formulario de solicitud de funciones en GitHub o usa /feature en el canal de solicitudes de funciones de Discord. Los enlaces a canales funcionan cuando te unes al servidor. Las solicitudes enviadas en Discord se convierten en issues públicos de GitHub y no necesitan una cuenta de GitHub."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Remplissez le formulaire de demande de fonctionnalité sur GitHub, ou utilisez /feature dans le salon des demandes de fonctionnalités sur Discord. Les liens vers les salons fonctionnent une fois que vous avez rejoint le serveur. Les demandes envoyées sur Discord deviennent des tickets GitHub publics et ne nécessitent aucun compte GitHub."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub पर फ़ीचर अनुरोध फ़ॉर्म भरें, या Discord पर फ़ीचर अनुरोध चैनल में /feature का उपयोग करें। चैनल लिंक सर्वर से जुड़ने के बाद काम करते हैं। Discord पर भेजे गए अनुरोध सार्वजनिक GitHub इश्यू बन जाते हैं और उनके लिए GitHub खाते की ज़रूरत नहीं होती।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Isi formulir permintaan fitur di GitHub, atau gunakan /feature di kanal permintaan fitur di Discord. Tautan kanal berfungsi setelah Anda bergabung ke server. Permintaan yang dikirim di Discord menjadi isu GitHub publik dan tidak memerlukan akun GitHub."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compila il modulo di richiesta funzioni su GitHub, oppure usa /feature nel canale delle richieste di funzioni su Discord. I link ai canali funzionano dopo che sei entrato nel server. Le richieste inviate su Discord diventano issue pubbliche su GitHub e non richiedono un account GitHub."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub の機能リクエストフォームに記入するか、Discord の機能リクエストチャンネルで /feature を使ってください。チャンネルリンクはサーバーに参加すると使えます。Discord で送ったリクエストは公開の GitHub Issue になり、GitHub アカウントは不要です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub에서 기능 요청 양식을 작성하거나 Discord의 기능 요청 채널에서 /feature를 사용하세요. 채널 링크는 서버에 참여한 후에 작동합니다. Discord에서 보낸 요청은 공개 GitHub 이슈가 되며 GitHub 계정이 필요하지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vul het formulier voor functieverzoeken op GitHub in, of gebruik /feature in het kanaal voor functieverzoeken op Discord. Kanaallinks werken zodra je lid bent van de server. Verzoeken via Discord worden openbare GitHub-issues en vereisen geen GitHub-account."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wypełnij formularz propozycji funkcji na GitHubie albo użyj /feature na kanale propozycji funkcji na Discordzie. Linki do kanałów działają po dołączeniu do serwera. Propozycje wysłane na Discordzie stają się publicznymi zgłoszeniami na GitHubie i nie wymagają konta GitHub."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preencha o formulário de solicitação de recurso no GitHub ou use /feature no canal de solicitações de recursos do Discord. Os links de canais funcionam depois que você entra no servidor. Solicitações enviadas no Discord viram issues públicas no GitHub e não exigem conta no GitHub."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Заполните форму предложения функции на GitHub или используйте /feature в канале предложений функций в Discord. Ссылки на каналы работают после вступления на сервер. Предложения, отправленные в Discord, становятся публичными задачами на GitHub и не требуют аккаунта GitHub."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub'da özellik isteği formunu doldurun veya Discord'daki özellik istekleri kanalında /feature komutunu kullanın. Kanal bağlantıları sunucuya katıldıktan sonra çalışır. Discord'da gönderilen istekler herkese açık GitHub sorun kayıtlarına dönüşür ve GitHub hesabı gerektirmez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Заповніть форму пропозиції функції на GitHub або скористайтеся /feature у каналі пропозицій функцій у Discord. Посилання на канали працюють, щойно ви приєднаєтеся до сервера. Пропозиції, надіслані в Discord, стають публічними задачами на GitHub і не потребують облікового запису GitHub."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Điền biểu mẫu yêu cầu tính năng trên GitHub, hoặc dùng /feature trong kênh yêu cầu tính năng trên Discord. Liên kết kênh hoạt động sau khi bạn tham gia máy chủ. Yêu cầu gửi trên Discord sẽ trở thành issue công khai trên GitHub và không cần tài khoản GitHub."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 GitHub 上填写功能请求表单，或在 Discord 的功能请求频道使用 /feature。加入服务器后频道链接才能使用。在 Discord 上提交的请求会成为公开的 GitHub 议题，无需 GitHub 账户。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 GitHub 上填寫功能請求表單，或在 Discord 的功能請求頻道使用 /feature。加入伺服器後頻道連結才能使用。在 Discord 上送出的請求會成為公開的 GitHub 議題，不需要 GitHub 帳號。"
+          }
+        }
+      }
+    },
     "Filter" : {
       "localizations" : {
         "de" : {
@@ -142232,6 +143240,230 @@
         }
       }
     },
+    "Get Help" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hilfe erhalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obtener ayuda"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obtener ayuda"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obtenir de l’aide"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सहायता पाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dapatkan Bantuan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ottieni aiuto"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ヘルプを受ける"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "도움 받기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vraag om hulp"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uzyskaj pomoc"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obter Ajuda"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Получить помощь"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yardım Al"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Отримати допомогу"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhận trợ giúp"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "获取帮助"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "取得協助"
+          }
+        }
+      }
+    },
+    "Get Help on Discord" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hilfe auf Discord erhalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obtener ayuda en Discord"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obtener ayuda en Discord"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obtenir de l’aide sur Discord"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord पर सहायता पाएँ"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dapatkan Bantuan di Discord"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ottieni aiuto su Discord"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord でヘルプを受ける"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord에서 도움 받기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vraag om hulp op Discord"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uzyskaj pomoc na Discordzie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Obter Ajuda no Discord"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Получить помощь в Discord"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord'da Yardım Al"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Отримати допомогу в Discord"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhận trợ giúp trên Discord"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Discord 上获取帮助"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Discord 上取得協助"
+          }
+        }
+      }
+    },
     "Get a Key" : {
       "localizations" : {
         "de" : {
@@ -143236,6 +144468,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Git 的索引已鎖定。請等待其他 Git 操作完成，然後再試一次。"
+          }
+        }
+      }
+    },
+    "GitHub" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub"
           }
         }
       }
@@ -160994,118 +162338,6 @@
         }
       }
     },
-    "Issues on GitHub are public. A bug report starts with only your versions of Coincide and macOS filled in; leave keys, tokens and private code out of what you add." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Issues auf GitHub sind öffentlich. In einem Fehlerbericht sind nur deine Versionen von Coincide und macOS vorausgefüllt; lass Schlüssel, Tokens und privaten Code aus deinen Angaben heraus."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Las incidencias en GitHub son públicas. Un informe de error solo incluye de antemano tus versiones de Coincide y macOS; no añadas claves, tokens ni código privado."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Los issues en GitHub son públicos. Un reporte de error solo incluye de antemano tus versiones de Coincide y macOS; no agregues claves, tokens ni código privado."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Les tickets sur GitHub sont publics. Un rapport de bug ne contient au départ que vos versions de Coincide et de macOS ; n’y ajoutez ni clés, ni jetons, ni code privé."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub पर इश्यू सार्वजनिक होते हैं। बग रिपोर्ट में पहले से केवल आपके Coincide और macOS के संस्करण भरे होते हैं; जो आप जोड़ें उसमें कुंजियाँ, टोकन और निजी कोड न डालें।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Isu di GitHub bersifat publik. Laporan bug hanya terisi versi Coincide dan macOS Anda; jangan sertakan kunci, token, dan kode pribadi dalam apa yang Anda tambahkan."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Le segnalazioni su GitHub sono pubbliche. Una segnalazione di bug contiene in partenza solo le tue versioni di Coincide e macOS; non aggiungere chiavi, token o codice privato."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub の Issue は公開されます。バグ報告には Coincide と macOS のバージョンだけがあらかじめ入力されます。追加する内容にキー、トークン、非公開のコードを含めないでください。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub 이슈는 공개됩니다. 버그 보고서에는 Coincide와 macOS 버전만 미리 입력되며, 추가하는 내용에 키, 토큰, 비공개 코드를 넣지 마세요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Issues op GitHub zijn openbaar. Een bugrapport bevat vooraf alleen je versies van Coincide en macOS; laat sleutels, tokens en privécode weg uit wat je toevoegt."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Zgłoszenia na GitHubie są publiczne. Raport o błędzie zawiera na start tylko Twoje wersje Coincide i macOS; nie dodawaj kluczy, tokenów ani prywatnego kodu."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Issues no GitHub são públicas. Um relatório de bug vem preenchido apenas com suas versões do Coincide e do macOS; não inclua chaves, tokens nem código privado no que você adicionar."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Задачи на GitHub публичны. В отчёте об ошибке заранее указаны только ваши версии Coincide и macOS; не добавляйте ключи, токены и закрытый код."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub'daki sorun kayıtları herkese açıktır. Hata raporunda yalnızca Coincide ve macOS sürümleriniz önceden doldurulur; eklediklerinize anahtar, token ve özel kod koymayın."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Задачі на GitHub публічні. У звіті про помилку заздалегідь вказано лише ваші версії Coincide і macOS; не додавайте ключі, токени та закритий код."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Các issue trên GitHub là công khai. Báo cáo lỗi chỉ điền sẵn phiên bản Coincide và macOS của bạn; đừng thêm khóa, token hay mã riêng tư vào nội dung bạn viết."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub 上的议题是公开的。错误报告只会预先填入你的 Coincide 和 macOS 版本；请勿在你添加的内容中包含密钥、令牌和私有代码。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub 上的議題是公開的。錯誤回報只會預先填入你的 Coincide 和 macOS 版本；請勿在你加入的內容中包含金鑰、權杖和私有程式碼。"
-          }
-        }
-      }
-    },
     "It can’t search by site, so Coincide matches its logins itself." : {
       "localizations" : {
         "de" : {
@@ -162166,6 +163398,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "我腦中已經冒出好多點子了。我們來做點什麼吧？"
+          }
+        }
+      }
+    },
+    "Join the Discord" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord beitreten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Unirse al Discord"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Unirse al Discord"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rejoindre le Discord"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord से जुड़ें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gabung ke Discord"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Unisciti al Discord"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord に参加"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord 참여하기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Word lid van de Discord"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dołącz do Discorda"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrar no Discord"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Присоединиться к Discord"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discord'a Katıl"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Приєднатися до Discord"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tham gia Discord"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "加入 Discord"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "加入 Discord"
           }
         }
       }
@@ -206243,6 +207587,118 @@
         }
       }
     },
+    "On GitHub or Discord" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf GitHub oder Discord"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En GitHub o Discord"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En GitHub o Discord"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sur GitHub ou Discord"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub या Discord पर"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Di GitHub atau Discord"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Su GitHub o Discord"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub または Discord で"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub 또는 Discord에서"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Op GitHub of Discord"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Na GitHubie lub Discordzie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No GitHub ou Discord"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "На GitHub или в Discord"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub'da veya Discord'da"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "На GitHub або в Discord"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trên GitHub hoặc Discord"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 GitHub 或 Discord 上"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 GitHub 或 Discord 上"
+          }
+        }
+      }
+    },
     "On Selected Days" : {
       "localizations" : {
         "de" : {
@@ -216886,230 +218342,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "打開終端機，僅為此帳號執行 %@ 的登入流程。"
-          }
-        }
-      }
-    },
-    "Opens the bug report form on GitHub" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Öffnet das Formular für Fehlerberichte auf GitHub"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Abre el formulario de informe de errores en GitHub"
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Abre el formulario de reporte de errores en GitHub"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ouvre le formulaire de rapport de bug sur GitHub"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub पर बग रिपोर्ट फ़ॉर्म खोलता है"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Membuka formulir laporan bug di GitHub"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apre il modulo di segnalazione bug su GitHub"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub のバグ報告フォームを開きます"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub에서 버그 보고 양식을 엽니다"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Opent het formulier voor bugrapporten op GitHub"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Otwiera formularz zgłoszenia błędu na GitHubie"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Abre o formulário de relatório de bug no GitHub"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Открывает форму отчёта об ошибке на GitHub"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub'da hata raporu formunu açar"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Відкриває форму звіту про помилку на GitHub"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mở biểu mẫu báo lỗi trên GitHub"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "在 GitHub 上打开错误报告表单"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "在 GitHub 上打開錯誤回報表單"
-          }
-        }
-      }
-    },
-    "Opens the feature request form on GitHub" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Öffnet das Formular für Funktionswünsche auf GitHub"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Abre el formulario de solicitud de funciones en GitHub"
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Abre el formulario de solicitud de funciones en GitHub"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Ouvre le formulaire de demande de fonctionnalité sur GitHub"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub पर फ़ीचर अनुरोध फ़ॉर्म खोलता है"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Membuka formulir permintaan fitur di GitHub"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Apre il modulo di richiesta funzioni su GitHub"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub の機能リクエストフォームを開きます"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub에서 기능 요청 양식을 엽니다"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Opent het formulier voor functieverzoeken op GitHub"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Otwiera formularz propozycji funkcji na GitHubie"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Abre o formulário de solicitação de recurso no GitHub"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Открывает форму предложения функции на GitHub"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "GitHub'da özellik isteği formunu açar"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Відкриває форму пропозиції функції на GitHub"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mở biểu mẫu yêu cầu tính năng trên GitHub"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "在 GitHub 上打开功能请求表单"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "在 GitHub 上打開功能請求表單"
           }
         }
       }
@@ -228201,6 +229433,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "隱私權"
+          }
+        }
+      }
+    },
+    "Privacy Policy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Datenschutzerklärung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Política de privacidad"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Política de privacidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Politique de confidentialité"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "गोपनीयता नीति"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kebijakan Privasi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Informativa sulla privacy"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "プライバシーポリシー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "개인정보 처리방침"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Privacybeleid"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Polityka prywatności"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Política de Privacidade"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Политика конфиденциальности"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gizlilik Politikası"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Політика конфіденційності"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chính sách quyền riêng tư"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "隐私政策"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "隱私權政策"
           }
         }
       }
@@ -281436,6 +282780,7 @@
       }
     },
     "Source Code" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -284455,6 +285800,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "標準"
+          }
+        }
+      }
+    },
+    "Star on GitHub" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf GitHub mit Stern markieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dar una estrella en GitHub"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dar una estrella en GitHub"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajouter une étoile sur GitHub"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub पर स्टार दें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beri Bintang di GitHub"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aggiungi una stella su GitHub"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub でスターを付ける"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub에서 별표 주기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geef een ster op GitHub"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Daj gwiazdkę na GitHubie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dar uma Estrela no GitHub"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поставить звезду на GitHub"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GitHub'da Yıldız Ver"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Поставити зірку на GitHub"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gắn sao trên GitHub"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 GitHub 上加星标"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 GitHub 上加星號"
           }
         }
       }
@@ -295893,6 +297350,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "終端機"
+          }
+        }
+      }
+    },
+    "Terms of Service" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nutzungsbedingungen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Términos del servicio"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Términos del servicio"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conditions d’utilisation"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सेवा की शर्तें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ketentuan Layanan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Termini di servizio"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "利用規約"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "서비스 약관"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Servicevoorwaarden"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Warunki korzystania z usługi"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Termos de Serviço"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Условия использования"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hizmet Koşulları"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Умови використання"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Điều khoản dịch vụ"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "服务条款"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "服務條款"
           }
         }
       }
@@ -351526,6 +353095,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "填寫審查內容…"
+          }
+        }
+      }
+    },
+    "Writes an email to %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schreibt eine E-Mail an %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escribe un correo a %@"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escribe un correo a %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Écrit un e-mail à %@"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ को ईमेल लिखता है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Menulis email ke %@"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Scrive un’email a %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ にメールを書きます"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@에 이메일을 작성합니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schrijft een e-mail aan %@"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pisze e-mail do %@"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escreve um e-mail para %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пишет письмо на адрес %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ adresine e-posta yazar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Пише листа на адресу %@"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Viết email đến %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "给 %@ 写邮件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "寫電子郵件給 %@"
           }
         }
       }

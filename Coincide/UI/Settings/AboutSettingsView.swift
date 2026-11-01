@@ -30,21 +30,7 @@ struct AboutSettingsView: View {
 
             AppUpdateSettingsView()
 
-            HelpCommunitySection()
-
-            Section {
-                AboutLink(
-                    symbol: "chevron.left.forwardslash.chevron.right", color: .gray, title: String(localized: "Source Code"),
-                    detail: "github.com/apoorvdarshan/coincide", url: "https://github.com/apoorvdarshan/coincide")
-            }
-
-            Section("Follow") {
-                AboutLink(
-                    symbol: "at", color: .black, title: "X", detail: "@apoorvdarshan", url: "https://x.com/apoorvdarshan")
-                AboutLink(
-                    symbol: "camera.fill", color: .pink, title: "Instagram", detail: "@apoorvcodes",
-                    url: "https://www.instagram.com/apoorvcodes")
-            }
+            HelpCommunitySections()
 
             Section("Acknowledgements") {
                 Text("Coincide is a native macOS port of T3 Code, the open-source agent app by T3 Tools Inc., and is used under the MIT License.")
@@ -168,22 +154,27 @@ struct AboutSettingsView: View {
         """
 }
 
-/// Settings › About's Help & Community: a row for each `CommunityLink`, which opens its GitHub form with this Mac's
-/// versions of Coincide and macOS filled in, as Help › Report an Issue… does.
-struct HelpCommunitySection: View {
+/// Settings › About's Help & Community, Follow, and Contact & Legal: a row for each `CommunityLink`, as in the Help
+/// menu. Report an Issue and Request a Feature ask GitHub or Discord first; a bug report's form has this Mac's versions
+/// of Coincide and macOS filled in.
+struct HelpCommunitySections: View {
     var body: some View {
-        Section {
-            ForEach(CommunityLink.allCases) { link in
-                AboutLink(
-                    symbol: link.symbol, color: link.tint, title: link.title, detail: link.detail,
-                    url: link.url().absoluteString, opens: link.macURL)
+        ForEach(CommunityLink.Group.allCases, id: \.self) { group in
+            Section {
+                ForEach(CommunityLink.links(in: group)) { link in
+                    AboutLink(
+                        symbol: link.symbol, color: link.tint, title: link.title, detail: link.detail,
+                        url: link.url().absoluteString, action: { link.open() })
+                }
+            } header: {
+                Text(CommunityLink.title(of: group))
+            } footer: {
+                if group == .community {
+                    Text("Discord channel links open once you’ve joined the server. Reports sent there with /bug or /feature become public GitHub issues and need no GitHub account. GitHub issues are public too; a bug report starts with only your versions of Coincide and macOS filled in.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-        } header: {
-            Text("Help & Community")
-        } footer: {
-            Text("Issues on GitHub are public. A bug report starts with only your versions of Coincide and macOS filled in; leave keys, tokens and private code out of what you add.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -195,13 +186,17 @@ private struct AboutLink: View {
     let title: String
     let detail: String
     let url: String
-    /// What a click opens when it isn't `url`, such as a form with fields filled in.
-    var opens: URL?
+    /// What a click does instead of opening `url`, such as asking GitHub or Discord.
+    var action: (() -> Void)?
     @Environment(\.openURL) private var openURL
 
     var body: some View {
         Button {
-            if let destination = opens ?? URL(string: url) { openURL(destination) }
+            if let action {
+                action()
+            } else if let destination = URL(string: url) {
+                openURL(destination)
+            }
         } label: {
             HStack(spacing: 10) {
                 SettingsIconTile(symbol: symbol, color: color, size: 24)
@@ -221,6 +216,6 @@ private struct AboutLink: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .help(url)
-        .accessibilityHint(Text("Opens \(url) in your browser"))
+        .accessibilityHint(url.hasPrefix("mailto:") ? Text("Writes an email to \(detail)") : Text("Opens \(url) in your browser"))
     }
 }
