@@ -117,7 +117,7 @@
       <li>There’s no Coincide account, and Coincide’s own code has no ads, analytics or tracking. The app doesn’t send your conversations, code, files or settings to us, and there’s no Coincide server it talks to.</li>
       <li>Your agents send your messages, and what they read or capture for you, to their own providers, under your accounts and those providers’ terms.</li>
       <li>Coincide keeps its data on your Mac. Some features contact other services directly; each one is listed below.</li>
-      <li>Computer Use, which is off by default, runs a bundled helper from Cua AI that sends content-free usage telemetry to Cua AI unless you turn it off.</li>
+      <li>Computer Use, which is off by default, runs a bundled helper from Cua AI. Coincide turns off the helper’s own telemetry and update checks, so it doesn’t contact Cua AI.</li>
       <li>Coincide Remote connects straight to your Mac over your own network or Tailscale. There’s no relay in between.</li>
       <li>In Discord, <code>/bug</code> and <code>/feature</code> reports become public GitHub issues, and Janus sends questions and reports to Google Gemini.</li>
       <li>We don’t sell or rent personal information, and we don’t use it for advertising.</li>
@@ -209,9 +209,7 @@
   <section aria-labelledby="computer-use">
     <h2 id="computer-use">Computer Use</h2>
     <p>Computer Use is off by default. When you turn it on, agents can list apps and windows, read a window’s controls, click, type, scroll and take screenshots. Screenshots and window contents an agent reads go to its provider.</p>
-    <p>To do this, Coincide runs a bundled copy of <a href="https://github.com/trycua/cua">Cua Driver</a>, an open-source helper made by Cua AI, on your Mac. Cua Driver has telemetry of its own. Based on its source code, when the helper runs it sends content-free product telemetry to Cua AI through PostHog’s EU servers by default: event names (such as a session starting or a tool finishing), which tool ran and how it ended, rough timings, the Cua Driver and macOS versions, your processor type and a random installation ID it saves in <code>~/.cua-driver</code>. Cua AI’s code states that these events never include prompts, typed text, screenshots, accessibility data, app or window names, URLs or file paths. The helper can also check GitHub or cua.ai for a newer Cua Driver release.</p>
-    <p>To stop Cua Driver’s telemetry, run this in Terminal (adjust the path if Coincide isn’t in Applications):</p>
-    <pre><code>/Applications/Coincide.app/Contents/Helpers/cua-driver telemetry disable</code></pre>
+    <p>To do this, Coincide runs a bundled copy of <a href="https://github.com/trycua/cua">Cua Driver</a>, an open-source helper made by Cua AI, on your Mac. Cua Driver normally sends content-free product telemetry to Cua AI and checks online for newer versions of itself. Coincide switches both off every time it starts the helper (it sets <code>DO_NOT_TRACK=1</code>, <code>CUA_DRIVER_RS_TELEMETRY_ENABLED=false</code> and <code>CUA_DRIVER_RS_UPDATE_CHECK=false</code>), so the helper sends nothing to Cua AI. Cua Driver is updated only when Coincide itself is.</p>
   </section>
 
   <section aria-labelledby="local">
@@ -276,8 +274,7 @@
       <li>Google (Fonts, Gemini for Janus, and Antigravity);</li>
       <li>Cloudflare (the website and Janus) and Discord;</li>
       <li>Hugging Face, OpenAI or Groq, for the dictation options you choose;</li>
-      <li>Cua AI, for Computer Use telemetry unless you turn it off;</li>
-      <li>services you connect yourself, such as 1Password, Bitwarden, Tailscale or your Git host.</li>
+            <li>services you connect yourself, such as 1Password, Bitwarden, Tailscale or your Git host.</li>
     </ul>
     <p>We may disclose information if the law requires it.</p>
   </section>

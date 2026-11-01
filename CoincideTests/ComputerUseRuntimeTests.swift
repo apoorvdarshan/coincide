@@ -86,6 +86,13 @@ struct FakeComputerUseDriver {
 /// Exercises the real process/stdio/socket lifecycle without opening apps, capturing the user's screen or asking TCC.
 @MainActor
 struct ComputerUseRuntimeTests {
+    @Test func theHelperSendsNoTelemetryAndNeverChecksForUpdates() {
+        let environment = ComputerUseRuntime.environment(directory: URL(fileURLWithPath: "/private/tmp/coincide-cua-test"))
+        #expect(environment["DO_NOT_TRACK"] == "1")
+        #expect(environment["CUA_DRIVER_RS_TELEMETRY_ENABLED"] == "false")
+        #expect(environment["CUA_DRIVER_RS_UPDATE_CHECK"] == "false")
+    }
+
     @Test func startupIsCoalescedAndTheSocketIsPrivate() async throws {
         let helper = try FakeComputerUseDriver()
         let runtime = ComputerUseRuntime(executable: helper.executable)
