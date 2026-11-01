@@ -126,7 +126,8 @@ jobs:
 
       # Xcode's compilation cache: compiler outputs keyed by the exact inputs of each compile, so an unchanged file
       # reuses its earlier output and a changed one compiles again. It holds no build products or test results; the
-      # build starts from an empty DerivedData and every test runs.
+      # build starts from an empty DerivedData and every test runs. (A cached DerivedData barely helped: a fresh checkout
+      # gives every file a new date, so Xcode compiles the app's targets again anyway. Measured in #200.)
       - name: Restore compilation cache
         id: compilation
         if: steps.scope.outputs.app != 'false'
@@ -153,8 +154,9 @@ jobs:
           path: build/SourcePackages
           key: ${{ steps.packages.outputs.cache-primary-key }}
 
+      # A re-run of a commit restores that commit's own cache exactly, and a cache key can't be saved twice.
       - name: Save compilation cache
-        if: steps.build.outcome == 'success' && github.event_name != 'pull_request'
+        if: steps.build.outcome == 'success' && github.event_name != 'pull_request' && steps.compilation.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/CompilationCache
