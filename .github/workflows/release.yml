@@ -1,0 +1,316 @@
+# Builds Coincide for Mac and publishes it (docs/releasing.md).
+#
+# Pushing a tag v<version>, where <version> is MARKETING_VERSION in project.yml, runs the unit tests and the release
+# scripts' tests, builds the universal app (Developer ID, hardened runtime, notarized and stapled), the DMG and the ZIP,
+# verifies them, and then publishes them: the GitHub Release (notes from CHANGELOG.md), the Homebrew cask in
+# apoorvdarshan/homebrew-tap and the npm package coincide-dev, all at that version.
+#
+# Run workflow (workflow_dispatch) only validates: tests, build, signing, notarization, stapling and verification, with
+# the DMG, ZIP and checksums kept as the run's artifact. It never publishes anything.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Releases run one at a time in tag order: a newer tag waits behind the running release, and never cancels or replaces
+# one that is waiting. Validation runs publish nothing, so each gets its own group.
+concurrency:
+  group: ${{ github.event_name == 'push' && 'release' || format('release-validation-{0}', github.run_id) }}
+  cancel-in-progress: false
+  # Keep every waiting tag run queued; the default would cancel an older pending run. (actionlint 1.7 doesn't know
+  # this key yet.)
+  queue: max
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Check the version and tag
+        id: version
+        run: |
+          version="$(scripts/release/version.sh)"
+          publish=false
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            if [ "$GITHUB_REF_TYPE" != tag ] || [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::The tag $GITHUB_REF_NAME doesn't match MARKETING_VERSION $version in project.yml (expected v$version)."
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::v$version points at a commit that isn't on main."
+              exit 1
+            fi
+            publish=true
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "publish=$publish" >>"$GITHUB_OUTPUT"
+          echo "Coincide $version; publish: $publish" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Check the release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PUBLISH: ${{ steps.version.outputs.publish }}
+        run: |
+          if ! scripts/release/notes.sh "$VERSION" >/dev/null; then
+            if [ "$PUBLISH" = true ]; then exit 1; fi
+            echo "::warning::CHANGELOG.md has no section for $VERSION yet; a tag would fail here."
+          fi
+
+      - name: Check the secrets
+        env:
+          PUBLISH: ${{ steps.version.outputs.publish }}
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          required=(MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD APP_STORE_CONNECT_API_KEY_ID
+            APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_API_KEY_P8)
+          [ "$PUBLISH" = true ] && required+=(TAP_GITHUB_TOKEN NPM_TOKEN)
+          missing=()
+          for name in "${required[@]}"; do [ -n "${!name}" ] || missing+=("$name"); done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing repository secrets: ${missing[*]} (see docs/releasing.md)."
+            exit 1
+          fi
+
+      - name: Test the release scripts
+        run: scripts/release/test.sh
+
+  # The same build and tests as ci.yml's required "Build and test", run again on this exact commit.
+  unit-tests:
+    name: Unit tests
+    needs: preflight
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build and run unit tests
+        run: |
+          xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' -skipPackagePluginValidation \
+            -derivedDataPath build/DerivedData test -collect-test-diagnostics never
+
+  build:
+    name: Build, sign and notarize
+    needs: [preflight, unit-tests]
+    runs-on: xcode-27
+    # Notarization usually takes minutes but can take much longer; notarytool waits up to 2 hours per submission.
+    timeout-minutes: 300
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # CFBundleVersion is the commit count (scripts/build-number.sh).
+          fetch-depth: 0
+
+      - name: Choose paths for the credentials
+        run: |
+          echo "KEYCHAIN=$RUNNER_TEMP/release-signing.keychain-db" >>"$GITHUB_ENV"
+          echo "NOTARY_KEY_PATH=$RUNNER_TEMP/notary/AuthKey.p8" >>"$GITHUB_ENV"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Set up the signing keychain
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          password="$(openssl rand -base64 32)"
+          echo "::add-mask::$password"
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          (umask 077; printf '%s' "$CERTIFICATE_P12" | base64 --decode >"$certificate")
+          security create-keychain -p "$password" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$password" "$KEYCHAIN"
+          security import "$certificate" -k "$KEYCHAIN" -f pkcs12 -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null
+          rm -f "$certificate"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$KEYCHAIN" >/dev/null
+          # In front of the search list, so codesign finds the identity. (macOS's /bin/bash is 3.2: no mapfile.)
+          others=()
+          while IFS= read -r line; do line="${line#*\"}"; others+=("${line%\"*}"); done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$KEYCHAIN" "${others[@]}"
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -F '"Developer ID Application: Apoorv Darshan (23RV7FYH36)"'
+
+      - name: Set up the notarization key
+        env:
+          API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+        run: |
+          (umask 077; mkdir -p "$(dirname "$NOTARY_KEY_PATH")"; printf '%s\n' "$API_KEY_P8" >"$NOTARY_KEY_PATH")
+          grep -q 'BEGIN PRIVATE KEY' "$NOTARY_KEY_PATH" || { echo "::error::APP_STORE_CONNECT_API_KEY_P8 isn't a .p8 key"; exit 1; }
+
+      - name: Build, notarize, package and verify
+        env:
+          NOTARY_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: scripts/release/build.sh "$RUNNER_TEMP/release"
+
+      - name: Keep the release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Coincide-${{ env.VERSION }}
+          path: |
+            ${{ runner.temp }}/release/Coincide-${{ env.VERSION }}.dmg
+            ${{ runner.temp }}/release/Coincide.dmg
+            ${{ runner.temp }}/release/Coincide-macos-universal.zip
+            ${{ runner.temp }}/release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Keep the build log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: xcodebuild-log
+          path: ${{ runner.temp }}/release/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Remove the signing keychain and notarization key
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN" 2>/dev/null || true
+          rm -rf "$(dirname "$NOTARY_KEY_PATH")" "$RUNNER_TEMP/developer-id.p12"
+
+  github-release:
+    name: Publish the GitHub Release
+    needs: [preflight, build]
+    if: needs.preflight.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Coincide-${{ env.VERSION }}
+          path: dist
+
+      - name: Check the files
+        working-directory: dist
+        run: sha256sum --check --strict SHA256SUMS.txt
+
+      # Not a pre-release, even at 0.x: GitHub's releases/latest (the in-app updater's feed, coincide.dev's download link
+      # and Homebrew's livecheck) skips pre-releases. A re-run updates the release instead of failing.
+      - name: Publish
+        run: |
+          scripts/release/notes.sh "$VERSION" >"$RUNNER_TEMP/notes.md"
+          files=(dist/"Coincide-$VERSION.dmg" dist/Coincide.dmg dist/Coincide-macos-universal.zip dist/SHA256SUMS.txt)
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" "${files[@]}" --clobber
+            gh release edit "v$VERSION" --title "Coincide $VERSION" --notes-file "$RUNNER_TEMP/notes.md" --draft=false --prerelease=false --latest
+          else
+            gh release create "v$VERSION" "${files[@]}" --verify-tag --title "Coincide $VERSION" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          fi
+          echo "Published https://github.com/$GH_REPO/releases/tag/v$VERSION" >>"$GITHUB_STEP_SUMMARY"
+
+  homebrew:
+    name: Update the Homebrew cask
+    needs: [preflight, github-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Coincide-${{ env.VERSION }}
+          path: dist
+
+      # TAP_GITHUB_TOKEN is a fine-grained token that can only write the tap's contents. gh's credential helper passes it
+      # to git, so it never appears in a URL or the repository's config.
+      - name: Commit the new version to apoorvdarshan/homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          sha="$(awk -v file="Coincide-$VERSION.dmg" '$2 == file { print $1 }' dist/SHA256SUMS.txt)"
+          gh auth setup-git
+          gh repo clone apoorvdarshan/homebrew-tap "$RUNNER_TEMP/tap" -- --depth 1
+          scripts/release/update-cask.sh "$RUNNER_TEMP/tap/Casks/coincide.rb" "$VERSION" "$sha"
+          cd "$RUNNER_TEMP/tap"
+          if git diff --quiet; then
+            echo "The cask is already at $VERSION."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "coincide $VERSION"
+          git push origin HEAD
+
+  npm:
+    name: Publish coincide-dev to npm
+    needs: [preflight, github-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          [ "$(node -p 'require("./package.json").version')" = "$VERSION" ]
+          if [ "$(npm view "coincide-dev@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "coincide-dev $VERSION is already on npm."
+            exit 0
+          fi
+          cp ../LICENSE LICENSE
+          npm publish --provenance --access public
+          echo "Published https://www.npmjs.com/package/coincide-dev/v/$VERSION" >>"$GITHUB_STEP_SUMMARY"

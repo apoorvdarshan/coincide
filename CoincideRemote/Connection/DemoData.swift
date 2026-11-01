@@ -79,10 +79,10 @@ enum DemoData {
         let now = Date()
         func thread(_ title: String, _ project: UUID, _ selection: RemoteSelection, minutes: Double, id: UUID = UUID(),
                     pinned: Bool = false, running: Bool = false, approvals: Int = 0, unseen: String? = nil,
-                    schedules: Int? = nil) -> RemoteThreadSummary {
+                    schedules: Int? = nil, mode: String = "build") -> RemoteThreadSummary {
             RemoteThreadSummary(
                 id: id, projectID: project, title: title, updatedAt: now.addingTimeInterval(-minutes * 60), selection: selection,
-                isPinned: pinned, branch: "main", isRunning: running, pendingApprovals: approvals, unseen: unseen, itemCount: 8,
+                interactionMode: mode, isPinned: pinned, branch: "main", isRunning: running, pendingApprovals: approvals, unseen: unseen, itemCount: 8,
                 runningSince: running && !old ? now.addingTimeInterval(-41) : nil, hasBackgroundWork: old ? nil : false,
                 scheduleCount: old ? nil : schedules, nextScheduledRun: old || schedules == nil ? nil : Self.nextStandup)
         }
@@ -99,7 +99,11 @@ enum DemoData {
             ],
             threads: [
                 thread("Release checklist", otherProjectID, codex, minutes: 300, pinned: pins),
-                thread("iPhone image previews in threads", projectID, claude, minutes: 1, id: threadID, running: true, schedules: 2),
+                // `-CoincideRemoteDemoCodex`: the open thread runs Codex, which offers a faster speed too.
+                // `-CoincideRemoteDemoIdle`: its turn has ended. `-CoincideRemoteDemoPlan`: it's in plan mode.
+                thread(
+                    "iPhone image previews in threads", projectID, has("Codex") ? codex : claude, minutes: 1, id: threadID,
+                    running: !has("Idle"), schedules: 2, mode: has("Plan") ? "plan" : "build"),
                 thread("Fix stale transcript row heights", projectID, codex, minutes: 25, unseen: "completed"),
                 thread("Run git push for the remote branch", projectID, claude, minutes: 50, approvals: 1),
                 thread("Paywall copy for annual plan", otherProjectID, codex, minutes: 60 * 26, unseen: "failed"),
@@ -643,6 +647,7 @@ enum DemoData {
                     id: "b", provider: "claude", title: "xcodebuild test -scheme CoincideRemote", kind: .command,
                     startedAt: Date().addingTimeInterval(-412)),
             ])
+            : has("Idle") ? RemoteTurnState(provider: "claude")
             : RemoteTurnState(isRunning: true, startedAt: Date().addingTimeInterval(-95), provider: "claude")
         return RemoteTranscript(
             thread: summary, items: background ? items.filter { $0.kind != .approval } : items, turn: turn,

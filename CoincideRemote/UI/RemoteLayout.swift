@@ -91,6 +91,14 @@ nonisolated enum RemoteLayout {
         var size: CGSize
     }
 
+    /// The narrowest footer that keeps every control on one line: each menu and pinned control as its symbol, and the
+    /// fixed controls at their size.
+    static func footerMinimumWidth(chips: [Chip], pinned: [Chip] = [], fixed: CGFloat, spacing: CGFloat = 2) -> CGFloat {
+        let menus = chips.reduce(0) { $0 + $1.compact } + spacing * CGFloat(max(0, chips.count - 1))
+        let trailing = fixed + pinned.reduce(0) { $0 + $1.compact + spacing }
+        return menus + (chips.isEmpty ? 0 : spacing) + trailing
+    }
+
     /// Lays out the composer's footer as on the Mac: the menus (model, effort, speed, access, mode) from the leading
     /// edge, and at the trailing end the controls that must never scroll away or sit under a menu: steer or queue while
     /// the agent works (`pinned`), then attach and send or stop (`fixed`).
@@ -98,8 +106,12 @@ nonisolated enum RemoteLayout {
     /// When the menus don't all fit with their labels, the pinned controls show their symbols (send shows steer or queue
     /// too), then the menus drop to their symbols from the last one back; menus that still don't fit continue on another
     /// line (a narrow window at a large text size).
+    ///
+    /// `inset` is room kept before the first menu, so its symbol lines up with the message above it; the menus give it up
+    /// when that's what keeps them all on one line.
     static func footer(
-        width: CGFloat, chips: [Chip], pinned: [Chip] = [], fixed: CGFloat, height: CGFloat, spacing: CGFloat = 2
+        width: CGFloat, chips: [Chip], pinned: [Chip] = [], fixed: CGFloat, height: CGFloat, spacing: CGFloat = 2,
+        inset: CGFloat = 0
     ) -> Footer {
         func total(_ widths: [CGFloat]) -> CGFloat {
             widths.reduce(0, +) + spacing * CGFloat(max(0, widths.count - 1))
@@ -107,9 +119,12 @@ nonisolated enum RemoteLayout {
         func trailing(compact: Bool) -> CGFloat {
             fixed + pinned.reduce(0) { $0 + (compact ? $1.compact : $1.full) + spacing }
         }
-        let compactPins = total(chips.map(\.full)) > width - trailing(compact: false) - spacing
+        let lead =
+            inset > 0 && footerMinimumWidth(chips: chips, pinned: pinned, fixed: fixed, spacing: spacing) + inset <= width
+            ? inset : 0
+        let compactPins = total(chips.map(\.full)) > width - lead - trailing(compact: false) - spacing
         let trailingWidth = min(width, trailing(compact: compactPins))
-        let firstLine = max(0, width - trailingWidth - spacing)
+        let firstLine = max(0, width - lead - trailingWidth - spacing)
 
         // Labels for as many leading menus as fit, symbols for the rest.
         var compactFrom = chips.count
@@ -124,14 +139,15 @@ nonisolated enum RemoteLayout {
         for (index, chip) in chips.enumerated() {
             let isCompact = index >= compactFrom
             let chipWidth = isCompact ? chip.compact : chip.full
-            let room = line == 0 ? firstLine : width
+            let room = line == 0 ? firstLine : width - lead
             if x + chipWidth > room, x > 0 || line == 0 {
                 line += 1
                 x = 0
             }
             placements.append(
                 Placement(
-                    line: line, frame: CGRect(x: x, y: CGFloat(line) * height, width: min(chipWidth, width), height: height),
+                    line: line,
+                    frame: CGRect(x: lead + x, y: CGFloat(line) * height, width: min(chipWidth, width - lead), height: height),
                     isCompact: isCompact))
             x += chipWidth + spacing
         }

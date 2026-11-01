@@ -86,6 +86,14 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
             session.answerSavePrompt(save: save, never: never, provider: self.sessions.profile.logins, settings: self.sessions.profile.settings)
         }
         passkeyBanner.onDismiss = { [weak self] in self?.session?.dismissPasskeyNotice() }
+        passkeyBanner.onAction = { [weak self] action in
+            guard let session = self?.session else { return }
+            switch action {
+            case .open: session.openPasskeyPageInBrowser()
+            case .importSignIn: session.importPasskeySignIn()
+            case .allowFullDiskAccess: session.allowFullDiskAccessForPasskeyImport()
+            }
+        }
         dialogBanner.onAnswer = { [weak self] accept, text in self?.session?.activeTab.answerDialog(accept: accept, text: text) }
         for banner in [approvalBanner, saveBanner, passkeyBanner, dialogBanner] as [NSView] { banner.isHidden = true }
         banners.orientation = .vertical
@@ -273,6 +281,7 @@ final class PreviewViewController: NSViewController, NSTextFieldDelegate {
         if let save { saveBanner.show(save) }
         saveBanner.isHidden = save == nil
         let passkeyNotice = session?.activePasskeyNotice
+        if let passkeyNotice { passkeyBanner.show(passkeyNotice) }
         passkeyBanner.isHidden = passkeyNotice == nil
         let dialog = session?.activeTab.dialog
         if let dialog { dialogBanner.show(dialog) }

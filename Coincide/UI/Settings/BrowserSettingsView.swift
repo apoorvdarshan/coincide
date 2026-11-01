@@ -64,9 +64,19 @@ struct BrowserSettingsView: View {
     @State private var confirmingClear = false
     @State private var clearing = false
     @State private var importing = false
-    /// Set at launch when macOS reopened Coincide for Full Disk Access, so the import picks up where it was.
+    /// Opens the import when the pane appears: set at launch when macOS reopened Coincide for Full Disk Access, so the
+    /// import picks up where it was, and by `showImport()`.
     static var opensImportOnAppear = false
     @State private var showsAllBookmarks = false
+    private static let importRequested = Notification.Name("coincide.browserImportRequested")
+
+    /// Opens Settings › Browser with the import, from elsewhere in the app (the browser's passkey notice): when the
+    /// pane appears, or at once when it's already showing.
+    static func showImport() {
+        opensImportOnAppear = true
+        SettingsWindowController.shared.show(section: .browser)
+        NotificationCenter.default.post(name: importRequested, object: nil)
+    }
 
     var body: some View {
         Form {
@@ -166,6 +176,10 @@ struct BrowserSettingsView: View {
                 Self.opensImportOnAppear = false
                 importing = true
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.importRequested)) { _ in
+            Self.opensImportOnAppear = false
+            importing = true
         }
         .sheet(isPresented: $importing) {
             BrowserImportSheet(profile: model.profile) { importing = false }

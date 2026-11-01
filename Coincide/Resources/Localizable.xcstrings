@@ -5005,6 +5005,124 @@
         }
       }
     },
+    "%@ has no sign-in for %@ yet. Sign in there, wait a moment, then try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ hat noch keine Anmeldung für %2$@. Melde dich dort an, warte einen Moment und versuche es dann erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ has no sign-in for %2$@ yet. Sign in there, wait a moment, then try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ aún no tiene ningún inicio de sesión para %2$@. Inicia sesión allí, espera un momento y vuelve a intentarlo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ aún no tiene ningún inicio de sesión para %2$@. Inicia sesión allí, espera un momento y vuelve a intentarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ n’a pas encore de connexion pour %2$@. Connectez-vous-y, attendez un instant, puis réessayez."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ में अभी %2$@ के लिए कोई साइन-इन नहीं है। वहां साइन इन करें, थोड़ा रुकें, फिर दोबारा कोशिश करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ belum memiliki login untuk %2$@. Masuk di sana, tunggu sebentar, lalu coba lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ non ha ancora un accesso per %2$@. Accedi lì, aspetta un momento, poi riprova."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ にはまだ %2$@ のサインインがありません。そちらでサインインし、少し待ってからもう一度試してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@에 아직 %2$@ 로그인이 없습니다. 거기에서 로그인하고 잠시 기다린 다음 다시 시도하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ heeft nog geen aanmelding voor %2$@. Log daar in, wacht even en probeer het opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przeglądarka %1$@ nie ma jeszcze logowania do %2$@. Zaloguj się tam, odczekaj chwilę i spróbuj ponownie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O %1$@ ainda não tem login para %2$@. Faça login lá, espere um momento e tente de novo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "В %1$@ пока нет входа на %2$@. Войдите там, подождите немного и повторите попытку."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ uygulamasında henüz %2$@ için bir oturum yok. Orada oturum açın, biraz bekleyin ve yeniden deneyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "У %1$@ поки немає входу на %2$@. Увійдіть там, зачекайте трохи й спробуйте ще раз."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ chưa có lần đăng nhập nào cho %2$@. Hãy đăng nhập ở đó, đợi một lát, rồi thử lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ 中还没有 %2$@ 的登录状态。请在那里登录，稍等片刻后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ 中還沒有 %2$@ 的登入狀態。請在那裡登入，稍候片刻後再試一次。"
+          }
+        }
+      }
+    },
     "%@ in %@" : {
       "localizations" : {
         "de" : {
@@ -14101,6 +14219,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%1$@：「%2$@」需要 ⌘ 或 ⌃。"
+          }
+        }
+      }
+    },
+    "%@’s Keychain key wasn’t available, so nothing was imported. Try again and choose Allow when macOS asks." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Schlüsselbund-Schlüssel von %@ war nicht verfügbar, daher wurde nichts importiert. Versuche es erneut und wähle „Erlauben“, wenn macOS fragt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La clave del llavero de %@ no estaba disponible, así que no se importó nada. Inténtalo de nuevo y elige Permitir cuando macOS pregunte."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La clave del llavero de %@ no estaba disponible, así que no se importó nada. Inténtalo de nuevo y elige Permitir cuando macOS pregunte."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La clé du trousseau de %@ n’était pas disponible, rien n’a donc été importé. Réessayez et choisissez Autoriser lorsque macOS le demande."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ की कीचेन कुंजी उपलब्ध नहीं थी, इसलिए कुछ भी इम्पोर्ट नहीं हुआ। फिर से कोशिश करें और macOS के पूछने पर अनुमति दें चुनें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci Rantai Kunci %@ tidak tersedia, jadi tidak ada yang diimpor. Coba lagi dan pilih Izinkan saat macOS bertanya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La chiave del portachiavi di %@ non era disponibile, quindi non è stato importato nulla. Riprova e scegli Consenti quando macOS lo chiede."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ のキーチェーン鍵を使用できなかったため、何も読み込まれませんでした。もう一度試し、macOS に確認されたら「許可」を選んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@의 키체인 키를 사용할 수 없어 아무것도 가져오지 못했습니다. 다시 시도하고 macOS가 물으면 허용을 선택하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De sleutelhangersleutel van %@ was niet beschikbaar, dus er is niets geïmporteerd. Probeer het opnieuw en kies Sta toe als macOS erom vraagt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klucz przeglądarki %@ z pęku kluczy był niedostępny, więc niczego nie zaimportowano. Spróbuj ponownie i wybierz Pozwól, gdy macOS zapyta."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A chave das Chaves do %@ não estava disponível, então nada foi importado. Tente de novo e escolha Permitir quando o macOS perguntar."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключ %@ из связки ключей был недоступен, поэтому ничего не импортировано. Повторите попытку и выберите «Разрешить», когда macOS спросит."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ uygulamasının Anahtar Zinciri anahtarı kullanılamadı, bu yüzden hiçbir şey içe aktarılmadı. Yeniden deneyin ve macOS sorduğunda İzin Ver’i seçin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключ %@ з в’язки ключів був недоступний, тому нічого не імпортовано. Спробуйте ще раз і виберіть «Дозволити», коли macOS запитає."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không dùng được khóa Chuỗi khóa của %@ nên không có gì được nhập. Hãy thử lại và chọn Cho phép khi macOS hỏi."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法使用 %@ 的钥匙串密钥，因此未导入任何内容。请重试，并在 macOS 询问时选择“允许”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法使用 %@ 的鑰匙圈密鑰，因此未匯入任何內容。請再試一次，並在 macOS 詢問時選擇「允許」。"
           }
         }
       }
@@ -53912,6 +54142,118 @@
         }
       }
     },
+    "Bitwarden didn’t save the passkey’s sign-in count." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden hat den Anmeldezähler des Passkeys nicht gespeichert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden no guardó el contador de inicios de sesión de la llave de acceso."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden no guardó el contador de inicios de sesión de la llave de acceso."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden n’a pas enregistré le compteur de connexions de la clé d’identification."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden ने पासकी की साइन-इन गिनती सेव नहीं की।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden tidak menyimpan penghitung masuk kunci sandi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden non ha salvato il contatore degli accessi della passkey."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden はパスキーのサインイン回数を保存しませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden이 패스키의 로그인 횟수를 저장하지 않았습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden heeft de aanmeldteller van de toegangssleutel niet bewaard."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden nie zapisał licznika logowań klucza dostępu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Bitwarden não salvou o contador de entradas da chave de acesso."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden не сохранил счётчик входов ключа доступа."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden, geçiş anahtarının oturum açma sayacını kaydetmedi."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden не зберіг лічильник входів ключа доступу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden chưa lưu bộ đếm đăng nhập của khóa truy cập."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 未保存通行密钥的登录计数。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 未儲存通行密鑰的登入次數。"
+          }
+        }
+      }
+    },
     "Blur" : {
       "localizations" : {
         "de" : {
@@ -57497,6 +57839,7 @@
       }
     },
     "Browser extensions can’t run inside Coincide’s browser, so Coincide works with each password manager’s command-line tool. In the browser, Coincide types passwords and one-time codes into the page itself, after you allow it for the site." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -69031,6 +69374,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "請選擇有效的時間。"
+          }
+        }
+      }
+    },
+    "Choose an account." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wähle einen Account."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige una cuenta."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige una cuenta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Choisissez un compte."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कोई खाता चुनें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pilih akun."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Scegli un account."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アカウントを選択してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "계정을 선택하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kies een account."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wybierz konto."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escolha uma conta."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выберите учётную запись."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir hesap seçin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Виберіть обліковий запис."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy chọn một tài khoản."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "选择一个账户。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "選擇一個帳號。"
+          }
+        }
+      }
+    },
+    "Choose an account. You’ll confirm with Touch ID or your Mac password next." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wähle einen Account. Danach bestätigst du mit Touch ID oder deinem Mac-Passwort."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige una cuenta. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige una cuenta. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Choisissez un compte. Vous confirmerez ensuite avec Touch ID ou le mot de passe de votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कोई खाता चुनें। इसके बाद आप Touch ID या अपने Mac पासवर्ड से पुष्टि करेंगे।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pilih akun. Selanjutnya Anda akan mengonfirmasi dengan Touch ID atau kata sandi Mac."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Scegli un account. Poi confermerai con Touch ID o la password del Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アカウントを選択してください。次に Touch ID または Mac のパスワードで確認します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "계정을 선택하세요. 다음으로 Touch ID 또는 Mac 암호로 확인합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kies een account. Daarna bevestig je met Touch ID of je Mac-wachtwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wybierz konto. Następnie potwierdzisz to za pomocą Touch ID lub hasła do Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escolha uma conta. Em seguida, você vai confirmar com o Touch ID ou a senha do Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выберите учётную запись. Затем вы подтвердите вход с помощью Touch ID или пароля Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir hesap seçin. Ardından Touch ID veya Mac parolanızla onaylayacaksınız."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Виберіть обліковий запис. Потім ви підтвердите вхід за допомогою Touch ID або пароля Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy chọn một tài khoản. Tiếp theo, bạn sẽ xác nhận bằng Touch ID hoặc mật khẩu máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "选择一个账户。接下来，你将使用触控 ID 或 Mac 密码确认。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "選擇一個帳號。接下來，你將使用 Touch ID 或 Mac 密碼確認。"
           }
         }
       }
@@ -81536,6 +82103,118 @@
         }
       }
     },
+    "Coincide always asks for Touch ID or your Mac password after you click Sign In. When this is off, it asks only when the site requires it or the Bitwarden item has master password re-prompt on." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide fragt immer nach Touch ID oder deinem Mac-Passwort, nachdem du auf „Anmelden“ geklickt hast. Ist das aus, fragt Coincide nur, wenn die Website es verlangt oder für den Bitwarden-Eintrag die erneute Abfrage des Master-Passworts aktiviert ist."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide siempre pide Touch ID o la contraseña de tu Mac después de que hagas clic en Iniciar sesión. Si esta opción está desactivada, solo la pide cuando el sitio lo exige o el elemento de Bitwarden tiene activada la nueva solicitud de la contraseña maestra."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide siempre pide Touch ID o la contraseña de tu Mac después de que hagas clic en Iniciar sesión. Si esta opción está desactivada, solo la pide cuando el sitio lo exige o el elemento de Bitwarden tiene activada la nueva solicitud de la contraseña maestra."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide demande toujours Touch ID ou le mot de passe de votre Mac après que vous avez cliqué sur Se connecter. Si cette option est désactivée, il ne le demande que si le site l’exige ou si la nouvelle demande du mot de passe principal est activée pour l’élément Bitwarden."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "साइन इन करें पर क्लिक करने के बाद Coincide हमेशा Touch ID या आपका Mac पासवर्ड मांगता है। इसे बंद करने पर वह तभी मांगता है जब साइट को इसकी ज़रूरत हो या Bitwarden आइटम के लिए मास्टर पासवर्ड दोबारा पूछना चालू हो।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide selalu meminta Touch ID atau kata sandi Mac setelah Anda mengeklik Masuk. Jika ini nonaktif, Coincide hanya memintanya saat situs mengharuskannya atau item Bitwarden mengaktifkan permintaan ulang kata sandi utama."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide chiede sempre Touch ID o la password del Mac dopo che fai clic su Accedi. Se l’opzione è disattivata, la chiede solo quando il sito lo richiede o quando per l’elemento di Bitwarden è attiva la nuova richiesta della password principale."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "「サインイン」をクリックした後、Coincide は常に Touch ID または Mac のパスワードを求めます。オフにすると、サイトが求める場合か、Bitwarden の項目でマスターパスワードの再入力が有効な場合にのみ求めます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로그인을 클릭하면 Coincide가 항상 Touch ID 또는 Mac 암호를 요청합니다. 이 옵션을 끄면 사이트에서 요구하거나 Bitwarden 항목에 마스터 비밀번호 재확인이 켜져 있을 때만 요청합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide vraagt altijd om Touch ID of je Mac-wachtwoord nadat je op Log in hebt geklikt. Als dit uit staat, vraagt Coincide er alleen om als de site het vereist of als voor het Bitwarden-item opnieuw vragen om het hoofdwachtwoord aan staat."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide zawsze prosi o Touch ID lub hasło do Maca po kliknięciu Zaloguj się. Gdy ta opcja jest wyłączona, prosi tylko wtedy, gdy wymaga tego witryna lub element Bitwarden ma włączone ponowne pytanie o hasło główne."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide sempre pede o Touch ID ou a senha do Mac depois que você clica em Entrar. Com esta opção desativada, ele só pede quando o site exige ou quando o item do Bitwarden tem a nova solicitação da senha mestra ativada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide всегда запрашивает Touch ID или пароль Mac после того, как вы нажмёте «Войти». Если этот параметр выключен, он запрашивает их, только когда этого требует сайт или для элемента Bitwarden включён повторный запрос мастер-пароля."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oturum Aç’a tıkladıktan sonra Coincide her zaman Touch ID veya Mac parolanızı ister. Bu kapalıyken yalnızca site gerektirdiğinde veya Bitwarden öğesinde ana parolayı yeniden sorma açık olduğunda ister."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide завжди запитує Touch ID або пароль Mac після того, як ви натиснете «Увійти». Якщо цей параметр вимкнено, він запитує їх, лише коли цього вимагає сайт або для елемента Bitwarden увімкнено повторний запит головного пароля."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide luôn yêu cầu Touch ID hoặc mật khẩu máy Mac sau khi bạn bấm Đăng nhập. Khi tắt tùy chọn này, Coincide chỉ yêu cầu khi trang web bắt buộc hoặc mục Bitwarden bật yêu cầu nhập lại mật khẩu chính."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "点按“登录”后，Coincide 总会要求使用触控 ID 或 Mac 密码。关闭此选项后，仅当网站要求或该 Bitwarden 项目开启了主密码重新提示时才会要求。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "按一下「登入」後，Coincide 一律會要求使用 Touch ID 或 Mac 密碼。關閉此選項後，只有在網站要求或該 Bitwarden 項目開啟了主密碼重新提示時才會要求。"
+          }
+        }
+      }
+    },
     "Coincide can replace each link with a copy of the master, so every agent keeps its instructions, or leave the links as they are." : {
       "localizations" : {
         "de" : {
@@ -81984,6 +82663,118 @@
         }
       }
     },
+    "Coincide connects to each password manager through its command-line tool, so you don’t need its browser extension. In the browser, Coincide types passwords and one-time codes into the page itself, after you allow it for the site." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide verbindet sich über das Befehlszeilenwerkzeug des jeweiligen Passwortmanagers, eine Browsererweiterung brauchst du also nicht. Im Browser tippt Coincide Passwörter und Einmalcodes selbst in die Seite ein, nachdem du es für die Website erlaubt hast."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide se conecta con cada gestor de contraseñas mediante su herramienta de línea de comandos, así que no necesitas su extensión del navegador. En el navegador, Coincide escribe las contraseñas y los códigos de un solo uso en la página después de que lo permitas para el sitio."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide se conecta con cada gestor de contraseñas mediante su herramienta de línea de comandos, así que no necesitas su extensión del navegador. En el navegador, Coincide escribe las contraseñas y los códigos de un solo uso en la página después de que lo permitas para el sitio."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide se connecte à chaque gestionnaire de mots de passe via son outil en ligne de commande : vous n’avez donc pas besoin de son extension de navigateur. Dans le navigateur, Coincide saisit lui-même les mots de passe et les codes à usage unique dans la page, après votre autorisation pour le site."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide हर पासवर्ड मैनेजर से उसके कमांड-लाइन टूल के ज़रिए जुड़ता है, इसलिए आपको उसके ब्राउज़र एक्सटेंशन की ज़रूरत नहीं है। ब्राउज़र में, साइट के लिए आपकी अनुमति के बाद Coincide पासवर्ड और वन-टाइम कोड खुद पेज में टाइप करता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide terhubung ke setiap pengelola kata sandi melalui alat baris perintahnya, jadi Anda tidak memerlukan ekstensi browsernya. Di browser, Coincide sendiri yang mengetik kata sandi dan kode sekali pakai ke halaman setelah Anda mengizinkannya untuk situs itu."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide si collega a ogni gestore di password tramite il suo strumento da riga di comando, quindi non ti serve la sua estensione per il browser. Nel browser è Coincide a digitare password e codici monouso nella pagina, dopo che l’hai consentito per il sito."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide は各パスワードマネージャのコマンドラインツールを通じて連携するため、ブラウザ拡張機能は必要ありません。ブラウザでは、サイトごとに許可すると Coincide 自身がパスワードとワンタイムコードをページに入力します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide는 각 암호 관리자의 명령줄 도구를 통해 연결되므로 브라우저 확장 프로그램이 필요하지 않습니다. 브라우저에서는 사이트별로 허용하면 Coincide가 직접 암호와 일회용 코드를 페이지에 입력합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide maakt verbinding met elke wachtwoordbeheerder via diens opdrachtregeltool, dus je hebt de browserextensie niet nodig. In de browser typt Coincide wachtwoorden en eenmalige codes zelf in de pagina, nadat je het voor de site hebt toegestaan."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide łączy się z każdym menedżerem haseł przez jego narzędzie wiersza poleceń, więc nie potrzebujesz jego rozszerzenia przeglądarki. W przeglądarce Coincide sam wpisuje hasła i kody jednorazowe na stronie, gdy pozwolisz na to dla witryny."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide se conecta a cada gerenciador de senhas pela ferramenta de linha de comando dele, então você não precisa da extensão do navegador. No navegador, o próprio Coincide digita senhas e códigos únicos na página, depois que você permite para o site."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide подключается к каждому менеджеру паролей через его инструмент командной строки, поэтому расширение для браузера не нужно. В браузере Coincide сам вводит пароли и одноразовые коды на странице после вашего разрешения для сайта."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide her parola yöneticisine kendi komut satırı aracıyla bağlanır; bu yüzden tarayıcı uzantısına ihtiyacınız yoktur. Tarayıcıda, siteye izin verdikten sonra Coincide parolaları ve tek kullanımlık kodları sayfaya kendisi yazar."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide підключається до кожного менеджера паролів через його інструмент командного рядка, тож розширення для браузера не потрібне. У браузері Coincide сам вводить паролі й одноразові коди на сторінці після вашого дозволу для сайту."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide kết nối với từng trình quản lý mật khẩu qua công cụ dòng lệnh của nó, nên bạn không cần tiện ích mở rộng trình duyệt. Trong trình duyệt, Coincide tự nhập mật khẩu và mã dùng một lần vào trang sau khi bạn cho phép với trang đó."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 通过各密码管理器的命令行工具与其连接，因此无需安装其浏览器扩展。在浏览器中，你允许该网站后，由 Coincide 自己把密码和一次性验证码填入页面。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 透過各密碼管理工具的命令列工具與其連線，因此不需要安裝其瀏覽器延伸功能。在瀏覽器中，你允許該網站後，由 Coincide 自己把密碼和一次性驗證碼填入頁面。"
+          }
+        }
+      }
+    },
     "Coincide copies OPENAI_API_KEY from ~/.codex/auth.json into its Keychain and sends it only to OpenAI, with your dictation audio. Changing the key in Codex later doesn’t change Coincide’s copy." : {
       "localizations" : {
         "de" : {
@@ -82428,6 +83219,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Coincide 無法為遠端伺服器建立金鑰。"
+          }
+        }
+      }
+    },
+    "Coincide couldn’t read %@’s sign-ins, so nothing was imported." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide konnte die Anmeldungen von %@ nicht lesen, daher wurde nichts importiert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide no pudo leer los inicios de sesión de %@, así que no se importó nada."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide no pudo leer los inicios de sesión de %@, así que no se importó nada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide n’a pas pu lire les connexions de %@, rien n’a donc été importé."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide %@ के साइन-इन नहीं पढ़ सका, इसलिए कुछ भी इम्पोर्ट नहीं हुआ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide tidak dapat membaca login %@, jadi tidak ada yang diimpor."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide non è riuscito a leggere gli accessi di %@, quindi non è stato importato nulla."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide は %@ のサインインを読み取れなかったため、何も読み込まれませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide가 %@의 로그인을 읽지 못해 아무것도 가져오지 못했습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide kon de aanmeldingen van %@ niet lezen, dus er is niets geïmporteerd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie udało się odczytać logowań przeglądarki %@, więc niczego nie zaimportowano."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide não conseguiu ler os logins do %@, então nada foi importado."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide не удалось прочитать входы %@, поэтому ничего не импортировано."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide, %@ uygulamasının oturumlarını okuyamadı, bu yüzden hiçbir şey içe aktarılmadı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide не вдалося прочитати входи %@, тому нічого не імпортовано."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide không đọc được các lần đăng nhập của %@ nên không có gì được nhập."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 无法读取 %@ 的登录状态，因此未导入任何内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 無法讀取 %@ 的登入狀態，因此未匯入任何內容。"
           }
         }
       }
@@ -91730,6 +92633,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "刪除對話前先確認"
+          }
+        }
+      }
+    },
+    "Confirm passkey sign-ins with Touch ID" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passkey-Anmeldungen mit Touch ID bestätigen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmar con Touch ID los inicios de sesión con llave de acceso"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmar con Touch ID los inicios de sesión con llave de acceso"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmer avec Touch ID les connexions par clé d’identification"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पासकी साइन-इन की पुष्टि Touch ID से करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Konfirmasi proses masuk dengan kunci sandi menggunakan Touch ID"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conferma con Touch ID gli accessi con passkey"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "パスキーでのサインインを Touch ID で確認"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Touch ID로 패스키 로그인 확인"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aanmeldingen met toegangssleutel bevestigen met Touch ID"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Potwierdzaj logowanie kluczem dostępu za pomocą Touch ID"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmar com o Touch ID as entradas com chave de acesso"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Подтверждать вход с ключом доступа через Touch ID"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçiş anahtarıyla oturum açmaları Touch ID ile onayla"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Підтверджувати вхід із ключем доступу через Touch ID"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Xác nhận đăng nhập bằng khóa truy cập với Touch ID"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用触控 ID 确认通行密钥登录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 Touch ID 確認通行密鑰登入"
           }
         }
       }
@@ -155920,6 +156935,118 @@
         }
       }
     },
+    "Import Again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erneut importieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Volver a importar"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Volver a importar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer à nouveau"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "फिर से इम्पोर्ट करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impor Lagi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importa di nuovo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "もう一度読み込む"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "다시 가져오기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opnieuw importeren"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importuj ponownie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar de novo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импортировать снова"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yeniden İçe Aktar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпортувати знову"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhập lại"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再次导入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再次匯入"
+          }
+        }
+      }
+    },
     "Import CLI Session" : {
       "localizations" : {
         "de" : {
@@ -156256,6 +157383,230 @@
         }
       }
     },
+    "Import Sign-In" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anmeldung importieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar inicio de sesión"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar inicio de sesión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer la connexion"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "साइन-इन इम्पोर्ट करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impor Login"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importa accesso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サインインを読み込む"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로그인 가져오기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aanmelding importeren"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importuj logowanie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar login"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импортировать вход"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oturumu İçe Aktar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпортувати вхід"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhập lần đăng nhập"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "导入登录状态"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "匯入登入狀態"
+          }
+        }
+      }
+    },
+    "Import Sign-In…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anmeldung importieren …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar inicio de sesión…"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar inicio de sesión…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer la connexion…"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "साइन-इन इम्पोर्ट करें…"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impor Login…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importa accesso…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サインインを読み込む…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로그인 가져오기…"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aanmelding importeren…"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importuj logowanie…"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar login…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импортировать вход…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oturumu İçe Aktar…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпортувати вхід…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhập lần đăng nhập…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "导入登录状态…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "匯入登入狀態…"
+          }
+        }
+      }
+    },
     "Import from Another Browser" : {
       "localizations" : {
         "de" : {
@@ -156588,6 +157939,360 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "從 CSV 匯出檔案匯入密碼"
+          }
+        }
+      }
+    },
+    "Imported your %@ sign-in from %@ and reloaded the page. If it still asks you to sign in, wait a moment and import again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Anmeldung bei %1$@ wurde aus %2$@ importiert und die Seite neu geladen. Wenn sie weiterhin eine Anmeldung verlangt, warte einen Moment und importiere erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Imported your %1$@ sign-in from %2$@ and reloaded the page. If it still asks you to sign in, wait a moment and import again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se importó tu inicio de sesión de %1$@ desde %2$@ y se recargó la página. Si sigue pidiendo que inicies sesión, espera un momento y vuelve a importarlo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se importó tu inicio de sesión de %1$@ desde %2$@ y se recargó la página. Si sigue pidiendo que inicies sesión, espera un momento y vuelve a importarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Votre connexion à %1$@ a été importée depuis %2$@ et la page rechargée. Si elle vous demande encore de vous connecter, attendez un instant et importez-la à nouveau."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ से आपका %1$@ साइन-इन इम्पोर्ट हो गया और पेज फिर से लोड हो गया। अगर यह अब भी साइन इन करने को कहे, तो थोड़ा रुककर फिर से इम्पोर्ट करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Login %1$@ Anda telah diimpor dari %2$@ dan halaman dimuat ulang. Jika masih diminta masuk, tunggu sebentar lalu impor lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il tuo accesso a %1$@ è stato importato da %2$@ e la pagina è stata ricaricata. Se chiede ancora di accedere, aspetta un momento e importalo di nuovo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ から %1$@ のサインインを読み込み、ページを再読み込みしました。まだサインインを求められる場合は、少し待ってからもう一度読み込んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@에서 %1$@ 로그인을 가져오고 페이지를 새로 고쳤습니다. 계속 로그인하라고 하면 잠시 기다린 다음 다시 가져오세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Je aanmelding voor %1$@ is geïmporteerd uit %2$@ en de pagina is opnieuw geladen. Vraagt de pagina nog steeds om in te loggen, wacht dan even en importeer opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zaimportowano logowanie do %1$@ z przeglądarki %2$@ i ponownie wczytano stronę. Jeśli nadal prosi o zalogowanie, odczekaj chwilę i zaimportuj ponownie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seu login de %1$@ foi importado do %2$@ e a página foi recarregada. Se ela ainda pedir para entrar, espere um momento e importe de novo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вход на %1$@ импортирован из %2$@, страница перезагружена. Если она всё ещё просит войти, подождите немного и импортируйте снова."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ oturumunuz %2$@ uygulamasından içe aktarıldı ve sayfa yeniden yüklendi. Hâlâ oturum açmanızı isterse biraz bekleyip yeniden içe aktarın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вхід на %1$@ імпортовано з %2$@, сторінку перезавантажено. Якщо вона все ще просить увійти, зачекайте трохи й імпортуйте знову."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã nhập lần đăng nhập %1$@ của bạn từ %2$@ và tải lại trang. Nếu trang vẫn yêu cầu đăng nhập, hãy đợi một lát rồi nhập lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已从 %2$@ 导入你的 %1$@ 登录状态并重新载入页面。如果页面仍要求登录，请稍等片刻后再次导入。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已從 %2$@ 匯入你的 %1$@ 登入狀態並重新載入頁面。如果頁面仍要求登入，請稍候片刻再匯入一次。"
+          }
+        }
+      }
+    },
+    "Importing your %@ sign-in from %@…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Anmeldung bei %1$@ wird aus %2$@ importiert …"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Importing your %1$@ sign-in from %2$@…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando tu inicio de sesión de %1$@ desde %2$@…"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando tu inicio de sesión de %1$@ desde %2$@…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importation de votre connexion à %1$@ depuis %2$@…"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ से आपका %1$@ साइन-इन इम्पोर्ट हो रहा है…"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mengimpor login %1$@ Anda dari %2$@…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importazione del tuo accesso a %1$@ da %2$@…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ から %1$@ のサインインを読み込み中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@에서 %1$@ 로그인을 가져오는 중…"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Je aanmelding voor %1$@ wordt geïmporteerd uit %2$@…"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importowanie logowania do %1$@ z przeglądarki %2$@…"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando seu login de %1$@ do %2$@…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импорт входа на %1$@ из %2$@…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ oturumunuz %2$@ uygulamasından içe aktarılıyor…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпорт входу на %1$@ з %2$@…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đang nhập lần đăng nhập %1$@ của bạn từ %2$@…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在从 %2$@ 导入你的 %1$@ 登录状态…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在從 %2$@ 匯入你的 %1$@ 登入狀態…"
+          }
+        }
+      }
+    },
+    "Importing your %@ sign-in from %@… If macOS asks whether Coincide may use its Keychain key, choose Allow." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Anmeldung bei %1$@ wird aus %2$@ importiert … Fragt macOS, ob Coincide den Schlüsselbund-Schlüssel des Browsers verwenden darf, wähle „Erlauben“."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Importing your %1$@ sign-in from %2$@… If macOS asks whether Coincide may use its Keychain key, choose Allow."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando tu inicio de sesión de %1$@ desde %2$@… Si macOS pregunta si Coincide puede usar su clave del llavero, elige Permitir."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando tu inicio de sesión de %1$@ desde %2$@… Si macOS pregunta si Coincide puede usar su clave del llavero, elige Permitir."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importation de votre connexion à %1$@ depuis %2$@… Si macOS demande si Coincide peut utiliser sa clé du trousseau, choisissez Autoriser."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ से आपका %1$@ साइन-इन इम्पोर्ट हो रहा है… अगर macOS पूछे कि क्या Coincide उसकी कीचेन कुंजी इस्तेमाल कर सकता है, तो अनुमति दें चुनें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mengimpor login %1$@ Anda dari %2$@… Jika macOS menanyakan apakah Coincide boleh menggunakan kunci Rantai Kuncinya, pilih Izinkan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importazione del tuo accesso a %1$@ da %2$@… Se macOS chiede se Coincide può usare la sua chiave del portachiavi, scegli Consenti."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ から %1$@ のサインインを読み込み中… Coincide がキーチェーン鍵を使用してよいか macOS に確認されたら、「許可」を選んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@에서 %1$@ 로그인을 가져오는 중… Coincide가 키체인 키를 사용해도 되는지 macOS가 물으면 허용을 선택하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Je aanmelding voor %1$@ wordt geïmporteerd uit %2$@… Vraagt macOS of Coincide de sleutelhangersleutel mag gebruiken, kies dan Sta toe."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importowanie logowania do %1$@ z przeglądarki %2$@… Jeśli macOS zapyta, czy Coincide może użyć jej klucza z pęku kluczy, wybierz Pozwól."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando seu login de %1$@ do %2$@… Se o macOS perguntar se o Coincide pode usar a chave dele nas Chaves, escolha Permitir."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импорт входа на %1$@ из %2$@… Если macOS спросит, может ли Coincide использовать его ключ из связки ключей, выберите «Разрешить»."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ oturumunuz %2$@ uygulamasından içe aktarılıyor… macOS, Coincide’ın onun Anahtar Zinciri anahtarını kullanıp kullanamayacağını sorarsa İzin Ver’i seçin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпорт входу на %1$@ з %2$@… Якщо macOS запитає, чи може Coincide використати його ключ із в’язки ключів, виберіть «Дозволити»."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đang nhập lần đăng nhập %1$@ của bạn từ %2$@… Nếu macOS hỏi Coincide có được dùng khóa Chuỗi khóa của nó không, hãy chọn Cho phép."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在从 %2$@ 导入你的 %1$@ 登录状态… 如果 macOS 询问是否允许 Coincide 使用它的钥匙串密钥，请选择“允许”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在從 %2$@ 匯入你的 %1$@ 登入狀態… 如果 macOS 詢問是否允許 Coincide 使用它的鑰匙圈密鑰，請選擇「允許」。"
           }
         }
       }
@@ -221484,6 +223189,7 @@
       }
     },
     "Passkeys aren’t available in Coincide’s browser yet. Choose another way to sign in (like “Try another way” on Google), then use the key button to fill your password from your password manager." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -221591,6 +223297,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Coincide 的瀏覽器尚不支援通行密鑰。請選擇其他登入方式（例如 Google 上的「嘗試其他方式」），然後使用鑰匙按鈕從密碼管理工具填入密碼。"
+          }
+        }
+      }
+    },
+    "Passkeys aren’t available in Coincide’s browser yet. Sign in with your passkey in %@, then import that sign-in here. Or choose another way to sign in (like “Try another way” on Google), then use the key button to fill your password from your password manager." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passkeys sind im Browser von Coincide noch nicht verfügbar. Melde dich in %@ mit deinem Passkey an und importiere diese Anmeldung dann hierher. Oder wähle eine andere Anmeldemethode (etwa „Andere Option wählen“ bei Google) und fülle dann mit der Schlüsseltaste dein Passwort aus deinem Passwortmanager aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las llaves de acceso aún no están disponibles en el navegador de Coincide. Inicia sesión con tu llave de acceso en %@ y luego importa aquí ese inicio de sesión. O elige otra forma de iniciar sesión (como «Probar otra manera» en Google) y luego usa el botón de la llave para rellenar tu contraseña desde tu gestor de contraseñas."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las llaves de acceso aún no están disponibles en el navegador de Coincide. Inicia sesión con tu llave de acceso en %@ y luego importa aquí ese inicio de sesión. O elige otra forma de iniciar sesión (como “Probar otra manera” en Google) y luego usa el botón de la llave para rellenar tu contraseña desde tu gestor de contraseñas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les clés d’identification ne sont pas encore disponibles dans le navigateur de Coincide. Connectez-vous avec votre clé d’identification dans %@, puis importez cette connexion ici. Ou choisissez une autre méthode de connexion (comme « Essayer une autre méthode » sur Google), puis utilisez le bouton en forme de clé pour remplir votre mot de passe depuis votre gestionnaire de mots de passe."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide के ब्राउज़र में पासकी अभी उपलब्ध नहीं हैं। %@ में अपनी पासकी से साइन इन करें, फिर वह साइन-इन यहां इम्पोर्ट करें। या साइन इन करने का कोई दूसरा तरीका चुनें (जैसे Google पर “दूसरा तरीका आज़माएं”), फिर अपने पासवर्ड मैनेजर से पासवर्ड भरने के लिए चाबी वाला बटन इस्तेमाल करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci sandi belum tersedia di browser Coincide. Masuk dengan kunci sandi Anda di %@, lalu impor login tersebut ke sini. Atau pilih cara lain untuk masuk (seperti “Coba cara lain” di Google), lalu gunakan tombol kunci untuk mengisi kata sandi dari pengelola kata sandi Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le passkey non sono ancora disponibili nel browser di Coincide. Accedi con la tua passkey in %@, poi importa qui quell’accesso. Oppure scegli un altro modo per accedere (come “Prova un altro metodo” su Google), poi usa il pulsante con la chiave per compilare la password dal tuo gestore di password."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide のブラウザではまだパスキーを使用できません。%@ でパスキーを使ってサインインしてから、そのサインインをここに読み込んでください。または、別のサインイン方法（Google の「別の方法を試す」など）を選んでから、鍵ボタンでパスワードマネージャのパスワードを入力してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 브라우저에서는 아직 패스키를 사용할 수 없습니다. %@에서 패스키로 로그인한 다음 그 로그인을 여기로 가져오세요. 또는 다른 로그인 방법(Google의 ‘다른 방법 시도’ 등)을 선택한 다음 열쇠 버튼으로 암호 관리자의 암호를 채우세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegangssleutels zijn nog niet beschikbaar in de browser van Coincide. Log in met je toegangssleutel in %@ en importeer die aanmelding daarna hier. Of kies een andere manier om in te loggen (zoals ‘Andere manier proberen’ bij Google) en gebruik daarna de sleutelknop om je wachtwoord uit je wachtwoordbeheerder in te vullen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klucze dostępu nie są jeszcze dostępne w przeglądarce Coincide. Zaloguj się kluczem dostępu w przeglądarce %@, a potem zaimportuj tutaj to logowanie. Możesz też wybrać inny sposób logowania (np. „Wypróbuj inny sposób” w Google), a następnie użyć przycisku z kluczem, aby wypełnić hasło z menedżera haseł."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As chaves de acesso ainda não estão disponíveis no navegador do Coincide. Entre com sua chave de acesso no %@ e depois importe esse login para cá. Ou escolha outra forma de entrar (como “Tentar de outra maneira” no Google) e depois use o botão da chave para preencher sua senha com seu gerenciador de senhas."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключи доступа пока недоступны в браузере Coincide. Войдите с ключом доступа в %@, а затем импортируйте этот вход сюда. Или выберите другой способ входа (например, «Другой способ» в Google), а затем нажмите кнопку с ключом, чтобы заполнить пароль из менеджера паролей."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçiş anahtarları Coincide’ın tarayıcısında henüz kullanılamıyor. %@ uygulamasında geçiş anahtarınızla oturum açın, ardından bu oturumu buraya aktarın. Ya da başka bir oturum açma yöntemi seçin (Google’da “Başka bir yol deneyin” gibi), ardından parolanızı parola yöneticinizden doldurmak için anahtar düğmesini kullanın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключі доступу поки недоступні в браузері Coincide. Увійдіть за допомогою ключа доступу в %@, а потім імпортуйте цей вхід сюди. Або виберіть інший спосіб входу (наприклад, «Інший спосіб» у Google), а потім натисніть кнопку з ключем, щоб заповнити пароль із менеджера паролів."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình duyệt của Coincide chưa hỗ trợ khóa truy cập. Hãy đăng nhập bằng khóa truy cập trong %@, rồi nhập lần đăng nhập đó vào đây. Hoặc chọn cách đăng nhập khác (như “Thử cách khác” trên Google), rồi dùng nút chìa khóa để điền mật khẩu từ trình quản lý mật khẩu của bạn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 的浏览器暂不支持通行密钥。请在 %@ 中用通行密钥登录，然后将该登录状态导入到这里。或者选择其他登录方式（例如 Google 上的“尝试其他方式”），然后使用钥匙按钮从密码管理器填充密码。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 的瀏覽器尚不支援通行密鑰。請在 %@ 中用通行密鑰登入，然後將該登入狀態匯入到這裡。或者選擇其他登入方式（例如 Google 上的「嘗試其他方式」），然後使用鑰匙按鈕從密碼管理工具填入密碼。"
+          }
+        }
+      }
+    },
+    "Passkeys aren’t available in Coincide’s browser yet. Sign in with your passkey in your browser, then import that sign-in here. Or choose another way to sign in (like “Try another way” on Google), then use the key button to fill your password from your password manager." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passkeys sind im Browser von Coincide noch nicht verfügbar. Melde dich in deinem Browser mit deinem Passkey an und importiere diese Anmeldung dann hierher. Oder wähle eine andere Anmeldemethode (etwa „Andere Option wählen“ bei Google) und fülle dann mit der Schlüsseltaste dein Passwort aus deinem Passwortmanager aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las llaves de acceso aún no están disponibles en el navegador de Coincide. Inicia sesión con tu llave de acceso en tu navegador y luego importa aquí ese inicio de sesión. O elige otra forma de iniciar sesión (como «Probar otra manera» en Google) y luego usa el botón de la llave para rellenar tu contraseña desde tu gestor de contraseñas."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las llaves de acceso aún no están disponibles en el navegador de Coincide. Inicia sesión con tu llave de acceso en tu navegador y luego importa aquí ese inicio de sesión. O elige otra forma de iniciar sesión (como “Probar otra manera” en Google) y luego usa el botón de la llave para rellenar tu contraseña desde tu gestor de contraseñas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les clés d’identification ne sont pas encore disponibles dans le navigateur de Coincide. Connectez-vous avec votre clé d’identification dans votre navigateur, puis importez cette connexion ici. Ou choisissez une autre méthode de connexion (comme « Essayer une autre méthode » sur Google), puis utilisez le bouton en forme de clé pour remplir votre mot de passe depuis votre gestionnaire de mots de passe."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide के ब्राउज़र में पासकी अभी उपलब्ध नहीं हैं। अपने ब्राउज़र में अपनी पासकी से साइन इन करें, फिर वह साइन-इन यहां इम्पोर्ट करें। या साइन इन करने का कोई दूसरा तरीका चुनें (जैसे Google पर “दूसरा तरीका आज़माएं”), फिर अपने पासवर्ड मैनेजर से पासवर्ड भरने के लिए चाबी वाला बटन इस्तेमाल करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci sandi belum tersedia di browser Coincide. Masuk dengan kunci sandi Anda di browser Anda, lalu impor login tersebut ke sini. Atau pilih cara lain untuk masuk (seperti “Coba cara lain” di Google), lalu gunakan tombol kunci untuk mengisi kata sandi dari pengelola kata sandi Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le passkey non sono ancora disponibili nel browser di Coincide. Accedi con la tua passkey nel tuo browser, poi importa qui quell’accesso. Oppure scegli un altro modo per accedere (come “Prova un altro metodo” su Google), poi usa il pulsante con la chiave per compilare la password dal tuo gestore di password."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide のブラウザではまだパスキーを使用できません。お使いのブラウザでパスキーを使ってサインインしてから、そのサインインをここに読み込んでください。または、別のサインイン方法（Google の「別の方法を試す」など）を選んでから、鍵ボタンでパスワードマネージャのパスワードを入力してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 브라우저에서는 아직 패스키를 사용할 수 없습니다. 사용 중인 브라우저에서 패스키로 로그인한 다음 그 로그인을 여기로 가져오세요. 또는 다른 로그인 방법(Google의 ‘다른 방법 시도’ 등)을 선택한 다음 열쇠 버튼으로 암호 관리자의 암호를 채우세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegangssleutels zijn nog niet beschikbaar in de browser van Coincide. Log in met je toegangssleutel in je browser en importeer die aanmelding daarna hier. Of kies een andere manier om in te loggen (zoals ‘Andere manier proberen’ bij Google) en gebruik daarna de sleutelknop om je wachtwoord uit je wachtwoordbeheerder in te vullen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klucze dostępu nie są jeszcze dostępne w przeglądarce Coincide. Zaloguj się kluczem dostępu w swojej przeglądarce, a potem zaimportuj tutaj to logowanie. Możesz też wybrać inny sposób logowania (np. „Wypróbuj inny sposób” w Google), a następnie użyć przycisku z kluczem, aby wypełnić hasło z menedżera haseł."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As chaves de acesso ainda não estão disponíveis no navegador do Coincide. Entre com sua chave de acesso no seu navegador e depois importe esse login para cá. Ou escolha outra forma de entrar (como “Tentar de outra maneira” no Google) e depois use o botão da chave para preencher sua senha com seu gerenciador de senhas."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключи доступа пока недоступны в браузере Coincide. Войдите с ключом доступа в своём браузере, а затем импортируйте этот вход сюда. Или выберите другой способ входа (например, «Другой способ» в Google), а затем нажмите кнопку с ключом, чтобы заполнить пароль из менеджера паролей."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçiş anahtarları Coincide’ın tarayıcısında henüz kullanılamıyor. Tarayıcınızda geçiş anahtarınızla oturum açın, ardından bu oturumu buraya aktarın. Ya da başka bir oturum açma yöntemi seçin (Google’da “Başka bir yol deneyin” gibi), ardından parolanızı parola yöneticinizden doldurmak için anahtar düğmesini kullanın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключі доступу поки недоступні в браузері Coincide. Увійдіть за допомогою ключа доступу у своєму браузері, а потім імпортуйте цей вхід сюди. Або виберіть інший спосіб входу (наприклад, «Інший спосіб» у Google), а потім натисніть кнопку з ключем, щоб заповнити пароль із менеджера паролів."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình duyệt của Coincide chưa hỗ trợ khóa truy cập. Hãy đăng nhập bằng khóa truy cập trong trình duyệt của bạn, rồi nhập lần đăng nhập đó vào đây. Hoặc chọn cách đăng nhập khác (như “Thử cách khác” trên Google), rồi dùng nút chìa khóa để điền mật khẩu từ trình quản lý mật khẩu của bạn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 的浏览器暂不支持通行密钥。请在你的浏览器中用通行密钥登录，然后将该登录状态导入到这里。或者选择其他登录方式（例如 Google 上的“尝试其他方式”），然后使用钥匙按钮从密码管理器填充密码。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 的瀏覽器尚不支援通行密鑰。請在你的瀏覽器中用通行密鑰登入，然後將該登入狀態匯入到這裡。或者選擇其他登入方式（例如 Google 上的「嘗試其他方式」），然後使用鑰匙按鈕從密碼管理工具填入密碼。"
           }
         }
       }
@@ -277159,6 +279089,118 @@
         }
       }
     },
+    "Sign In" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anmelden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Iniciar sesión"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Iniciar sesión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se connecter"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "साइन इन करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Masuk"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accedi"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サインイン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로그인"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Log in"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zaloguj się"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Войти"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oturum Aç"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійти"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đăng nhập"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "登录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "登入"
+          }
+        }
+      }
+    },
     "Sign In Again" : {
       "localizations" : {
         "de" : {
@@ -277827,6 +279869,236 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "登入"
+          }
+        }
+      }
+    },
+    "Sign in to %@ as %@ with your Bitwarden passkey?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit deinem Bitwarden-Passkey als %2$@ bei %1$@ anmelden?"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Sign in to %1$@ as %2$@ with your Bitwarden passkey?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciar sesión en %1$@ como %2$@ con tu llave de acceso de Bitwarden?"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciar sesión en %1$@ como %2$@ con tu llave de acceso de Bitwarden?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se connecter à %1$@ en tant que %2$@ avec votre clé d’identification Bitwarden ?"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अपनी Bitwarden पासकी से %2$@ के रूप में %1$@ में साइन इन करें?"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Masuk ke %1$@ sebagai %2$@ dengan kunci sandi Bitwarden Anda?"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accedere a %1$@ come %2$@ con la tua passkey di Bitwarden?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden のパスキーを使用して %2$@ として %1$@ にサインインしますか？"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 패스키를 사용하여 %2$@(으)로 %1$@에 로그인하시겠습니까?"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inloggen bij %1$@ als %2$@ met je Bitwarden-toegangssleutel?"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalogować się do %1$@ jako %2$@ kluczem dostępu z Bitwarden?"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrar em %1$@ como %2$@ com sua chave de acesso do Bitwarden?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Войти на %1$@ как %2$@ с помощью ключа доступа из Bitwarden?"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ sitesinde %2$@ olarak Bitwarden geçiş anahtarınızla oturum açılsın mı?"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійти на %1$@ як %2$@ за допомогою ключа доступу з Bitwarden?"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đăng nhập vào %1$@ với tư cách %2$@ bằng khóa truy cập Bitwarden?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "要使用 Bitwarden 通行密钥以 %2$@ 的身份登录 %1$@ 吗？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "要使用 Bitwarden 通行密鑰以 %2$@ 的身分登入 %1$@ 嗎？"
+          }
+        }
+      }
+    },
+    "Sign in to %@ with your Bitwarden passkey?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit deinem Bitwarden-Passkey bei %@ anmelden?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciar sesión en %@ con tu llave de acceso de Bitwarden?"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciar sesión en %@ con tu llave de acceso de Bitwarden?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se connecter à %@ avec votre clé d’identification Bitwarden ?"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अपनी Bitwarden पासकी से %@ में साइन इन करें?"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Masuk ke %@ dengan kunci sandi Bitwarden Anda?"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accedere a %@ con la tua passkey di Bitwarden?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden のパスキーを使用して %@ にサインインしますか？"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 패스키를 사용하여 %@에 로그인하시겠습니까?"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inloggen bij %@ met je Bitwarden-toegangssleutel?"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalogować się do %@ kluczem dostępu z Bitwarden?"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrar em %@ com sua chave de acesso do Bitwarden?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Войти на %@ с помощью ключа доступа из Bitwarden?"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ sitesinde Bitwarden geçiş anahtarınızla oturum açılsın mı?"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійти на %@ за допомогою ключа доступу з Bitwarden?"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đăng nhập vào %@ bằng khóa truy cập Bitwarden?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "要使用 Bitwarden 通行密钥登录 %@ 吗？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "要使用 Bitwarden 通行密鑰登入 %@ 嗎？"
           }
         }
       }
@@ -278841,6 +281113,354 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "已登入為 %1$@。%2$@讀取。"
+          }
+        }
+      }
+    },
+    "Signed in to %@ in %@? Import that sign-in to use it here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In %2$@ bei %1$@ angemeldet? Importiere diese Anmeldung, um sie hier zu nutzen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Signed in to %1$@ in %2$@? Import that sign-in to use it here."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Has iniciado sesión en %1$@ en %2$@? Importa ese inicio de sesión para usarlo aquí."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciaste sesión en %1$@ en %2$@? Importa ese inicio de sesión para usarlo aquí."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connecté à %1$@ dans %2$@ ? Importez cette connexion pour l’utiliser ici."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ में %1$@ पर साइन इन कर लिया? उस साइन-इन को यहां इस्तेमाल करने के लिए इम्पोर्ट करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sudah masuk ke %1$@ di %2$@? Impor login tersebut untuk menggunakannya di sini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hai effettuato l’accesso a %1$@ in %2$@? Importa quell’accesso per usarlo qui."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ で %1$@ にサインインしましたか？そのサインインを読み込むと、ここで使用できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@에서 %1$@에 로그인했나요? 그 로그인을 가져와 여기에서 사용하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ingelogd op %1$@ in %2$@? Importeer die aanmelding om haar hier te gebruiken."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalogowano się na stronie %1$@ w przeglądarce %2$@? Zaimportuj to logowanie, aby używać go tutaj."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrou em %1$@ no %2$@? Importe esse login para usá-lo aqui."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вошли на %1$@ в %2$@? Импортируйте этот вход, чтобы пользоваться им здесь."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ uygulamasında %1$@ sitesinde oturum açtınız mı? Burada kullanmak için bu oturumu içe aktarın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійшли на %1$@ у %2$@? Імпортуйте цей вхід, щоб користуватися ним тут."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã đăng nhập %1$@ trong %2$@? Hãy nhập lần đăng nhập đó để dùng tại đây."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在 %2$@ 中登录 %1$@？导入该登录状态即可在这里使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在 %2$@ 中登入 %1$@？匯入該登入狀態即可在這裡使用。"
+          }
+        }
+      }
+    },
+    "Signed in to %@ in %@? Wait half a minute for it to save the sign-in, then import it here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In %2$@ bei %1$@ angemeldet? Warte eine halbe Minute, bis die Anmeldung gespeichert ist, und importiere sie dann hierher."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Signed in to %1$@ in %2$@? Wait half a minute for it to save the sign-in, then import it here."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Has iniciado sesión en %1$@ en %2$@? Espera medio minuto a que guarde el inicio de sesión y luego impórtalo aquí."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciaste sesión en %1$@ en %2$@? Espera medio minuto a que guarde el inicio de sesión y luego impórtalo aquí."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connecté à %1$@ dans %2$@ ? Attendez une demi-minute qu’il enregistre la connexion, puis importez-la ici."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ में %1$@ पर साइन इन कर लिया? साइन-इन सहेजे जाने के लिए आधा मिनट रुकें, फिर उसे यहां इम्पोर्ट करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sudah masuk ke %1$@ di %2$@? Tunggu setengah menit sampai login tersimpan, lalu impor ke sini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hai effettuato l’accesso a %1$@ in %2$@? Aspetta mezzo minuto che salvi l’accesso, poi importalo qui."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ で %1$@ にサインインしましたか？サインインが保存されるまで30秒ほど待ってから、ここに読み込んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@에서 %1$@에 로그인했나요? 로그인이 저장되도록 30초 정도 기다린 다음 여기로 가져오세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ingelogd op %1$@ in %2$@? Wacht een halve minuut tot de aanmelding is bewaard en importeer haar daarna hier."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalogowano się na stronie %1$@ w przeglądarce %2$@? Odczekaj pół minuty, aż zapisze logowanie, a potem zaimportuj je tutaj."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrou em %1$@ no %2$@? Espere meio minuto para ele salvar o login e depois importe-o para cá."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вошли на %1$@ в %2$@? Подождите полминуты, пока браузер сохранит вход, а затем импортируйте его сюда."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ uygulamasında %1$@ sitesinde oturum açtınız mı? Oturumu kaydetmesi için yarım dakika bekleyin, ardından buraya aktarın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійшли на %1$@ у %2$@? Зачекайте пів хвилини, поки браузер збереже вхід, а потім імпортуйте його сюди."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã đăng nhập %1$@ trong %2$@? Hãy đợi nửa phút để trình duyệt lưu lần đăng nhập, rồi nhập vào đây."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在 %2$@ 中登录 %1$@？请等待半分钟让它保存登录状态，然后导入到这里。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在 %2$@ 中登入 %1$@？請等待半分鐘讓它儲存登入狀態，然後匯入到這裡。"
+          }
+        }
+      }
+    },
+    "Signed in to %@ in your browser? Import that sign-in to use it here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In deinem Browser bei %@ angemeldet? Importiere diese Anmeldung, um sie hier zu nutzen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Has iniciado sesión en %@ en tu navegador? Importa ese inicio de sesión para usarlo aquí."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciaste sesión en %@ en tu navegador? Importa ese inicio de sesión para usarlo aquí."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connecté à %@ dans votre navigateur ? Importez cette connexion pour l’utiliser ici."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अपने ब्राउज़र में %@ पर साइन इन कर लिया? उस साइन-इन को यहां इस्तेमाल करने के लिए इम्पोर्ट करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sudah masuk ke %@ di browser Anda? Impor login tersebut untuk menggunakannya di sini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hai effettuato l’accesso a %@ nel tuo browser? Importa quell’accesso per usarlo qui."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ブラウザで %@ にサインインしましたか？そのサインインを読み込むと、ここで使用できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "브라우저에서 %@에 로그인했나요? 그 로그인을 가져와 여기에서 사용하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ingelogd op %@ in je browser? Importeer die aanmelding om haar hier te gebruiken."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalogowano się na stronie %@ w przeglądarce? Zaimportuj to logowanie, aby używać go tutaj."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrou em %@ no seu navegador? Importe esse login para usá-lo aqui."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вошли на %@ в своём браузере? Импортируйте этот вход, чтобы пользоваться им здесь."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tarayıcınızda %@ sitesinde oturum açtınız mı? Burada kullanmak için bu oturumu içe aktarın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійшли на %@ у своєму браузері? Імпортуйте цей вхід, щоб користуватися ним тут."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã đăng nhập %@ trong trình duyệt của bạn? Hãy nhập lần đăng nhập đó để dùng tại đây."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在你的浏览器中登录 %@？导入该登录状态即可在这里使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在你的瀏覽器中登入 %@？匯入該登入狀態即可在這裡使用。"
           }
         }
       }
@@ -313058,6 +315678,118 @@
         }
       }
     },
+    "The passkey’s sign-in count can’t go higher." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Anmeldezähler des Passkeys kann nicht weiter steigen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El contador de inicios de sesión de la llave de acceso no puede aumentar más."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El contador de inicios de sesión de la llave de acceso no puede aumentar más."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le compteur de connexions de la clé d’identification ne peut plus augmenter."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पासकी की साइन-इन गिनती अब और नहीं बढ़ सकती।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Penghitung masuk kunci sandi tidak bisa bertambah lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il contatore degli accessi della passkey non può aumentare oltre."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "パスキーのサインイン回数をこれ以上増やせません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "패스키의 로그인 횟수를 더 이상 늘릴 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De aanmeldteller van de toegangssleutel kan niet hoger."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Licznik logowań klucza dostępu nie może już wzrosnąć."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O contador de entradas da chave de acesso não pode aumentar mais."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Счётчик входов ключа доступа больше не может увеличиваться."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçiş anahtarının oturum açma sayacı daha fazla artamaz."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Лічильник входів ключа доступу більше не може зростати."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bộ đếm đăng nhập của khóa truy cập không thể tăng thêm."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "通行密钥的登录计数无法再增加。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "通行密鑰的登入次數無法再增加。"
+          }
+        }
+      }
+    },
     "The password goes only to Bitwarden’s tool. Coincide keeps the session it returns in your Keychain until you lock it." : {
       "localizations" : {
         "de" : {
@@ -315406,6 +318138,454 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "此儲存庫除了指示之外還有尚未推送的變更 (%@)。Coincide 只會推送指示檔案，因此請自行推送這些變更。"
+          }
+        }
+      }
+    },
+    "The request comes from %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Anfrage kommt von %@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud procede de %@."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud viene de %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La demande provient de %@."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह अनुरोध %@ से आया है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permintaan ini berasal dari %@."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La richiesta proviene da %@."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このリクエストは %@ からのものです。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 요청은 %@에서 왔습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het verzoek komt van %@."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prośba pochodzi z %@."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A solicitação vem de %@."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запрос пришёл от %@."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İstek %@ adresinden geliyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запит надійшов від %@."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yêu cầu đến từ %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此请求来自 %@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此要求來自 %@。"
+          }
+        }
+      }
+    },
+    "The request comes from %@. Choose an account." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Anfrage kommt von %@. Wähle einen Account."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud procede de %@. Elige una cuenta."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud viene de %@. Elige una cuenta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La demande provient de %@. Choisissez un compte."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह अनुरोध %@ से आया है। कोई खाता चुनें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permintaan ini berasal dari %@. Pilih akun."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La richiesta proviene da %@. Scegli un account."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このリクエストは %@ からのものです。アカウントを選択してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 요청은 %@에서 왔습니다. 계정을 선택하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het verzoek komt van %@. Kies een account."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prośba pochodzi z %@. Wybierz konto."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A solicitação vem de %@. Escolha uma conta."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запрос пришёл от %@. Выберите учётную запись."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İstek %@ adresinden geliyor. Bir hesap seçin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запит надійшов від %@. Виберіть обліковий запис."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yêu cầu đến từ %@. Hãy chọn một tài khoản."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此请求来自 %@。选择一个账户。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此要求來自 %@。選擇一個帳號。"
+          }
+        }
+      }
+    },
+    "The request comes from %@. Choose an account. You’ll confirm with Touch ID or your Mac password next." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Anfrage kommt von %@. Wähle einen Account. Danach bestätigst du mit Touch ID oder deinem Mac-Passwort."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud procede de %@. Elige una cuenta. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud viene de %@. Elige una cuenta. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La demande provient de %@. Choisissez un compte. Vous confirmerez ensuite avec Touch ID ou le mot de passe de votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह अनुरोध %@ से आया है। कोई खाता चुनें। इसके बाद आप Touch ID या अपने Mac पासवर्ड से पुष्टि करेंगे।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permintaan ini berasal dari %@. Pilih akun. Selanjutnya Anda akan mengonfirmasi dengan Touch ID atau kata sandi Mac."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La richiesta proviene da %@. Scegli un account. Poi confermerai con Touch ID o la password del Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このリクエストは %@ からのものです。アカウントを選択してください。次に Touch ID または Mac のパスワードで確認します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 요청은 %@에서 왔습니다. 계정을 선택하세요. 다음으로 Touch ID 또는 Mac 암호로 확인합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het verzoek komt van %@. Kies een account. Daarna bevestig je met Touch ID of je Mac-wachtwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prośba pochodzi z %@. Wybierz konto. Następnie potwierdzisz to za pomocą Touch ID lub hasła do Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A solicitação vem de %@. Escolha uma conta. Em seguida, você vai confirmar com o Touch ID ou a senha do Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запрос пришёл от %@. Выберите учётную запись. Затем вы подтвердите вход с помощью Touch ID или пароля Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İstek %@ adresinden geliyor. Bir hesap seçin. Ardından Touch ID veya Mac parolanızla onaylayacaksınız."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запит надійшов від %@. Виберіть обліковий запис. Потім ви підтвердите вхід за допомогою Touch ID або пароля Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yêu cầu đến từ %@. Hãy chọn một tài khoản. Tiếp theo, bạn sẽ xác nhận bằng Touch ID hoặc mật khẩu máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此请求来自 %@。选择一个账户。接下来，你将使用触控 ID 或 Mac 密码确认。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此要求來自 %@。選擇一個帳號。接下來，你將使用 Touch ID 或 Mac 密碼確認。"
+          }
+        }
+      }
+    },
+    "The request comes from %@. You’ll confirm with Touch ID or your Mac password next." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Anfrage kommt von %@. Danach bestätigst du mit Touch ID oder deinem Mac-Passwort."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud procede de %@. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud viene de %@. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La demande provient de %@. Vous confirmerez ensuite avec Touch ID ou le mot de passe de votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह अनुरोध %@ से आया है। इसके बाद आप Touch ID या अपने Mac पासवर्ड से पुष्टि करेंगे।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permintaan ini berasal dari %@. Selanjutnya Anda akan mengonfirmasi dengan Touch ID atau kata sandi Mac."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La richiesta proviene da %@. Poi confermerai con Touch ID o la password del Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このリクエストは %@ からのものです。次に Touch ID または Mac のパスワードで確認します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 요청은 %@에서 왔습니다. 다음으로 Touch ID 또는 Mac 암호로 확인합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het verzoek komt van %@. Daarna bevestig je met Touch ID of je Mac-wachtwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prośba pochodzi z %@. Następnie potwierdzisz to za pomocą Touch ID lub hasła do Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A solicitação vem de %@. Em seguida, você vai confirmar com o Touch ID ou a senha do Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запрос пришёл от %@. Затем вы подтвердите вход с помощью Touch ID или пароля Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İstek %@ adresinden geliyor. Ardından Touch ID veya Mac parolanızla onaylayacaksınız."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запит надійшов від %@. Потім ви підтвердите вхід за допомогою Touch ID або пароля Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yêu cầu đến từ %@. Tiếp theo, bạn sẽ xác nhận bằng Touch ID hoặc mật khẩu máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此请求来自 %@。接下来，你将使用触控 ID 或 Mac 密码确认。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此要求來自 %@。接下來，你將使用 Touch ID 或 Mac 密碼確認。"
           }
         }
       }
@@ -343154,6 +346334,118 @@
         }
       }
     },
+    "Use passkeys from Bitwarden" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passkeys aus Bitwarden verwenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usar llaves de acceso de Bitwarden"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usar llaves de acceso de Bitwarden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utiliser les clés d’identification de Bitwarden"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden की पासकी इस्तेमाल करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gunakan kunci sandi dari Bitwarden"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usa le passkey di Bitwarden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden のパスキーを使用"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 패스키 사용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegangssleutels uit Bitwarden gebruiken"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Używaj kluczy dostępu z Bitwarden"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usar chaves de acesso do Bitwarden"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Использовать ключи доступа из Bitwarden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden’daki geçiş anahtarlarını kullan"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Використовувати ключі доступу з Bitwarden"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dùng khóa truy cập từ Bitwarden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 Bitwarden 中的通行密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 Bitwarden 中的通行密鑰"
+          }
+        }
+      }
+    },
     "Use private sessions" : {
       "localizations" : {
         "de" : {
@@ -349955,6 +353247,231 @@
         }
       }
     },
+    "When a site asks for a passkey you saved in Bitwarden, Coincide offers to sign in with it, and you confirm each sign-in with Touch ID or your Mac password. Coincide reads the passkey with Bitwarden’s tool on this Mac, only to answer the site, and never sends it anywhere else." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wenn eine Website nach einem Passkey fragt, den du in Bitwarden gespeichert hast, bietet Coincide an, dich damit anzumelden, und du bestätigst jede Anmeldung mit Touch ID oder deinem Mac-Passwort. Coincide liest den Passkey mit dem Tool von Bitwarden auf diesem Mac, nur um der Website zu antworten, und sendet ihn nirgendwohin sonst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando un sitio pide una llave de acceso que guardaste en Bitwarden, Coincide ofrece iniciar sesión con ella, y confirmas cada inicio de sesión con Touch ID o la contraseña de tu Mac. Coincide lee la llave de acceso con la herramienta de Bitwarden en este Mac, solo para responder al sitio, y nunca la envía a ningún otro lugar."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando un sitio pide una llave de acceso que guardaste en Bitwarden, Coincide ofrece iniciar sesión con ella, y confirmas cada inicio de sesión con Touch ID o la contraseña de tu Mac. Coincide lee la llave de acceso con la herramienta de Bitwarden en esta Mac, solo para responder al sitio, y nunca la envía a ningún otro lugar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quand un site demande une clé d’identification enregistrée dans Bitwarden, Coincide propose de vous connecter avec, et vous confirmez chaque connexion avec Touch ID ou le mot de passe de votre Mac. Coincide lit la clé d’identification avec l’outil de Bitwarden sur ce Mac, uniquement pour répondre au site, et ne l’envoie nulle part ailleurs."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जब कोई साइट Bitwarden में सहेजी गई आपकी पासकी मांगती है, तो Coincide उससे साइन इन करने की पेशकश करता है, और आप हर साइन-इन की पुष्टि Touch ID या अपने Mac पासवर्ड से करते हैं। Coincide इस Mac पर Bitwarden के टूल से पासकी केवल साइट को जवाब देने के लिए पढ़ता है, और उसे कहीं और नहीं भेजता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saat situs meminta kunci sandi yang Anda simpan di Bitwarden, Coincide menawarkan untuk masuk dengannya, dan Anda mengonfirmasi setiap proses masuk dengan Touch ID atau kata sandi Mac. Coincide membaca kunci sandi dengan alat Bitwarden di Mac ini, hanya untuk menjawab situs, dan tidak pernah mengirimkannya ke tempat lain."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando un sito chiede una passkey che hai salvato in Bitwarden, Coincide propone di accedere con quella, e confermi ogni accesso con Touch ID o la password del Mac. Coincide legge la passkey con lo strumento di Bitwarden su questo Mac, solo per rispondere al sito, e non la invia da nessun’altra parte."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden に保存したパスキーをサイトが求めると、Coincide はそのパスキーでのサインインを提案します。サインインのたびに Touch ID または Mac のパスワードで確認します。Coincide はサイトに応答するためだけに、この Mac 上で Bitwarden のツールを使ってパスキーを読み取り、ほかの場所には一切送信しません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사이트에서 Bitwarden에 저장한 패스키를 요청하면 Coincide가 해당 패스키로 로그인하도록 제안하며, 매번 Touch ID 또는 Mac 암호로 로그인을 확인합니다. Coincide는 사이트에 응답하기 위해서만 이 Mac에서 Bitwarden 도구로 패스키를 읽으며, 다른 곳으로는 절대 보내지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Als een site vraagt om een toegangssleutel die je in Bitwarden hebt bewaard, biedt Coincide aan om daarmee in te loggen, en je bevestigt elke aanmelding met Touch ID of je Mac-wachtwoord. Coincide leest de toegangssleutel met de tool van Bitwarden op deze Mac, alleen om de site te antwoorden, en stuurt hem nergens anders naartoe."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gdy witryna prosi o klucz dostępu zapisany w Bitwarden, Coincide proponuje zalogowanie się nim, a każde logowanie potwierdzasz za pomocą Touch ID lub hasła do Maca. Coincide odczytuje klucz dostępu narzędziem Bitwarden na tym Macu, tylko aby odpowiedzieć witrynie, i nigdzie indziej go nie wysyła."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando um site pede uma chave de acesso salva no Bitwarden, o Coincide oferece entrar com ela, e você confirma cada entrada com o Touch ID ou a senha do Mac. O Coincide lê a chave de acesso com a ferramenta do Bitwarden neste Mac, apenas para responder ao site, e nunca a envia para outro lugar."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Когда сайт запрашивает ключ доступа, сохранённый в Bitwarden, Coincide предлагает войти с ним, а каждый вход вы подтверждаете с помощью Touch ID или пароля Mac. Coincide читает ключ доступа инструментом Bitwarden на этом Mac только для ответа сайту и никуда больше его не отправляет."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir site Bitwarden’a kaydettiğiniz bir geçiş anahtarını istediğinde Coincide onunla oturum açmayı önerir ve her oturum açmayı Touch ID veya Mac parolanızla onaylarsınız. Coincide geçiş anahtarını yalnızca siteye yanıt vermek için bu Mac’te Bitwarden’ın aracıyla okur ve başka hiçbir yere göndermez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Коли сайт запитує ключ доступу, збережений у Bitwarden, Coincide пропонує увійти з ним, а кожен вхід ви підтверджуєте за допомогою Touch ID або пароля Mac. Coincide читає ключ доступу інструментом Bitwarden на цьому Mac лише для відповіді сайту й нікуди більше його не надсилає."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khi một trang web yêu cầu khóa truy cập bạn đã lưu trong Bitwarden, Coincide sẽ đề nghị đăng nhập bằng khóa đó, và bạn xác nhận mỗi lần đăng nhập bằng Touch ID hoặc mật khẩu máy Mac. Coincide đọc khóa truy cập bằng công cụ của Bitwarden trên máy Mac này, chỉ để trả lời trang web, và không bao giờ gửi nó đi nơi khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "当网站请求你存储在 Bitwarden 中的通行密钥时，Coincide 会提供使用它登录，每次登录都需通过触控 ID 或 Mac 密码确认。Coincide 在这台 Mac 上通过 Bitwarden 的工具读取通行密钥，仅用于回应该网站，绝不会将其发送到其他任何地方。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "當網站要求你儲存在 Bitwarden 中的通行密鑰時，Coincide 會提供用它登入，每次登入都需以 Touch ID 或 Mac 密碼確認。Coincide 在這台 Mac 上透過 Bitwarden 的工具讀取通行密鑰，僅用於回應該網站，絕不會傳送到其他任何地方。"
+          }
+        }
+      }
+    },
+    "When a site asks for a passkey you saved in Bitwarden, Coincide offers to sign in with it, and you confirm each sign-in. Coincide reads the passkey with Bitwarden’s tool on this Mac, only to answer the site, and never sends it anywhere else." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wenn eine Website nach einem Passkey fragt, den du in Bitwarden gespeichert hast, bietet Coincide an, dich damit anzumelden, und du bestätigst jede Anmeldung. Coincide liest den Passkey mit dem Tool von Bitwarden auf diesem Mac, nur um der Website zu antworten, und sendet ihn nirgendwohin sonst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando un sitio pide una llave de acceso que guardaste en Bitwarden, Coincide ofrece iniciar sesión con ella, y confirmas cada inicio de sesión. Coincide lee la llave de acceso con la herramienta de Bitwarden en este Mac, solo para responder al sitio, y nunca la envía a ningún otro lugar."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando un sitio pide una llave de acceso que guardaste en Bitwarden, Coincide ofrece iniciar sesión con ella, y confirmas cada inicio de sesión. Coincide lee la llave de acceso con la herramienta de Bitwarden en esta Mac, solo para responder al sitio, y nunca la envía a ningún otro lugar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quand un site demande une clé d’identification enregistrée dans Bitwarden, Coincide propose de vous connecter avec, et vous confirmez chaque connexion. Coincide lit la clé d’identification avec l’outil de Bitwarden sur ce Mac, uniquement pour répondre au site, et ne l’envoie nulle part ailleurs."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जब कोई साइट Bitwarden में सहेजी गई आपकी पासकी मांगती है, तो Coincide उससे साइन इन करने की पेशकश करता है, और आप हर साइन-इन की पुष्टि करते हैं। Coincide इस Mac पर Bitwarden के टूल से पासकी केवल साइट को जवाब देने के लिए पढ़ता है, और उसे कहीं और नहीं भेजता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saat situs meminta kunci sandi yang Anda simpan di Bitwarden, Coincide menawarkan untuk masuk dengannya, dan Anda mengonfirmasi setiap proses masuk. Coincide membaca kunci sandi dengan alat Bitwarden di Mac ini, hanya untuk menjawab situs, dan tidak pernah mengirimkannya ke tempat lain."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando un sito chiede una passkey che hai salvato in Bitwarden, Coincide propone di accedere con quella, e confermi ogni accesso. Coincide legge la passkey con lo strumento di Bitwarden su questo Mac, solo per rispondere al sito, e non la invia da nessun’altra parte."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden に保存したパスキーをサイトが求めると、Coincide はそのパスキーでのサインインを提案し、サインインのたびにあなたが確認します。Coincide はサイトに応答するためだけに、この Mac 上で Bitwarden のツールを使ってパスキーを読み取り、ほかの場所には一切送信しません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사이트에서 Bitwarden에 저장한 패스키를 요청하면 Coincide가 해당 패스키로 로그인하도록 제안하며, 매번 로그인을 직접 확인합니다. Coincide는 사이트에 응답하기 위해서만 이 Mac에서 Bitwarden 도구로 패스키를 읽으며, 다른 곳으로는 절대 보내지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Als een site vraagt om een toegangssleutel die je in Bitwarden hebt bewaard, biedt Coincide aan om daarmee in te loggen, en je bevestigt elke aanmelding. Coincide leest de toegangssleutel met de tool van Bitwarden op deze Mac, alleen om de site te antwoorden, en stuurt hem nergens anders naartoe."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gdy witryna prosi o klucz dostępu zapisany w Bitwarden, Coincide proponuje zalogowanie się nim, a każde logowanie potwierdzasz. Coincide odczytuje klucz dostępu narzędziem Bitwarden na tym Macu, tylko aby odpowiedzieć witrynie, i nigdzie indziej go nie wysyła."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando um site pede uma chave de acesso salva no Bitwarden, o Coincide oferece entrar com ela, e você confirma cada entrada. O Coincide lê a chave de acesso com a ferramenta do Bitwarden neste Mac, apenas para responder ao site, e nunca a envia para outro lugar."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Когда сайт запрашивает ключ доступа, сохранённый в Bitwarden, Coincide предлагает войти с ним, а каждый вход вы подтверждаете. Coincide читает ключ доступа инструментом Bitwarden на этом Mac только для ответа сайту и никуда больше его не отправляет."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir site Bitwarden’a kaydettiğiniz bir geçiş anahtarını istediğinde Coincide onunla oturum açmayı önerir ve her oturum açmayı siz onaylarsınız. Coincide geçiş anahtarını yalnızca siteye yanıt vermek için bu Mac’te Bitwarden’ın aracıyla okur ve başka hiçbir yere göndermez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Коли сайт запитує ключ доступу, збережений у Bitwarden, Coincide пропонує увійти з ним, а кожен вхід ви підтверджуєте. Coincide читає ключ доступу інструментом Bitwarden на цьому Mac лише для відповіді сайту й нікуди більше його не надсилає."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khi một trang web yêu cầu khóa truy cập bạn đã lưu trong Bitwarden, Coincide sẽ đề nghị đăng nhập bằng khóa đó, và bạn xác nhận mỗi lần đăng nhập. Coincide đọc khóa truy cập bằng công cụ của Bitwarden trên máy Mac này, chỉ để trả lời trang web, và không bao giờ gửi nó đi nơi khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "当网站请求你存储在 Bitwarden 中的通行密钥时，Coincide 会提供使用它登录，每次登录都需经你确认。Coincide 在这台 Mac 上通过 Bitwarden 的工具读取通行密钥，仅用于回应该网站，绝不会将其发送到其他任何地方。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "當網站要求你儲存在 Bitwarden 中的通行密鑰時，Coincide 會提供用它登入，每次登入都需經你確認。Coincide 在這台 Mac 上透過 Bitwarden 的工具讀取通行密鑰，僅用於回應該網站，絕不會傳送到其他任何地方。"
+          }
+        }
+      }
+    },
     "When an agent asks to sign in and you choose Always for This Site, the site is listed here." : {
       "localizations" : {
         "de" : {
@@ -356235,6 +359752,118 @@
         }
       }
     },
+    "You’ll confirm with Touch ID or your Mac password next." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Danach bestätigst du mit Touch ID oder deinem Mac-Passwort."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vous confirmerez ensuite avec Touch ID ou le mot de passe de votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इसके बाद आप Touch ID या अपने Mac पासवर्ड से पुष्टि करेंगे।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Selanjutnya Anda akan mengonfirmasi dengan Touch ID atau kata sandi Mac."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Poi confermerai con Touch ID o la password del Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "次に Touch ID または Mac のパスワードで確認します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "다음으로 Touch ID 또는 Mac 암호로 확인합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Daarna bevestig je met Touch ID of je Mac-wachtwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Następnie potwierdzisz to za pomocą Touch ID lub hasła do Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Em seguida, você vai confirmar com o Touch ID ou a senha do Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Затем вы подтвердите вход с помощью Touch ID или пароля Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ardından Touch ID veya Mac parolanızla onaylayacaksınız."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Потім ви підтвердите вхід за допомогою Touch ID або пароля Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tiếp theo, bạn sẽ xác nhận bằng Touch ID hoặc mật khẩu máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "接下来，你将使用触控 ID 或 Mac 密码确认。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "接下來，你將使用 Touch ID 或 Mac 密碼確認。"
+          }
+        }
+      }
+    },
     "Zen balance" : {
       "localizations" : {
         "de" : {
@@ -360515,6 +364144,118 @@
         }
       }
     },
+    "macOS protects %@’s data, so Coincide needs Full Disk Access to import your sign-in from it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS schützt die Daten von %@, daher braucht Coincide Festplattenvollzugriff, um deine Anmeldung daraus zu importieren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protege los datos de %@, así que Coincide necesita acceso total al disco para importar tu inicio de sesión desde él."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protege los datos de %@, así que Coincide necesita acceso total al disco para importar tu inicio de sesión desde él."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protège les données de %@, Coincide a donc besoin de l’accès complet au disque pour en importer votre connexion."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS %@ के डेटा की सुरक्षा करता है, इसलिए उससे आपका साइन-इन इम्पोर्ट करने के लिए Coincide को फ़ुल डिस्क एक्सेस चाहिए।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS melindungi data %@, jadi Coincide memerlukan Akses Disk Penuh untuk mengimpor login Anda darinya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protegge i dati di %@, quindi Coincide ha bisogno dell’accesso completo al disco per importarne il tuo accesso."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS は %@ のデータを保護しているため、そこからサインインを読み込むには Coincide にフルディスクアクセスが必要です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS가 %@의 데이터를 보호하므로 거기에서 로그인을 가져오려면 Coincide에 전체 디스크 접근 권한이 필요합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS beschermt de gegevens van %@, dus Coincide heeft volledige schijftoegang nodig om je aanmelding eruit te importeren."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS chroni dane przeglądarki %@, więc Coincide potrzebuje pełnego dostępu do dysku, aby zaimportować z niej logowanie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O macOS protege os dados do %@, então o Coincide precisa de Acesso Total ao Disco para importar seu login dele."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS защищает данные %@, поэтому Coincide нужен полный доступ к диску, чтобы импортировать оттуда ваш вход."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS, %@ verilerini korur; bu yüzden Coincide’ın oturumunuzu oradan içe aktarması için Tam Disk Erişimi gerekir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS захищає дані %@, тому Coincide потрібен повний доступ до диска, щоб імпортувати звідти ваш вхід."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS bảo vệ dữ liệu của %@, nên Coincide cần Truy cập toàn bộ ổ đĩa để nhập lần đăng nhập của bạn từ đó."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS 保护 %@ 的数据，因此 Coincide 需要完全磁盘访问权限才能从中导入你的登录状态。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS 保護 %@ 的資料，因此 Coincide 需要完整磁碟取用權限才能從中匯入你的登入狀態。"
+          }
+        }
+      }
+    },
     "macOS protects %@’s data. To import it, turn on Coincide in System Settings › Privacy & Security › Full Disk Access, then open this again." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -363643,6 +367384,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "語音"
+          }
+        }
+      }
+    },
+    "sign in to %@ with your Bitwarden passkey" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "dich mit deinem Bitwarden-Passkey bei %@ anzumelden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iniciar sesión en %@ con tu llave de acceso de Bitwarden"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iniciar sesión en %@ con tu llave de acceso de Bitwarden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "vous connecter à %@ avec votre clé d’identification Bitwarden"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अपनी Bitwarden पासकी से %@ में साइन इन करने"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "masuk ke %@ dengan kunci sandi Bitwarden Anda"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "accedere a %@ con la tua passkey di Bitwarden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden のパスキーで %@ にサインイン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 패스키로 %@에 로그인"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "in te loggen bij %@ met je Bitwarden-toegangssleutel"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "zalogować się do %@ kluczem dostępu z Bitwarden"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "entrar em %@ com sua chave de acesso do Bitwarden"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "войти на %@ с помощью ключа доступа из Bitwarden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ sitesinde Bitwarden geçiş anahtarınızla oturum açmaya"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "увійти на %@ за допомогою ключа доступу з Bitwarden"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "đăng nhập vào %@ bằng khóa truy cập Bitwarden của bạn"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 Bitwarden 通行密钥登录 %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 Bitwarden 通行密鑰登入 %@"
           }
         }
       }
