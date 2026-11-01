@@ -60,7 +60,9 @@ final class ComposerSuggestionPanel: NSObject, NSTableViewDataSource, NSTableVie
     }
 
     private func position(_ panel: NSPanel, above anchor: NSView) {
-        guard let window = anchor.window else { return }
+        // Only over a window on screen: ordering the list in brings its parent window back with it, so a list that
+        // arrives after the window closed (pull requests or an agent's commands that took a while) must not reopen it.
+        guard let window = anchor.window, window.isVisible else { return hide() }
         let rows = CGFloat(min(max(items.count, 1), maxVisibleRows))
         let height = items.isEmpty ? 40 : rows * rowHeight + padding * 2
         let anchorFrame = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
