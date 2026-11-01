@@ -8,6 +8,8 @@
 
 A native macOS app for the coding agents you already pay for — **Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity** — in one window, with one model picker, and the ability to **switch agents in the middle of a thread**.
 
+![A Coincide window: bots, projects and chats from every agent in the sidebar, and a thread where Claude Code fixes a bug and opens a pull request](docs/images/coincide.png)
+
 Coincide is a native AppKit port of [T3 Code](https://github.com/pingdotgg/t3code). It drives each agent's own command-line tool with the login you already have, so your existing subscriptions keep working. Coincide never sells, proxies or meters tokens.
 
 Website and docs: [coincide.dev](https://coincide.dev) · [Features](https://coincide.dev/features) · [Docs](https://coincide.dev/docs) · [FAQ](https://coincide.dev/faq)
@@ -38,6 +40,10 @@ Every release is signed with Developer ID and notarized by Apple. Coincide → C
 T3 Code is an Electron app with a Node server behind a web UI. Coincide is built with AppKit (and SwiftUI where it fits, like Settings) and talks to the agents in-process, so it starts instantly, idles at a fraction of the memory, scrolls long streaming transcripts smoothly, and gets macOS 26 Liquid Glass, menus, shortcuts, accessibility and notifications for free.
 
 ## Features
+
+![Switching a thread from Claude Code to Codex: typing /codex, and Codex picking up where Claude Code left off](docs/images/switch-agents.gif)
+
+*Images show demo data.*
 
 - **Every agent, one picker.** Models from all installed and signed-in agents appear in one menu, grouped by agent, with favorites, hidden models, reasoning effort and fast mode where the provider supports them.
 - **Switch mid-thread.** Each agent keeps its own native session for the thread. When you switch, the next agent gets a recap of the turns it missed and continues in the same working directory. Switch back and the earlier agent resumes its own session.
