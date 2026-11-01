@@ -18,7 +18,7 @@ struct NavigationRailTests {
             view.subviews.forEach(collect)
         }
         collect(rail.view)
-        #expect(buttons.count == 12)
+        #expect(buttons.count == 13)
         // Whatever opens on the right has its button on the right, in the toolbar (`InspectorPanelButtons`): the
         // schedules too, so the rail has no Scheduled clock.
         let labels = Set(buttons.compactMap { $0.accessibilityLabel() })
@@ -37,28 +37,35 @@ struct NavigationRailTests {
         }
     }
 
-    /// Star on GitHub, Join the Discord and Support Coincide on Ko-fi sit above the bottom group, named for their links
-    /// in their tooltips and to VoiceOver, and send their clicks to the rail.
+    /// Star on GitHub, Upvote Coincide on Product Hunt, Join the Discord and Support Coincide on Ko-fi sit above the
+    /// bottom group, named for their links in their tooltips and to VoiceOver, and send their clicks to the rail.
     @Test func communityButtonsNameTheirLinks() throws {
         let rail = NavigationRailViewController()
         _ = rail.view
-        #expect(NavigationRailViewController.communityLinks == [.starOnGitHub, .joinDiscord, .supportOnKoFi])
+        #expect(NavigationRailViewController.communityLinks == [.starOnGitHub, .upvoteOnProductHunt, .joinDiscord, .supportOnKoFi])
         let buttons = rail.communityButtons
-        #expect(buttons.map { $0.accessibilityLabel() } == ["Star on GitHub", "Join the Discord", "Support Coincide on Ko-fi"])
+        #expect(buttons.map { $0.accessibilityLabel() } == [
+            "Star on GitHub", "Upvote Coincide on Product Hunt", "Join the Discord", "Support Coincide on Ko-fi",
+        ])
         #expect(buttons.map(\.toolTip) == [
-            "Star on GitHub\nCoincide is open source under the MIT License", "Join the Discord\ndiscord.gg/DETrbhDVqw",
+            "Star on GitHub\nCoincide is open source under the MIT License",
+            "Upvote Coincide on Product Hunt\nproducthunt.com/products/coincide", "Join the Discord\ndiscord.gg/DETrbhDVqw",
             "Support Coincide on Ko-fi\nBuy Apoorv a coffee",
         ])
         #expect(buttons.allSatisfy { $0.target === rail && $0.action != nil })
-        #expect(buttons.map { $0.identifier?.rawValue } == ["community.starOnGitHub", "community.joinDiscord", "community.supportOnKoFi"])
+        // Every button shows its outline symbol.
+        #expect(buttons.allSatisfy { $0.image != nil })
+        #expect(buttons.map { $0.identifier?.rawValue } == [
+            "community.starOnGitHub", "community.upvoteOnProductHunt", "community.joinDiscord", "community.supportOnKoFi",
+        ])
         // Above Usage, Instructions, Agents and Settings, in one group with them.
         let group = try #require(buttons.first?.superview as? NSStackView)
-        #expect(Array(group.arrangedSubviews.prefix(3)) == buttons as [NSView])
-        #expect(group.arrangedSubviews.count == 7)
+        #expect(Array(group.arrangedSubviews.prefix(4)) == buttons as [NSView])
+        #expect(group.arrangedSubviews.count == 8)
     }
 
-    /// A window too short for every button lets the community buttons go, Ko-fi first and Discord last, before
-    /// anything overlaps; a tall one shows them all.
+    /// A window too short for every button lets the community buttons go, Ko-fi first, then Product Hunt, then GitHub
+    /// and Discord last, before anything overlaps; a tall one shows them all.
     @Test func aShortRailLetsTheCommunityButtonsGo() throws {
         func shown(height: CGFloat) -> (community: [String], frames: [NSRect]) {
             let rail = NavigationRailViewController()
@@ -73,13 +80,16 @@ struct NavigationRailTests {
             let community = rail.communityButtons.filter { !$0.isHiddenOrHasHiddenAncestor }.compactMap { $0.accessibilityLabel() }
             return (community, buttons.map { $0.convert($0.bounds, to: rail.view) }.sorted { $0.minY < $1.minY })
         }
-        #expect(shown(height: 800).community == ["Star on GitHub", "Join the Discord", "Support Coincide on Ko-fi"])
+        #expect(shown(height: 800).community == [
+            "Star on GitHub", "Upvote Coincide on Product Hunt", "Join the Discord", "Support Coincide on Ko-fi",
+        ])
+        #expect(shown(height: 580).community == ["Star on GitHub", "Upvote Coincide on Product Hunt", "Join the Discord"])
         #expect(shown(height: 530).community == ["Star on GitHub", "Join the Discord"])
         #expect(shown(height: 500).community == ["Join the Discord"])
         #expect(shown(height: 450).community.isEmpty)
-        for height in [800, 530, 500, 450] as [CGFloat] {
+        for height in [800, 580, 530, 500, 450] as [CGFloat] {
             let frames = shown(height: height).frames
-            #expect(frames.count == 12 - (3 - shown(height: height).community.count))
+            #expect(frames.count == 13 - (4 - shown(height: height).community.count))
             for (upper, lower) in zip(frames, frames.dropFirst()) {
                 #expect(lower.minY - upper.maxY >= 4, "At \(height): \(upper) and \(lower) overlap")
             }

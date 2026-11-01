@@ -10,6 +10,8 @@ public enum CoincideLinks {
     public static let discordBugReports = URL(string: "https://discord.com/channels/1566352780862427258/1566353951299862598")!
     public static let discordFeatureRequests = URL(
         string: "https://discord.com/channels/1566352780862427258/1566353955494039602")!
+    /// Coincide's page on Product Hunt, to upvote it.
+    public static let productHunt = URL(string: "https://www.producthunt.com/products/coincide")!
     /// Donations, on the Mac only ("Buy Apoorv a Coffee").
     public static let koFi = URL(string: "https://ko-fi.com/apoorvdarshan")!
     public static let x = URL(string: "https://x.com/apoorvdarshan")!
@@ -28,7 +30,8 @@ public enum CoincideLinks {
 }
 
 /// Help & Community, as both apps list it in Settings and the Mac also in its Help menu, command palette and rail: help
-/// and reports, the Discord server and the source code, the developer's accounts, and contact and legal pages. Each
+/// and reports, the Discord server, the source code and the Product Hunt page, the developer's accounts, and contact and
+/// legal pages. Each
 /// app supplies the titles and symbols and lists the links `offered(on:)` its platform, so a link added here shows up
 /// in every place of the apps that offer it.
 ///
@@ -43,6 +46,8 @@ public enum CommunityLink: String, CaseIterable, Sendable, Identifiable {
     case requestFeature
     case joinDiscord
     case starOnGitHub
+    /// Coincide's Product Hunt page, to upvote it.
+    case upvoteOnProductHunt
     /// Ko-fi donations, which only the Mac offers.
     case supportOnKoFi
     case x
@@ -70,7 +75,8 @@ public enum CommunityLink: String, CaseIterable, Sendable, Identifiable {
 
     public var group: Group {
         switch self {
-        case .getHelp, .reportIssue, .requestFeature, .joinDiscord, .starOnGitHub, .supportOnKoFi: .community
+        case .getHelp, .reportIssue, .requestFeature, .joinDiscord, .starOnGitHub, .upvoteOnProductHunt, .supportOnKoFi:
+            .community
         case .x, .instagram, .linkedIn: .follow
         case .contact, .privacyPolicy, .termsOfService: .contact
         }
@@ -135,6 +141,7 @@ public enum CommunityLink: String, CaseIterable, Sendable, Identifiable {
         case .getHelp: return CoincideLinks.discordHelp
         case .joinDiscord: return CoincideLinks.discordInvite
         case .starOnGitHub: return CoincideLinks.repository
+        case .upvoteOnProductHunt: return CoincideLinks.productHunt
         case .supportOnKoFi: return CoincideLinks.koFi
         case .x: return CoincideLinks.x
         case .instagram: return CoincideLinks.instagram
