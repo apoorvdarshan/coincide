@@ -1,4 +1,5 @@
 import AppKit
+import CoincideRemoteKit
 import Foundation
 import Testing
 
@@ -392,7 +393,10 @@ struct PaletteCatalogTests {
         let (core, more) = PaletteCatalog(windowController: nil).actions()
         #expect(core.map(\.id).contains("action:add-project"))
         #expect(!core.contains { ["action:terminal", "action:diff", "action:find", "action:stop"].contains($0.id) })
-        #expect(more.map(\.id).suffix(3) == ["action:appearance", "action:refresh-agents", "action:settings"])
+        // Then Help & Community, as in the Help menu.
+        let ids = more.map(\.id)
+        #expect(ids.filter { !$0.hasPrefix("help:") }.suffix(3) == ["action:appearance", "action:refresh-agents", "action:settings"])
+        #expect(ids.suffix(CommunityLink.allCases.count) == CommunityLink.allCases.map { "help:\($0.rawValue)" })
         #expect(!more.contains { $0.id == "action:pin" || $0.id == "action:sidebar" })
     }
 }

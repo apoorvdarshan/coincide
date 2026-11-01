@@ -1,4 +1,5 @@
 import CoincideKit
+import CoincideRemoteKit
 import SwiftUI
 
 struct SettingsRootView: View {
@@ -458,6 +459,8 @@ struct SettingsSearchResults: View {
                     String(localized: "Version"), String(localized: "License"), "GitHub", "T3 Code", "X", "Instagram",
                 ]),
         ]
+        // Help & Community, Follow, and Contact & Legal, in About.
+        entries += CommunityLink.allCases.map { SettingsSearchEntry(title: $0.title, pane: .section(.about), keywords: $0.keywords) }
         for kind in kinds {
             entries.append(
                 SettingsSearchEntry(

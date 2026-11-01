@@ -98,6 +98,7 @@ struct SettingsSidebar: View {
             } else if client.isConnected {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 44).sidebarRow()
             }
+            HelpCommunityRows()
             Spacer(minLength: 12).sidebarRow().accessibilityHidden(true)
             row(.about, title: String(localized: "About"), symbol: "info.circle.fill", color: "gray")
         }
@@ -131,13 +132,16 @@ struct SettingsSidebar: View {
 }
 
 /// A pane's colored tile and title, as in the Mac Settings sidebar: an agent's own mark for a provider's pane, and the
-/// provider's status dot.
+/// provider's status dot. A row that opens a web page instead of a pane ends with an arrow, after the account or address
+/// it opens when that is worth showing.
 struct SettingsTileLabel: View {
     let title: String
     var logo: String?
     let symbol: String
     let color: String
     var status: String?
+    var detail: String?
+    var opensLink = false
     @Environment(\.theme) private var theme
     @ScaledMetric(relativeTo: .callout) private var tile: CGFloat = 26
 
@@ -167,6 +171,18 @@ struct SettingsTileLabel: View {
             if let status {
                 StatusDot(color: MacSettingsLabel.statusColor(status))
                     .accessibilityLabel(Text(MacSettingsLabel.statusLabel(status)))
+            }
+            if let detail {
+                Text(verbatim: detail)
+                    .font(.footnote)
+                    .foregroundStyle(theme.secondaryInk)
+                    .lineLimit(1)
+            }
+            if opensLink {
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(theme.tertiaryInk)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.vertical, 2)
@@ -577,6 +593,7 @@ struct SettingsSearchResults: View {
         let search = SearchMatch(query)
         let panes = allPanes.filter { search.isEmpty || search.matches($0.title) }
         let hits = search.isEmpty ? [] : settingHits(search)
+        let links = search.isEmpty ? [] : CommunityLink.allCases.filter { search.matches(([$0.title] + $0.keywords).joined(separator: " ")) }
         List {
             if !panes.isEmpty {
                 SidebarHeader(Text("Panes")).sidebarRow()
@@ -603,10 +620,14 @@ struct SettingsSearchResults: View {
                     .sidebarRow()
                 }
             }
+            if !links.isEmpty {
+                SidebarHeader(Text("Help & Community")).sidebarRow()
+                ForEach(links) { CommunityLinkRow(link: $0) }
+            }
         }
         .sidebarList(theme)
         .overlay {
-            if !search.isEmpty, panes.isEmpty, hits.isEmpty { ContentUnavailableView.search(text: query) }
+            if !search.isEmpty, panes.isEmpty, hits.isEmpty, links.isEmpty { ContentUnavailableView.search(text: query) }
         }
         .navigationTitle("Settings")
     }
