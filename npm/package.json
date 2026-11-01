@@ -1,0 +1,37 @@
+{
+  "name": "coincide-dev",
+  "version": "0.1.0",
+  "description": "Installs Coincide, the native Mac app for Claude Code, Codex, Cursor and other coding agents",
+  "keywords": [
+    "coincide",
+    "macos",
+    "installer",
+    "claude-code",
+    "codex",
+    "cursor",
+    "coding-agents"
+  ],
+  "homepage": "https://coincide.dev",
+  "bugs": "https://github.com/apoorvdarshan/coincide/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apoorvdarshan/coincide.git",
+    "directory": "npm"
+  },
+  "license": "MIT",
+  "author": "Apoorv Darshan",
+  "type": "module",
+  "bin": {
+    "coincide-dev": "bin/coincide-dev.mjs"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

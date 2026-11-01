@@ -1,6 +1,8 @@
 // The coincide.dev Worker: static files come straight from public/; this only answers /api/interest, the public
-// count of taps asking for Coincide on other platforms. Every tap adds one; nothing about the visitor is stored.
+// count of taps asking for Coincide on other platforms (every tap adds one; nothing about the visitor is stored), and
+// /api/stats, Coincide's public download counts (stats.mjs).
 import { DurableObject } from "cloudflare:workers";
+import { handleStats } from "./stats.mjs";
 
 const PLATFORMS = ["windows", "linux", "android"];
 const ORIGINS = new Set(["https://coincide.dev", "https://www.coincide.dev"]);
@@ -39,8 +41,9 @@ export class InterestCounter extends DurableObject {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname === "/api/stats" || url.pathname === "/api/stats/badge") return handleStats(request, env, ctx);
     if (url.pathname !== "/api/interest" && !url.pathname.startsWith("/api/interest/")) return env.ASSETS.fetch(request);
     const counter = env.INTEREST.get(env.INTEREST.idFromName("global"));
     const headers = { "content-type": "application/json", "cache-control": "no-store" };

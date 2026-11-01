@@ -1,0 +1,47 @@
+# Unit tests for the coincide.dev Worker (website/worker/). It has no npm dependencies, so this is plain Node:
+# `node --test` runs website/worker/*.test.mjs. Runs only when the site or this workflow changes; deploying stays manual
+# (`wrangler deploy` from website/).
+
+name: Website
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/website.yml"
+      - "website/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/website.yml"
+      - "website/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to a pull request replaces its older run; main and manual runs are never cancelled.
+concurrency:
+  group: website-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Website Worker tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: website
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Check syntax
+        run: for file in website/worker/*.js website/worker/*.mjs; do node --check "$file"; done
+
+      - name: Run tests
+        run: node --test "website/worker/*.test.mjs"
