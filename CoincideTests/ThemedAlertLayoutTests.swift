@@ -139,7 +139,9 @@ struct ThemedAlertLayoutTests {
         hud.progress = 0.6
         let content = try #require(hud.panel.contentView)
         content.layoutSubtreeIfNeeded()
-        #expect(content.fittingSize.width >= 160)
+        // Large enough to read at a glance, not a small toast.
+        #expect(content.fittingSize.width >= 300)
+        #expect(content.fittingSize.height >= 90)
         try writePNG(of: content, panel: hud.panel, name: "quit-hint")
     }
 
