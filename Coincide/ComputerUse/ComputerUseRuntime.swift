@@ -368,7 +368,7 @@ final class ComputerUseRuntime {
         return CGPoint(x: x, y: y)
     }
 
-    private static func environment(directory: URL) -> [String: String] {
+    static func environment(directory: URL) -> [String: String] {
         // Do not pass providers' API keys, unlocked vault sessions or an old standalone Cua endpoint to the helper.
         let source = ProcessInfo.processInfo.environment
         var environment = source.filter { key, _ in
@@ -380,6 +380,11 @@ final class ComputerUseRuntime {
         // The app whose permissions it uses: a Debug build's own, never the installed Coincide's.
         environment["CUA_DRIVER_HOST_BUNDLE_ID"] = CoincideIdentity.bundleID
         environment["CUA_DRIVER_PERMISSION_MODE"] = "standard"
+        // Coincide collects no usage data, so its helper mustn't either: Cua Driver sends telemetry and checks for its
+        // own releases unless told not to.
+        environment["DO_NOT_TRACK"] = "1"
+        environment["CUA_DRIVER_RS_TELEMETRY_ENABLED"] = "false"
+        environment["CUA_DRIVER_RS_UPDATE_CHECK"] = "false"
         return environment
     }
 
