@@ -1,7 +1,9 @@
 name: CI
 
 on:
-  # Every pull request runs, because "Build and test" is a required check and a skipped one would block merging.
+  # Every pull request runs, because "Build and test" is a required check and a skipped one would block merging. A pull
+  # request that changes nothing the app is built or tested from passes in seconds (see "Check what the pull request
+  # changes").
   pull_request:
   push:
     branches: [main]
@@ -9,12 +11,18 @@ on:
       - "**.md"
   workflow_dispatch:
 
+# A newer push to a pull request replaces its older run; main and manual runs are never cancelled.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
+
+env:
+  # XcodeGen's release archive, checked against its published SHA-256. Faster than `brew install xcodegen`.
+  XCODEGEN_VERSION: 2.46.0
+  XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
 
 jobs:
   build-and-test:
@@ -24,14 +32,137 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pull requests only; pushes to main and manual runs always build and test. The build and tests are skipped only
+      # when this step positively finds that every changed file is one the app isn't built or tested from: if it
+      # fails or can't tell, `app` is left unset and everything runs.
+      - name: Check what the pull request changes
+        id: scope
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Files the app isn't built or tested from. Anything else, including this workflow, the issue forms (which
+          # CommunityLinksTests read) and Markdown inside a source folder, needs the build and tests.
+          affects_app() {
+            case "$1" in
+              .github/workflows/ci.yml) return 0 ;;
+              website/* | discord/* | npm/* | docs/* | .github/workflows/* | .github/dependabot.yml | \
+                .github/actionlint.yaml | .github/PULL_REQUEST_TEMPLATE.md) return 1 ;;
+              */*) return 0 ;;
+              *.md) return 1 ;;
+              *) return 0 ;;
+            esac
+          }
+          # GitHub tests a pull request on a merge commit of it into its base: the first parent is the base, the second
+          # the pull request's head. The shallow checkout hides parents from `git log`, but the commit still names them.
+          read -r base head extra <<<"$(git cat-file commit HEAD | sed -n 's/^parent //p' | tr '\n' ' ')"
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] || [ -z "$base" ] || [ "$head" != "$PR_HEAD" ] || [ -n "$extra" ]; then
+            echo "::notice::Not a merge of the pull request into its base, so everything runs."
+            exit 0
+          fi
+          git fetch --quiet --no-tags --no-recurse-submodules --depth=1 origin "$base"
+          # --no-renames lists both sides of a rename, so moving a file out of a source folder counts.
+          git diff --no-renames --name-only -z "$base" HEAD >"$RUNNER_TEMP/changed-files"
+          app=false
+          count=0
+          while IFS= read -r -d '' path; do
+            count=$((count + 1))
+            if affects_app "$path"; then
+              app=true
+              echo "Needs the build and tests: $path"
+            fi
+          done <"$RUNNER_TEMP/changed-files"
+          if [ "$count" -eq 0 ]; then
+            echo "::notice::Found no changed files, so everything runs."
+            exit 0
+          fi
+          if [ "$app" = false ]; then
+            echo "Changes only files the app isn't built or tested from:"
+            tr '\0' '\n' <"$RUNNER_TEMP/changed-files"
+            echo "Skipping the Swift build and tests: this pull request changes only files the app isn't built or tested from." \
+              >>"$GITHUB_STEP_SUMMARY"
+          fi
+          echo "app=$app" >>"$GITHUB_OUTPUT"
+
+      - name: Skip the build and tests
+        if: steps.scope.outputs.app == 'false'
+        run: echo "This pull request changes only files the app isn't built or tested from, so there is nothing to build or test."
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        if: steps.scope.outputs.app != 'false'
+        run: |
+          curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+          echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >>"$GITHUB_PATH"
 
       - name: Generate Xcode project
-        run: xcodegen generate
+        id: generate
+        if: steps.scope.outputs.app != 'false'
+        run: |
+          xcodegen generate
+          # Compiler outputs are reused only with the Xcode that wrote them.
+          xcode="$(xcodebuild -version | awk '/^Build version/ { print $3 }')"
+          test -n "$xcode"
+          echo "xcode=$xcode" >>"$GITHUB_OUTPUT"
 
-      - name: Build and run unit tests
+      # Caches are saved only by pushes to main and manual runs (each in its own branch's scope); pull requests restore
+      # main's and never write one, so nothing a pull request builds reaches another branch.
+      - name: Restore Swift packages
+        id: packages
+        if: steps.scope.outputs.app != 'false'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/SourcePackages
+          # project.yml pins the remote packages.
+          key: ci-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml') }}
+          restore-keys: ci-packages-${{ runner.os }}-${{ runner.arch }}-
+
+      # Xcode's compilation cache: compiler outputs keyed by the exact inputs of each compile, so an unchanged file
+      # reuses its earlier output and a changed one compiles again. It holds no build products or test results; the
+      # build starts from an empty DerivedData and every test runs.
+      - name: Restore compilation cache
+        id: compilation
+        if: steps.scope.outputs.app != 'false'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/CompilationCache
+          key: ci-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.generate.outputs.xcode }}-${{ github.sha }}
+          restore-keys: ci-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.generate.outputs.xcode }}-
+
+      # COMPILATION_CACHE_LIMIT_SIZE keeps the cache from growing with every saved run; a full build adds about 850 MB.
+      - name: Build
+        id: build
+        if: steps.scope.outputs.app != 'false'
         run: |
           xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' -skipPackagePluginValidation \
-            -derivedDataPath build/DerivedData test -collect-test-diagnostics never
+            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages build-for-testing \
+            COMPILATION_CACHE_ENABLE_CACHING=YES "COMPILATION_CACHE_CAS_PATH=$PWD/build/CompilationCache" \
+            COMPILATION_CACHE_LIMIT_SIZE=2G
+
+      - name: Save Swift packages
+        if: steps.build.outcome == 'success' && github.event_name != 'pull_request' && steps.packages.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/SourcePackages
+          key: ${{ steps.packages.outputs.cache-primary-key }}
+
+      - name: Save compilation cache
+        if: steps.build.outcome == 'success' && github.event_name != 'pull_request'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/CompilationCache
+          key: ${{ steps.compilation.outputs.cache-primary-key }}
+
+      - name: Run unit tests
+        if: steps.scope.outputs.app != 'false'
+        run: |
+          xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' -skipPackagePluginValidation \
+            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages test-without-building \
+            -collect-test-diagnostics never
