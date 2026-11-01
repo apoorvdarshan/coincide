@@ -117,7 +117,7 @@ struct PasswordsSettingsSection: View {
     var body: some View {
         Group {
             Section {
-                Text("Browser extensions can’t run inside Coincide’s browser, so Coincide works with each password manager’s command-line tool. In the browser, Coincide types passwords and one-time codes into the page itself, after you allow it for the site.")
+                Text("Coincide connects to each password manager through its command-line tool, so you don’t need its browser extension. In the browser, Coincide types passwords and one-time codes into the page itself, after you allow it for the site.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 ForEach(PasswordManagerKind.allCases) { kind in managerRow(kind) }
