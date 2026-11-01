@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Import Claude Code and Codex CLI sessions · Coincide</title>
+<meta name="description" content="Bring Claude Code or Codex conversations from Terminal into Coincide as threads that resume the same session, without changing the original files.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/docs/import-cli-sessions">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/docs/import-cli-sessions">
+<meta property="og:title" content="Import Claude Code and Codex CLI sessions · Coincide">
+<meta property="og:description" content="Bring Claude Code or Codex conversations from Terminal into Coincide as threads that resume the same session, without changing the original files.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Import Claude Code and Codex CLI sessions · Coincide">
+<meta name="twitter:description" content="Bring Claude Code or Codex conversations from Terminal into Coincide as threads that resume the same session, without changing the original files.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://coincide.dev/docs/import-cli-sessions#page","url":"https://coincide.dev/docs/import-cli-sessions","name":"Import Claude Code and Codex CLI sessions · Coincide","description":"Bring Claude Code or Codex conversations from Terminal into Coincide as threads that resume the same session, without changing the original files.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/docs/import-cli-sessions#breadcrumb"},"headline":"Import sessions from Claude Code and Codex","datePublished":"2026-11-01","dateModified":"2026-11-01","author":{"@id":"https://coincide.dev/#apoorv"},"publisher":{"@id":"https://coincide.dev/#organization"},"image":"https://coincide.dev/img/og.jpg","mainEntityOfPage":"https://coincide.dev/docs/import-cli-sessions","about":{"@id":"https://coincide.dev/#app"}},{"@type":"Person","@id":"https://coincide.dev/#apoorv","name":"Apoorv Darshan","url":"https://github.com/apoorvdarshan","sameAs":["https://github.com/apoorvdarshan","https://x.com/apoorvdarshan","https://instagram.com/apoorvcodes"]},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://coincide.dev/docs"},{"@type":"ListItem","position":3,"name":"Import CLI sessions","item":"https://coincide.dev/docs/import-cli-sessions"}],"@id":"https://coincide.dev/docs/import-cli-sessions#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs" aria-current="true">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/docs">Docs</a></li><li><span aria-current="page">Import CLI sessions</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Guide</p>
+    <h1>Import sessions from Claude Code and Codex</h1>
+    <p class="lede">Conversations you started with <code>claude</code> or <code>codex</code> in Terminal don’t have to stay there. Coincide can import them as threads that keep the agent’s own session, so the next message continues where the CLI left off.</p>
+    <p class="updated">Updated <time datetime="2026-11-01">November 1, 2026</time></p>
+  </header>
+  <div class="prose">
+
+<h2 id="how">Importing a session</h2>
+<ol>
+  <li>Choose <strong>File › Import CLI Session…</strong>. Coincide scans your local histories: <code>~/.claude/projects</code> for Claude Code and <code>~/.codex/sessions</code> and <code>~/.codex/archived_sessions</code> for Codex. It follows <code>CLAUDE_CONFIG_DIR</code> and <code>CODEX_HOME</code> when Coincide itself was started with them, for example from Terminal; otherwise use Choose File… for histories kept elsewhere.</li>
+  <li>Search by title or folder and select a session to preview the conversation.</li>
+  <li>Click <strong>Import</strong>. If you already imported that session, Coincide offers <strong>Open Existing Thread</strong> instead of making a duplicate.</li>
+</ol>
+<p>To import a file the list doesn’t show, use <strong>Choose File…</strong> and pick a Claude Code session or Codex rollout <code>.jsonl</code> file.</p>
+
+<h2 id="after">What you get</h2>
+<ul>
+  <li><strong>A thread that resumes the same session.</strong> The imported thread keeps the provider’s session ID, so your next message resumes the CLI’s own session natively. <a href="/features/switch-agents">Switching to another agent</a> works as in any thread: the next agent gets a recap.</li>
+  <li><strong>Nothing runs on import.</strong> Importing never starts an agent, and imported threads begin in Ask for approval mode, so the first turn can’t change files without you. Switch the thread to Full access if you want.</li>
+  <li><strong>A readable transcript.</strong> For Claude Code it follows the latest main branch of the conversation; for Codex it applies the rollback events, so turns you undid in the CLI stay undone.</li>
+</ul>
+
+<h2 id="source">The original file</h2>
+<p>Coincide never changes the CLI’s file. It keeps an exact private copy in its own data folder; <strong>File › Reveal Imported Source</strong> shows that copy in Finder. Anything the transcript can’t show stays in that copy: unsupported records, attachments, excluded branches of the conversation and text beyond the limits below. Deleting the imported thread also deletes its copy, and Undo restores both.</p>
+
+<h2 id="limits">Limits</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Limit</th><th scope="col">Value</th></tr></thead><tbody><tr><td>File size</td><td>32 MB per file</td></tr><tr><td>Record size</td><td>4 MB per record</td></tr><tr><td>Records</td><td>100,000 per file</td></tr><tr><td>Text shown per transcript field</td><td>100,000 characters</td></tr><tr><td>Preview</td><td>200,000 characters</td></tr><tr><td>Sessions listed</td><td>2,000, newest first</td></tr></tbody></table></div>
+<p>A session over the file limits shows “This session exceeds the import limits (32 MB per file, 4 MB per record, or 100,000 records).” When some histories can’t be listed, the window says so and suggests <strong>Choose File…</strong>.</p>
+
+<h2 id="notes">Good to know</h2>
+<ul>
+  <li>Only Claude Code and Codex sessions can be imported. The other agents’ histories aren’t read.</li>
+  <li>Claude Code’s subagent histories aren’t scanned automatically.</li>
+  <li>Each session needs one valid session ID and an absolute working directory; Coincide refuses files without them.</li>
+  <li>If the CLI writes to the file after you previewed it, Coincide asks you to select it again: “The session changed after the preview. Select it again to refresh before importing.”</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/agents/claude-code"><b><i><img src="/img/logo-claude.png" alt="" width="21" height="21" loading="lazy"></i>Claude Code</b><span>Anthropic’s agent through its own CLI, with your Claude plan or API key. Plan mode, steering, subagents and fast mode.</span></a></li><li><a class="card" href="/agents/codex"><b><i><img src="/img/logo-codex.png" alt="" width="21" height="21" loading="lazy"></i>Codex</b><span>OpenAI’s agent through codex app-server, with your ChatGPT sign-in or API key. Plan mode, steering and speed tiers.</span></a></li><li><a class="card" href="/features/switch-agents"><b>Switch agents mid-thread</b><span>Hand a conversation to another agent; it gets a recap of the turns it missed and works in the same folder.</span></a></li><li><a class="card" href="/features/projects-and-threads"><b>Projects and threads</b><span>A sidebar of projects, threads and chats with message search, pinning, archiving, snoozing and per-project defaults.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

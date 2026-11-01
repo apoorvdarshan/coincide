@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Approvals, full access and agent questions · Coincide</title>
+<meta name="description" content="Choose per thread whether coding agents run freely or ask before each command and file edit, and answer agents’ questions right in the thread.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/approvals">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/approvals">
+<meta property="og:title" content="Approvals, full access and agent questions · Coincide">
+<meta property="og:description" content="Choose per thread whether coding agents run freely or ask before each command and file edit, and answer agents’ questions right in the thread.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Approvals, full access and agent questions · Coincide">
+<meta name="twitter:description" content="Choose per thread whether coding agents run freely or ask before each command and file edit, and answer agents’ questions right in the thread.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/approvals#page","url":"https://coincide.dev/features/approvals","name":"Approvals, full access and agent questions · Coincide","description":"Choose per thread whether coding agents run freely or ask before each command and file edit, and answer agents’ questions right in the thread.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/approvals#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Approvals and questions","item":"https://coincide.dev/features/approvals"}],"@id":"https://coincide.dev/features/approvals#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Approvals and questions</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>Full access, approvals and questions</h1>
+    <p class="lede">Each thread has an access setting. With Full access, agents run commands and edit files without asking. With Ask for approval, every command and file change waits for you, and the request appears right above the composer.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2>Choosing the access mode</h2>
+<p>The access button in the composer shows the thread’s mode. Change it there, with Thread › Access… (<kbd>⇧</kbd><kbd>⌘</kbd><kbd>A</kbd>), or with Choose Access… in the <a href="/features/command-palette">command palette</a>.</p>
+<ul>
+  <li><strong>Full access</strong>: “Agents run commands and edit files without asking.” This is the default for new threads.</li>
+  <li><strong>Ask for approval</strong>: “Agents ask before running commands or editing files.”</li>
+</ul>
+<p>Settings › General › New Threads › Access sets what new threads start with, and a project’s Project Defaults… can set its own. Changing the access of one thread also makes it the default for the next new thread.</p>
+<p>When you move a thread from Full access to Ask for approval, Coincide ends the agent sessions that might still hold full access: idle ones at once, a running one when its turn ends. The next message resumes them under approval, so an agent can’t keep working unasked in the background.</p>
+
+<h2>Answering an approval</h2>
+<p>An approval request shows above the composer with what the agent wants to do, such as a command approval with the exact command, a file change approval, or a web access approval, and the agent’s own choices as buttons. Common choices:</p>
+<ul>
+  <li><strong>Allow</strong> once, or <strong>Deny</strong>, which lets the agent try something else;</li>
+  <li><strong>Deny and stop</strong>, which also ends the turn;</li>
+  <li>a session-wide choice such as “Always allow this session” (Claude Code) or “Allow for this session” (Codex), and for Codex sometimes “Always allow” a specific command or host.</li>
+</ul>
+<p>Some requests have a text field for a note to send with your choice. If you type a new message while an approval is waiting, sending it declines the request and steers the agent with your message instead. The Dock icon’s badge counts approvals waiting in all threads, and with Coincide in the background a notification tells you; see <a href="/features/notifications">Notifications</a>.</p>
+
+<h2>What each mode means for each agent</h2>
+<p>Coincide maps the two modes onto each agent’s own permission system, so the agent enforces them.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Agent</th><th scope="col">Full access</th><th scope="col">Ask for approval</th></tr></thead><tbody><tr><td>Claude Code</td><td><code>bypassPermissions</code>. If your Claude Code settings don’t allow it, Coincide falls back to auto mode, then to asking.</td><td>Claude Code’s default mode. “Always allow” is limited to this session and never switches Claude into a mode that skips more than file-edit prompts.</td></tr><tr><td>Codex</td><td>Never asks, and runs without a sandbox.</td><td>A read-only sandbox; Codex asks before commands it doesn’t trust and before any change.</td></tr><tr><td>Cursor</td><td>Runs <code>cursor-agent</code> with <code>--force</code>.</td><td>Cursor’s own options for each request, plus Cancel.</td></tr><tr><td>Grok Build</td><td>Grok’s always-approve mode.</td><td>Grok’s default permission mode: Approve, Allow all edits this session, Decline or Cancel.</td></tr><tr><td>OpenCode</td><td>Allows everything.</td><td>Asks before shell commands, edits and work outside the project folder.</td></tr><tr><td>Antigravity</td><td>Antigravity’s yolo mode.</td><td>Allow once, Allow for this thread, Deny or Cancel, with Google’s security note.</td></tr></tbody></table></div>
+<p>For Grok Build and Antigravity, reading and searching files never needs approval, in either mode. Changing the access mode of a Cursor or Grok Build thread restarts the agent process, which then reloads the conversation.</p>
+
+<h2>Questions from the agent</h2>
+<p>Agents sometimes stop to ask you something, such as Claude Code’s AskUserQuestion, Codex’s input requests, Cursor’s and Grok Build’s questions, Antigravity’s interactions and OpenCode’s forms. Coincide shows them one at a time above the composer: pick an option or type an answer, then go on to the next with Next or Back. Answers to secret questions use a password field and aren’t saved in the transcript. In the work log the question reads “Answer below” until you do, then lists your answers.</p>
+<p>Claude Code and Codex can also show forms from their MCP servers. OpenCode forms with links, hidden or conditional fields are declined with a note to the agent, since Coincide can’t show them faithfully.</p>
+
+<h2>Choosing wisely</h2>
+<ul>
+  <li>Full access is fast but trusts the agent with your shell and files. Run it in a <a href="/features/worktrees">worktree</a>, keep <a href="/features/git">checkpoints</a> on, and review the diff.</li>
+  <li>Ask for approval suits unfamiliar repositories, production credentials, or prompt-based <a href="/features/plan-mode">plan mode</a>.</li>
+  <li>Schedules an agent creates for itself have their own approval: by default you allow them from a card in the thread (Settings › General › “Approve schedules agents create”). See <a href="/features/scheduled-tasks">Scheduled tasks</a>.</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/plan-mode"><b>Plan mode</b><span>Have the agent investigate and propose a plan without changing files, refine it, then implement it with one click.</span></a></li><li><a class="card" href="/features/background-agents"><b>Background agents</b><span>A background agent host keeps every turn running when you quit, update or crash Coincide.</span></a></li><li><a class="card" href="/features/notifications"><b>Notifications</b><span>Hear when an agent finishes, fails, needs approval or asks a question, on the one device you’re using.</span></a></li><li><a class="card" href="/features/computer-use"><b>Computer Use</b><span>Agents see and operate native Mac apps through a bundled helper, with their own cursor. Off by default.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

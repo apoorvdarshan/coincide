@@ -1,5 +1,6 @@
-// The coincide.dev website: static files in public/, served by Cloudflare Workers, plus worker/index.js for the
-// platform-interest counter (/api/interest). Deploy from this folder with `wrangler deploy`.
+// The coincide.dev website: static files in public/ (most pages generated from site/, see site/README.md), served by
+// Cloudflare Workers, plus worker/index.js for the platform-interest counter (/api/interest) and download counts
+// (/api/stats). Unknown addresses get public/404.html with a 404 status. Deploy from this folder with `wrangler deploy`.
 {
   "name": "coincide-website",
   "compatibility_date": "2026-10-30",
@@ -7,7 +8,10 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "html_handling": "drop-trailing-slash"
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "404-page",
+    // Browsers opening /api/… directly would otherwise get the 404 page without reaching the Worker.
+    "run_worker_first": ["/api/*"]
   },
   "routes": [
     { "pattern": "coincide.dev", "custom_domain": true },

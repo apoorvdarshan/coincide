@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Passkeys in Coincide’s browser with Bitwarden · Coincide</title>
+<meta name="description" content="Sign in with passkeys saved in Bitwarden inside Coincide’s browser, or sign in with any passkey in your own browser and import that sign-in into Coincide.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/passkeys">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/passkeys">
+<meta property="og:title" content="Passkeys in Coincide’s browser with Bitwarden · Coincide">
+<meta property="og:description" content="Sign in with passkeys saved in Bitwarden inside Coincide’s browser, or sign in with any passkey in your own browser and import that sign-in into Coincide.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Passkeys in Coincide’s browser with Bitwarden · Coincide">
+<meta name="twitter:description" content="Sign in with passkeys saved in Bitwarden inside Coincide’s browser, or sign in with any passkey in your own browser and import that sign-in into Coincide.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/passkeys#page","url":"https://coincide.dev/features/passkeys","name":"Passkeys in Coincide’s browser with Bitwarden · Coincide","description":"Sign in with passkeys saved in Bitwarden inside Coincide’s browser, or sign in with any passkey in your own browser and import that sign-in into Coincide.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/passkeys#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Passkeys","item":"https://coincide.dev/features/passkeys"}],"@id":"https://coincide.dev/features/passkeys#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Passkeys</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>Passkeys in Coincide’s browser</h1>
+    <p class="lede">Coincide 0.1.0 gives its browser two ways to get past a passkey prompt: sign in with a passkey saved in Bitwarden, confirming each sign-in, or sign in with your passkey in your default browser and import that sign-in into Coincide.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2 id="why">Why passkeys need special handling</h2>
+<p>On macOS, a browser can use the system’s passkeys (iCloud Keychain and other passkey providers) on any website only if Apple has given it a special browser entitlement. Coincide’s release builds don’t have it, so when a site asks for a passkey, the system can’t answer. Coincide works around that in the two ways below, and tells you when a page asked for a passkey it can’t provide.</p>
+
+<h2 id="bitwarden">Sign in with a Bitwarden passkey</h2>
+<p>If you keep passkeys in Bitwarden, Coincide can answer the site’s passkey request itself, using Bitwarden’s command-line tool on your Mac.</p>
+<ol>
+  <li>In Settings › Browser › Passwords, turn on Bitwarden and unlock it (see <a href="/features/browser-passwords">passwords and saved logins</a> for installing <code>bw</code>).</li>
+  <li>Leave “Use passkeys from Bitwarden” on. It’s on by default once Bitwarden is on.</li>
+  <li>When a site asks for a passkey you saved in Bitwarden, Coincide asks “Sign in to <em>site</em> with your Bitwarden passkey?”, showing which site the request comes from. If you have more than one passkey for the site, choose the account.</li>
+  <li>Click Sign In. Coincide reads that passkey with <code>bw</code>, signs the site’s challenge on your Mac and returns the answer to the page.</li>
+</ol>
+<h3 id="touch-id">Touch ID</h3>
+<p>Your click on Sign In is the confirmation, as with Bitwarden’s browser extension. Coincide also asks for Touch ID or your Mac password when the site requires user verification, or when the Bitwarden item has master password re-prompt turned on. To be asked every time, turn on “Confirm passkey sign-ins with Touch ID” (off by default).</p>
+<h3 id="bitwarden-privacy">What happens to the passkey</h3>
+<p>Coincide reads the passkey through your own Bitwarden tool only after you confirm, uses it only on your Mac to answer that site’s request, and never sends it to us or anywhere else. The site receives only the signed answer, as it would from any passkey. Coincide answers only the page’s own main frame, for the site the passkey belongs to.</p>
+
+<h2 id="import">Use any passkey through your own browser</h2>
+<p>For passkeys stored anywhere else, such as iCloud Keychain or a security key, let your everyday browser do the passkey part and bring the result back:</p>
+<ol>
+  <li>When the page asks for a passkey, Coincide’s browser shows “Passkeys aren’t available in Coincide’s browser yet” with an <strong>Open in <em>your browser</em></strong> button. Click it to open the same page in your default browser.</li>
+  <li>Sign in there with your passkey as usual.</li>
+  <li>Back in Coincide, click <strong>Import Sign-In</strong>. Coincide copies that site’s sign-in from your browser into its own browser profile and reloads the page, now signed in.</li>
+</ol>
+<p>The import reads your browser’s data on your Mac, the same way <a href="/features/browser">importing from another browser</a> does: macOS may ask whether Coincide may use the browser’s Keychain key (choose Allow), and Safari needs Full Disk Access. Some browsers take a moment to save a new sign-in; if the page still asks you to sign in, wait and import again.</p>
+<p>You can also skip the passkey: many sites offer another way to sign in (such as “Try another way” on Google), after which the key button can fill your password from a password manager.</p>
+
+<h2 id="agents">Passkeys and agents</h2>
+<p>Agents can’t sign in with a passkey on their own. When a page an agent is working on asks for one, the agent is told to choose another way to sign in, or to hand the step to you in the browser panel; you then use one of the ways above.</p>
+
+<h2 id="limits">Limitations</h2>
+<ul>
+  <li>Bitwarden passkeys are for signing in. Creating a new passkey on a site isn’t supported in Coincide’s browser.</li>
+  <li>Only an item’s first passkey is used, and only passkeys of the kind Bitwarden creates.</li>
+  <li>Bitwarden must be on and unlocked in Coincide for its passkeys to be offered.</li>
+  <li>Private browser sessions don’t use imported sign-ins.</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/browser-passwords"><b>Passwords and logins</b><span>Fill sign-ins from your Keychain, 1Password or Bitwarden, and let agents sign in without seeing passwords.</span></a></li><li><a class="card" href="/features/browser"><b>Browser in every thread</b><span>A WebKit browser beside each conversation that agents can read, click and type in, with your sign-ins.</span></a></li><li><a class="card" href="/changelog"><b>Changelog</b><span>What changed in each release.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

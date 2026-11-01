@@ -1,5 +1,6 @@
-# Unit tests for the coincide.dev Worker (website/worker/). It has no npm dependencies, so this is plain Node:
-# `node --test` runs website/worker/*.test.mjs. Runs only when the site or this workflow changes; deploying stays manual
+# Tests for coincide.dev: the Worker (website/worker/) and the generated pages (website/site/: built files up to date,
+# links, metadata, structured data and sitemap). No npm dependencies, so this is plain Node: `node --test`. Runs only
+# when the site, CHANGELOG.md (the source of /changelog) or this workflow changes; deploying stays manual
 # (`wrangler deploy` from website/).
 
 name: Website
@@ -10,11 +11,13 @@ on:
     paths:
       - ".github/workflows/website.yml"
       - "website/**"
+      - "CHANGELOG.md"
   push:
     branches: [main]
     paths:
       - ".github/workflows/website.yml"
       - "website/**"
+      - "CHANGELOG.md"
   workflow_dispatch:
 
 permissions:
@@ -41,7 +44,11 @@ jobs:
           node-version: 24
 
       - name: Check syntax
-        run: for file in website/worker/*.js website/worker/*.mjs; do node --check "$file"; done
+        run: for file in website/worker/*.js website/worker/*.mjs website/site/*.mjs; do node --check "$file"; done
 
-      - name: Run tests
+      - name: Run Worker tests
         run: node --test "website/worker/*.test.mjs"
+
+      # Fails when a page source, the layout or CHANGELOG.md changed without `node website/site/build.mjs`.
+      - name: Check the generated pages
+        run: node --test "website/site/*.test.mjs"

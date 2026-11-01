@@ -19,7 +19,7 @@ Releases are published as regular releases, not pre-releases, even at 0.x: GitHu
 
 ## Cutting a release
 
-1. In a pull request, set the new version in `project.yml` (`MARKETING_VERSION`) and `npm/package.json` (`version`), and add its `## <version>` section to `CHANGELOG.md`. `scripts/release/test.sh` fails if the two versions differ.
+1. In a pull request, set the new version in `project.yml` (`MARKETING_VERSION`) and `npm/package.json` (`version`), and add its `## <version>` section to `CHANGELOG.md`. `scripts/release/test.sh` fails if the two versions differ. Run `node website/site/build.mjs` too, so coincide.dev's `/changelog`, download page and structured data show the new version (they read it from `CHANGELOG.md`); the Website workflow fails until they do.
 2. After it merges, tag main and push the tag:
 
    ```sh

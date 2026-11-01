@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Images, media and interactive previews · Coincide</title>
+<meta name="description" content="How agents show real images, audio, video and sandboxed interactive HTML or SVG in a Coincide thread, with the coincide-html and coincide-svg fences.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/docs/rich-output">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/docs/rich-output">
+<meta property="og:title" content="Images, media and interactive previews · Coincide">
+<meta property="og:description" content="How agents show real images, audio, video and sandboxed interactive HTML or SVG in a Coincide thread, with the coincide-html and coincide-svg fences.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Images, media and interactive previews · Coincide">
+<meta name="twitter:description" content="How agents show real images, audio, video and sandboxed interactive HTML or SVG in a Coincide thread, with the coincide-html and coincide-svg fences.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://coincide.dev/docs/rich-output#page","url":"https://coincide.dev/docs/rich-output","name":"Images, media and interactive previews · Coincide","description":"How agents show real images, audio, video and sandboxed interactive HTML or SVG in a Coincide thread, with the coincide-html and coincide-svg fences.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/docs/rich-output#breadcrumb"},"headline":"Images, media and interactive previews","datePublished":"2026-11-01","dateModified":"2026-11-01","author":{"@id":"https://coincide.dev/#apoorv"},"publisher":{"@id":"https://coincide.dev/#organization"},"image":"https://coincide.dev/img/og.jpg","mainEntityOfPage":"https://coincide.dev/docs/rich-output","about":{"@id":"https://coincide.dev/#app"}},{"@type":"Person","@id":"https://coincide.dev/#apoorv","name":"Apoorv Darshan","url":"https://github.com/apoorvdarshan","sameAs":["https://github.com/apoorvdarshan","https://x.com/apoorvdarshan","https://instagram.com/apoorvcodes"]},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://coincide.dev/docs"},{"@type":"ListItem","position":3,"name":"Rich agent output","item":"https://coincide.dev/docs/rich-output"}],"@id":"https://coincide.dev/docs/rich-output#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs" aria-current="true">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/docs">Docs</a></li><li><span aria-current="page">Rich agent output</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Reference</p>
+    <h1>Images, media and interactive previews</h1>
+    <p class="lede">An agent’s reply in Coincide is more than text. When it links an image, a clip or a small HTML tool it made, Coincide shows the real thing under the reply. Every agent can do this, because it’s plain Markdown; Coincide tells each agent how at the start of its turns.</p>
+    <p class="updated">Updated <time datetime="2026-11-01">November 1, 2026</time></p>
+  </header>
+  <div class="prose">
+
+<h2 id="media">Images, audio and video</h2>
+<p>Coincide shows media that a reply links with Markdown:</p>
+<pre><code>![Screenshot of the settings page](/Users/me/project/out/settings.png)
+[Demo recording](/Users/me/project/out/demo.mp4)
+![Chart](https://example.com/chart.png)</code></pre>
+<ul>
+  <li>Images: PNG, JPEG, GIF, WebP, HEIC, AVIF, BMP and TIFF. Click one to open it.</li>
+  <li>Video (MP4, M4V, MOV, WebM) and audio (MP3, M4A, WAV, AAC, AIFF, FLAC, OGG) get player controls. Nothing autoplays.</li>
+  <li>Local files work best with absolute paths. A relative path is read from the thread’s working folder; chats without a project have their own folder, so absolute paths are the safe choice there.</li>
+  <li>HTTP and HTTPS addresses work too. Coincide fetches web images without cookies, up to 8 MB.</li>
+</ul>
+<p>When Codex generates an image with its own image tool, Coincide copies the result into the thread’s attachments and shows it, even if the reply forgets to link it. Coincide doesn’t give any agent an image or video generator it doesn’t already have.</p>
+
+<h2 id="interactive">Interactive previews</h2>
+<p>For a chart, a diagram or a small tool, an agent can write a fenced block in the <code>coincide-html</code> or <code>coincide-svg</code> language. Coincide renders it as a live preview under the reply:</p>
+<pre><code>```coincide-html
+&lt;canvas id=&quot;c&quot; width=&quot;400&quot; height=&quot;200&quot;&gt;&lt;/canvas&gt;
+&lt;script&gt;
+  const ctx = document.getElementById('c').getContext('2d');
+  [40, 90, 60, 120].forEach((v, i) =&gt; ctx.fillRect(20 + i * 90, 200 - v, 60, v));
+&lt;/script&gt;
+```</code></pre>
+<p>Linking a local <code>.html</code>, <code>.htm</code> or <code>.svg</code> file does the same. Ordinary <code>html</code> fences stay code samples, so agents can still show you HTML without running it.</p>
+<h3>The sandbox</h3>
+<p>Previews run in a sandboxed web view with a strict content policy:</p>
+<ul>
+  <li>Inline JavaScript and CSS work; external scripts, stylesheets and fonts don’t.</li>
+  <li>No network requests, forms, downloads, pop-ups or navigation away from the preview.</li>
+  <li>No cookies, saved logins or storage that outlives the preview, and no bridge to Coincide or your Mac.</li>
+  <li>Images, media and fonts must be embedded as <code>data:</code> or <code>blob:</code> URLs.</li>
+</ul>
+<p>So build previews from inline code and embedded data, such as SVG, canvas or a table built from a JSON array in the script.</p>
+
+<h2 id="limits">Limits</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">What</th><th scope="col">Limit</th></tr></thead><tbody><tr><td>Previews per reply</td><td>8 (images, media and interactive previews together)</td></tr><tr><td>A coincide-html or coincide-svg block, or a linked .html or .svg file</td><td>256 KB</td></tr><tr><td>Inline data: images</td><td>12 MB as text, 8 MB decoded</td></tr><tr><td>Web images</td><td>8 MB</td></tr><tr><td>Local images</td><td>64 MB</td></tr></tbody></table></div>
+<p>Previews wait until a streamed response finishes, so a half-written block is never run. If something can’t be shown, the card says “Preview unavailable”. The Markdown stays in the reply, selectable and copyable, either way.</p>
+
+<h2 id="agents">What Coincide tells agents</h2>
+<p>Coincide adds a short note to each turn explaining these rules: how to link images and media, to use absolute paths, the two fence languages and the sandbox. It also asks agents to show only files and results they really created, and to say so when a generation tool failed or isn’t available instead of claiming an image or video that doesn’t exist.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/transcript"><b>Native transcript</b><span>Markdown, highlighted code, images, audio, video, sandboxed previews and folded work logs, labeled by agent and model.</span></a></li><li><a class="card" href="/features/browser"><b>Browser in every thread</b><span>A WebKit browser beside each conversation that agents can read, click and type in, with your sign-ins.</span></a></li><li><a class="card" href="/agents"><b>Agents</b><span>The six agents Coincide works with, and what each one supports.</span></a></li><li><a class="card" href="/features/composer"><b>Composer</b><span>Attachments, @ file mentions, slash commands, quotes and diff comments, and steering or queueing while an agent works.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

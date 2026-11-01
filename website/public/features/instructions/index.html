@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>One AGENTS.md for every coding agent · Coincide</title>
+<meta name="description" content="Edit AGENTS.md, CLAUDE.md and GEMINI.md in one place, link every agent to one master file, and sync it to iCloud Drive or a Git repository.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/instructions">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/instructions">
+<meta property="og:title" content="One AGENTS.md for every coding agent · Coincide">
+<meta property="og:description" content="Edit AGENTS.md, CLAUDE.md and GEMINI.md in one place, link every agent to one master file, and sync it to iCloud Drive or a Git repository.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="One AGENTS.md for every coding agent · Coincide">
+<meta name="twitter:description" content="Edit AGENTS.md, CLAUDE.md and GEMINI.md in one place, link every agent to one master file, and sync it to iCloud Drive or a Git repository.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/instructions#page","url":"https://coincide.dev/features/instructions","name":"One AGENTS.md for every coding agent · Coincide","description":"Edit AGENTS.md, CLAUDE.md and GEMINI.md in one place, link every agent to one master file, and sync it to iCloud Drive or a Git repository.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/instructions#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Instruction files","item":"https://coincide.dev/features/instructions"}],"@id":"https://coincide.dev/features/instructions#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Instruction files</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>Instruction files for every agent</h1>
+    <p class="lede">Each agent reads its standing instructions from its own file: Claude Code from <code>CLAUDE.md</code>, Codex, OpenCode and others from <code>AGENTS.md</code>, Antigravity from <code>GEMINI.md</code>. Coincide shows which agent reads which file, lets you edit them, can link them all to one master file, and can keep that file in step across your Macs.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2 id="where">Open the instructions</h2>
+<ul>
+  <li><strong>Global instructions</strong>, which every agent reads in every project: Settings › Instructions.</li>
+  <li><strong>A project’s instructions</strong>: select the project and choose File › Edit Instructions…</li>
+</ul>
+<p>Each file is listed with the agents that read it (“Used by: Codex, Cursor, Grok Build…”), whether it’s a link and where to, and whether it can be read. Edit it right there, or use Open in Editor and Reveal in Finder. If a file changes on disk while you have unsaved edits, Coincide tells you rather than overwriting it.</p>
+
+<h2 id="files">Which agent reads which file</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Agent</th><th scope="col">Global file</th><th scope="col">In a project</th></tr></thead><tbody><tr><td>Claude Code</td><td><code>~/.claude/CLAUDE.md</code> (or in <code>$CLAUDE_CONFIG_DIR</code>)</td><td><code>CLAUDE.md</code>, <code>CLAUDE.local.md</code>, <code>.claude/CLAUDE.md</code></td></tr><tr><td>Codex</td><td><code>~/.codex/AGENTS.md</code> (or in <code>$CODEX_HOME</code>)</td><td><code>AGENTS.md</code>, or <code>AGENTS.override.md</code> first</td></tr><tr><td>Cursor</td><td>None: Cursor keeps user rules in its own settings</td><td><code>AGENTS.md</code>, <code>.cursorrules</code>, <code>.cursor/rules/*.mdc</code></td></tr><tr><td>Grok Build</td><td><code>~/.grok/AGENTS.md</code> (or in <code>$GROK_HOME</code>), and Claude Code’s file with its Claude compatibility on</td><td><code>AGENTS.md</code>, <code>CLAUDE.md</code></td></tr><tr><td>OpenCode</td><td><code>~/.config/opencode/AGENTS.md</code></td><td><code>AGENTS.md</code></td></tr><tr><td>Antigravity</td><td><code>GEMINI.md</code> in Coincide’s private Antigravity profile</td><td><code>AGENTS.md</code>, <code>GEMINI.md</code></td></tr></tbody></table></div>
+<p>Accounts you add with their own configuration folder (see <a href="/docs/agent-accounts">agent accounts</a>) have their own global files, and Coincide lists those too. If a project has no <code>AGENTS.md</code> yet, Create AGENTS.md makes one; Link CLAUDE.md to AGENTS.md then makes Claude Code read the same text.</p>
+
+<h2 id="one-file">Use one file for all agents</h2>
+<p>Turn on “Use one file for all agents” and Coincide links each agent’s file to one master file with a symbolic link, so <code>CLAUDE.md → AGENTS.md</code> and every agent reads the same instructions. It’s off by default.</p>
+<ul>
+  <li>For a project, the master is its <code>AGENTS.md</code>, which most agents read already.</li>
+  <li>For global instructions, the default master is <code>~/.config/coincide/AGENTS.md</code>, a folder no agent owns, so removing an agent never removes your instructions. You can choose another file.</li>
+  <li>Files whose text differs are backed up first, as <code>CLAUDE.md.coincide-backup-&lt;date&gt;</code> beside the original. Coincide never deletes text. If two files differ, Compare… shows the lines only in each, and you choose what to keep.</li>
+  <li>Saving through a link writes the file it points to and never replaces the link itself. Fix Links… repairs broken links, and turning the option off can replace links with copies of the master.</li>
+</ul>
+
+<h2 id="sync">Sync the master file</h2>
+<p>Once there’s a master, Sync… keeps a copy of it in step, in one or both places. The master stays where it is; changes made in Coincide go to the copy, and changes made to the copy, for example on your other Mac, come back.</p>
+<ul>
+  <li><strong>iCloud Drive:</strong> a copy at iCloud Drive › Coincide › Instructions, so Coincide on your other Macs uses the same instructions.</li>
+  <li><strong>GitHub or a Git repository:</strong> a copy in a repository you choose, committed whenever the instructions change and, with “Push changes right away”, pushed. Coincide can create a private GitHub repository for it with <code>gh repo create --private</code>. It never force-pushes and never pushes other files.</li>
+</ul>
+<p>If the master and a copy both changed, Coincide asks which to keep and backs up the other. Synced instructions leave your Mac, so keep keys, tokens and passwords out of them.</p>
+
+<h2 id="bots">Instructions and bots</h2>
+<p>These files are what every agent reads in a folder. A <a href="/features/bots">bot’s</a> own instructions are separate: they go to its agent at the start of each session, on top of whatever files the folder has.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/bots"><b>Bots</b><span>Standing assistants with a face, a personality and a job, on the agent and model you choose.</span></a></li><li><a class="card" href="/features/projects-and-threads"><b>Projects and threads</b><span>A sidebar of projects, threads and chats with message search, pinning, archiving, snoozing and per-project defaults.</span></a></li><li><a class="card" href="/agents"><b>Agents</b><span>The six agents Coincide works with, and what each one supports.</span></a></li><li><a class="card" href="/docs/data-storage"><b>Where data is stored</b><span>Every folder and Keychain item Coincide uses on your Mac, what’s in each, and how to move, back up or reset them.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

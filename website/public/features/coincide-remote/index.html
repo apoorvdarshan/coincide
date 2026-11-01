@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Coincide Remote for iPhone and iPad (coming soon)</title>
+<meta name="description" content="Coincide Remote, coming soon for iPhone and iPad, connects straight to Coincide on your Mac over your network or Tailscale, with no relay or account.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/coincide-remote">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/coincide-remote">
+<meta property="og:title" content="Coincide Remote for iPhone and iPad (coming soon)">
+<meta property="og:description" content="Coincide Remote, coming soon for iPhone and iPad, connects straight to Coincide on your Mac over your network or Tailscale, with no relay or account.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Coincide Remote for iPhone and iPad (coming soon)">
+<meta name="twitter:description" content="Coincide Remote, coming soon for iPhone and iPad, connects straight to Coincide on your Mac over your network or Tailscale, with no relay or account.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/coincide-remote#page","url":"https://coincide.dev/features/coincide-remote","name":"Coincide Remote for iPhone and iPad (coming soon)","description":"Coincide Remote, coming soon for iPhone and iPad, connects straight to Coincide on your Mac over your network or Tailscale, with no relay or account.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/coincide-remote#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Coincide Remote","item":"https://coincide.dev/features/coincide-remote"}],"@id":"https://coincide.dev/features/coincide-remote#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Coincide Remote</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature · Coming soon</p>
+    <h1>Coincide Remote for iPhone and iPad</h1>
+    <p class="lede">Coincide Remote is the companion app that lets you follow and steer the agents on your Mac from your iPhone or iPad. It isn’t released yet. This page describes how it’s being built, so you know what to expect and how it handles your data.</p>
+    
+  </header>
+  <div class="prose">
+
+<div class="callout">
+  <p><strong>Not available yet.</strong> Coincide Remote isn’t on the App Store or TestFlight, and there’s no release date. Coincide for Mac 0.1.0 works fully on its own. Follow <a href="https://x.com/apoorvdarshan">@apoorvdarshan</a> or join the <a href="https://discord.gg/DETrbhDVqw">Discord</a> to hear when it ships. Details below may change before release.</p>
+</div>
+
+<h2 id="what">What it’s for</h2>
+<p>Agents in Coincide often run for minutes or hours, in the <a href="/features/background-agents">background agent host</a>, while you’re away from the desk. Coincide Remote puts those threads in your pocket. A paired device can see and control much of what Coincide on that Mac can:</p>
+<ul>
+  <li>projects, threads and chats, with their messages and attachments, and new messages to your agents;</li>
+  <li>answering an agent that’s waiting for approval or asking a question;</li>
+  <li>diffs and git actions, scheduled tasks, bots, usage and settings;</li>
+  <li>photos and files you attach on the phone, which go to your Mac and, when you send them, to the agent’s provider;</li>
+  <li>dictation with Apple’s speech recognition on the device.</li>
+</ul>
+<p>It’s being built to match the Mac app’s look and its 19 languages.</p>
+
+<h2 id="connection">How it connects</h2>
+<p>There’s no Coincide server, relay or account in between. Your iPhone or iPad connects straight to Coincide on your Mac:</p>
+<ul>
+  <li><strong>Over your own network:</strong> on the same Wi-Fi or local network, the Mac announces itself with Bonjour, under your Mac’s name.</li>
+  <li><strong>Over Tailscale:</strong> away from home, the phone reaches the Mac through your own Tailscale network.</li>
+  <li><strong>Encrypted:</strong> the connection uses TLS 1.3, and the phone pins your Mac’s certificate when you pair, so it only talks to that Mac.</li>
+  <li><strong>Limited to private addresses:</strong> the Mac accepts connections only from local, private and Tailscale addresses.</li>
+</ul>
+<p>Coincide has to be open on the Mac for the phone to connect.</p>
+
+<h2 id="pairing">Pairing</h2>
+<p>On the Mac, the switch lives in Settings › General › Coincide Remote (“Allow Coincide Remote”), and it’s off until you turn it on. Choose Pair iPhone or iPad… and the Mac shows a one-time pairing code that expires after five minutes; you scan it with the app.</p>
+<p>The phone keeps a random token in its Keychain, and the Mac keeps only a hash of it. The same pane lists paired devices with when they last connected, lets you revoke any of them, and can reset the certificate, which forgets every paired device.</p>
+
+<h2 id="alerts">Notifications</h2>
+<p>With Coincide Remote in use and the Mac idle, Coincide sends its notifications (a turn finished, an agent needs you) to the iPhone or iPad instead of the Mac, never to both, and seeing a thread anywhere clears them everywhere. <a href="/features/notifications">Notifications</a> covers how this works on the Mac.</p>
+<p><strong>Lock-screen alerts</strong> are optional and off by default. When you turn on “Notify this iPhone when it’s locked”, the Mac writes a short alert (the thread’s title, what happened and a detail line of up to 120 characters) to your own private iCloud database, and Apple delivers it as a push notification. Coincide deletes each alert once you’ve seen its thread. This needs a Mac build signed for iCloud; the builds published on GitHub for 0.1.0 leave that entitlement out, so lock-screen alerts aren’t available with them.</p>
+
+<h2 id="permissions">Permissions on the phone</h2>
+<p>Camera (to scan the pairing code and take photos you attach), photo library (photos you pick or save), microphone and speech recognition (dictation), and local network (to find and reach your Mac).</p>
+
+<h2 id="privacy">Privacy</h2>
+<p>Everything goes between your devices, and to your agents’ providers only when you send a message. The <a href="/privacy">privacy policy</a> already covers Coincide Remote, including what Apple may share if you install it through TestFlight or the App Store.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/notifications"><b>Notifications</b><span>Hear when an agent finishes, fails, needs approval or asks a question, on the one device you’re using.</span></a></li><li><a class="card" href="/features/background-agents"><b>Background agents</b><span>A background agent host keeps every turn running when you quit, update or crash Coincide.</span></a></li><li><a class="card" href="/features/languages"><b>19 languages</b><span>The interface in 19 languages, following your Mac’s language or one you pick just for Coincide.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

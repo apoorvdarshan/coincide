@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Notifications when agents finish or need you · Coincide</title>
+<meta name="description" content="Coincide notifies you when a coding agent finishes, fails, needs approval or has a question, sends each alert to one device only and clears it once seen.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/notifications">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/notifications">
+<meta property="og:title" content="Notifications when agents finish or need you · Coincide">
+<meta property="og:description" content="Coincide notifies you when a coding agent finishes, fails, needs approval or has a question, sends each alert to one device only and clears it once seen.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Notifications when agents finish or need you · Coincide">
+<meta name="twitter:description" content="Coincide notifies you when a coding agent finishes, fails, needs approval or has a question, sends each alert to one device only and clears it once seen.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/notifications#page","url":"https://coincide.dev/features/notifications","name":"Notifications when agents finish or need you · Coincide","description":"Coincide notifies you when a coding agent finishes, fails, needs approval or has a question, sends each alert to one device only and clears it once seen.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/notifications#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Notifications","item":"https://coincide.dev/features/notifications"}],"@id":"https://coincide.dev/features/notifications#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Notifications</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>Notifications that know where you are</h1>
+    <p class="lede">Agents take minutes, and you’ll be doing something else. Coincide tells you when a turn is done or an agent is waiting on you, and once you’ve seen the thread, the alert goes away.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2>What you’re told about</h2>
+<p>With Settings › General › Notifications › “Notify when Coincide is in the background” on (the default), Coincide posts a macOS notification for these events, unless you’re already looking at that thread:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Notification</th><th scope="col">When</th></tr></thead><tbody><tr><td><em>Agent</em> finished</td><td>A turn ends. The notification shows the opening line of the agent’s reply.</td></tr><tr><td><em>Agent</em> failed</td><td>A turn ends with an error, with the error’s text.</td></tr><tr><td><em>Agent</em> needs approval</td><td>An agent in a thread set to Ask for approval wants to run a command or edit a file.</td></tr><tr><td><em>Agent</em> has a question</td><td>An agent stopped to ask you something.</td></tr><tr><td>Your turn in the browser</td><td>An agent working in the thread’s browser needs you to sign in, pass a check or enter a code.</td></tr><tr><td><em>Agent</em> is waiting to start</td><td>An agent is slow to start, which usually means macOS is asking for permission to access a folder and needs you at the Mac.</td></tr></tbody></table></div>
+<p>Each notification is titled with the thread’s name, says what happened and in which project, and plays the default sound. Clicking it opens the thread, with its browser for a browser request. Archived threads don’t notify.</p>
+<p>macOS asks for permission the first time a notification is due, not at launch. If notifications are turned off for Coincide in System Settings › Notifications, the setting says so.</p>
+
+<h2>The Dock badge</h2>
+<p>Coincide’s Dock icon shows how many approvals are waiting across all threads, so a glance tells you whether any agent is blocked on you. Answer them in each thread; see <a href="/features/approvals">Approvals and questions</a>.</p>
+
+<h2>Even with Coincide closed</h2>
+<p>When you quit Coincide while agents are still working, the <a href="/features/background-agents">background agent host</a> keeps them running and posts the same finished, failed, approval and question notifications itself. Clicking one opens Coincide on that thread.</p>
+
+<h2>One device at a time</h2>
+<p>Coincide sends each event to exactly one place, so you don’t get the same alert on your Mac and your phone:</p>
+<ul>
+  <li>If you’re using the Mac (any input in the last two minutes, screen unlocked and awake), the Mac gets it, even with a phone in front of you.</li>
+  <li>If the Mac is idle, locked or asleep and you’re using <a href="/features/coincide-remote">Coincide Remote</a> on an iPhone or iPad, the alert appears there instead.</li>
+  <li>If neither is in use, a phone that turned on lock-screen alerts and was used in the last four hours gets one on its lock screen, through your own iCloud account; otherwise the Mac does.</li>
+  <li>The device that would show an alert stays quiet when the thread is already open on its screen.</li>
+</ul>
+<p class="note">Coincide Remote is coming soon and isn’t available yet. Until it is, notifications go to your Mac. Lock-screen alerts also need a Mac build signed for iCloud; see the <a href="/privacy">privacy policy</a> for what such an alert contains.</p>
+
+<h2>Cleared once seen</h2>
+<p>Opening a thread clears what was posted about it everywhere: notifications on the Mac, including ones the agent host posted while Coincide was closed, alerts in Coincide Remote and lock-screen alerts. You won’t come back to a stack of alerts for things you’ve already read.</p>
+
+<h2>Turning them off</h2>
+<p>Turn off “Notify when Coincide is in the background” in Settings › General, or manage Coincide in System Settings › Notifications to change banner style, sounds or Focus behavior. Notifications are ordinary local macOS notifications; nothing about them is sent to us.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/background-agents"><b>Background agents</b><span>A background agent host keeps every turn running when you quit, update or crash Coincide.</span></a></li><li><a class="card" href="/features/approvals"><b>Approvals and questions</b><span>Let agents run freely or approve each command and edit, per thread, and answer agents’ questions inline.</span></a></li><li><a class="card" href="/features/coincide-remote"><b>Coincide Remote</b><span>Coming soon: follow and steer your Mac’s agents from iPhone or iPad, connected directly to your Mac.</span></a></li><li><a class="card" href="/features/browser"><b>Browser in every thread</b><span>A WebKit browser beside each conversation that agents can read, click and type in, with your sign-ins.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

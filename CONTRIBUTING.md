@@ -40,7 +40,7 @@ Builds are signed ad hoc by default. If your agent configuration lives in a prot
 | `CoincideKitTests/` | Unit tests (Swift Testing) and opt-in live provider tests |
 | `Fuzz/` | libFuzzer targets for the parsers in CoincideKit (see [Fuzzing](#fuzzing)) |
 | `scripts/` | Maintenance scripts, such as `sync-strings.sh` |
-| `website/` | The [coincide.dev](https://coincide.dev) website: static files in `public/`, served by Cloudflare Workers; deploy with `wrangler deploy` from this folder |
+| `website/` | The [coincide.dev](https://coincide.dev) website: static files in `public/`, most of them generated from `site/` (see `website/site/README.md`), served by Cloudflare Workers; deploy with `wrangler deploy` from this folder |
 
 ## Code style
 

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Saved logins, 1Password and Bitwarden · Coincide</title>
+<meta name="description" content="Fill sign-ins in Coincide’s browser from logins saved in your Keychain, 1Password or Bitwarden, and let agents sign in without ever seeing a password.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/browser-passwords">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/browser-passwords">
+<meta property="og:title" content="Saved logins, 1Password and Bitwarden · Coincide">
+<meta property="og:description" content="Fill sign-ins in Coincide’s browser from logins saved in your Keychain, 1Password or Bitwarden, and let agents sign in without ever seeing a password.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Saved logins, 1Password and Bitwarden · Coincide">
+<meta name="twitter:description" content="Fill sign-ins in Coincide’s browser from logins saved in your Keychain, 1Password or Bitwarden, and let agents sign in without ever seeing a password.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/browser-passwords#page","url":"https://coincide.dev/features/browser-passwords","name":"Saved logins, 1Password and Bitwarden · Coincide","description":"Fill sign-ins in Coincide’s browser from logins saved in your Keychain, 1Password or Bitwarden, and let agents sign in without ever seeing a password.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/browser-passwords#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Passwords and logins","item":"https://coincide.dev/features/browser-passwords"}],"@id":"https://coincide.dev/features/browser-passwords#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Passwords and logins</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>Passwords and saved logins</h1>
+    <p class="lede">Coincide’s browser can fill sign-ins and one-time codes from logins it saves in your Keychain, from 1Password and from Bitwarden, without any browser extension. When an agent needs to sign in, Coincide types the login for it after you allow the site, and the agent never sees the password.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2 id="sources">Where logins come from</h2>
+<p>Turn password managers on in Settings › Browser › Passwords. None is on until you choose one, and you can use several at once.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Source</th><th scope="col">How Coincide reaches it</th><th scope="col">Set up</th></tr></thead><tbody><tr><td>Coincide Saved Logins</td><td>Your login Keychain on this Mac</td><td>Nothing to install</td></tr><tr><td>1Password</td><td>1Password’s command-line tool, <code>op</code></td><td>Install it, then turn on “Integrate with 1Password CLI” in 1Password › Settings › Developer</td></tr><tr><td>Bitwarden</td><td>Bitwarden’s command-line tool, <code>bw</code></td><td>Install it, run <code>bw login</code> in Terminal once, then unlock it in Coincide</td></tr></tbody></table></div>
+<p>Both tools install with Homebrew:</p>
+<div class="cmd"><code>brew install --cask 1password-cli</code><button class="copy" type="button" hidden data-copy="brew install --cask 1password-cli" aria-label="Copy the 1Password CLI install command"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M4.5 13V6.2c0-1 .8-1.7 1.7-1.7H13"/></svg></button></div>
+<div class="cmd"><code>brew install bitwarden-cli</code><button class="copy" type="button" hidden data-copy="brew install bitwarden-cli" aria-label="Copy the Bitwarden CLI install command"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M4.5 13V6.2c0-1 .8-1.7 1.7-1.7H13"/></svg></button></div>
+<p>Bitwarden’s master password goes only to <code>bw</code>. Coincide keeps the unlocked session that <code>bw</code> returns in your Keychain until you choose Lock.</p>
+
+<h2 id="fill">Fill a sign-in</h2>
+<ol>
+  <li>Open the sign-in page in a thread’s <a href="/features/browser">browser</a>.</li>
+  <li>Click the key button in the address bar. It lists the logins that match the site from every source you turned on.</li>
+  <li>Pick one. Coincide types the username and password into the page itself. On a two-factor page, the same menu offers the login’s one-time code, for logins that have one.</li>
+</ol>
+<p>After you sign in on a page by hand, Coincide offers to save the login in your Keychain (turn this off with “Offer to save logins”, or choose Never for This Site).</p>
+
+<h2 id="csv">Import passwords from a CSV export</h2>
+<p>“Import CSV…” in Settings › Browser › Passwords reads password exports from Chrome, Safari and Apple Passwords, Firefox, 1Password and Bitwarden, and saves the logins in your Keychain as Coincide saved logins. Rows without a web address or a password are skipped. Delete the CSV file afterwards: it holds your passwords unencrypted.</p>
+
+<h2 id="agents">When an agent needs to sign in</h2>
+<p>An agent driving the browser can ask Coincide to sign in on the page it’s on. Coincide shows a sign-in request in the thread naming the site and the login it would use, and you choose Allow Once, Always for This Site or Deny. If you allow it, Coincide fills the form; the agent gets the username at most, never the password or the one-time code, and submits the form itself. Sites you allowed always are listed under “Sites Agents Can Sign In To”, where you can revoke them.</p>
+<p>If no saved login matches, the agent hands the step to you instead, with a note in the browser panel saying what to do.</p>
+
+<div class="callout warn">
+  <p><strong>Agents and your Bitwarden session.</strong> “Let agents use your unlocked password managers” in Settings › Browser › Passwords is on by default. While it’s on, agents Coincide starts receive Bitwarden’s unlocked session, so they can read any item in your vault with the <code>bw</code> command, such as API keys and tokens, without asking. Turn it off if you don’t want that; agents that are already running pick up the change when they start again.</p>
+</div>
+
+<h2 id="security">How the secrets are handled</h2>
+<ul>
+  <li>Coincide talks to each password manager through its own command-line tool on your Mac. It doesn’t need or use their browser extensions.</li>
+  <li>Logins you save in Coincide stay in your login Keychain, together with any one-time-code secrets. Coincide’s data folder keeps only the list of logins, without passwords.</li>
+  <li>Agents can’t read password fields, cookies or site storage through the browser connection.</li>
+  <li>Passkeys are a separate feature; see <a href="/features/passkeys">passkeys in Coincide’s browser</a>.</li>
+</ul>
+<p>The <a href="/privacy">privacy policy</a> lists what’s kept where, and <a href="/docs/data-storage">where Coincide stores data</a> shows how to remove it.</p>
+
+<h2 id="limits">Limitations</h2>
+<ul>
+  <li>Some password tools can’t search by site; Coincide then matches their logins to the page itself. Settings shows which features each tool supports.</li>
+  <li>Filling needs the password manager to be unlocked: Bitwarden in Coincide’s Settings, 1Password through its app.</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/browser"><b>Browser in every thread</b><span>A WebKit browser beside each conversation that agents can read, click and type in, with your sign-ins.</span></a></li><li><a class="card" href="/features/passkeys"><b>Passkeys</b><span>Sign in with Bitwarden passkeys in Coincide’s browser, or import a passkey sign-in from your own browser.</span></a></li><li><a class="card" href="/docs/data-storage"><b>Where data is stored</b><span>Every folder and Keychain item Coincide uses on your Mac, what’s in each, and how to move, back up or reset them.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+<script>
+  // Copy buttons for commands: shown only when there's a clipboard to copy to.
+  document.querySelectorAll('.cmd .copy').forEach(button => {
+    if (!navigator.clipboard) return;
+    button.hidden = false;
+    button.addEventListener('click', () => navigator.clipboard.writeText(button.dataset.copy).then(() => {
+      button.classList.add('done');
+      setTimeout(() => button.classList.remove('done'), 1400);
+    }).catch(() => {}));
+  });
+</script>
+</body>
+</html>

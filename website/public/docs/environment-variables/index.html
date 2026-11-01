@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Environment variables Coincide reads and sets · Coincide</title>
+<meta name="description" content="The environment variables Coincide reads, the ones it gives agents and scripts, such as COINCIDE_THREAD_ID, and the agent variables it sets per account.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/docs/environment-variables">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/docs/environment-variables">
+<meta property="og:title" content="Environment variables Coincide reads and sets · Coincide">
+<meta property="og:description" content="The environment variables Coincide reads, the ones it gives agents and scripts, such as COINCIDE_THREAD_ID, and the agent variables it sets per account.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Environment variables Coincide reads and sets · Coincide">
+<meta name="twitter:description" content="The environment variables Coincide reads, the ones it gives agents and scripts, such as COINCIDE_THREAD_ID, and the agent variables it sets per account.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://coincide.dev/docs/environment-variables#page","url":"https://coincide.dev/docs/environment-variables","name":"Environment variables Coincide reads and sets · Coincide","description":"The environment variables Coincide reads, the ones it gives agents and scripts, such as COINCIDE_THREAD_ID, and the agent variables it sets per account.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/docs/environment-variables#breadcrumb"},"headline":"Environment variables","datePublished":"2026-11-01","dateModified":"2026-11-01","author":{"@id":"https://coincide.dev/#apoorv"},"publisher":{"@id":"https://coincide.dev/#organization"},"image":"https://coincide.dev/img/og.jpg","mainEntityOfPage":"https://coincide.dev/docs/environment-variables","about":{"@id":"https://coincide.dev/#app"}},{"@type":"Person","@id":"https://coincide.dev/#apoorv","name":"Apoorv Darshan","url":"https://github.com/apoorvdarshan","sameAs":["https://github.com/apoorvdarshan","https://x.com/apoorvdarshan","https://instagram.com/apoorvcodes"]},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://coincide.dev/docs"},{"@type":"ListItem","position":3,"name":"Environment variables","item":"https://coincide.dev/docs/environment-variables"}],"@id":"https://coincide.dev/docs/environment-variables#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs" aria-current="true">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/docs">Docs</a></li><li><span aria-current="page">Environment variables</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Reference</p>
+    <h1>Environment variables</h1>
+    <p class="lede">Coincide starts agents with your login shell’s environment, plus a few variables of its own. This page lists the variables that matter to you: those you can set for Coincide, those your agents and scripts receive, and those Coincide sets for agent accounts.</p>
+    <p class="updated">Updated <time datetime="2026-11-01">November 1, 2026</time></p>
+  </header>
+  <div class="prose">
+
+<h2 id="agents-env">What agents start with</h2>
+<p>Coincide reads your login shell’s environment once, as a new Terminal window would, and starts every agent with it. It adds the usual install folders to <code>PATH</code> and removes variables that would make an agent think it’s running inside another Claude Code session, for when you start Coincide from one. On each agent’s page in Settings, <strong>Environment Variables</strong> adds your own on top, for example a custom base URL.</p>
+
+<h2 id="read">Variables Coincide reads</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Variable</th><th scope="col">Effect</th></tr></thead><tbody><tr><td><code>COINCIDE_DATA_DIR</code></td><td>Use this folder instead of <code>~/Library/Application Support/Coincide</code> for Coincide’s data, its worktrees and Antigravity’s profile. Meant for testing; see <a href="/docs/data-storage">data storage</a>.</td></tr><tr><td><code>COINCIDE_CONTROL_SOCKET</code></td><td>Read by the <code>coincide</code> command: the socket to talk to. <code>--socket</code> overrides it.</td></tr><tr><td><code>COINCIDE_THREAD_ID</code></td><td>Read by the <code>coincide</code> command: the thread <code>this</code> means.</td></tr><tr><td><code>COINCIDE_AGENT_HOST=1</code></td><td>In a Debug build from source, use the background agent host instead of running agents in the app.</td></tr><tr><td><code>CLAUDE_CONFIG_DIR</code>, <code>CODEX_HOME</code></td><td>Where File › Import CLI Session… looks for Claude Code and Codex histories, when set in Coincide’s own environment.</td></tr></tbody></table></div>
+
+<h2 id="given">Variables Coincide gives agents</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Variable</th><th scope="col">When</th><th scope="col">Value</th></tr></thead><tbody><tr><td><code>PATH</code></td><td>While Command-line control is on</td><td>Gains the folder with the <code>coincide</code> tool inside Coincide.app</td></tr><tr><td><code>COINCIDE_CONTROL_SOCKET</code></td><td>While Command-line control is on</td><td>The socket of the Coincide that started the agent</td></tr><tr><td><code>COINCIDE_THREAD_ID</code></td><td>While Command-line control is on</td><td>The agent’s own thread, so <code>coincide … this</code> works</td></tr><tr><td><code>BW_SESSION</code></td><td>When you connected Bitwarden and turned on <strong>Let agents use your unlocked password managers</strong> in Settings › Browser</td><td>Bitwarden’s unlocked session, so the agent’s <code>bw</code> can read your vault without unlocking it</td></tr></tbody></table></div>
+<p>Agents already running get <code>BW_SESSION</code> when they next start. Leave that setting off unless you want agents to read any item in your Bitwarden vault without asking.</p>
+
+<h2 id="shell">Variables for your shell and scripts</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Variable</th><th scope="col">Where</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>COINCIDE_RESOLVING_ENVIRONMENT=1</code></td><td>Your shell’s startup files, while Coincide reads your environment</td><td>Lets a slow <code>.zshrc</code> skip work Coincide doesn’t need. Agents never see it.</td></tr><tr><td><code>COINCIDE_PROJECT_ROOT</code></td><td>Project scripts run from the terminal</td><td>The project’s folder</td></tr><tr><td><code>COINCIDE_WORKTREE_PATH</code></td><td>Project scripts, when the thread has its own worktree</td><td>The worktree’s folder, for example to copy <code>.env</code> into it</td></tr><tr><td><code>T3CODE_PROJECT_ROOT</code>, <code>T3CODE_WORKTREE_PATH</code></td><td>Project scripts</td><td>The same values under T3 Code’s names, so scripts from <code>t3.json</code> work unchanged</td></tr></tbody></table></div>
+
+<h2 id="accounts">Variables Coincide sets for agent accounts</h2>
+<p>The default account of each agent uses its tool’s own settings. For each account you add, Coincide sets the variable that moves the tool’s sign-in to a folder of that account, or the one that carries its API key. It also clears API-key variables your shell exports for that agent, so the account uses only its own sign-in.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Agent</th><th scope="col">Sign-in folder</th><th scope="col">API key</th></tr></thead><tbody><tr><td>Claude Code</td><td><code>CLAUDE_CONFIG_DIR</code></td><td><code>ANTHROPIC_API_KEY</code></td></tr><tr><td>Codex</td><td><code>CODEX_HOME</code></td><td><code>OPENAI_API_KEY</code>, saved in that <code>CODEX_HOME</code> with <code>codex login --with-api-key</code></td></tr><tr><td>Cursor</td><td>—</td><td><code>CURSOR_API_KEY</code></td></tr><tr><td>Grok Build</td><td><code>GROK_HOME</code></td><td><code>XAI_API_KEY</code></td></tr><tr><td>OpenCode</td><td><code>XDG_DATA_HOME</code></td><td><code>OPENCODE_API_KEY</code> (OpenCode Zen), or <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>, <code>OPENROUTER_API_KEY</code>, <code>GOOGLE_GENERATIVE_AI_API_KEY</code>, <code>XAI_API_KEY</code>, <code>GROQ_API_KEY</code>, <code>DEEPSEEK_API_KEY</code> or <code>MISTRAL_API_KEY</code></td></tr><tr><td>Antigravity</td><td>—</td><td><code>GEMINI_API_KEY</code></td></tr></tbody></table></div>
+<p>Keys come from the Keychain and go only into that agent’s process. More in <a href="/docs/agent-accounts">Accounts and API keys</a>.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/docs/cli"><b>Command-line reference</b><span>Every coincide command, option, output format and exit status, with the rules for naming threads and projects.</span></a></li><li><a class="card" href="/docs/agent-accounts"><b>Accounts and API keys</b><span>Add a second subscription login or an API key to any agent, pick it per thread, and see where each key is kept.</span></a></li><li><a class="card" href="/docs/data-storage"><b>Where data is stored</b><span>Every folder and Keychain item Coincide uses on your Mac, what’s in each, and how to move, back up or reset them.</span></a></li><li><a class="card" href="/docs/troubleshooting"><b>Troubleshooting</b><span>What Coincide’s error messages mean and how to fix them: missing or signed-out agents, updates, Gatekeeper and more.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Terms of Service · Coincide</title>
-<meta name="description" content="The terms for using Coincide, Coincide Remote, coincide.dev and the Coincide Discord community: the MIT-licensed software, your agent accounts, community rules and the limits of our responsibility.">
+<meta name="description" content="The terms for Coincide, Coincide Remote, coincide.dev and the Coincide Discord: the MIT-licensed software, agent accounts, community rules and liability.">
 <meta name="theme-color" content="#0A0D24">
 <link rel="canonical" href="https://coincide.dev/terms">
 <meta property="og:type" content="website">
@@ -12,12 +12,22 @@
 <meta property="og:url" content="https://coincide.dev/terms">
 <meta property="og:title" content="Coincide Terms of Service">
 <meta property="og:description" content="The MIT-licensed software, your agent accounts, community rules and the limits of our responsibility.">
+<meta property="og:locale" content="en_US">
 <meta property="og:image" content="https://coincide.dev/img/og.jpg">
-<link rel="icon" href="/img/icon-tight-96.png">
-<link rel="apple-touch-icon" href="/img/icon-tight.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<!-- site-schema -->
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/terms#page","url":"https://coincide.dev/terms","name":"Terms of Service · Coincide","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"about":{"@id":"https://coincide.dev/#app"},"dateModified":"2026-11-01","breadcrumb":{"@id":"https://coincide.dev/terms#breadcrumb"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Terms of Service","item":"https://coincide.dev/terms"}],"@id":"https://coincide.dev/terms#breadcrumb"}]}</script>
+<!-- /site-schema -->
 <style>
   :root {
     --night: #0A0D24;
@@ -41,13 +51,6 @@
   :focus-visible { outline: 2px solid var(--signal-hi); outline-offset: 3px; border-radius: 6px; }
   .skip { position: absolute; left: -9999px; }
   .skip:focus { left: 16px; top: 12px; z-index: 10; padding: 8px 14px; border-radius: 999px; background: var(--silver); color: var(--night); text-decoration: none; }
-
-  .top { display: flex; align-items: center; gap: 24px; max-width: 1280px; margin: 0 auto; padding: 22px var(--pad); }
-  .brand { display: flex; align-items: center; gap: 11px; color: var(--silver); font-weight: 650; font-size: 18px; letter-spacing: -.01em; text-decoration: none; }
-  .brand img { width: 30px; height: 30px; }
-  .top nav { display: flex; gap: 22px; margin-left: auto; font-size: 15px; }
-  .top nav a { color: var(--ash); text-decoration: none; transition: color .2s; }
-  .top nav a:hover, .top nav a[aria-current="page"] { color: var(--silver); }
 
   main { max-width: calc(720px + 2 * var(--pad)); margin: 0 auto; padding: clamp(24px, 6vw, 64px) var(--pad) clamp(64px, 9vw, 112px); }
   .eyebrow { margin: 0 0 14px; color: var(--signal-hi); font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
@@ -75,21 +78,15 @@
   .toc a { color: var(--silver); text-decoration-color: var(--rule); }
   .toc a:hover { color: #fff; text-decoration-color: currentColor; }
 
-  footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px; max-width: 1280px; margin: 0 auto; padding: 26px var(--pad) calc(40px + env(safe-area-inset-bottom)); border-top: 1px solid var(--rule); color: var(--faint); font: 13px var(--mono); }
-  footer a { color: inherit; text-decoration: none; transition: color .2s; }
-  footer a:hover { color: var(--silver); }
-  footer .links { display: flex; flex-wrap: wrap; gap: 8px 18px; }
-
   @media (max-width: 600px) {
     body { font-size: 16.5px; }
     .intro { font-size: 18px; }
     .toc ol { columns: 1; }
     .callout { padding: 18px 20px 20px; }
   }
-  @media (max-width: 380px) { .top { gap: 14px; } .top nav { gap: 14px; font-size: 14px; } }
   @media print {
     html, body { background: #fff; color: #000; }
-    .top nav, .skip, .toc { display: none; }
+    .skip, .toc { display: none; }
     a { color: #000; }
     .callout, code { background: none; border-color: #ccc; box-shadow: none; }
     h3, strong, .caps, .caps strong { color: #000; }
@@ -98,12 +95,18 @@
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
-<header class="top">
-  <a class="brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
-  <nav aria-label="Legal"><a href="/privacy">Privacy</a><a href="/terms" aria-current="page">Terms</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+<!-- site-header -->
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
 </header>
+<!-- /site-header -->
 
 <main id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><span aria-current="page">Terms of Service</span></li></ol></nav>
   <p class="eyebrow">Legal</p>
   <h1>Terms of Service</h1>
   <p class="updated">Last updated: <time datetime="2026-11-01">November 1, 2026</time></p>
@@ -233,9 +236,17 @@
   </section>
 </main>
 
-<footer>
-  <span>© 2026 Apoorv Darshan</span>
-  <span class="links"><a href="/privacy">Privacy</a><a href="/terms" aria-current="page">Terms</a><a href="mailto:apoorv@fud-ai.app">Contact</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></span>
+<!-- site-footer -->
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
 </footer>
+<!-- /site-footer -->
 </body>
 </html>

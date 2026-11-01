@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Composer: attachments, @files and follow-ups · Coincide</title>
+<meta name="description" content="Write to any coding agent in Coincide with images and PDFs, @ file mentions, slash commands and quotes, and steer or queue messages while it works.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/composer">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/composer">
+<meta property="og:title" content="Composer: attachments, @files and follow-ups · Coincide">
+<meta property="og:description" content="Write to any coding agent in Coincide with images and PDFs, @ file mentions, slash commands and quotes, and steer or queue messages while it works.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Composer: attachments, @files and follow-ups · Coincide">
+<meta name="twitter:description" content="Write to any coding agent in Coincide with images and PDFs, @ file mentions, slash commands and quotes, and steer or queue messages while it works.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/composer#page","url":"https://coincide.dev/features/composer","name":"Composer: attachments, @files and follow-ups · Coincide","description":"Write to any coding agent in Coincide with images and PDFs, @ file mentions, slash commands and quotes, and steer or queue messages while it works.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/composer#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Composer","item":"https://coincide.dev/features/composer"}],"@id":"https://coincide.dev/features/composer#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Composer</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>The composer</h1>
+    <p class="lede">The composer is where you talk to whichever agent runs the thread. It takes files and images, mentions files in your project, runs commands, and decides what happens when you send while the agent is still working.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2>Sending</h2>
+<p>Settings › General › “Send messages with” chooses Return (Shift-Return adds a line) or Command-Return (Return adds a line). In an empty composer, the Up arrow brings back your earlier messages in the thread, and Down walks back to your draft. Each thread keeps its own draft, attachments included, when you switch threads or restart Coincide. <kbd>⌘</kbd><kbd>.</kbd> stops the running turn.</p>
+
+<h2>Attachments</h2>
+<p>Paste or drop images into the composer, or click the attach button to choose images, PDFs or other files. Images are copied into Coincide’s attachments folder as PNG, JPEG, GIF or WebP, at most 2000 pixels on the long edge; click a thumbnail to see it in Quick Look. How the file reaches the agent depends on the agent:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Agent</th><th scope="col">Images</th><th scope="col">Other files</th></tr></thead><tbody><tr><td>Claude Code</td><td>Sent inline (resized to fit Claude’s limits)</td><td>PDFs are sent as documents, up to 100 pages or 20 MB; other files are named by path</td></tr><tr><td>Codex</td><td>Sent as local images, when the model accepts images</td><td>Named by path</td></tr><tr><td>Cursor</td><td>Sent inline, or named by path if Cursor can’t take them</td><td>Named by path</td></tr><tr><td>Grok Build</td><td>PNG, JPEG, GIF and WebP up to 10 MB, inline</td><td>Named by path</td></tr><tr><td>OpenCode</td><td>Sent as file references with their path</td><td>Named by path</td></tr><tr><td>Antigravity</td><td>PNG, JPEG, WebP and BMP</td><td>Named by path</td></tr></tbody></table></div>
+<p>“Named by path” means the agent is told where the file is on your Mac and can open it with its own tools.</p>
+
+<h2>Quotes, terminal output and diff comments</h2>
+<p>Context you collect shows as cards beside the attachments:</p>
+<ul>
+  <li><strong>Quotes.</strong> Select text in a reply, plan or message and click <strong>Reply</strong>, or press <kbd>⌘</kbd><kbd>L</kbd> (Edit › Add Selection to Composer).</li>
+  <li><strong>Terminal output.</strong> Select text in the <a href="/features/terminal">terminal</a> and add it the same way, or press <kbd>⇧</kbd><kbd>⌘</kbd><kbd>L</kbd> in the terminal to send the last command’s output.</li>
+  <li><strong>Diff comments.</strong> In the <a href="/features/git">diff</a>, select lines and choose Comment on Selected Lines… to tell the agent what to do about them.</li>
+</ul>
+<p>Cards stay attached through drafts and sending, and they’re included when another agent takes over the thread.</p>
+
+<h2>Mentions and commands</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Type</th><th scope="col">What it offers</th></tr></thead><tbody><tr><td><code>@</code></td><td>Files and folders in the thread’s folder, from <code>git ls-files</code> (so <code>.gitignore</code> is respected) or a folder walk. Choosing a folder keeps the list open on its contents.</td></tr><tr><td><code>/</code></td><td>Coincide’s commands: <code>/model</code>, <code>/plan</code>, <code>/build</code>, <code>/usage-limits</code> when the agent reports limits, and one per other ready agent, such as <code>/codex</code>. Below them, the current agent’s own slash commands.</td></tr><tr><td><code>$</code></td><td>The current agent’s skills, when it reports any.</td></tr><tr><td><code>#</code></td><td>Open pull requests of the repository on GitHub, mentioned as a link.</td></tr></tbody></table></div>
+<p>Tab or Return chooses the highlighted suggestion and Escape closes the list. A message that is only a Coincide command, such as <code>/plan</code>, changes the thread instead of being sent.</p>
+
+<h2>Sending while the agent works</h2>
+<p>Each thread has a follow-up behavior, chosen in its composer (new threads start with the one in Settings › General):</p>
+<ul>
+  <li><strong>Steer</strong> sends your message into the running turn, so the agent adjusts course without stopping. Claude Code, Codex and OpenCode support this.</li>
+  <li><strong>Queue</strong> holds the message until the turn ends. Queued messages show in a card where you can send one now, edit it or remove it.</li>
+  <li><strong>Interrupt</strong> stops the turn and sends your message next.</li>
+</ul>
+<p>The alternate send does the other thing for one message: <kbd>⌘</kbd><kbd>↩</kbd> (or <kbd>⇧</kbd><kbd>⌘</kbd><kbd>↩</kbd> when Command-Return sends), or ⌘-click on the send button. For Cursor, Grok Build and Antigravity, which can’t take a message mid-turn, Steer is shown but queues instead.</p>
+
+<h2>The composer’s controls</h2>
+<p>Under the text are the thread’s settings: <a href="/features/model-picker">agent and model</a>, reasoning effort, speed where offered, <a href="/features/approvals">access</a>, and <a href="/features/plan-mode">plan or build</a> mode. On the right are attach, the microphone for <a href="/features/dictation">dictation</a>, a meter of your plan’s <a href="/features/usage-dashboard">usage limits</a> for agents that report them, and a context-window meter showing how full the conversation is.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/model-picker"><b>Model picker</b><span>Every installed agent’s models in one searchable menu, with favorites, hidden models, reasoning effort and speed.</span></a></li><li><a class="card" href="/features/plan-mode"><b>Plan mode</b><span>Have the agent investigate and propose a plan without changing files, refine it, then implement it with one click.</span></a></li><li><a class="card" href="/features/transcript"><b>Native transcript</b><span>Markdown, highlighted code, images, audio, video, sandboxed previews and folded work logs, labeled by agent and model.</span></a></li><li><a class="card" href="/features/dictation"><b>Dictation</b><span>Speak your prompts with Apple’s on-device speech, a local Whisper model, or OpenAI or Groq with your key.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

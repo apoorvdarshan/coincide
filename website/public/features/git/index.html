@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Diffs, per-turn checkpoints and rewind · Coincide</title>
+<meta name="description" content="Review every agent turn in Coincide’s diff panel, revert files to before any turn with Git checkpoints, and fork or rewind a conversation.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/git">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/git">
+<meta property="og:title" content="Diffs, per-turn checkpoints and rewind · Coincide">
+<meta property="og:description" content="Review every agent turn in Coincide’s diff panel, revert files to before any turn with Git checkpoints, and fork or rewind a conversation.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Diffs, per-turn checkpoints and rewind · Coincide">
+<meta name="twitter:description" content="Review every agent turn in Coincide’s diff panel, revert files to before any turn with Git checkpoints, and fork or rewind a conversation.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/git#page","url":"https://coincide.dev/features/git","name":"Diffs, per-turn checkpoints and rewind · Coincide","description":"Review every agent turn in Coincide’s diff panel, revert files to before any turn with Git checkpoints, and fork or rewind a conversation.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/git#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Diffs and checkpoints","item":"https://coincide.dev/features/git"}],"@id":"https://coincide.dev/features/git#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Diffs and checkpoints</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>Diffs, checkpoints, fork and rewind</h1>
+    <p class="lede">Coincide snapshots your working tree around every agent turn, so you can see exactly what a turn changed and undo it, whichever agent did the work. Git does the bookkeeping; your branches, index and stash are left alone.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2>The diff panel</h2>
+<p>View › Show Diff (<kbd>⌘</kbd><kbd>D</kbd>) opens the diff beside the conversation, for the thread’s folder: its project checkout or its <a href="/features/worktrees">worktree</a>. Its menu chooses what to show:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Scope</th><th scope="col">What it shows</th></tr></thead><tbody><tr><td>Uncommitted Changes</td><td>Everything in the working tree that differs from the last commit, untracked files included</td></tr><tr><td>Branch Changes</td><td>Everything the current branch changed since it left its base branch</td></tr><tr><td>Latest Turn</td><td>What the agent’s most recent turn changed, updating while the turn is still running</td></tr><tr><td>Turn 1, Turn 2, …</td><td>Any earlier turn of the thread, with its time and the number of files it touched</td></tr></tbody></table></div>
+<p>The diff options switch between <strong>Unified Diff</strong> and <strong>Side-by-Side Diff</strong>, ignore whitespace, and collapse or expand every file. A file list shows each file as added, modified, deleted, renamed or untracked; from a file you can open it, copy its path or reveal it in Finder.</p>
+<p>To ask for a change, select lines and choose <strong>Comment on Selected Lines…</strong>. Your comment goes to the composer as a card with those lines, so the agent knows exactly what you mean.</p>
+
+<h2>Checkpoints</h2>
+<p>With Settings › General › Git › “Create checkpoints” on (the default), Coincide snapshots the working tree before each turn and again when it ends. Each snapshot is a Git commit built in a temporary index and kept alive by a hidden ref under <code>refs/coincide/checkpoints/</code>. It never touches your index, branches or stash, and isn’t on any of your branches.</p>
+<p>Checkpoints are what make per-turn diffs possible, for every agent. They need the folder to be a Git repository; for a folder that isn’t one, the diff panel offers Initialize Git.</p>
+
+<h2>Reverting a turn</h2>
+<p>On one of your earlier messages, choose <strong>Edit from here</strong>. Coincide asks “Edit from here?” and offers:</p>
+<ul>
+  <li><strong>Revert and Keep Changes</strong>: the conversation is rewound to before that message, which comes back to the composer for you to edit and send again. Files stay as they are.</li>
+  <li><strong>Revert Files Too</strong>: the same, and the working tree is also put back the way it was before that turn, undoing every edit since.</li>
+</ul>
+<p>Revert Files Too is only offered when it’s safe. Restoring rewrites the whole folder, so Coincide refuses while another thread is working in the same folder, or has worked there since that turn. The checkpoints of the reverted turns are discarded, since that history no longer exists.</p>
+
+<h2>Forking a conversation</h2>
+<p>To try another direction without losing this one, choose <strong>Fork from this response</strong> on any reply, or <strong>Fork Thread</strong> in the sidebar for the conversation up to its latest finished turn. The fork is a new thread in the same project with the conversation so far, and opens with the cursor in its composer. A divider in each thread links to the other.</p>
+<p>A fork, like a rewind, starts the agents’ native sessions afresh: the next agent gets a recap of the conversation it carries on, as when you <a href="/features/switch-agents">switch agents</a>. A fork shares the folder with its original unless you move it to a worktree, so both see the same files.</p>
+
+<h2>Committing</h2>
+<p>From the diff panel you can also commit, push, pull and open a pull request, with commit messages and descriptions an agent writes from your changes. That’s covered in <a href="/features/pull-requests">Commits and pull requests</a>.</p>
+
+<h2>Things to know</h2>
+<ul>
+  <li>Checkpoints cover the thread’s folder. Changes an agent makes elsewhere on your Mac aren’t restored.</li>
+  <li>Turning checkpoints off stops new snapshots; the turn scopes then say “Turn checkpoints are off”.</li>
+  <li>Undoing an archive, move or delete in the sidebar never changes files. To undo an agent’s edits, revert a turn.</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/worktrees"><b>Worktrees</b><span>Run each thread in its own Git worktree and branch, so parallel agents never edit the same checkout.</span></a></li><li><a class="card" href="/features/pull-requests"><b>Commits and pull requests</b><span>Commit, push and open pull requests on five Git hosts with agent-written messages; review GitHub PRs beside the chat.</span></a></li><li><a class="card" href="/features/transcript"><b>Native transcript</b><span>Markdown, highlighted code, images, audio, video, sandboxed previews and folded work logs, labeled by agent and model.</span></a></li><li><a class="card" href="/features/switch-agents"><b>Switch agents mid-thread</b><span>Hand a conversation to another agent; it gets a recap of the turns it missed and works in the same folder.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

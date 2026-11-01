@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Claude Code in a native Mac app · Coincide</title>
+<meta name="description" content="Use Claude Code in Coincide with your Claude plan or API key: plan mode, steering, subagents, fast mode, usage limits and switching agents mid-thread.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/agents/claude-code">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/agents/claude-code">
+<meta property="og:title" content="Claude Code in a native Mac app · Coincide">
+<meta property="og:description" content="Use Claude Code in Coincide with your Claude plan or API key: plan mode, steering, subagents, fast mode, usage limits and switching agents mid-thread.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Claude Code in a native Mac app · Coincide">
+<meta name="twitter:description" content="Use Claude Code in Coincide with your Claude plan or API key: plan mode, steering, subagents, fast mode, usage limits and switching agents mid-thread.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/agents/claude-code#page","url":"https://coincide.dev/agents/claude-code","name":"Claude Code in a native Mac app · Coincide","description":"Use Claude Code in Coincide with your Claude plan or API key: plan mode, steering, subagents, fast mode, usage limits and switching agents mid-thread.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/agents/claude-code#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Agents","item":"https://coincide.dev/agents"},{"@type":"ListItem","position":3,"name":"Claude Code","item":"https://coincide.dev/agents/claude-code"}],"@id":"https://coincide.dev/agents/claude-code#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents" aria-current="true">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/agents">Agents</a></li><li><span aria-current="page">Claude Code</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Agent · Anthropic</p>
+    <div class="title-row"><span class="mark"><img src="/img/logo-claude.png" alt="Claude logo" width="38" height="38"></span><h1>Claude Code in Coincide</h1></div>
+    <p class="lede">Coincide runs the <code>claude</code> command-line tool you already have installed, signed in with your own Claude plan or Anthropic API key, and gives it a native Mac window, threads, git tools and a browser. You can hand any thread to another agent and back.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2 id="how">How Coincide runs Claude Code</h2>
+<p>Coincide starts <code>claude</code> and talks to it over Claude Code’s stream-json control protocol, the same one Anthropic’s Agent SDK uses. Nothing goes through a Coincide server: Claude Code talks to Anthropic (or to the Bedrock, Vertex AI or gateway endpoint it’s configured for) exactly as it does in Terminal. Coincide never resells, proxies or meters your tokens.</p>
+<p>Coincide looks for <code>claude</code> on your login shell’s <code>PATH</code> and in the usual install folders, such as Homebrew’s and <code>~/.local/bin</code>. If yours lives elsewhere, set a custom path in Settings › Claude Code. Your own Claude Code configuration, <code>CLAUDE.md</code> files and settings keep applying, because it’s the same tool.</p>
+<p>Turns run in Coincide’s <a href="/features/background-agents">background agent host</a>, so a long Claude Code turn keeps going when you quit or update Coincide.</p>
+
+<h2 id="setup">Set it up</h2>
+<ol>
+  <li><strong>Install Claude Code</strong> with Anthropic’s installer (see the <a href="https://claude.com/product/claude-code">official Claude Code page</a> for other ways):
+<div class="cmd"><code>curl -fsSL https://claude.ai/install.sh | bash</code><button class="copy" type="button" hidden data-copy="curl -fsSL https://claude.ai/install.sh | bash" aria-label="Copy the Claude Code install command"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M4.5 13V6.2c0-1 .8-1.7 1.7-1.7H13"/></svg></button></div></li>
+  <li><strong>Sign in</strong> with your Claude account, or set up an API key:
+<div class="cmd"><code>claude auth login</code><button class="copy" type="button" hidden data-copy="claude auth login" aria-label="Copy the sign-in command"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M4.5 13V6.2c0-1 .8-1.7 1.7-1.7H13"/></svg></button></div></li>
+  <li><strong>Open Settings › Claude Code</strong> in Coincide. It shows whether Claude Code is installed and signed in, its version and account, and can run both commands in Terminal for you. Choose Check Again after signing in.</li>
+  <li><strong>Pick a Claude model</strong> in the composer’s <a href="/features/model-picker">model picker</a> and send your first message.</li>
+</ol>
+<p>To use more than one Claude account, or an Anthropic API key next to your subscription, add accounts in the same pane. Each login account gets its own Claude Code configuration folder, and API keys are kept in your Keychain. <a href="/docs/agent-accounts">Agent accounts</a> explains how.</p>
+
+<h2 id="models">Models, effort and fast mode</h2>
+<p>The model list comes from Claude Code itself, so it matches what your account can use, filled in with details Coincide knows about each model. If a model needs a newer Claude Code than you have, Coincide says which version to upgrade to.</p>
+<ul>
+  <li><strong>Reasoning effort:</strong> the levels Claude Code accepts for the model (from low up to max), plus <em>ultrathink</em> on models that support it, which Coincide asks for in the prompt.</li>
+  <li><strong>Fast mode:</strong> offered on models that report it. If Claude Code ran a turn at standard speed anyway, Coincide shows Claude Code’s reason, such as needing a paid plan or usage credits.</li>
+  <li><strong>Custom models:</strong> add model IDs Claude Code accepts but doesn’t list in Settings › Claude Code.</li>
+</ul>
+
+<h2 id="features">What works with Claude Code</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">In Coincide</th><th scope="col">With Claude Code</th></tr></thead><tbody><tr><td>Plan mode</td><td>Claude Code’s own plan mode. When Claude finishes a plan, Coincide shows it and Claude waits; if Claude enters plan mode by itself, you choose Implement or Keep planning.</td></tr><tr><td>Approvals and full access</td><td>Ask for approval uses Claude Code’s default permission mode. Full access uses <code>bypassPermissions</code>; if your Claude Code settings forbid that, Coincide falls back to auto mode, then to asking. “Always allow” lasts for the session.</td></tr><tr><td>Questions</td><td>Claude’s questions and MCP servers’ forms are answered inline in the thread.</td></tr><tr><td>Steering</td><td>A message sent while Claude works can steer the running turn instead of waiting for it.</td></tr><tr><td>Attachments</td><td>Images (PNG, JPEG, GIF, WebP) and PDFs are sent to Claude; other files are mentioned by path.</td></tr><tr><td>Subagents</td><td>Subagents’ tool calls show as progress in the turn, and background work is tracked.</td></tr><tr><td>Resuming</td><td>Each thread keeps its own Claude Code session. Coincide also names it after the thread, so <code>claude --resume</code> in Terminal shows the same titles.</td></tr><tr><td>Usage limits</td><td>Your plan’s session and weekly limits, read from Claude Code, in the composer and the <a href="/features/usage-dashboard">usage dashboard</a>.</td></tr><tr><td>Importing</td><td>Earlier Claude Code conversations can be <a href="/docs/import-cli-sessions">imported</a> from <code>~/.claude</code> and continued.</td></tr></tbody></table></div>
+
+<h2 id="switching">Switching to and from Claude Code</h2>
+<p>Type <code>/claude</code> in the composer, or pick a Claude model, to hand a thread that another agent started to Claude Code. Claude gets a recap of the turns it missed and works in the same folder. Switch away and back again, and Claude Code resumes its own session with only the newer turns recapped. <a href="/features/switch-agents">How switching works</a>.</p>
+
+<h2 id="limits">Limitations</h2>
+<ul>
+  <li>Coincide uses the Claude Code you have installed, so new Claude Code features appear only once Coincide supports them, and some models need a recent Claude Code.</li>
+  <li>Changing some settings in the middle of a thread restarts Claude Code’s process, which stops its background work; Coincide tells you when that happens.</li>
+  <li>With a custom API endpoint (a non-Anthropic <code>ANTHROPIC_BASE_URL</code>), plan usage limits aren’t shown.</li>
+  <li>Claude Code’s own usage policies and plan limits apply as usual.</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/plan-mode"><b>Plan mode</b><span>Have the agent investigate and propose a plan without changing files, refine it, then implement it with one click.</span></a></li><li><a class="card" href="/features/switch-agents"><b>Switch agents mid-thread</b><span>Hand a conversation to another agent; it gets a recap of the turns it missed and works in the same folder.</span></a></li><li><a class="card" href="/docs/import-cli-sessions"><b>Import CLI sessions</b><span>Turn Claude Code and Codex conversations from Terminal into Coincide threads that resume the same native session.</span></a></li><li><a class="card" href="/docs/agent-accounts"><b>Accounts and API keys</b><span>Add a second subscription login or an API key to any agent, pick it per thread, and see where each key is kept.</span></a></li><li><a class="card" href="/compare/claude-desktop"><b>vs Claude desktop app</b><span>Anthropic’s app for Claude Code, or one Mac window for Claude Code and five other agents.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+<script>
+  // Copy buttons for commands: shown only when there's a clipboard to copy to.
+  document.querySelectorAll('.cmd .copy').forEach(button => {
+    if (!navigator.clipboard) return;
+    button.hidden = false;
+    button.addEventListener('click', () => navigator.clipboard.writeText(button.dataset.copy).then(() => {
+      button.classList.add('done');
+      setTimeout(() => button.classList.remove('done'), 1400);
+    }).catch(() => {}));
+  });
+</script>
+</body>
+</html>

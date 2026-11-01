@@ -1,0 +1,673 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://coincide.dev/</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/agents</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/agents/antigravity</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/agents/claude-code</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/agents/codex</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/agents/cursor</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/agents/grok-build</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/agents/opencode</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/changelog</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/compare</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/compare/claude-desktop</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/compare/codex-app</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/compare/conductor</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/compare/cursor</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/compare/t3-code</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/compare/terminal</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/de</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/agent-accounts</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/build-from-source</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/cli</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/data-storage</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/environment-variables</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/getting-started</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/import-cli-sessions</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/keyboard-shortcuts</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/macos-permissions</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/rich-output</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/settings</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/translations</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/troubleshooting</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/uninstall</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/docs/updating</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/download</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/es</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/faq</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/approvals</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/appshots</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/background-agents</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/bots</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/browser</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/browser-passwords</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/coincide-remote</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/command-line</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/command-palette</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/composer</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/computer-use</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/dictation</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/git</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/instructions</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/keep-awake</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/languages</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/model-picker</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/notifications</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/passkeys</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/plan-mode</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/projects-and-threads</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/pull-requests</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/scheduled-tasks</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/switch-agents</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/terminal</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/transcript</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/usage-dashboard</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/features/worktrees</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/fr</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/hi</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/id</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/it</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/ja</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/ko</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/nl</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/pl</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/privacy</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/pt-br</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/ru</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/terms</loc>
+    <lastmod>2026-11-01</lastmod>
+  </url>
+  <url>
+    <loc>https://coincide.dev/tr</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/uk</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/vi</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/zh-hans</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+  <url>
+    <loc>https://coincide.dev/zh-hant</loc>
+    <lastmod>2026-11-01</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://coincide.dev/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://coincide.dev/de"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://coincide.dev/es"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://coincide.dev/fr"/>
+    <xhtml:link rel="alternate" hreflang="hi" href="https://coincide.dev/hi"/>
+    <xhtml:link rel="alternate" hreflang="id" href="https://coincide.dev/id"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://coincide.dev/it"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://coincide.dev/ja"/>
+    <xhtml:link rel="alternate" hreflang="ko" href="https://coincide.dev/ko"/>
+    <xhtml:link rel="alternate" hreflang="nl" href="https://coincide.dev/nl"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://coincide.dev/pl"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://coincide.dev/ru"/>
+    <xhtml:link rel="alternate" hreflang="tr" href="https://coincide.dev/tr"/>
+    <xhtml:link rel="alternate" hreflang="uk" href="https://coincide.dev/uk"/>
+    <xhtml:link rel="alternate" hreflang="vi" href="https://coincide.dev/vi"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans"/>
+    <xhtml:link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://coincide.dev/"/>
+  </url>
+</urlset>
