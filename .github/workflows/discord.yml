@@ -1,0 +1,47 @@
+# Unit tests for Janus, the Coincide Discord bot (discord/). The Worker has no npm
+# dependencies, so this is plain Node: `node --test` runs discord/worker/*.test.mjs.
+# Runs only when the bot or this workflow changes. Deploying stays manual (see discord/README.md).
+
+name: Discord bot
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/discord.yml"
+      - "discord/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/discord.yml"
+      - "discord/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to a pull request replaces its older run; main and manual runs are never cancelled.
+concurrency:
+  group: discord-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Discord bot tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: discord
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Check syntax
+        run: for file in discord/worker/*.mjs discord/scripts/*.mjs; do node --check "$file"; done
+
+      - name: Run tests
+        run: node --test "discord/worker/*.test.mjs"

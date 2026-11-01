@@ -1,0 +1,38 @@
+// Janus, the Coincide Discord bot: slash commands, issue-closure replies, release
+// announcements and spam moderation. See README.md in this folder. Only public IDs
+// belong here; secrets are set with `wrangler secret put` and never committed.
+{
+  "name": "coincide-discord",
+  "main": "./worker/index.mjs",
+  "compatibility_date": "2026-07-10",
+  "workers_dev": false,
+  "preview_urls": false,
+  // Keep scheduled-run logs; the dashboard setting alone is reset by the next deploy.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": { "enabled": true, "invocation_logs": true, "persist": true }
+  },
+  "vars": {
+    "DISCORD_APPLICATION_ID": "1566350650839797780",
+    // Ed25519 key that verifies Discord's request signatures. Public; not the bot token.
+    "DISCORD_PUBLIC_KEY": "49498e3413455cc8d7cb5d6363fbcf87aa399745506cbfcff0f32959b800c0ca",
+    "DISCORD_GUILD_ID": "1566352780862427258",
+    "DISCORD_ANNOUNCEMENTS_CHANNEL_ID": "1566353944077279284",
+    "DISCORD_MODERATION_ENABLED": "true",
+    "DISCORD_MODERATION_LOG_CHANNEL_ID": "1566353958543560714",
+    "DISCORD_GEMINI_MODEL": "gemini-3.5-flash-lite",
+    "DISCORD_BOT_NAME": "Janus",
+    "DISCORD_INVITE_URL": "https://discord.gg/DETrbhDVqw"
+  },
+  // Cooldowns, replay markers, issue-closure routing and seen releases. Janus's own
+  // namespace, separate from every other app's bot.
+  "kv_namespaces": [{ "binding": "DISCORD_STATE", "id": "076da39ea1cd450eab1b8e72b12cf047" }],
+  "durable_objects": {
+    "bindings": [{ "name": "DISCORD_MODERATION", "class_name": "DiscordModeration" }]
+  },
+  "migrations": [{ "tag": "discord-moderation-v1", "new_sqlite_classes": ["DiscordModeration"] }],
+  // Hourly release check, issue-closure retries every 5 minutes, spam scan every minute.
+  "triggers": { "crons": ["23 * * * *", "*/5 * * * *", "* * * * *"] },
+  "routes": [{ "pattern": "discord.coincide.dev", "custom_domain": true }]
+}
