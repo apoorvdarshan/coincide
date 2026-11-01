@@ -5005,6 +5005,124 @@
         }
       }
     },
+    "%@ has no sign-in for %@ yet. Sign in there, wait a moment, then try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ hat noch keine Anmeldung für %2$@. Melde dich dort an, warte einen Moment und versuche es dann erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ has no sign-in for %2$@ yet. Sign in there, wait a moment, then try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ aún no tiene ningún inicio de sesión para %2$@. Inicia sesión allí, espera un momento y vuelve a intentarlo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ aún no tiene ningún inicio de sesión para %2$@. Inicia sesión allí, espera un momento y vuelve a intentarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ n’a pas encore de connexion pour %2$@. Connectez-vous-y, attendez un instant, puis réessayez."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ में अभी %2$@ के लिए कोई साइन-इन नहीं है। वहां साइन इन करें, थोड़ा रुकें, फिर दोबारा कोशिश करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ belum memiliki login untuk %2$@. Masuk di sana, tunggu sebentar, lalu coba lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ non ha ancora un accesso per %2$@. Accedi lì, aspetta un momento, poi riprova."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ にはまだ %2$@ のサインインがありません。そちらでサインインし、少し待ってからもう一度試してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@에 아직 %2$@ 로그인이 없습니다. 거기에서 로그인하고 잠시 기다린 다음 다시 시도하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ heeft nog geen aanmelding voor %2$@. Log daar in, wacht even en probeer het opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przeglądarka %1$@ nie ma jeszcze logowania do %2$@. Zaloguj się tam, odczekaj chwilę i spróbuj ponownie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O %1$@ ainda não tem login para %2$@. Faça login lá, espere um momento e tente de novo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "В %1$@ пока нет входа на %2$@. Войдите там, подождите немного и повторите попытку."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ uygulamasında henüz %2$@ için bir oturum yok. Orada oturum açın, biraz bekleyin ve yeniden deneyin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "У %1$@ поки немає входу на %2$@. Увійдіть там, зачекайте трохи й спробуйте ще раз."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ chưa có lần đăng nhập nào cho %2$@. Hãy đăng nhập ở đó, đợi một lát, rồi thử lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ 中还没有 %2$@ 的登录状态。请在那里登录，稍等片刻后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ 中還沒有 %2$@ 的登入狀態。請在那裡登入，稍候片刻後再試一次。"
+          }
+        }
+      }
+    },
     "%@ in %@" : {
       "localizations" : {
         "de" : {
@@ -14101,6 +14219,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%1$@：「%2$@」需要 ⌘ 或 ⌃。"
+          }
+        }
+      }
+    },
+    "%@’s Keychain key wasn’t available, so nothing was imported. Try again and choose Allow when macOS asks." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Schlüsselbund-Schlüssel von %@ war nicht verfügbar, daher wurde nichts importiert. Versuche es erneut und wähle „Erlauben“, wenn macOS fragt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La clave del llavero de %@ no estaba disponible, así que no se importó nada. Inténtalo de nuevo y elige Permitir cuando macOS pregunte."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La clave del llavero de %@ no estaba disponible, así que no se importó nada. Inténtalo de nuevo y elige Permitir cuando macOS pregunte."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La clé du trousseau de %@ n’était pas disponible, rien n’a donc été importé. Réessayez et choisissez Autoriser lorsque macOS le demande."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ की कीचेन कुंजी उपलब्ध नहीं थी, इसलिए कुछ भी इम्पोर्ट नहीं हुआ। फिर से कोशिश करें और macOS के पूछने पर अनुमति दें चुनें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci Rantai Kunci %@ tidak tersedia, jadi tidak ada yang diimpor. Coba lagi dan pilih Izinkan saat macOS bertanya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La chiave del portachiavi di %@ non era disponibile, quindi non è stato importato nulla. Riprova e scegli Consenti quando macOS lo chiede."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ のキーチェーン鍵を使用できなかったため、何も読み込まれませんでした。もう一度試し、macOS に確認されたら「許可」を選んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@의 키체인 키를 사용할 수 없어 아무것도 가져오지 못했습니다. 다시 시도하고 macOS가 물으면 허용을 선택하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De sleutelhangersleutel van %@ was niet beschikbaar, dus er is niets geïmporteerd. Probeer het opnieuw en kies Sta toe als macOS erom vraagt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klucz przeglądarki %@ z pęku kluczy był niedostępny, więc niczego nie zaimportowano. Spróbuj ponownie i wybierz Pozwól, gdy macOS zapyta."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A chave das Chaves do %@ não estava disponível, então nada foi importado. Tente de novo e escolha Permitir quando o macOS perguntar."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключ %@ из связки ключей был недоступен, поэтому ничего не импортировано. Повторите попытку и выберите «Разрешить», когда macOS спросит."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ uygulamasının Anahtar Zinciri anahtarı kullanılamadı, bu yüzden hiçbir şey içe aktarılmadı. Yeniden deneyin ve macOS sorduğunda İzin Ver’i seçin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключ %@ з в’язки ключів був недоступний, тому нічого не імпортовано. Спробуйте ще раз і виберіть «Дозволити», коли macOS запитає."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không dùng được khóa Chuỗi khóa của %@ nên không có gì được nhập. Hãy thử lại và chọn Cho phép khi macOS hỏi."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法使用 %@ 的钥匙串密钥，因此未导入任何内容。请重试，并在 macOS 询问时选择“允许”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "無法使用 %@ 的鑰匙圈密鑰，因此未匯入任何內容。請再試一次，並在 macOS 詢問時選擇「允許」。"
           }
         }
       }
@@ -82428,6 +82658,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Coincide 無法為遠端伺服器建立金鑰。"
+          }
+        }
+      }
+    },
+    "Coincide couldn’t read %@’s sign-ins, so nothing was imported." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide konnte die Anmeldungen von %@ nicht lesen, daher wurde nichts importiert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide no pudo leer los inicios de sesión de %@, así que no se importó nada."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide no pudo leer los inicios de sesión de %@, así que no se importó nada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide n’a pas pu lire les connexions de %@, rien n’a donc été importé."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide %@ के साइन-इन नहीं पढ़ सका, इसलिए कुछ भी इम्पोर्ट नहीं हुआ।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide tidak dapat membaca login %@, jadi tidak ada yang diimpor."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide non è riuscito a leggere gli accessi di %@, quindi non è stato importato nulla."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide は %@ のサインインを読み取れなかったため、何も読み込まれませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide가 %@의 로그인을 읽지 못해 아무것도 가져오지 못했습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide kon de aanmeldingen van %@ niet lezen, dus er is niets geïmporteerd."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie udało się odczytać logowań przeglądarki %@, więc niczego nie zaimportowano."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide não conseguiu ler os logins do %@, então nada foi importado."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide не удалось прочитать входы %@, поэтому ничего не импортировано."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide, %@ uygulamasının oturumlarını okuyamadı, bu yüzden hiçbir şey içe aktarılmadı."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide не вдалося прочитати входи %@, тому нічого не імпортовано."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide không đọc được các lần đăng nhập của %@ nên không có gì được nhập."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 无法读取 %@ 的登录状态，因此未导入任何内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 無法讀取 %@ 的登入狀態，因此未匯入任何內容。"
           }
         }
       }
@@ -155920,6 +156262,118 @@
         }
       }
     },
+    "Import Again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erneut importieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Volver a importar"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Volver a importar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer à nouveau"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "फिर से इम्पोर्ट करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impor Lagi"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importa di nuovo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "もう一度読み込む"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "다시 가져오기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Opnieuw importeren"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importuj ponownie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar de novo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импортировать снова"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yeniden İçe Aktar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпортувати знову"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhập lại"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再次导入"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "再次匯入"
+          }
+        }
+      }
+    },
     "Import CLI Session" : {
       "localizations" : {
         "de" : {
@@ -156256,6 +156710,230 @@
         }
       }
     },
+    "Import Sign-In" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anmeldung importieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar inicio de sesión"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar inicio de sesión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer la connexion"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "साइन-इन इम्पोर्ट करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impor Login"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importa accesso"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サインインを読み込む"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로그인 가져오기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aanmelding importeren"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importuj logowanie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar login"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импортировать вход"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oturumu İçe Aktar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпортувати вхід"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhập lần đăng nhập"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "导入登录状态"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "匯入登入狀態"
+          }
+        }
+      }
+    },
+    "Import Sign-In…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anmeldung importieren …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar inicio de sesión…"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar inicio de sesión…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer la connexion…"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "साइन-इन इम्पोर्ट करें…"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impor Login…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importa accesso…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サインインを読み込む…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로그인 가져오기…"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aanmelding importeren…"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importuj logowanie…"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar login…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импортировать вход…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oturumu İçe Aktar…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпортувати вхід…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nhập lần đăng nhập…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "导入登录状态…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "匯入登入狀態…"
+          }
+        }
+      }
+    },
     "Import from Another Browser" : {
       "localizations" : {
         "de" : {
@@ -156588,6 +157266,360 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "從 CSV 匯出檔案匯入密碼"
+          }
+        }
+      }
+    },
+    "Imported your %@ sign-in from %@ and reloaded the page. If it still asks you to sign in, wait a moment and import again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Anmeldung bei %1$@ wurde aus %2$@ importiert und die Seite neu geladen. Wenn sie weiterhin eine Anmeldung verlangt, warte einen Moment und importiere erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Imported your %1$@ sign-in from %2$@ and reloaded the page. If it still asks you to sign in, wait a moment and import again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se importó tu inicio de sesión de %1$@ desde %2$@ y se recargó la página. Si sigue pidiendo que inicies sesión, espera un momento y vuelve a importarlo."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se importó tu inicio de sesión de %1$@ desde %2$@ y se recargó la página. Si sigue pidiendo que inicies sesión, espera un momento y vuelve a importarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Votre connexion à %1$@ a été importée depuis %2$@ et la page rechargée. Si elle vous demande encore de vous connecter, attendez un instant et importez-la à nouveau."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ से आपका %1$@ साइन-इन इम्पोर्ट हो गया और पेज फिर से लोड हो गया। अगर यह अब भी साइन इन करने को कहे, तो थोड़ा रुककर फिर से इम्पोर्ट करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Login %1$@ Anda telah diimpor dari %2$@ dan halaman dimuat ulang. Jika masih diminta masuk, tunggu sebentar lalu impor lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il tuo accesso a %1$@ è stato importato da %2$@ e la pagina è stata ricaricata. Se chiede ancora di accedere, aspetta un momento e importalo di nuovo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ から %1$@ のサインインを読み込み、ページを再読み込みしました。まだサインインを求められる場合は、少し待ってからもう一度読み込んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@에서 %1$@ 로그인을 가져오고 페이지를 새로 고쳤습니다. 계속 로그인하라고 하면 잠시 기다린 다음 다시 가져오세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Je aanmelding voor %1$@ is geïmporteerd uit %2$@ en de pagina is opnieuw geladen. Vraagt de pagina nog steeds om in te loggen, wacht dan even en importeer opnieuw."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zaimportowano logowanie do %1$@ z przeglądarki %2$@ i ponownie wczytano stronę. Jeśli nadal prosi o zalogowanie, odczekaj chwilę i zaimportuj ponownie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seu login de %1$@ foi importado do %2$@ e a página foi recarregada. Se ela ainda pedir para entrar, espere um momento e importe de novo."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вход на %1$@ импортирован из %2$@, страница перезагружена. Если она всё ещё просит войти, подождите немного и импортируйте снова."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ oturumunuz %2$@ uygulamasından içe aktarıldı ve sayfa yeniden yüklendi. Hâlâ oturum açmanızı isterse biraz bekleyip yeniden içe aktarın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вхід на %1$@ імпортовано з %2$@, сторінку перезавантажено. Якщо вона все ще просить увійти, зачекайте трохи й імпортуйте знову."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã nhập lần đăng nhập %1$@ của bạn từ %2$@ và tải lại trang. Nếu trang vẫn yêu cầu đăng nhập, hãy đợi một lát rồi nhập lại."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已从 %2$@ 导入你的 %1$@ 登录状态并重新载入页面。如果页面仍要求登录，请稍等片刻后再次导入。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已從 %2$@ 匯入你的 %1$@ 登入狀態並重新載入頁面。如果頁面仍要求登入，請稍候片刻再匯入一次。"
+          }
+        }
+      }
+    },
+    "Importing your %@ sign-in from %@…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Anmeldung bei %1$@ wird aus %2$@ importiert …"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Importing your %1$@ sign-in from %2$@…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando tu inicio de sesión de %1$@ desde %2$@…"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando tu inicio de sesión de %1$@ desde %2$@…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importation de votre connexion à %1$@ depuis %2$@…"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ से आपका %1$@ साइन-इन इम्पोर्ट हो रहा है…"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mengimpor login %1$@ Anda dari %2$@…"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importazione del tuo accesso a %1$@ da %2$@…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ から %1$@ のサインインを読み込み中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@에서 %1$@ 로그인을 가져오는 중…"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Je aanmelding voor %1$@ wordt geïmporteerd uit %2$@…"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importowanie logowania do %1$@ z przeglądarki %2$@…"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando seu login de %1$@ do %2$@…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импорт входа на %1$@ из %2$@…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ oturumunuz %2$@ uygulamasından içe aktarılıyor…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпорт входу на %1$@ з %2$@…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đang nhập lần đăng nhập %1$@ của bạn từ %2$@…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在从 %2$@ 导入你的 %1$@ 登录状态…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在從 %2$@ 匯入你的 %1$@ 登入狀態…"
+          }
+        }
+      }
+    },
+    "Importing your %@ sign-in from %@… If macOS asks whether Coincide may use its Keychain key, choose Allow." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Anmeldung bei %1$@ wird aus %2$@ importiert … Fragt macOS, ob Coincide den Schlüsselbund-Schlüssel des Browsers verwenden darf, wähle „Erlauben“."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Importing your %1$@ sign-in from %2$@… If macOS asks whether Coincide may use its Keychain key, choose Allow."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando tu inicio de sesión de %1$@ desde %2$@… Si macOS pregunta si Coincide puede usar su clave del llavero, elige Permitir."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando tu inicio de sesión de %1$@ desde %2$@… Si macOS pregunta si Coincide puede usar su clave del llavero, elige Permitir."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importation de votre connexion à %1$@ depuis %2$@… Si macOS demande si Coincide peut utiliser sa clé du trousseau, choisissez Autoriser."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ से आपका %1$@ साइन-इन इम्पोर्ट हो रहा है… अगर macOS पूछे कि क्या Coincide उसकी कीचेन कुंजी इस्तेमाल कर सकता है, तो अनुमति दें चुनें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mengimpor login %1$@ Anda dari %2$@… Jika macOS menanyakan apakah Coincide boleh menggunakan kunci Rantai Kuncinya, pilih Izinkan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importazione del tuo accesso a %1$@ da %2$@… Se macOS chiede se Coincide può usare la sua chiave del portachiavi, scegli Consenti."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ から %1$@ のサインインを読み込み中… Coincide がキーチェーン鍵を使用してよいか macOS に確認されたら、「許可」を選んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@에서 %1$@ 로그인을 가져오는 중… Coincide가 키체인 키를 사용해도 되는지 macOS가 물으면 허용을 선택하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Je aanmelding voor %1$@ wordt geïmporteerd uit %2$@… Vraagt macOS of Coincide de sleutelhangersleutel mag gebruiken, kies dan Sta toe."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importowanie logowania do %1$@ z przeglądarki %2$@… Jeśli macOS zapyta, czy Coincide może użyć jej klucza z pęku kluczy, wybierz Pozwól."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importando seu login de %1$@ do %2$@… Se o macOS perguntar se o Coincide pode usar a chave dele nas Chaves, escolha Permitir."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Импорт входа на %1$@ из %2$@… Если macOS спросит, может ли Coincide использовать его ключ из связки ключей, выберите «Разрешить»."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ oturumunuz %2$@ uygulamasından içe aktarılıyor… macOS, Coincide’ın onun Anahtar Zinciri anahtarını kullanıp kullanamayacağını sorarsa İzin Ver’i seçin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Імпорт входу на %1$@ з %2$@… Якщо macOS запитає, чи може Coincide використати його ключ із в’язки ключів, виберіть «Дозволити»."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đang nhập lần đăng nhập %1$@ của bạn từ %2$@… Nếu macOS hỏi Coincide có được dùng khóa Chuỗi khóa của nó không, hãy chọn Cho phép."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在从 %2$@ 导入你的 %1$@ 登录状态… 如果 macOS 询问是否允许 Coincide 使用它的钥匙串密钥，请选择“允许”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "正在從 %2$@ 匯入你的 %1$@ 登入狀態… 如果 macOS 詢問是否允許 Coincide 使用它的鑰匙圈密鑰，請選擇「允許」。"
           }
         }
       }
@@ -221484,6 +222516,7 @@
       }
     },
     "Passkeys aren’t available in Coincide’s browser yet. Choose another way to sign in (like “Try another way” on Google), then use the key button to fill your password from your password manager." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -221591,6 +222624,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Coincide 的瀏覽器尚不支援通行密鑰。請選擇其他登入方式（例如 Google 上的「嘗試其他方式」），然後使用鑰匙按鈕從密碼管理工具填入密碼。"
+          }
+        }
+      }
+    },
+    "Passkeys aren’t available in Coincide’s browser yet. Sign in with your passkey in %@, then import that sign-in here. Or choose another way to sign in (like “Try another way” on Google), then use the key button to fill your password from your password manager." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passkeys sind im Browser von Coincide noch nicht verfügbar. Melde dich in %@ mit deinem Passkey an und importiere diese Anmeldung dann hierher. Oder wähle eine andere Anmeldemethode (etwa „Andere Option wählen“ bei Google) und fülle dann mit der Schlüsseltaste dein Passwort aus deinem Passwortmanager aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las llaves de acceso aún no están disponibles en el navegador de Coincide. Inicia sesión con tu llave de acceso en %@ y luego importa aquí ese inicio de sesión. O elige otra forma de iniciar sesión (como «Probar otra manera» en Google) y luego usa el botón de la llave para rellenar tu contraseña desde tu gestor de contraseñas."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las llaves de acceso aún no están disponibles en el navegador de Coincide. Inicia sesión con tu llave de acceso en %@ y luego importa aquí ese inicio de sesión. O elige otra forma de iniciar sesión (como “Probar otra manera” en Google) y luego usa el botón de la llave para rellenar tu contraseña desde tu gestor de contraseñas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les clés d’identification ne sont pas encore disponibles dans le navigateur de Coincide. Connectez-vous avec votre clé d’identification dans %@, puis importez cette connexion ici. Ou choisissez une autre méthode de connexion (comme « Essayer une autre méthode » sur Google), puis utilisez le bouton en forme de clé pour remplir votre mot de passe depuis votre gestionnaire de mots de passe."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide के ब्राउज़र में पासकी अभी उपलब्ध नहीं हैं। %@ में अपनी पासकी से साइन इन करें, फिर वह साइन-इन यहां इम्पोर्ट करें। या साइन इन करने का कोई दूसरा तरीका चुनें (जैसे Google पर “दूसरा तरीका आज़माएं”), फिर अपने पासवर्ड मैनेजर से पासवर्ड भरने के लिए चाबी वाला बटन इस्तेमाल करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci sandi belum tersedia di browser Coincide. Masuk dengan kunci sandi Anda di %@, lalu impor login tersebut ke sini. Atau pilih cara lain untuk masuk (seperti “Coba cara lain” di Google), lalu gunakan tombol kunci untuk mengisi kata sandi dari pengelola kata sandi Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le passkey non sono ancora disponibili nel browser di Coincide. Accedi con la tua passkey in %@, poi importa qui quell’accesso. Oppure scegli un altro modo per accedere (come “Prova un altro metodo” su Google), poi usa il pulsante con la chiave per compilare la password dal tuo gestore di password."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide のブラウザではまだパスキーを使用できません。%@ でパスキーを使ってサインインしてから、そのサインインをここに読み込んでください。または、別のサインイン方法（Google の「別の方法を試す」など）を選んでから、鍵ボタンでパスワードマネージャのパスワードを入力してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 브라우저에서는 아직 패스키를 사용할 수 없습니다. %@에서 패스키로 로그인한 다음 그 로그인을 여기로 가져오세요. 또는 다른 로그인 방법(Google의 ‘다른 방법 시도’ 등)을 선택한 다음 열쇠 버튼으로 암호 관리자의 암호를 채우세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegangssleutels zijn nog niet beschikbaar in de browser van Coincide. Log in met je toegangssleutel in %@ en importeer die aanmelding daarna hier. Of kies een andere manier om in te loggen (zoals ‘Andere manier proberen’ bij Google) en gebruik daarna de sleutelknop om je wachtwoord uit je wachtwoordbeheerder in te vullen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klucze dostępu nie są jeszcze dostępne w przeglądarce Coincide. Zaloguj się kluczem dostępu w przeglądarce %@, a potem zaimportuj tutaj to logowanie. Możesz też wybrać inny sposób logowania (np. „Wypróbuj inny sposób” w Google), a następnie użyć przycisku z kluczem, aby wypełnić hasło z menedżera haseł."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As chaves de acesso ainda não estão disponíveis no navegador do Coincide. Entre com sua chave de acesso no %@ e depois importe esse login para cá. Ou escolha outra forma de entrar (como “Tentar de outra maneira” no Google) e depois use o botão da chave para preencher sua senha com seu gerenciador de senhas."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключи доступа пока недоступны в браузере Coincide. Войдите с ключом доступа в %@, а затем импортируйте этот вход сюда. Или выберите другой способ входа (например, «Другой способ» в Google), а затем нажмите кнопку с ключом, чтобы заполнить пароль из менеджера паролей."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçiş anahtarları Coincide’ın tarayıcısında henüz kullanılamıyor. %@ uygulamasında geçiş anahtarınızla oturum açın, ardından bu oturumu buraya aktarın. Ya da başka bir oturum açma yöntemi seçin (Google’da “Başka bir yol deneyin” gibi), ardından parolanızı parola yöneticinizden doldurmak için anahtar düğmesini kullanın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключі доступу поки недоступні в браузері Coincide. Увійдіть за допомогою ключа доступу в %@, а потім імпортуйте цей вхід сюди. Або виберіть інший спосіб входу (наприклад, «Інший спосіб» у Google), а потім натисніть кнопку з ключем, щоб заповнити пароль із менеджера паролів."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình duyệt của Coincide chưa hỗ trợ khóa truy cập. Hãy đăng nhập bằng khóa truy cập trong %@, rồi nhập lần đăng nhập đó vào đây. Hoặc chọn cách đăng nhập khác (như “Thử cách khác” trên Google), rồi dùng nút chìa khóa để điền mật khẩu từ trình quản lý mật khẩu của bạn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 的浏览器暂不支持通行密钥。请在 %@ 中用通行密钥登录，然后将该登录状态导入到这里。或者选择其他登录方式（例如 Google 上的“尝试其他方式”），然后使用钥匙按钮从密码管理器填充密码。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 的瀏覽器尚不支援通行密鑰。請在 %@ 中用通行密鑰登入，然後將該登入狀態匯入到這裡。或者選擇其他登入方式（例如 Google 上的「嘗試其他方式」），然後使用鑰匙按鈕從密碼管理工具填入密碼。"
+          }
+        }
+      }
+    },
+    "Passkeys aren’t available in Coincide’s browser yet. Sign in with your passkey in your browser, then import that sign-in here. Or choose another way to sign in (like “Try another way” on Google), then use the key button to fill your password from your password manager." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passkeys sind im Browser von Coincide noch nicht verfügbar. Melde dich in deinem Browser mit deinem Passkey an und importiere diese Anmeldung dann hierher. Oder wähle eine andere Anmeldemethode (etwa „Andere Option wählen“ bei Google) und fülle dann mit der Schlüsseltaste dein Passwort aus deinem Passwortmanager aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las llaves de acceso aún no están disponibles en el navegador de Coincide. Inicia sesión con tu llave de acceso en tu navegador y luego importa aquí ese inicio de sesión. O elige otra forma de iniciar sesión (como «Probar otra manera» en Google) y luego usa el botón de la llave para rellenar tu contraseña desde tu gestor de contraseñas."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las llaves de acceso aún no están disponibles en el navegador de Coincide. Inicia sesión con tu llave de acceso en tu navegador y luego importa aquí ese inicio de sesión. O elige otra forma de iniciar sesión (como “Probar otra manera” en Google) y luego usa el botón de la llave para rellenar tu contraseña desde tu gestor de contraseñas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les clés d’identification ne sont pas encore disponibles dans le navigateur de Coincide. Connectez-vous avec votre clé d’identification dans votre navigateur, puis importez cette connexion ici. Ou choisissez une autre méthode de connexion (comme « Essayer une autre méthode » sur Google), puis utilisez le bouton en forme de clé pour remplir votre mot de passe depuis votre gestionnaire de mots de passe."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide के ब्राउज़र में पासकी अभी उपलब्ध नहीं हैं। अपने ब्राउज़र में अपनी पासकी से साइन इन करें, फिर वह साइन-इन यहां इम्पोर्ट करें। या साइन इन करने का कोई दूसरा तरीका चुनें (जैसे Google पर “दूसरा तरीका आज़माएं”), फिर अपने पासवर्ड मैनेजर से पासवर्ड भरने के लिए चाबी वाला बटन इस्तेमाल करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kunci sandi belum tersedia di browser Coincide. Masuk dengan kunci sandi Anda di browser Anda, lalu impor login tersebut ke sini. Atau pilih cara lain untuk masuk (seperti “Coba cara lain” di Google), lalu gunakan tombol kunci untuk mengisi kata sandi dari pengelola kata sandi Anda."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le passkey non sono ancora disponibili nel browser di Coincide. Accedi con la tua passkey nel tuo browser, poi importa qui quell’accesso. Oppure scegli un altro modo per accedere (come “Prova un altro metodo” su Google), poi usa il pulsante con la chiave per compilare la password dal tuo gestore di password."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide のブラウザではまだパスキーを使用できません。お使いのブラウザでパスキーを使ってサインインしてから、そのサインインをここに読み込んでください。または、別のサインイン方法（Google の「別の方法を試す」など）を選んでから、鍵ボタンでパスワードマネージャのパスワードを入力してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 브라우저에서는 아직 패스키를 사용할 수 없습니다. 사용 중인 브라우저에서 패스키로 로그인한 다음 그 로그인을 여기로 가져오세요. 또는 다른 로그인 방법(Google의 ‘다른 방법 시도’ 등)을 선택한 다음 열쇠 버튼으로 암호 관리자의 암호를 채우세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegangssleutels zijn nog niet beschikbaar in de browser van Coincide. Log in met je toegangssleutel in je browser en importeer die aanmelding daarna hier. Of kies een andere manier om in te loggen (zoals ‘Andere manier proberen’ bij Google) en gebruik daarna de sleutelknop om je wachtwoord uit je wachtwoordbeheerder in te vullen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klucze dostępu nie są jeszcze dostępne w przeglądarce Coincide. Zaloguj się kluczem dostępu w swojej przeglądarce, a potem zaimportuj tutaj to logowanie. Możesz też wybrać inny sposób logowania (np. „Wypróbuj inny sposób” w Google), a następnie użyć przycisku z kluczem, aby wypełnić hasło z menedżera haseł."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As chaves de acesso ainda não estão disponíveis no navegador do Coincide. Entre com sua chave de acesso no seu navegador e depois importe esse login para cá. Ou escolha outra forma de entrar (como “Tentar de outra maneira” no Google) e depois use o botão da chave para preencher sua senha com seu gerenciador de senhas."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключи доступа пока недоступны в браузере Coincide. Войдите с ключом доступа в своём браузере, а затем импортируйте этот вход сюда. Или выберите другой способ входа (например, «Другой способ» в Google), а затем нажмите кнопку с ключом, чтобы заполнить пароль из менеджера паролей."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçiş anahtarları Coincide’ın tarayıcısında henüz kullanılamıyor. Tarayıcınızda geçiş anahtarınızla oturum açın, ardından bu oturumu buraya aktarın. Ya da başka bir oturum açma yöntemi seçin (Google’da “Başka bir yol deneyin” gibi), ardından parolanızı parola yöneticinizden doldurmak için anahtar düğmesini kullanın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ключі доступу поки недоступні в браузері Coincide. Увійдіть за допомогою ключа доступу у своєму браузері, а потім імпортуйте цей вхід сюди. Або виберіть інший спосіб входу (наприклад, «Інший спосіб» у Google), а потім натисніть кнопку з ключем, щоб заповнити пароль із менеджера паролів."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trình duyệt của Coincide chưa hỗ trợ khóa truy cập. Hãy đăng nhập bằng khóa truy cập trong trình duyệt của bạn, rồi nhập lần đăng nhập đó vào đây. Hoặc chọn cách đăng nhập khác (như “Thử cách khác” trên Google), rồi dùng nút chìa khóa để điền mật khẩu từ trình quản lý mật khẩu của bạn."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 的浏览器暂不支持通行密钥。请在你的浏览器中用通行密钥登录，然后将该登录状态导入到这里。或者选择其他登录方式（例如 Google 上的“尝试其他方式”），然后使用钥匙按钮从密码管理器填充密码。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 的瀏覽器尚不支援通行密鑰。請在你的瀏覽器中用通行密鑰登入，然後將該登入狀態匯入到這裡。或者選擇其他登入方式（例如 Google 上的「嘗試其他方式」），然後使用鑰匙按鈕從密碼管理工具填入密碼。"
           }
         }
       }
@@ -278841,6 +280098,354 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "已登入為 %1$@。%2$@讀取。"
+          }
+        }
+      }
+    },
+    "Signed in to %@ in %@? Import that sign-in to use it here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In %2$@ bei %1$@ angemeldet? Importiere diese Anmeldung, um sie hier zu nutzen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Signed in to %1$@ in %2$@? Import that sign-in to use it here."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Has iniciado sesión en %1$@ en %2$@? Importa ese inicio de sesión para usarlo aquí."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciaste sesión en %1$@ en %2$@? Importa ese inicio de sesión para usarlo aquí."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connecté à %1$@ dans %2$@ ? Importez cette connexion pour l’utiliser ici."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ में %1$@ पर साइन इन कर लिया? उस साइन-इन को यहां इस्तेमाल करने के लिए इम्पोर्ट करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sudah masuk ke %1$@ di %2$@? Impor login tersebut untuk menggunakannya di sini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hai effettuato l’accesso a %1$@ in %2$@? Importa quell’accesso per usarlo qui."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ で %1$@ にサインインしましたか？そのサインインを読み込むと、ここで使用できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@에서 %1$@에 로그인했나요? 그 로그인을 가져와 여기에서 사용하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ingelogd op %1$@ in %2$@? Importeer die aanmelding om haar hier te gebruiken."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalogowano się na stronie %1$@ w przeglądarce %2$@? Zaimportuj to logowanie, aby używać go tutaj."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrou em %1$@ no %2$@? Importe esse login para usá-lo aqui."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вошли на %1$@ в %2$@? Импортируйте этот вход, чтобы пользоваться им здесь."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ uygulamasında %1$@ sitesinde oturum açtınız mı? Burada kullanmak için bu oturumu içe aktarın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійшли на %1$@ у %2$@? Імпортуйте цей вхід, щоб користуватися ним тут."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã đăng nhập %1$@ trong %2$@? Hãy nhập lần đăng nhập đó để dùng tại đây."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在 %2$@ 中登录 %1$@？导入该登录状态即可在这里使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在 %2$@ 中登入 %1$@？匯入該登入狀態即可在這裡使用。"
+          }
+        }
+      }
+    },
+    "Signed in to %@ in %@? Wait half a minute for it to save the sign-in, then import it here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In %2$@ bei %1$@ angemeldet? Warte eine halbe Minute, bis die Anmeldung gespeichert ist, und importiere sie dann hierher."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Signed in to %1$@ in %2$@? Wait half a minute for it to save the sign-in, then import it here."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Has iniciado sesión en %1$@ en %2$@? Espera medio minuto a que guarde el inicio de sesión y luego impórtalo aquí."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciaste sesión en %1$@ en %2$@? Espera medio minuto a que guarde el inicio de sesión y luego impórtalo aquí."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connecté à %1$@ dans %2$@ ? Attendez une demi-minute qu’il enregistre la connexion, puis importez-la ici."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ में %1$@ पर साइन इन कर लिया? साइन-इन सहेजे जाने के लिए आधा मिनट रुकें, फिर उसे यहां इम्पोर्ट करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sudah masuk ke %1$@ di %2$@? Tunggu setengah menit sampai login tersimpan, lalu impor ke sini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hai effettuato l’accesso a %1$@ in %2$@? Aspetta mezzo minuto che salvi l’accesso, poi importalo qui."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ で %1$@ にサインインしましたか？サインインが保存されるまで30秒ほど待ってから、ここに読み込んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@에서 %1$@에 로그인했나요? 로그인이 저장되도록 30초 정도 기다린 다음 여기로 가져오세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ingelogd op %1$@ in %2$@? Wacht een halve minuut tot de aanmelding is bewaard en importeer haar daarna hier."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalogowano się na stronie %1$@ w przeglądarce %2$@? Odczekaj pół minuty, aż zapisze logowanie, a potem zaimportuj je tutaj."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrou em %1$@ no %2$@? Espere meio minuto para ele salvar o login e depois importe-o para cá."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вошли на %1$@ в %2$@? Подождите полминуты, пока браузер сохранит вход, а затем импортируйте его сюда."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$@ uygulamasında %1$@ sitesinde oturum açtınız mı? Oturumu kaydetmesi için yarım dakika bekleyin, ardından buraya aktarın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійшли на %1$@ у %2$@? Зачекайте пів хвилини, поки браузер збереже вхід, а потім імпортуйте його сюди."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã đăng nhập %1$@ trong %2$@? Hãy đợi nửa phút để trình duyệt lưu lần đăng nhập, rồi nhập vào đây."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在 %2$@ 中登录 %1$@？请等待半分钟让它保存登录状态，然后导入到这里。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在 %2$@ 中登入 %1$@？請等待半分鐘讓它儲存登入狀態，然後匯入到這裡。"
+          }
+        }
+      }
+    },
+    "Signed in to %@ in your browser? Import that sign-in to use it here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In deinem Browser bei %@ angemeldet? Importiere diese Anmeldung, um sie hier zu nutzen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Has iniciado sesión en %@ en tu navegador? Importa ese inicio de sesión para usarlo aquí."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciaste sesión en %@ en tu navegador? Importa ese inicio de sesión para usarlo aquí."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connecté à %@ dans votre navigateur ? Importez cette connexion pour l’utiliser ici."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अपने ब्राउज़र में %@ पर साइन इन कर लिया? उस साइन-इन को यहां इस्तेमाल करने के लिए इम्पोर्ट करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sudah masuk ke %@ di browser Anda? Impor login tersebut untuk menggunakannya di sini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hai effettuato l’accesso a %@ nel tuo browser? Importa quell’accesso per usarlo qui."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ブラウザで %@ にサインインしましたか？そのサインインを読み込むと、ここで使用できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "브라우저에서 %@에 로그인했나요? 그 로그인을 가져와 여기에서 사용하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ingelogd op %@ in je browser? Importeer die aanmelding om haar hier te gebruiken."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalogowano się na stronie %@ w przeglądarce? Zaimportuj to logowanie, aby używać go tutaj."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrou em %@ no seu navegador? Importe esse login para usá-lo aqui."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вошли на %@ в своём браузере? Импортируйте этот вход, чтобы пользоваться им здесь."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tarayıcınızda %@ sitesinde oturum açtınız mı? Burada kullanmak için bu oturumu içe aktarın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійшли на %@ у своєму браузері? Імпортуйте цей вхід, щоб користуватися ним тут."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đã đăng nhập %@ trong trình duyệt của bạn? Hãy nhập lần đăng nhập đó để dùng tại đây."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在你的浏览器中登录 %@？导入该登录状态即可在这里使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已在你的瀏覽器中登入 %@？匯入該登入狀態即可在這裡使用。"
           }
         }
       }
@@ -360511,6 +362116,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "macOS 保護 %@ 的資料，只有你能允許 Coincide 讀取：macOS 不允許 App 自行開啟完整磁碟取用權限。Coincide 會為你打開該列表；將 Coincide 拖進去並開啟它。如果 macOS 提示「結束並重新打開」，請選擇它，此視窗會重新出現。"
+          }
+        }
+      }
+    },
+    "macOS protects %@’s data, so Coincide needs Full Disk Access to import your sign-in from it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS schützt die Daten von %@, daher braucht Coincide Festplattenvollzugriff, um deine Anmeldung daraus zu importieren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protege los datos de %@, así que Coincide necesita acceso total al disco para importar tu inicio de sesión desde él."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protege los datos de %@, así que Coincide necesita acceso total al disco para importar tu inicio de sesión desde él."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protège les données de %@, Coincide a donc besoin de l’accès complet au disque pour en importer votre connexion."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS %@ के डेटा की सुरक्षा करता है, इसलिए उससे आपका साइन-इन इम्पोर्ट करने के लिए Coincide को फ़ुल डिस्क एक्सेस चाहिए।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS melindungi data %@, jadi Coincide memerlukan Akses Disk Penuh untuk mengimpor login Anda darinya."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS protegge i dati di %@, quindi Coincide ha bisogno dell’accesso completo al disco per importarne il tuo accesso."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS は %@ のデータを保護しているため、そこからサインインを読み込むには Coincide にフルディスクアクセスが必要です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS가 %@의 데이터를 보호하므로 거기에서 로그인을 가져오려면 Coincide에 전체 디스크 접근 권한이 필요합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS beschermt de gegevens van %@, dus Coincide heeft volledige schijftoegang nodig om je aanmelding eruit te importeren."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS chroni dane przeglądarki %@, więc Coincide potrzebuje pełnego dostępu do dysku, aby zaimportować z niej logowanie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O macOS protege os dados do %@, então o Coincide precisa de Acesso Total ao Disco para importar seu login dele."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS защищает данные %@, поэтому Coincide нужен полный доступ к диску, чтобы импортировать оттуда ваш вход."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS, %@ verilerini korur; bu yüzden Coincide’ın oturumunuzu oradan içe aktarması için Tam Disk Erişimi gerekir."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS захищає дані %@, тому Coincide потрібен повний доступ до диска, щоб імпортувати звідти ваш вхід."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS bảo vệ dữ liệu của %@, nên Coincide cần Truy cập toàn bộ ổ đĩa để nhập lần đăng nhập của bạn từ đó."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS 保护 %@ 的数据，因此 Coincide 需要完全磁盘访问权限才能从中导入你的登录状态。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS 保護 %@ 的資料，因此 Coincide 需要完整磁碟取用權限才能從中匯入你的登入狀態。"
           }
         }
       }

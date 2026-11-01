@@ -264,6 +264,8 @@ final class PreviewSession: NSObject {
     let passkeys: PasskeySupport
     /// "Passkeys aren't available" for the tab whose page asked for one.
     private(set) var passkeyNotice = PasskeyNoticeState()
+    /// The notice's ways around it: the user's own browser and the import back. Tests replace it.
+    let passkeyHandoff: PasskeyHandoffServices
     /// The agent's open "your turn" request, shown as a banner in the panel.
     let userTurn = UserTurnGate()
     /// An agent's request to sign in with a saved login, waiting on the user.
@@ -291,12 +293,13 @@ final class PreviewSession: NSObject {
     }
 
     init(dataStore: WKWebsiteDataStore, isPrivate: Bool, restoring state: BrowserTabsState? = nil,
-        passkeys: PasskeySupport = .current, warningStore: AppStore = .shared,
+        passkeys: PasskeySupport = .current, passkeyHandoff: PasskeyHandoffServices = .live, warningStore: AppStore = .shared,
         downloadDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads/Coincide", isDirectory: true)) {
         self.downloadDirectory = downloadDirectory
         self.isPrivate = isPrivate
         self.dataStore = dataStore
         self.passkeys = passkeys
+        self.passkeyHandoff = passkeyHandoff
         self.warningStore = warningStore
         super.init()
         let state = state ?? BrowserTabsState(urls: [""], selected: 0)
@@ -425,15 +428,62 @@ final class PreviewSession: NSObject {
         else { return }
         tab.passkeyRequested = true
         guard !warningStore.isWarningDismissed(WarningDismissalKey.passkeysUnavailable) else { return }
-        if passkeyNotice.requested(tabID: tab.id, host: host) { onChange?() }
+        if passkeyNotice.requested(tabID: tab.id, host: host, browser: passkeyHandoff.defaultBrowser()) { onChange?() }
     }
 
+    /// The notice's ×. Once a sign-in was imported it only closes the confirmation, so the next site's notice still
+    /// offers the way around; before that it acknowledges the limitation for good.
     func dismissPasskeyNotice() {
-        guard passkeyNotice.notice != nil else { return }
+        guard let notice = passkeyNotice.notice else { return }
         passkeyNotice.dismiss()
         // This is the same app capability warning on every site. Persist no browsing-domain history.
-        warningStore.dismissWarning(WarningDismissalKey.passkeysUnavailable)
+        if notice.stage != .imported { warningStore.dismissWarning(WarningDismissalKey.passkeysUnavailable) }
         onChange?()
+    }
+
+    /// "Open in <Browser>": the notice's page in the browser it names, where the user's passkey works. Importing the
+    /// sign-in made there is offered next.
+    func openPasskeyPageInBrowser() {
+        guard let notice = passkeyNotice.notice, let url = tab(notice.tabID)?.url,
+            ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+        else { return }
+        passkeyHandoff.open(url, notice.browser)
+        if passkeyNotice.openedElsewhere() { onChange?() }
+    }
+
+    /// "Import Sign-In": the site's cookies from the browser the page was opened in, through the browser import, into
+    /// this browser's storage (the shared profile, or a private browser's own), then the page reloads. A browser
+    /// Coincide can't import from by itself gets Settings' import instead, where the user picks one.
+    func importPasskeySignIn() {
+        // Nothing to bring back before the page was opened elsewhere.
+        guard let notice = passkeyNotice.notice, notice.stage != .unavailable else { return }
+        guard let definition = notice.browser?.importable else {
+            passkeyHandoff.showImport()
+            return
+        }
+        guard passkeyNotice.importStarted() else { return }
+        onChange?()
+        let handoff = passkeyHandoff, store = dataStore
+        Task { [weak self] in
+            var failure: PasskeyNoticeState.ImportFailure?
+            switch await handoff.readSignIn(notice.site, definition) {
+            case .found(let cookies):
+                // WebKit refuses only malformed cookies; none accepted means nothing usable was read.
+                if await BrowserProfile.importCookies(cookies, into: store) == 0 { failure = .problem(.unreadable) }
+            case .nothingFound: failure = .nothingFound
+            case .problem(let reason): failure = .problem(reason)
+            }
+            guard let self, self.passkeyNotice.importFinished(tabID: notice.tabID, site: notice.site, failure: failure) else { return }
+            if failure == nil { self.tab(notice.tabID)?.webView?.reload() }
+            self.onChange?()
+        }
+    }
+
+    /// "Allow Full Disk Access…" after the import was refused: System Settings opens, and the import is offered again
+    /// for when the user is back.
+    func allowFullDiskAccessForPasskeyImport() {
+        passkeyHandoff.requestFullDiskAccess()
+        if passkeyNotice.offerImport() { onChange?() }
     }
 
     /// The notice for the tab shown in the panel, if any.

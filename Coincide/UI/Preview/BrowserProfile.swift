@@ -69,7 +69,13 @@ final class BrowserProfile {
 
     /// Adds imported cookies to the shared profile. Returns how many WebKit accepted.
     func importCookies(_ cookies: [ImportedCookie]) async -> Int {
-        let store = sharedDataStore.httpCookieStore
+        await Self.importCookies(cookies, into: sharedDataStore)
+    }
+
+    /// Adds imported cookies to `store`: the shared profile, or a private thread browser's own storage. Returns how
+    /// many WebKit accepted.
+    static func importCookies(_ cookies: [ImportedCookie], into dataStore: WKWebsiteDataStore) async -> Int {
+        let store = dataStore.httpCookieStore
         var count = 0
         for cookie in cookies {
             guard let httpCookie = cookie.httpCookie else { continue }
