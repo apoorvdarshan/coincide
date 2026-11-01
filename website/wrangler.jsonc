@@ -4,7 +4,8 @@
   "name": "coincide-website",
   "compatibility_date": "2026-11-01",
   "assets": {
-    "directory": "./public"
+    "directory": "./public",
+    "html_handling": "drop-trailing-slash"
   },
   "routes": [
     { "pattern": "coincide.dev", "custom_domain": true },
