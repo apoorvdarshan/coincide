@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Privacy Policy · Coincide</title>
+<meta name="description" content="How Coincide, Coincide Remote, coincide.dev and the Coincide Discord bot handle your information: what stays on your Mac, what your agents send to their providers, and every other service involved.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/privacy">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:url" content="https://coincide.dev/privacy">
+<meta property="og:title" content="Coincide Privacy Policy">
+<meta property="og:description" content="What stays on your Mac, what your agents send to their providers, and every other service involved.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png">
+<link rel="apple-touch-icon" href="/img/icon-tight.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --night: #0A0D24;
+    --plate: #121636;
+    --silver: #DCD8CF;
+    --ash: #8E92AE;
+    --faint: #555A7A;
+    --signal: #3E5BFF;
+    --signal-hi: #93A6FF;
+    --rule: rgba(220,216,207,.1);
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --pad: clamp(18px, 5vw, 64px);
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--night); -webkit-text-size-adjust: 100%; scroll-padding-top: 24px; }
+  body { margin: 0; color: var(--silver); font: 400 17px/1.65 var(--display); font-optical-sizing: auto; -webkit-font-smoothing: antialiased; }
+  a { color: var(--signal-hi); text-decoration: underline; text-decoration-color: rgba(147,166,255,.4); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: currentColor; }
+  ::selection { background: var(--signal); color: #fff; }
+  :focus-visible { outline: 2px solid var(--signal-hi); outline-offset: 3px; border-radius: 6px; }
+  .skip { position: absolute; left: -9999px; }
+  .skip:focus { left: 16px; top: 12px; z-index: 10; padding: 8px 14px; border-radius: 999px; background: var(--silver); color: var(--night); text-decoration: none; }
+
+  .top { display: flex; align-items: center; gap: 24px; max-width: 1280px; margin: 0 auto; padding: 22px var(--pad); }
+  .brand { display: flex; align-items: center; gap: 11px; color: var(--silver); font-weight: 650; font-size: 18px; letter-spacing: -.01em; text-decoration: none; }
+  .brand img { width: 30px; height: 30px; }
+  .top nav { display: flex; gap: 22px; margin-left: auto; font-size: 15px; }
+  .top nav a { color: var(--ash); text-decoration: none; transition: color .2s; }
+  .top nav a:hover, .top nav a[aria-current="page"] { color: var(--silver); }
+
+  main { max-width: calc(720px + 2 * var(--pad)); margin: 0 auto; padding: clamp(24px, 6vw, 64px) var(--pad) clamp(64px, 9vw, 112px); }
+  .eyebrow { margin: 0 0 14px; color: var(--signal-hi); font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  h1 { margin: 0; font: 700 clamp(40px, 8vw, 68px)/.95 var(--display); letter-spacing: -.045em; font-variation-settings: "opsz" 96; text-wrap: balance; }
+  .updated { margin: 18px 0 0; color: var(--ash); font: 13px/1.5 var(--mono); }
+  .intro { margin: 32px 0 0; font-size: 19px; line-height: 1.6; }
+  h2 { margin: 64px 0 0; padding-top: 28px; border-top: 1px solid var(--rule); font: 650 clamp(24px, 3.4vw, 30px)/1.15 var(--display); letter-spacing: -.025em; text-wrap: balance; }
+  h3 { margin: 32px 0 0; font: 600 18px/1.3 var(--display); letter-spacing: -.01em; color: #F2EFE8; }
+  p, ul, ol, pre { margin: 14px 0 0; }
+  ul, ol { padding-left: 1.25em; }
+  li { margin: 8px 0 0; }
+  li::marker { color: var(--faint); }
+  strong { font-weight: 600; color: #F2EFE8; }
+  code { font: 500 .84em/1.4 var(--mono); padding: .12em .42em; border-radius: 6px; background: var(--plate); border: 1px solid var(--rule); overflow-wrap: anywhere; }
+  pre { overflow-x: auto; padding: 14px 16px; border-radius: 12px; background: var(--plate); border: 1px solid var(--rule); }
+  pre code { padding: 0; border: 0; background: none; font-size: 13.5px; overflow-wrap: normal; }
+  .note { color: var(--ash); }
+
+  .summary { margin: 36px 0 0; padding: 22px 26px 24px; border-radius: 18px; background: var(--plate); border: 1px solid var(--rule); }
+  .summary h2 { margin: 0; padding: 0; border: 0; font-size: 20px; letter-spacing: -.01em; }
+  .summary ul { margin-top: 10px; }
+  .toc { margin: 40px 0 0; }
+  .toc p { margin: 0; color: var(--ash); font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  .toc ol { margin: 14px 0 0; columns: 2; column-gap: 36px; font-size: 15px; }
+  .toc li { margin: 0 0 6px; break-inside: avoid; }
+  .toc a { color: var(--silver); text-decoration-color: var(--rule); }
+  .toc a:hover { color: #fff; text-decoration-color: currentColor; }
+
+  footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px; max-width: 1280px; margin: 0 auto; padding: 26px var(--pad) calc(40px + env(safe-area-inset-bottom)); border-top: 1px solid var(--rule); color: var(--faint); font: 13px var(--mono); }
+  footer a { color: inherit; text-decoration: none; transition: color .2s; }
+  footer a:hover { color: var(--silver); }
+  footer .links { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+
+  @media (max-width: 600px) {
+    body { font-size: 16.5px; }
+    .intro { font-size: 18px; }
+    .toc ol { columns: 1; }
+    .summary { padding: 20px 20px 22px; }
+  }
+  @media (max-width: 380px) { .top { gap: 14px; } .top nav { gap: 14px; font-size: 14px; } }
+  @media print {
+    html, body { background: #fff; color: #000; }
+    .top nav, .skip, .toc { display: none; }
+    a { color: #000; }
+    .summary, code, pre { background: none; border-color: #ccc; }
+    h3, strong { color: #000; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+  <nav aria-label="Legal"><a href="/privacy" aria-current="page">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+</header>
+
+<main id="content">
+  <p class="eyebrow">Legal</p>
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated: <time datetime="2026-11-01">November 1, 2026</time></p>
+
+  <p class="intro">Coincide is a free, open-source Mac app that runs the coding agents you already use in one window. This policy explains what happens to your information when you use the Coincide Mac app, Coincide Remote (its iPhone and iPad companion, coming soon), the coincide.dev website, and the Coincide Discord community and its bot, Janus. Coincide is made by Apoorv Darshan (“we”, “us”). Its <a href="https://github.com/apoorvdarshan/coincide">source code is public</a>, so you can check every network request described here.</p>
+
+  <section class="summary" aria-labelledby="short">
+    <h2 id="short">The short version</h2>
+    <ul>
+      <li>There’s no Coincide account, and Coincide’s own code has no ads, analytics or tracking. The app doesn’t send your conversations, code, files or settings to us, and there’s no Coincide server it talks to.</li>
+      <li>Your agents send your messages, and what they read or capture for you, to their own providers, under your accounts and those providers’ terms.</li>
+      <li>Coincide keeps its data on your Mac. Some features contact other services directly; each one is listed below.</li>
+      <li>Computer Use, which is off by default, runs a bundled helper from Cua AI that sends content-free usage telemetry to Cua AI unless you turn it off.</li>
+      <li>Coincide Remote connects straight to your Mac over your own network or Tailscale. There’s no relay in between.</li>
+      <li>In Discord, <code>/bug</code> and <code>/feature</code> reports become public GitHub issues, and Janus sends questions and reports to Google Gemini.</li>
+      <li>We don’t sell or rent personal information, and we don’t use it for advertising.</li>
+    </ul>
+  </section>
+
+  <nav class="toc" aria-label="On this page">
+    <p>On this page</p>
+    <ol>
+      <li><a href="#agents">Your agents and their providers</a></li>
+      <li><a href="#on-your-mac">What stays on your Mac</a></li>
+      <li><a href="#connections">Other connections the app makes</a></li>
+      <li><a href="#browser">The browser and saved sign-ins</a></li>
+      <li><a href="#computer-use">Computer Use</a></li>
+      <li><a href="#local">Permissions and local helpers</a></li>
+      <li><a href="#remote">Coincide Remote</a></li>
+      <li><a href="#website">The website</a></li>
+      <li><a href="#discord">Discord and Janus</a></li>
+      <li><a href="#github-email">GitHub and email</a></li>
+      <li><a href="#sharing">Who receives information</a></li>
+      <li><a href="#security">Security</a></li>
+      <li><a href="#children">Children</a></li>
+      <li><a href="#choices">Your choices</a></li>
+      <li><a href="#changes">Changes and contact</a></li>
+    </ol>
+  </nav>
+
+  <section aria-labelledby="agents">
+    <h2 id="agents">Your agents and their providers</h2>
+    <p>Coincide doesn’t provide AI models. It starts each agent’s own command-line tool (Claude Code, Codex, Cursor, Grok Build, OpenCode or Antigravity) with the sign-in or API key you set up, and that tool talks to its provider, such as Anthropic, OpenAI, Cursor, xAI, OpenCode or Google, or whichever service you set an account to use.</p>
+    <p>What reaches the provider depends on the agent and on what you ask it to do. It typically includes your messages and attachments, files and command output the agent reads, and pages or screenshots it takes in Coincide’s browser or with Computer Use. Coincide itself also gives agents some text:</p>
+    <ul>
+      <li><strong>Thread titles.</strong> Unless you turn this off, Coincide asks a thread’s agent to name it, sending the current title and a few hundred characters of the conversation.</li>
+      <li><strong>Switching agents.</strong> When you switch agents in a thread, the next agent gets a recap of the turns it missed.</li>
+      <li><strong>Git.</strong> When Coincide writes a commit message or pull request description for you, an agent writes it from your changes.</li>
+      <li><strong>Bots.</strong> A bot’s personality and instructions go to its agent at the start of each session.</li>
+    </ul>
+    <p>Each provider handles this under its own terms and privacy policy. Coincide never proxies, stores on a server, sells or meters your tokens. The agent tools also keep their own files on your Mac (such as <code>~/.claude</code> or <code>~/.codex</code>), which Coincide doesn’t control.</p>
+  </section>
+
+  <section aria-labelledby="on-your-mac">
+    <h2 id="on-your-mac">What stays on your Mac</h2>
+    <p>Coincide keeps its data on your Mac, here:</p>
+    <ul>
+      <li><code>~/Library/Application Support/Coincide</code> (or the folder set in <code>COINCIDE_DATA_DIR</code>): projects, threads and transcripts, attachments, bots, settings, checkpoints, usage history (the latest 10,000 finished turns), the background agent host’s event logs, sign-in folders for extra agent accounts you add, exact copies of CLI sessions you import, browser history and bookmarks, the list of logins you save (without their passwords), and Coincide Remote settings.</li>
+      <li>Your login <strong>Keychain</strong>: API keys you add for agents and dictation, passwords and one-time-code secrets for logins you save, your Bitwarden session if you connect Bitwarden, Coincide Remote’s certificate and key, and a hash of each paired device’s token.</li>
+      <li><code>~/Library/WebKit</code>: the browser’s shared profile, with its cookies and site data.</li>
+      <li><code>~/Library/Caches/com.apoorvdarshan.coincide</code>: app updates while they’re downloaded and checked.</li>
+      <li><code>~/Downloads/Coincide</code>: files downloaded in Coincide’s browser.</li>
+    </ul>
+    <p>Whisper models you download also stay on your Mac. Deleting these folders and Keychain items removes Coincide’s data; Settings › Browser can also clear browsing data. Your own backups, such as Time Machine, may include them.</p>
+  </section>
+
+  <section aria-labelledby="connections">
+    <h2 id="connections">Other connections the app makes</h2>
+    <p>Apart from your agents, Coincide connects to other services only for these features. None of them sends anything to us.</p>
+    <h3>Update checks</h3>
+    <p>When you choose Check for Updates, or once a day if you turn on automatic checks (off by default), Coincide asks GitHub’s public Releases API for the latest version. Downloading an update fetches it from GitHub. As with any request, GitHub sees your IP address.</p>
+    <h3>Usage limits</h3>
+    <p>To show how much of your plans you’ve used, Coincide asks Claude Code and Codex through their own tools, and calls Cursor, xAI (Grok Build), OpenCode, Google’s Cloud Code service (Antigravity) and OpenRouter directly, with the sign-in or key that agent already keeps on your Mac. The credential goes only in a request header to that provider’s own address. Coincide reads Cursor’s sign-in from the Keychain only if you allow it in Settings. Anthropic API-key rate limits are read only when you ask, with a one-token request on that key. If you add an Anthropic Admin API key, Coincide reads your organization’s usage and cost reports from Anthropic.</p>
+    <h3>Usage from provider websites (off by default)</h3>
+    <p>If you turn these on in Settings › Usage, Coincide reads Codex credit details from chatgpt.com and your prepaid API credit balance from the Claude Console (platform.claude.com), using your sign-in in Coincide’s browser. The cookies are sent only to their own site.</p>
+    <h3>Antigravity setup</h3>
+    <p>Setting up Antigravity downloads Google’s Antigravity runtime from Google, checked against pinned checksums and Google’s signature, and signs you in with Google in your browser.</p>
+    <h3>Dictation</h3>
+    <p>By default, dictation uses Apple’s speech recognition on your Mac, and your audio stays on your Mac (macOS may first download the language’s speech files from Apple). If you download a Whisper model in Settings › Voice, it comes from Hugging Face and then runs on your Mac. If you choose OpenAI or Groq and add your own API key, your recording is sent to that provider to be transcribed. Recordings are held in memory only while they’re transcribed.</p>
+    <h3>Browsing</h3>
+    <p>Pages you or your agents open load from their sites, as in any browser, under those sites’ policies. Searches from the address bar go to the search engine you pick (Google by default). Images and media an agent links to in a reply load from their sites, without cookies.</p>
+    <h3>Git, password managers and sync</h3>
+    <ul>
+      <li>Pushing, pulling and pull requests use git and each host’s own command-line tool (such as <code>gh</code>) or web page, signed in as you.</li>
+      <li>If you connect 1Password or Bitwarden, Coincide uses their own command-line tools, which talk to their services.</li>
+      <li>If you choose to, Coincide keeps a copy of an instruction file in your iCloud Drive, or in a Git repository you pick and can push to its remote.</li>
+      <li>If you click to install an agent, Coincide opens Terminal and runs that agent’s official install command, which downloads from its maker.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="browser">
+    <h2 id="browser">The browser and saved sign-ins</h2>
+    <ul>
+      <li>Threads share one browser profile on your Mac, so sign-ins last across threads and relaunches. Settings › Browser offers private, per-thread sessions instead.</li>
+      <li>Importing cookies, history and bookmarks from other browsers happens entirely on your Mac; nothing imported leaves it. To read a Chromium browser’s cookies, macOS first asks you to allow access to that browser’s key in the Keychain.</li>
+      <li>Logins you save in Coincide are kept in your Keychain. Coincide can also fill sign-ins from 1Password or Bitwarden.</li>
+      <li>With Agent Control (on by default, per thread), an agent can open pages, read them, click, type and take screenshots. What it reads and captures goes to its provider. Agents can’t read cookies, site storage or password fields. If an agent asks Coincide to sign in, Coincide does it only after you allow that site, without showing the agent the password or one-time code.</li>
+      <li>Passkeys, where available, are handled by macOS.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="computer-use">
+    <h2 id="computer-use">Computer Use</h2>
+    <p>Computer Use is off by default. When you turn it on, agents can list apps and windows, read a window’s controls, click, type, scroll and take screenshots. Screenshots and window contents an agent reads go to its provider.</p>
+    <p>To do this, Coincide runs a bundled copy of <a href="https://github.com/trycua/cua">Cua Driver</a>, an open-source helper made by Cua AI, on your Mac. Cua Driver has telemetry of its own. Based on its source code, when the helper runs it sends content-free product telemetry to Cua AI through PostHog’s EU servers by default: event names (such as a session starting or a tool finishing), which tool ran and how it ended, rough timings, the Cua Driver and macOS versions, your processor type and a random installation ID it saves in <code>~/.cua-driver</code>. Cua AI’s code states that these events never include prompts, typed text, screenshots, accessibility data, app or window names, URLs or file paths. The helper can also check GitHub or cua.ai for a newer Cua Driver release.</p>
+    <p>To stop Cua Driver’s telemetry, run this in Terminal (adjust the path if Coincide isn’t in Applications):</p>
+    <pre><code>/Applications/Coincide.app/Contents/Helpers/cua-driver telemetry disable</code></pre>
+  </section>
+
+  <section aria-labelledby="local">
+    <h2 id="local">Permissions and local helpers</h2>
+    <ul>
+      <li>macOS asks before Coincide can use the microphone and speech recognition (dictation), the local network (Coincide Remote), and Accessibility, Screen Recording or Automation (Computer Use and Appshots).</li>
+      <li>Appshots (off by default) capture another app’s window into a chat when you press the shortcut, optionally with that window’s text. Like any attachment, it goes to the agent when you send it.</li>
+      <li>The <code>coincide</code> command-line tool talks to the app over a Unix socket that only your Mac user can open. You can turn it off in Settings › General.</li>
+      <li>Agents reach the browser, scheduled tasks and Computer Use through private connections on your Mac, each limited to their own thread.</li>
+      <li>Agents keep running in Coincide’s background agent host after you quit. It runs on your Mac and talks only to the app and the agents.</li>
+      <li>Keep Awake changes your power settings with <code>pmset</code> after asking for your password, and “Sleep normally on battery” adds a small helper that runs as root while that option is on. Neither sends anything anywhere.</li>
+      <li>Notifications on the Mac are ordinary local macOS notifications.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="remote">
+    <h2 id="remote">Coincide Remote</h2>
+    <p>Coincide Remote is the companion app for iPhone and iPad. Remote is off on the Mac until you turn it on in Settings.</p>
+    <ul>
+      <li><strong>How it connects.</strong> Your phone connects directly to Coincide on your Mac over your local network or your Tailscale network, using TLS 1.3. The Mac accepts connections only from local, private and Tailscale addresses. There’s no Coincide relay server or account.</li>
+      <li><strong>Pairing.</strong> You scan a one-time code that expires after five minutes. The phone pins your Mac’s certificate and keeps a random token in its Keychain; the Mac keeps only a hash of that token. While Remote is on, your Mac announces itself on the local network with Bonjour, under your Mac’s name.</li>
+      <li><strong>What a paired device can do.</strong> It can see and control much of what Coincide on that Mac can: projects, threads, messages and attachments, diffs and git actions, schedules, bots, usage and settings, and it can send messages to your agents. Photos and files you attach on the phone go to your Mac and, when you send them, to the agent’s provider. The phone tells the Mac whether it’s in use and which thread is open, so alerts go to the device you’re using.</li>
+      <li><strong>Permissions.</strong> Camera (to scan the pairing code and take photos you attach), photo library (photos you pick or save), microphone and speech recognition (dictation, using Apple’s recognition on the device), and local network.</li>
+      <li><strong>Lock-screen alerts (off by default).</strong> If you turn on “Notify this iPhone when it’s locked”, the Mac writes a short alert (the thread’s title, what happened and a detail line of up to 120 characters) to your own private iCloud database, and Apple delivers it as a push notification. We can’t read your private iCloud database. Coincide deletes each alert once you’ve seen its thread, and tries to remove any older than six hours.</li>
+      <li><strong>Apple.</strong> If you install Coincide Remote through TestFlight or the App Store, Apple may share crash reports and usage statistics with us, and for TestFlight your tester details and any feedback you send, as described in Apple’s terms and your device settings.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="website">
+    <h2 id="website">The website</h2>
+    <p>coincide.dev is a static site hosted on Cloudflare. It sets no cookies and runs no analytics or tracking scripts. Like any web host, Cloudflare processes your IP address and request details to deliver and protect the site, under <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare’s privacy policy</a>. The pages load fonts from Google Fonts, so your browser also contacts Google, which receives your IP address and browser details. Links to GitHub, Discord, X and Instagram take you to those services, under their own policies.</p>
+  </section>
+
+  <section aria-labelledby="discord">
+    <h2 id="discord">Discord and Janus</h2>
+    <p>The Coincide community lives on Discord, and <a href="https://discord.com/privacy">Discord’s privacy policy</a> covers your account and messages there. Janus is the server’s bot. It runs on Cloudflare Workers and answers slash commands only in the Coincide server.</p>
+    <h3>/ask</h3>
+    <p>Your question is sent to Google’s Gemini API to write an answer, which Janus posts in the channel. Janus sends only the question, not your name or ID, and doesn’t store it. Google handles it under its Gemini API terms.</p>
+    <h3>/bug and /feature</h3>
+    <p>Your report may be sent to Gemini to organize into a title and summary. Janus then opens a <strong>public</strong> issue in the <a href="https://github.com/apoorvdarshan/coincide/issues">apoorvdarshan/coincide</a> GitHub repository, with that summary and your original report quoted unchanged. Janus doesn’t add your Discord username or ID to the issue. Anyone can read it, so don’t include passwords, API keys, tokens, private code or personal information.</p>
+    <p>So it can tell you when your issue is closed, Janus privately stores the issue number with your Discord user ID, the channel ID and the ID of its reply, for up to two years. When the issue closes, it replies in that channel and mentions you. Notifications that can’t be delivered are retried for up to seven days.</p>
+    <h3>Cooldowns</h3>
+    <p>To limit how often commands run and to ignore repeated deliveries, Janus keeps short-lived records keyed by a hash of your Discord user ID: about a minute for <code>/ask</code>, and for reports the times of your recent reports, for up to two days.</p>
+    <h3>Spam moderation</h3>
+    <p>About once a minute, Janus checks new messages in the server’s channels and active threads for spam, using fixed rules on Cloudflare; no AI is involved. It stores Discord IDs, fingerprints (hashes) of recent messages, strike counts and times, but not message text. A member’s record becomes eligible for deletion after 30 days without a checked message, and strikes reset after 30 days without a new one. When Janus removes spam, it posts a warning in the channel and logs the outcome, with the user ID and a message link, in a private staff channel, where it stays until removed.</p>
+    <h3>Releases and logs</h3>
+    <p>Janus announces new public Coincide releases from GitHub, which involves no personal information. Cloudflare keeps operational logs of requests to the bot, which come from Discord and GitHub rather than from you; Janus’s own log lines record event and error types, not your messages.</p>
+  </section>
+
+  <section aria-labelledby="github-email">
+    <h2 id="github-email">GitHub and email</h2>
+    <p>Issues, pull requests and comments you post on GitHub are public and covered by GitHub’s privacy statement. Links in the app to report a bug open GitHub’s issue form in your browser and fill in only the versions of Coincide and your system; nothing is sent until you submit it. Please report security problems privately through <a href="https://github.com/apoorvdarshan/coincide/security/advisories/new">GitHub’s private vulnerability reporting</a>. If you email us, we use your message and address only to reply to you.</p>
+  </section>
+
+  <section aria-labelledby="sharing">
+    <h2 id="sharing">Who receives information</h2>
+    <p>We don’t sell, rent or trade personal information, and we don’t use it for advertising. Information reaches other parties only as described above:</p>
+    <ul>
+      <li>your agents’ providers;</li>
+      <li>Apple (iCloud, push notifications, speech files, TestFlight and the App Store);</li>
+      <li>GitHub (updates, issues and the git hosting you use);</li>
+      <li>Google (Fonts, Gemini for Janus, and Antigravity);</li>
+      <li>Cloudflare (the website and Janus) and Discord;</li>
+      <li>Hugging Face, OpenAI or Groq, for the dictation options you choose;</li>
+      <li>Cua AI, for Computer Use telemetry unless you turn it off;</li>
+      <li>services you connect yourself, such as 1Password, Bitwarden, Tailscale or your Git host.</li>
+    </ul>
+    <p>We may disclose information if the law requires it.</p>
+  </section>
+
+  <section aria-labelledby="security">
+    <h2 id="security">Security</h2>
+    <p>Credentials stay in the macOS or iOS Keychain, or in the agent tools’ own files, and are sent only in request headers to their own provider. Coincide Remote uses TLS 1.3 with a pinned certificate and per-device tokens. No software is perfectly secure; if you find a problem, please report it privately as described above.</p>
+  </section>
+
+  <section aria-labelledby="children">
+    <h2 id="children">Children</h2>
+    <p>Coincide is a tool for software developers and isn’t directed to children. Discord requires its members to meet Discord’s minimum age.</p>
+  </section>
+
+  <section aria-labelledby="choices">
+    <h2 id="choices">Your choices</h2>
+    <ul>
+      <li>Turn off what you don’t want: Coincide Remote, Agent Control, Computer Use, automatic thread titles, usage from provider websites, update checks and command-line control are all settings.</li>
+      <li>Delete Coincide’s data from your Mac using the locations above, and reset Coincide Remote’s pairing in its settings.</li>
+      <li>Ask us to remove what we hold about you, such as a report’s notification record, moderation records, or an issue Janus created for you. Depending on where you live, you may have rights to access, correct or delete personal information; email us and we’ll help.</li>
+      <li>For data held by your agents’ providers, Apple, Discord, GitHub or Google, use their own tools.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="changes">
+    <h2 id="changes">Changes and contact</h2>
+    <p>When Coincide changes how it handles information, we’ll update this page and the date at the top.</p>
+    <p>Questions or requests: Apoorv Darshan, <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a>.</p>
+  </section>
+</main>
+
+<footer>
+  <span>© 2026 Coincide</span>
+  <span class="links"><a href="/privacy" aria-current="page">Privacy</a><a href="/terms">Terms</a><a href="mailto:apoorv@fud-ai.app">Contact</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></span>
+</footer>
+</body>
+</html>
