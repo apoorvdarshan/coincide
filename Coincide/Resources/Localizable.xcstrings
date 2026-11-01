@@ -57839,6 +57839,7 @@
       }
     },
     "Browser extensions can’t run inside Coincide’s browser, so Coincide works with each password manager’s command-line tool. In the browser, Coincide types passwords and one-time codes into the page itself, after you allow it for the site." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -82434,6 +82435,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "任務完成前 Coincide 已關閉。請開啟其對話以繼續。"
+          }
+        }
+      }
+    },
+    "Coincide connects to each password manager through its command-line tool, so you don’t need its browser extension. In the browser, Coincide types passwords and one-time codes into the page itself, after you allow it for the site." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide verbindet sich über das Befehlszeilenwerkzeug des jeweiligen Passwortmanagers, eine Browsererweiterung brauchst du also nicht. Im Browser tippt Coincide Passwörter und Einmalcodes selbst in die Seite ein, nachdem du es für die Website erlaubt hast."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide se conecta con cada gestor de contraseñas mediante su herramienta de línea de comandos, así que no necesitas su extensión del navegador. En el navegador, Coincide escribe las contraseñas y los códigos de un solo uso en la página después de que lo permitas para el sitio."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide se conecta con cada gestor de contraseñas mediante su herramienta de línea de comandos, así que no necesitas su extensión del navegador. En el navegador, Coincide escribe las contraseñas y los códigos de un solo uso en la página después de que lo permitas para el sitio."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide se connecte à chaque gestionnaire de mots de passe via son outil en ligne de commande : vous n’avez donc pas besoin de son extension de navigateur. Dans le navigateur, Coincide saisit lui-même les mots de passe et les codes à usage unique dans la page, après votre autorisation pour le site."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide हर पासवर्ड मैनेजर से उसके कमांड-लाइन टूल के ज़रिए जुड़ता है, इसलिए आपको उसके ब्राउज़र एक्सटेंशन की ज़रूरत नहीं है। ब्राउज़र में, साइट के लिए आपकी अनुमति के बाद Coincide पासवर्ड और वन-टाइम कोड खुद पेज में टाइप करता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide terhubung ke setiap pengelola kata sandi melalui alat baris perintahnya, jadi Anda tidak memerlukan ekstensi browsernya. Di browser, Coincide sendiri yang mengetik kata sandi dan kode sekali pakai ke halaman setelah Anda mengizinkannya untuk situs itu."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide si collega a ogni gestore di password tramite il suo strumento da riga di comando, quindi non ti serve la sua estensione per il browser. Nel browser è Coincide a digitare password e codici monouso nella pagina, dopo che l’hai consentito per il sito."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide は各パスワードマネージャのコマンドラインツールを通じて連携するため、ブラウザ拡張機能は必要ありません。ブラウザでは、サイトごとに許可すると Coincide 自身がパスワードとワンタイムコードをページに入力します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide는 각 암호 관리자의 명령줄 도구를 통해 연결되므로 브라우저 확장 프로그램이 필요하지 않습니다. 브라우저에서는 사이트별로 허용하면 Coincide가 직접 암호와 일회용 코드를 페이지에 입력합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide maakt verbinding met elke wachtwoordbeheerder via diens opdrachtregeltool, dus je hebt de browserextensie niet nodig. In de browser typt Coincide wachtwoorden en eenmalige codes zelf in de pagina, nadat je het voor de site hebt toegestaan."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide łączy się z każdym menedżerem haseł przez jego narzędzie wiersza poleceń, więc nie potrzebujesz jego rozszerzenia przeglądarki. W przeglądarce Coincide sam wpisuje hasła i kody jednorazowe na stronie, gdy pozwolisz na to dla witryny."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide se conecta a cada gerenciador de senhas pela ferramenta de linha de comando dele, então você não precisa da extensão do navegador. No navegador, o próprio Coincide digita senhas e códigos únicos na página, depois que você permite para o site."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide подключается к каждому менеджеру паролей через его инструмент командной строки, поэтому расширение для браузера не нужно. В браузере Coincide сам вводит пароли и одноразовые коды на странице после вашего разрешения для сайта."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide her parola yöneticisine kendi komut satırı aracıyla bağlanır; bu yüzden tarayıcı uzantısına ihtiyacınız yoktur. Tarayıcıda, siteye izin verdikten sonra Coincide parolaları ve tek kullanımlık kodları sayfaya kendisi yazar."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide підключається до кожного менеджера паролів через його інструмент командного рядка, тож розширення для браузера не потрібне. У браузері Coincide сам вводить паролі й одноразові коди на сторінці після вашого дозволу для сайту."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide kết nối với từng trình quản lý mật khẩu qua công cụ dòng lệnh của nó, nên bạn không cần tiện ích mở rộng trình duyệt. Trong trình duyệt, Coincide tự nhập mật khẩu và mã dùng một lần vào trang sau khi bạn cho phép với trang đó."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 通过各密码管理器的命令行工具与其连接，因此无需安装其浏览器扩展。在浏览器中，你允许该网站后，由 Coincide 自己把密码和一次性验证码填入页面。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 透過各密碼管理工具的命令列工具與其連線，因此不需要安裝其瀏覽器延伸功能。在瀏覽器中，你允許該網站後，由 Coincide 自己把密碼和一次性驗證碼填入頁面。"
           }
         }
       }
