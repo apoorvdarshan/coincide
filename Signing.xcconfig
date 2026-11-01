@@ -35,9 +35,14 @@
 // Don't add the key without such a profile: macOS refuses to launch an app claiming a managed entitlement its
 // profile doesn't grant.
 //
-// Both settings apply to Release builds only. Debug builds have their own bundle ID (com.apoorvdarshan.coincide.debug,
-// see COINCIDE_BUNDLE_ID in project.yml), which a profile for com.apoorvdarshan.coincide doesn't cover, so they never
-// sign for iCloud or passkeys.
+// Published releases (docs/releasing.md) come from scripts/release/build.sh, which overrides these settings on the
+// command line: Developer ID, the hardened runtime and Coincide/Coincide.entitlements (microphone and Apple Events, which
+// the hardened runtime otherwise blocks), with no provisioning profile. The opt-in entitlements files above don't carry
+// those two keys, so a hardened build signed with one of them would lose dictation and Computer Use.
+//
+// COINCIDE_MAC_ENTITLEMENTS and COINCIDE_MAC_PROFILE apply to Release builds only. Debug builds have their own bundle
+// ID (com.apoorvdarshan.coincide.debug, see COINCIDE_BUNDLE_ID in project.yml), which a profile for
+// com.apoorvdarshan.coincide doesn't cover, so they never sign for iCloud or passkeys.
 #include? "Local.xcconfig"
 
 // The build number (CFBundleVersion) of every target: the number of commits in HEAD's history, which
