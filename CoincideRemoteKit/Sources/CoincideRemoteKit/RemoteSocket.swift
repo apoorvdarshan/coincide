@@ -79,7 +79,7 @@ public final class RemoteSocket: @unchecked Sendable {
         let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
         let context = NWConnection.ContentContext(identifier: "message", metadata: [metadata])
         connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { [weak self] error in
-            if let error { self?.finish(.transport(error.localizedDescription)) }
+            if let error { self?.finish(RemoteSocketError(error)) }
         })
     }
 
@@ -97,11 +97,11 @@ public final class RemoteSocket: @unchecked Sendable {
             continuation.yield(.ready)
             receive()
         case .failed(let error):
-            finish(Self.describe(error))
+            finish(RemoteSocketError(error))
             connection.cancel()
         case .waiting(let error):
             // Unreachable for now (no route, refused): give up so the caller can try the next address.
-            finish(Self.describe(error))
+            finish(RemoteSocketError(error))
             connection.cancel()
         case .cancelled:
             finish(nil)
@@ -114,7 +114,7 @@ public final class RemoteSocket: @unchecked Sendable {
         connection.receiveMessage { [weak self] content, context, _, error in
             guard let self else { return }
             if let error {
-                self.finish(Self.describe(error))
+                self.finish(RemoteSocketError(error))
                 return
             }
             let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
@@ -136,26 +136,50 @@ public final class RemoteSocket: @unchecked Sendable {
         continuation.yield(.closed(error))
         continuation.finish()
     }
-
-    private static func describe(_ error: NWError) -> RemoteSocketError {
-        // The pin is the only certificate check, so a TLS failure means the Mac presented another certificate.
-        if case .tls = error { return .certificateMismatch }
-        return .transport(error.localizedDescription)
-    }
 }
 
 public enum RemoteSocketError: Error, Hashable, Sendable {
     /// The Mac presented a certificate other than the paired one.
     case certificateMismatch
     case closedByMac
+    /// The system dropped the connection, as when iOS suspends the app or the network changes (`isTransient`).
+    case interrupted
+    /// Couldn't reach the Mac, or lost it, for another reason. The text names the Network error, for debugging only;
+    /// it's never shown.
     case transport(String)
 
+    /// What a Network error means here. POSIX errors from suspension and network changes are transient: the
+    /// connection aborted (53) or reset (54, 52), the socket gone (57, 32), the interface down while it changes (50),
+    /// the operation cancelled (89). A TLS error is the pin failing, the only certificate check, unless the TLS
+    /// session itself was closed underneath it; other errors (refused, no route, timed out, DNS) mean the Mac
+    /// isn't there.
+    public init(_ error: NWError) {
+        switch error {
+        case .posix(let code):
+            switch code {
+            case .ECONNABORTED, .ECONNRESET, .ENOTCONN, .ENETRESET, .ENETDOWN, .EPIPE, .ECANCELED: self = .interrupted
+            default: self = .transport("POSIX \(code.rawValue)")
+            }
+        case .tls(let status):
+            // errSSLClosedGraceful, errSSLClosedAbort and errSSLClosedNoNotify: the session was closed, not refused.
+            self = [-9805, -9806, -9816].contains(status) ? .interrupted : .certificateMismatch
+        default:
+            self = .transport("\(error)")
+        }
+    }
+
+    /// The system dropped the connection rather than the Mac or the network refusing it: iOS tears sockets down while
+    /// the app is suspended, and a change of network resets them. Connecting again right away usually works.
+    public var isTransient: Bool { self == .interrupted }
+
+    /// What to tell the user: never Network's own wording, which reads as an error code.
     public var message: String {
         switch self {
         case .certificateMismatch:
             String(localized: "The Mac's security certificate doesn't match the one you paired with. Pair again from the Mac's Settings.")
         case .closedByMac: String(localized: "The Mac closed the connection.")
-        case .transport(let message): message
+        case .interrupted: String(localized: "The connection to the Mac was lost.")
+        case .transport: String(localized: "Couldn’t connect.")
         }
     }
 }

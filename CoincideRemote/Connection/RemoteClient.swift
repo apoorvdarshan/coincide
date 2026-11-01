@@ -9,7 +9,9 @@ import UIKit
 /// Connecting tries the Mac's addresses in order (the Bonjour service if it's on this network, the address that worked
 /// last, local network addresses, then Tailscale) and authenticates with the token from pairing. A dropped connection
 /// is retried with backoff and as soon as the app comes back to the foreground; while offline the last state stays
-/// on screen, marked as such.
+/// on screen, marked as such. A launch, a return to the app and a connection the system dropped reconnect quietly
+/// (`RemoteReconnect`): nothing says "Connecting" or "Offline" unless that takes longer than the grace period
+/// (`shownPhase`).
 @MainActor
 @Observable
 final class RemoteClient {
@@ -23,6 +25,10 @@ final class RemoteClient {
     }
 
     private(set) var phase = Phase.idle
+    /// Within a quiet reconnect's grace period, or in the background (`RemoteReconnect.isQuiet`).
+    private var isQuiet = false
+    /// The phase when the quiet began, if the Mac was connected; what the screen goes on showing meanwhile.
+    private var phaseBeforeQuiet: Phase?
     private(set) var mac: SavedMac?
     private(set) var server: RemoteServerInfo?
     /// The Mac's Settings, once asked for; they stay current through `settings` events.
@@ -56,7 +62,9 @@ final class RemoteClient {
     @ObservationIgnored private var connectTask: Task<Void, Never>?
     @ObservationIgnored private var receiveTask: Task<Void, Never>?
     @ObservationIgnored private var retryTask: Task<Void, Never>?
-    @ObservationIgnored private var retryDelay: Duration = .seconds(1)
+    @ObservationIgnored private var reconnect = RemoteReconnect()
+    /// Ends `isQuiet` when the grace period does.
+    @ObservationIgnored private var quietTask: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
 
     /// What this phone reports about itself (`RemotePresence`); set by the app.
@@ -74,6 +82,23 @@ final class RemoteClient {
 
     var isConnected: Bool {
         if case .connected = phase { return true }
+        return false
+    }
+
+    /// The phase the screen shows. While a reconnect is quiet (`RemoteReconnect`) it goes on showing what it did
+    /// before: the Mac connected, or nil, nothing yet, when it wasn't (at launch, or after it went offline). So a quick
+    /// reconnect on coming back to the app goes unseen while the last workspace stays on screen.
+    var shownPhase: Phase? {
+        guard isQuiet else { return phase }
+        switch phase {
+        case .connecting, .offline: return phaseBeforeQuiet
+        case .idle, .connected, .needsPairing: return phase
+        }
+    }
+
+    /// Whether the screen shows the Mac connected (`shownPhase`). Actions still wait for `isConnected`.
+    var showsConnected: Bool {
+        if case .connected = shownPhase { return true }
         return false
     }
 
@@ -108,16 +133,19 @@ final class RemoteClient {
         }
         #endif
         bonjour.start()
+        // A launch connects quietly, as a return to the app does.
         if let id = saved.lastUsedID, let mac = saved.all.first(where: { $0.serverID == id }) ?? saved.all.first {
-            connect(to: mac)
+            connect(to: mac, quietly: true)
         } else if let mac = saved.all.first {
-            connect(to: mac)
+            connect(to: mac, quietly: true)
         }
     }
 
     // MARK: Connecting
 
-    func connect(to mac: SavedMac) {
+    /// Connects to a Mac. As when the user picks it, "Connecting" shows at once; `quietly`, as at launch, nothing shows
+    /// unless it takes longer than the grace period.
+    func connect(to mac: SavedMac, quietly: Bool = false) {
         if self.mac?.serverID != mac.serverID {
             threads = [:]
             workspace = RemoteWorkspace()
@@ -126,11 +154,12 @@ final class RemoteClient {
         }
         self.mac = mac
         saved.lastUsedID = mac.serverID
-        retryDelay = .seconds(1)
+        if quietly { reconnect.connectingQuietly(at: Date()) } else { reconnect.showNow() }
+        updateQuiet()
         start()
     }
 
-    /// Tries again now, such as when the app returns to the foreground.
+    /// Tries again now at the user's request (Try Again, Reconnect): "Connecting" shows at once.
     func reconnectIfNeeded() {
         #if DEBUG
         if DemoData.isEnabled { return }
@@ -138,11 +167,39 @@ final class RemoteClient {
         guard mac != nil else { return }
         switch phase {
         case .offline, .idle:
-            retryDelay = .seconds(1)
+            reconnect.showNow()
+            updateQuiet()
             start()
         default:
             break
         }
+    }
+
+    /// The app came to the front. Back from the background it reconnects at once and quietly: iOS rarely keeps the
+    /// socket through a suspension, and an attempt from before it may be waiting on a dead one. After a moment inactive
+    /// (Control Center, a system alert) the socket is as it was: a Mac that's offline is tried again, and that shows.
+    func becameActive() {
+        #if DEBUG
+        if DemoData.isEnabled { return }
+        #endif
+        let wasAway = reconnect.isInBackground
+        reconnect.becameActive(at: Date())
+        updateQuiet()
+        guard mac != nil else { return }
+        switch phase {
+        case .offline, .idle: start()
+        case .connecting where wasAway: start()
+        case .connecting, .connected, .needsPairing: break
+        }
+    }
+
+    /// The app went to the background: whatever the connection does meanwhile stays off screen until it's back.
+    func enteredBackground() {
+        #if DEBUG
+        if DemoData.isEnabled { return }
+        #endif
+        reconnect.enteredBackground()
+        updateQuiet()
     }
 
     func disconnect() {
@@ -153,6 +210,8 @@ final class RemoteClient {
         socket?.cancel()
         socket = nil
         failPending(RemoteError(.failed, String(localized: "Disconnected.")))
+        reconnect.showNow()
+        updateQuiet()
         phase = .idle
     }
 
@@ -188,6 +247,8 @@ final class RemoteClient {
         socket?.cancel()
         socket = nil
         guard let token = saved.token(for: mac.serverID) else {
+            reconnect.showNow()
+            updateQuiet()
             phase = .needsPairing(String(localized: "Pair this device with \(mac.name) again."))
             return
         }
@@ -197,13 +258,14 @@ final class RemoteClient {
             guard generation == self.generation else { return }
             switch outcome {
             case .connected:
-                self.retryDelay = .seconds(1)
+                break
             case .rejected(let message):
                 self.saved.deleteToken(for: mac.serverID)
+                self.reconnect.showNow()
+                self.updateQuiet()
                 self.phase = .needsPairing(message)
-            case .unreachable(let message):
-                self.phase = .offline(message)
-                self.scheduleRetry()
+            case .unreachable(let message, let transient):
+                self.retry(transient: transient, message: message)
             }
         }
     }
@@ -211,7 +273,39 @@ final class RemoteClient {
     private enum Outcome {
         case connected
         case rejected(String)
-        case unreachable(String)
+        /// `transient`: the last address failed the way a suspension or a network change makes it fail.
+        case unreachable(String, transient: Bool)
+    }
+
+    /// After a dropped connection or a failed attempt: again at once, and quietly, when the system dropped it
+    /// (`RemoteReconnect.failed`); otherwise offline until the next try.
+    private func retry(transient: Bool, message: String) {
+        switch reconnect.failed(transient: transient, at: Date()) {
+        case .retryNow:
+            updateQuiet()
+            start()
+        case .retry(let delay):
+            phase = .offline(message)
+            scheduleRetry(after: delay)
+        }
+    }
+
+    /// Brings `isQuiet` up to date, and ends it when the grace period does.
+    private func updateQuiet() {
+        let now = Date()
+        let quiet = reconnect.isQuiet(at: now)
+        if quiet != isQuiet {
+            if quiet { phaseBeforeQuiet = isConnected ? phase : nil }
+            isQuiet = quiet
+        }
+        quietTask?.cancel()
+        quietTask = nil
+        guard let remaining = reconnect.quietRemaining(at: now) else { return }
+        quietTask = Task {
+            try? await Task.sleep(for: .seconds(remaining))
+            guard !Task.isCancelled else { return }
+            self.updateQuiet()
+        }
     }
 
     /// Addresses in the order to try them.
@@ -227,23 +321,29 @@ final class RemoteClient {
     }
 
     private func establish(mac: SavedMac, token: String, generation: Int) async -> Outcome {
-        var lastError = String(localized: "\(mac.name) isn’t reachable. Make sure Coincide is open with Remote turned on.")
+        // What a socket failure says: where to look. Network's own wording would read as an error code.
+        let unreachable = String(localized: "\(mac.name) isn’t reachable. Make sure Coincide is open with Remote turned on.")
+        var lastError = unreachable
+        var transient = false
         for (host, port) in await targets(for: mac) {
-            guard generation == self.generation, !Task.isCancelled else { return .unreachable(lastError) }
+            guard generation == self.generation, !Task.isCancelled else {
+                return .unreachable(lastError, transient: transient)
+            }
             let socket = RemoteSocket(target: .host(host, port: port), fingerprint: mac.fingerprint)
             switch await open(socket, generation: generation) {
             case .failure(let error):
                 if error == .certificateMismatch {
                     return .rejected(error.message)
                 }
-                lastError = error.message
+                lastError = unreachable
+                transient = error.isTransient
                 continue
             case .success:
                 break
             }
             guard generation == self.generation else {
                 socket.cancel()
-                return .unreachable(lastError)
+                return .unreachable(lastError, transient: transient)
             }
             do {
                 let result = try await request(
@@ -257,6 +357,8 @@ final class RemoteClient {
                 saved.save(updated)
                 self.mac = updated
                 phase = .connected(info.name)
+                reconnect.connected(at: Date())
+                updateQuiet()
                 macIgnoresPresence = false
                 sendPresence()
                 await refreshAfterConnecting()
@@ -266,10 +368,12 @@ final class RemoteClient {
                 return .rejected(error.message)
             } catch {
                 socket.cancel()
-                lastError = (error as? RemoteError)?.message ?? error.localizedDescription
+                // The Mac's own answer (or ours, such as no answer in time) says what happened; anything else doesn't.
+                lastError = (error as? RemoteError)?.message ?? unreachable
+                transient = false
             }
         }
-        return .unreachable(lastError)
+        return .unreachable(lastError, transient: transient)
     }
 
     /// Connects the socket and starts reading from it; returns once it's connected or has failed. A socket's events
@@ -303,6 +407,11 @@ final class RemoteClient {
                         }
                     }
                 }
+                // Stopped by a newer attempt (`start`) before the socket opened: close it, and end the wait for it.
+                if opening.isWaiting {
+                    socket.cancel()
+                    opening.resume(.failure(.transport("cancelled")))
+                }
             }
             socket.start()
         }
@@ -324,16 +433,14 @@ final class RemoteClient {
         socket = nil
         failPending(RemoteError(.failed, String(localized: "The connection to the Mac was lost.")))
         guard case .connected = phase else { return }
-        phase = .offline(error?.message ?? String(localized: "The connection to the Mac was lost."))
-        scheduleRetry()
+        // No error: the connection was cancelled underneath, which only the system does.
+        retry(transient: error?.isTransient ?? true, message: String(localized: "The connection to the Mac was lost."))
     }
 
-    private func scheduleRetry() {
+    private func scheduleRetry(after delay: TimeInterval) {
         retryTask?.cancel()
-        let delay = retryDelay
-        retryDelay = min(retryDelay * 2, .seconds(30))
         retryTask = Task {
-            try? await Task.sleep(for: delay)
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             self.start()
         }
@@ -362,7 +469,8 @@ final class RemoteClient {
         for (host, port) in candidates {
             let socket = RemoteSocket(target: .host(host, port: port), fingerprint: payload.fingerprint)
             if case .failure(let error) = await open(socket, generation: generation) {
-                lastError = error.message
+                // Only the pin failing says more than where to look.
+                if error == .certificateMismatch { lastError = error.message }
                 continue
             }
             phase = .connecting(payload.name)
@@ -381,6 +489,8 @@ final class RemoteClient {
                 self.mac = mac
                 server = paired.server
                 phase = .connected(paired.server.name)
+                reconnect.connected(at: Date())
+                updateQuiet()
                 macIgnoresPresence = false
                 sendPresence()
                 onPaired?(paired.server)

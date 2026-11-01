@@ -23,7 +23,11 @@ struct CoincideRemoteApp: App {
             #endif
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { client.reconnectIfNeeded() }
+            switch phase {
+            case .active: client.becameActive()
+            case .background: client.enteredBackground()
+            default: break
+            }
         }
         .commands {
             CommandMenu("Thread") {
