@@ -168,6 +168,7 @@
       <li><code>~/Library/Application Support/Coincide</code> (or the folder set in <code>COINCIDE_DATA_DIR</code>): projects, threads and transcripts, attachments, bots, settings, checkpoints, usage history (the latest 10,000 finished turns), the background agent host’s event logs, sign-in folders for extra agent accounts you add, exact copies of CLI sessions you import, browser history and bookmarks, the list of logins you save (without their passwords), and Coincide Remote settings.</li>
       <li>Your login <strong>Keychain</strong>: API keys you add for agents and dictation, passwords and one-time-code secrets for logins you save, your Bitwarden session if you connect Bitwarden, Coincide Remote’s certificate and key, and a hash of each paired device’s token.</li>
       <li><code>~/Library/WebKit</code>: the browser’s shared profile, with its cookies and site data.</li>
+      <li><code>~/.coincide/worktrees</code> (or <code>worktrees</code> inside <code>COINCIDE_DATA_DIR</code>): git worktrees Coincide creates for threads, holding copies of your project’s files.</li>
       <li><code>~/Library/Caches/com.apoorvdarshan.coincide</code>: app updates while they’re downloaded and checked.</li>
       <li><code>~/Downloads/Coincide</code>: files downloaded in Coincide’s browser.</li>
     </ul>
@@ -193,6 +194,7 @@
     <ul>
       <li>Pushing, pulling and pull requests use git and each host’s own command-line tool (such as <code>gh</code>) or web page, signed in as you.</li>
       <li>If you connect 1Password or Bitwarden, Coincide uses their own command-line tools, which talk to their services.</li>
+      <li>“Let agents use your unlocked password managers” (Settings › Browser › Passwords, on by default) gives agents Coincide starts your unlocked Bitwarden session, so they can read any item in your vault with the <code>bw</code> command, such as API keys and tokens, without asking. Anything an agent reads can be sent to its provider like the rest of the conversation. Turn the setting off to stop this.</li>
       <li>If you choose to, Coincide keeps a copy of an instruction file in your iCloud Drive, or in a Git repository you pick and can push to its remote.</li>
       <li>If you click to install an agent, Coincide opens Terminal and runs that agent’s official install command, which downloads from its maker.</li>
     </ul>
@@ -206,7 +208,7 @@
       <li>Logins you save in Coincide are kept in your Keychain. Coincide can also fill sign-ins from 1Password or Bitwarden.</li>
       <li>If you connect Bitwarden, Coincide’s browser can sign you in with passkeys saved there, each time after you confirm the sign-in; Coincide also asks for Touch ID or your Mac password when the site requires it, or on every sign-in if you turn that on in Settings. Coincide reads the passkey locally through your own Bitwarden command-line tool, uses it only on your Mac to answer the site’s sign-in request, and never sends it to us. The site receives only the signed answer, as from any passkey.</li>
       <li>With Agent Control (on by default, per thread), an agent can open pages, read them, click, type and take screenshots. What it reads and captures goes to its provider. Agents can’t read cookies, site storage or password fields. If an agent asks Coincide to sign in, Coincide does it only after you allow that site, without showing the agent the password or one-time code.</li>
-      <li>Other passkeys, where available, are handled by macOS.</li>
+      <li>Other passkeys don’t work in Coincide’s browser yet. Coincide offers to open the page in your default browser and then import that site’s sign-in; the import reads only that site’s cookies, on your Mac.</li>
     </ul>
   </section>
 
