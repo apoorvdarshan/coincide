@@ -33,10 +33,11 @@ export default {
 <p>If you paired a device with Coincide Remote, you can also turn off <strong>Allow Coincide Remote</strong> under Remote.</p>
 
 <h2 id="homebrew">With Homebrew</h2>
-<p>If you installed with Homebrew, it removes the app, quits Coincide and unloads its three background jobs (the agent host, the lid watcher and the battery helper):</p>
+<p>If you installed with Homebrew, it quits Coincide, unloads its three background jobs (the agent host, the lid watcher and the battery helper) and removes the app, the old copies the updater kept and the <code>coincide</code> command link:</p>
 ${cmd("brew uninstall --cask coincide", "Copy the uninstall command")}
-<p>Add <code>--zap</code> to also delete its data, caches, preferences and browser storage, everything listed in <a href="#data">Data and settings</a> except <code>~/.coincide/worktrees</code>, <code>~/Downloads/Coincide</code> and an iCloud Drive copy. It leaves the <code>coincide</code> command link and the Keychain items, which you remove <a href="#manual">by hand</a>:</p>
+<p>Add <code>--zap</code> to also delete its data, caches, preferences, browser storage and <a href="#keychain">Keychain items</a>, everything listed in <a href="#data">Data and settings</a> except <code>~/.coincide/worktrees</code>, <code>~/Downloads/Coincide</code> and an iCloud Drive copy:</p>
 ${cmd("brew uninstall --zap --cask coincide", "Copy the zap command")}
+<p>The worktrees stay because they can hold work you haven’t committed or pushed, and <code>~/.coincide</code> goes only once it’s empty.</p>
 
 <h2 id="manual">By hand</h2>
 <ol>
@@ -67,11 +68,11 @@ ${table(["Location", "What’s there"], [
 <p>Not Coincide’s: your agents’ own files, such as <code>~/.claude</code>, <code>~/.codex</code> or <code>~/.grok</code>, and the agent tools themselves. Uninstall those with each tool’s own instructions if you want them gone too.</p>
 
 <h2 id="keychain">Keychain items</h2>
-<p>Coincide keeps secrets in your login Keychain: API keys for extra agent accounts and for dictation, passwords and one-time-code secrets of logins you saved, your Bitwarden session if you connected Bitwarden, and Coincide Remote’s certificate and key. Homebrew’s <code>--zap</code> doesn’t remove them. This removes every password item Coincide created:</p>
+<p>Coincide keeps secrets in your login Keychain: API keys for extra agent accounts and for dictation, passwords and one-time-code secrets of logins you saved, your Bitwarden session if you connected Bitwarden, and Coincide Remote’s certificate and key. <code>brew uninstall --zap</code> removes them. Otherwise, this removes every password item Coincide created, then Coincide Remote’s certificate and private key:</p>
 ${code(`for service in provider-account voice browser browser-logins remote; do
   while security delete-generic-password -s "com.apoorvdarshan.coincide.$service" >/dev/null 2>&1; do :; done
-done`)}
-<p>To remove Coincide Remote’s certificate and private key, open Keychain Access, search for “Coincide Remote” and delete both.</p>
+done
+security delete-identity -c "Coincide Remote"`)}
 
 <h2 id="keep-awake">If you already deleted it</h2>
 <p>If Keep Awake was on when you deleted Coincide, your Mac’s sleep is still disabled. Turn it back on with:</p>
