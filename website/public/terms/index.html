@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Terms of Service · Coincide</title>
+<meta name="description" content="The terms for using Coincide, Coincide Remote, coincide.dev and the Coincide Discord community: the MIT-licensed software, your agent accounts, community rules and the limits of our responsibility.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/terms">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:url" content="https://coincide.dev/terms">
+<meta property="og:title" content="Coincide Terms of Service">
+<meta property="og:description" content="The MIT-licensed software, your agent accounts, community rules and the limits of our responsibility.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png">
+<link rel="apple-touch-icon" href="/img/icon-tight.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --night: #0A0D24;
+    --plate: #121636;
+    --silver: #DCD8CF;
+    --ash: #8E92AE;
+    --faint: #555A7A;
+    --signal: #3E5BFF;
+    --signal-hi: #93A6FF;
+    --rule: rgba(220,216,207,.1);
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --pad: clamp(18px, 5vw, 64px);
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--night); -webkit-text-size-adjust: 100%; scroll-padding-top: 24px; }
+  body { margin: 0; color: var(--silver); font: 400 17px/1.65 var(--display); font-optical-sizing: auto; -webkit-font-smoothing: antialiased; }
+  a { color: var(--signal-hi); text-decoration: underline; text-decoration-color: rgba(147,166,255,.4); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: currentColor; }
+  ::selection { background: var(--signal); color: #fff; }
+  :focus-visible { outline: 2px solid var(--signal-hi); outline-offset: 3px; border-radius: 6px; }
+  .skip { position: absolute; left: -9999px; }
+  .skip:focus { left: 16px; top: 12px; z-index: 10; padding: 8px 14px; border-radius: 999px; background: var(--silver); color: var(--night); text-decoration: none; }
+
+  .top { display: flex; align-items: center; gap: 24px; max-width: 1280px; margin: 0 auto; padding: 22px var(--pad); }
+  .brand { display: flex; align-items: center; gap: 11px; color: var(--silver); font-weight: 650; font-size: 18px; letter-spacing: -.01em; text-decoration: none; }
+  .brand img { width: 30px; height: 30px; }
+  .top nav { display: flex; gap: 22px; margin-left: auto; font-size: 15px; }
+  .top nav a { color: var(--ash); text-decoration: none; transition: color .2s; }
+  .top nav a:hover, .top nav a[aria-current="page"] { color: var(--silver); }
+
+  main { max-width: calc(720px + 2 * var(--pad)); margin: 0 auto; padding: clamp(24px, 6vw, 64px) var(--pad) clamp(64px, 9vw, 112px); }
+  .eyebrow { margin: 0 0 14px; color: var(--signal-hi); font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  h1 { margin: 0; font: 700 clamp(40px, 8vw, 68px)/.95 var(--display); letter-spacing: -.045em; font-variation-settings: "opsz" 96; text-wrap: balance; }
+  .updated { margin: 18px 0 0; color: var(--ash); font: 13px/1.5 var(--mono); }
+  .intro { margin: 32px 0 0; font-size: 19px; line-height: 1.6; }
+  h2 { margin: 64px 0 0; padding-top: 28px; border-top: 1px solid var(--rule); font: 650 clamp(24px, 3.4vw, 30px)/1.15 var(--display); letter-spacing: -.025em; text-wrap: balance; }
+  h3 { margin: 32px 0 0; font: 600 18px/1.3 var(--display); letter-spacing: -.01em; color: #F2EFE8; }
+  p, ul, ol { margin: 14px 0 0; }
+  ul, ol { padding-left: 1.25em; }
+  li { margin: 8px 0 0; }
+  li::marker { color: var(--faint); }
+  strong { font-weight: 600; color: #F2EFE8; }
+  code { font: 500 .84em/1.4 var(--mono); padding: .12em .42em; border-radius: 6px; background: var(--plate); border: 1px solid var(--rule); overflow-wrap: anywhere; }
+  .caps { font-size: 15.5px; color: var(--ash); }
+  .caps strong { color: var(--silver); }
+
+  .callout { margin: 20px 0 0; padding: 20px 24px 22px; border-radius: 18px; background: var(--plate); border: 1px solid var(--rule); box-shadow: inset 3px 0 0 var(--signal); }
+  .callout h3 { margin: 0; }
+  .callout p:first-of-type { margin-top: 10px; }
+  .toc { margin: 40px 0 0; }
+  .toc p { margin: 0; color: var(--ash); font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  .toc ol { margin: 14px 0 0; columns: 2; column-gap: 36px; font-size: 15px; }
+  .toc li { margin: 0 0 6px; break-inside: avoid; }
+  .toc a { color: var(--silver); text-decoration-color: var(--rule); }
+  .toc a:hover { color: #fff; text-decoration-color: currentColor; }
+
+  footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px; max-width: 1280px; margin: 0 auto; padding: 26px var(--pad) calc(40px + env(safe-area-inset-bottom)); border-top: 1px solid var(--rule); color: var(--faint); font: 13px var(--mono); }
+  footer a { color: inherit; text-decoration: none; transition: color .2s; }
+  footer a:hover { color: var(--silver); }
+  footer .links { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+
+  @media (max-width: 600px) {
+    body { font-size: 16.5px; }
+    .intro { font-size: 18px; }
+    .toc ol { columns: 1; }
+    .callout { padding: 18px 20px 20px; }
+  }
+  @media (max-width: 380px) { .top { gap: 14px; } .top nav { gap: 14px; font-size: 14px; } }
+  @media print {
+    html, body { background: #fff; color: #000; }
+    .top nav, .skip, .toc { display: none; }
+    a { color: #000; }
+    .callout, code { background: none; border-color: #ccc; box-shadow: none; }
+    h3, strong, .caps, .caps strong { color: #000; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="top">
+  <a class="brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+  <nav aria-label="Legal"><a href="/privacy">Privacy</a><a href="/terms" aria-current="page">Terms</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+</header>
+
+<main id="content">
+  <p class="eyebrow">Legal</p>
+  <h1>Terms of Service</h1>
+  <p class="updated">Last updated: <time datetime="2026-11-01">November 1, 2026</time></p>
+
+  <p class="intro">These terms cover Coincide (the Mac app and its iPhone and iPad companion, Coincide Remote), the coincide.dev website, and the Coincide Discord community and its bot, Janus. Coincide is made by Apoorv Darshan (“we”, “us”). By using any of them you agree to these terms. If you don’t agree, please don’t use them. How we handle information is described in the <a href="/privacy">Privacy Policy</a>.</p>
+
+  <nav class="toc" aria-label="On this page">
+    <p>On this page</p>
+    <ol>
+      <li><a href="#license">The software and its license</a></li>
+      <li><a href="#early">Early software</a></li>
+      <li><a href="#accounts">Your agents and their providers</a></li>
+      <li><a href="#your-mac">What agents do on your Mac</a></li>
+      <li><a href="#remote">Coincide Remote</a></li>
+      <li><a href="#community">Community rules</a></li>
+      <li><a href="#janus">Janus, reports and AI answers</a></li>
+      <li><a href="#contributions">Feedback and contributions</a></li>
+      <li><a href="#trademarks">Trademarks</a></li>
+      <li><a href="#warranty">No warranty</a></li>
+      <li><a href="#liability">Limitation of liability</a></li>
+      <li><a href="#third-parties">Other services</a></li>
+      <li><a href="#changes">Changes and ending</a></li>
+      <li><a href="#contact">Contact</a></li>
+    </ol>
+  </nav>
+
+  <section aria-labelledby="license">
+    <h2 id="license">The software and its license</h2>
+    <p>Coincide is open source under the <a href="https://github.com/apoorvdarshan/coincide/blob/main/LICENSE">MIT License</a>. The license sets out your rights to use, copy, modify and distribute the code, and if these terms ever conflict with it about the software, the license wins. Components from other projects keep their own licenses, listed in <a href="https://github.com/apoorvdarshan/coincide/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>.</p>
+    <p>Official Mac builds are published on the repository’s <a href="https://github.com/apoorvdarshan/coincide/releases">GitHub Releases</a> page. Builds from anyone else, including forks, aren’t ours. Once Coincide Remote is released, Apple’s terms also apply to downloading it from Apple.</p>
+  </section>
+
+  <section aria-labelledby="early">
+    <h2 id="early">Early software</h2>
+    <p>Coincide is in early development. Expect bugs, rough edges and changes. Features may change, move or be removed, and we don’t promise any release schedule or ongoing support.</p>
+  </section>
+
+  <section aria-labelledby="accounts">
+    <h2 id="accounts">Your agents and their providers</h2>
+    <p>Coincide doesn’t provide AI models or sell access to them. It drives the agent tools you install (Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity) with your own sign-ins and API keys. You’re responsible for:</p>
+    <ul>
+      <li>your accounts and credentials with each provider;</li>
+      <li>what you spend, and staying within your plans’ limits;</li>
+      <li>following each provider’s terms and usage policies, including for automated or third-party use.</li>
+    </ul>
+    <p>Providers can change their tools, plans or terms in ways that break Coincide or affect your account, and that’s outside our control. Usage figures Coincide shows are estimates and reports from the providers, not bills.</p>
+    <div class="callout">
+      <h3>Antigravity account risk</h3>
+      <p>Google’s <a href="https://antigravity.google/terms">Antigravity terms</a> call accessing the service with third-party software, tools or services a breach. Since February 2026 Google has suspended accounts for this, mostly personal Google AI Pro and Ultra sign-ins used through third-party tools, and a suspension also cuts off Gemini CLI and Code Assist. Coincide drives Google’s own Antigravity agent, but Google staff have given conflicting answers about tools that do.</p>
+      <p>Use Antigravity in Coincide at your own risk, and consider a separate Google account. Gemini API keys from Google AI Studio or Gemini Enterprise aren’t affected. Coincide asks you to acknowledge this once before you sign in or turn Antigravity on.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="your-mac">
+    <h2 id="your-mac">What agents do on your Mac</h2>
+    <p>Agents in Coincide can run commands, create, change and delete files, use git (including commits, pushes and pull requests), use the browser in each thread, and, if you turn on Computer Use, operate other apps. In Full access mode they do this without asking first. Scheduled tasks send messages to agents on your behalf, and Keep Awake changes your Mac’s power settings.</p>
+    <p>You decide what agents may do and where. You’re responsible for reviewing their work, for what they do with your accounts and files, and for keeping backups. Use “Ask for approval” when you want to approve each command and file change.</p>
+  </section>
+
+  <section aria-labelledby="remote">
+    <h2 id="remote">Coincide Remote</h2>
+    <p>A paired iPhone or iPad can control Coincide on that Mac, including sending messages to your agents. Pair only devices you control, and if one is lost, reset pairing in Coincide’s Remote settings.</p>
+  </section>
+
+  <section aria-labelledby="community">
+    <h2 id="community">Community rules</h2>
+    <p>These rules apply on coincide.dev, in the Coincide Discord server and in the project’s spaces on GitHub, together with our <a href="https://github.com/apoorvdarshan/coincide/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a>. Please don’t:</p>
+    <ul>
+      <li>harass, threaten, demean or discriminate against anyone, or post sexual or violent content;</li>
+      <li>impersonate others, or share someone else’s personal information;</li>
+      <li>spam, mass-mention, advertise without permission, or post scams such as fake “free Nitro” links;</li>
+      <li>post malware, or API keys, tokens, cookies, passwords or private code, yours or anyone’s;</li>
+      <li>try to break, overload or get around the limits of the website or Janus, or use Janus for anything but Coincide help and reports;</li>
+      <li>break the law, or <a href="https://discord.com/terms">Discord’s Terms</a> and <a href="https://discord.com/guidelines">Community Guidelines</a>.</li>
+    </ul>
+    <h3>Moderation</h3>
+    <p>Janus removes spam it detects with fixed rules, such as mass mentions, the same message repeated in quick succession, or fake Nitro links. A first incident brings a 10-minute timeout, a second a 24-hour timeout, and a third a ban. Strikes reset after 30 days without a new one. Moderators may also remove content, time out or remove members for breaking these rules. To appeal, contact the server owner or email us.</p>
+  </section>
+
+  <section aria-labelledby="janus">
+    <h2 id="janus">Janus, reports and AI answers</h2>
+    <ul>
+      <li><strong>Reports are public.</strong> <code>/bug</code> and <code>/feature</code> create public issues in the <a href="https://github.com/apoorvdarshan/coincide/issues">apoorvdarshan/coincide</a> GitHub repository, with your report quoted unchanged and, when available, an AI-organized summary. Anyone can read them, and they may stay public. Submit only what you’re happy to publish and have the right to share.</li>
+      <li><strong>Limits.</strong> Reports share a wait that starts at 10 minutes, doubles with each further report up to a day, and resets after two days without one. <code>/ask</code> takes one question a minute.</li>
+      <li><strong>AI answers can be wrong.</strong> <code>/ask</code> answers are written by AI from a short description of Coincide. Janus can’t see your Mac, accounts or logs, remember earlier questions or take actions. Check important answers against the <a href="https://github.com/apoorvdarshan/coincide#readme">README</a>.</li>
+      <li><strong>Closed isn’t shipped.</strong> When an issue is closed, Janus tells you, but that doesn’t mean a fix or feature is in a released version.</li>
+      <li>Janus may be unavailable, change or stop at any time.</li>
+    </ul>
+    <p>Please report security vulnerabilities privately, as described in <a href="https://github.com/apoorvdarshan/coincide/blob/main/SECURITY.md">SECURITY.md</a>, never through Janus or a public issue.</p>
+  </section>
+
+  <section aria-labelledby="contributions">
+    <h2 id="contributions">Feedback and contributions</h2>
+    <p>You’re welcome to send ideas and feedback, and we may use them freely without owing you anything. Code you contribute to the repository follows <a href="https://github.com/apoorvdarshan/coincide/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> and, as GitHub’s Terms of Service provide, is licensed under the repository’s MIT License.</p>
+  </section>
+
+  <section aria-labelledby="trademarks">
+    <h2 id="trademarks">Trademarks</h2>
+    <p>Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity, and their logos, belong to their owners: Anthropic, OpenAI, Anysphere, xAI, SST and Google. Names and icons of browsers and password managers belong to their owners too, including Apple, Google, Microsoft, Mozilla, Brave, The Browser Company, Opera, Vivaldi, AgileBits (1Password) and Bitwarden. Coincide uses them only to identify the software it works with, and isn’t affiliated with or endorsed by any of them.</p>
+    <p>The MIT License covers Coincide’s code, not its name or logo. Forks are welcome; please don’t present a modified build as the official Coincide.</p>
+  </section>
+
+  <section aria-labelledby="warranty">
+    <h2 id="warranty">No warranty</h2>
+    <p class="caps">Coincide, Coincide Remote, coincide.dev, the Discord community and Janus are provided <strong>“as is” and “as available”, without warranty of any kind</strong>, express or implied, including warranties of merchantability, fitness for a particular purpose and non-infringement. We don’t promise that they’ll be error-free, secure, uninterrupted or compatible with any agent or provider.</p>
+  </section>
+
+  <section aria-labelledby="liability">
+    <h2 id="liability">Limitation of liability</h2>
+    <p class="caps">To the fullest extent the law allows, <strong>Apoorv Darshan and Coincide’s contributors aren’t liable for any claim, damages or other liability</strong>, whether in contract, tort or otherwise, arising from or in connection with Coincide, the website, the community or Janus, or their use. That includes lost or changed data or code, provider charges or account suspensions, and anything an agent does on your Mac or with your accounts. Some places don’t allow these limits, so they apply only as far as the law permits.</p>
+  </section>
+
+  <section aria-labelledby="third-parties">
+    <h2 id="third-parties">Other services</h2>
+    <p>Your agents’ providers, Apple, Discord, GitHub, Google, Cloudflare and any other service you use with Coincide have their own terms. We don’t control them and aren’t responsible for them.</p>
+  </section>
+
+  <section aria-labelledby="changes">
+    <h2 id="changes">Changes and ending</h2>
+    <p>We may update these terms. When we do, we’ll change the date at the top, and continuing to use Coincide, the website or the community after that means you accept the new terms. We may change or stop the website, the Discord server or Janus, and may remove anyone who breaks these rules. None of this takes away the rights the MIT License gives you for copies of Coincide you already have.</p>
+  </section>
+
+  <section aria-labelledby="contact">
+    <h2 id="contact">Contact</h2>
+    <p>Questions about these terms: Apoorv Darshan, <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a>.</p>
+  </section>
+</main>
+
+<footer>
+  <span>© 2026 Coincide</span>
+  <span class="links"><a href="/privacy">Privacy</a><a href="/terms" aria-current="page">Terms</a><a href="mailto:apoorv@fud-ai.app">Contact</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></span>
+</footer>
+</body>
+</html>
