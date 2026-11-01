@@ -161348,6 +161348,7 @@
       }
     },
     "Install Antigravity, open it once and sign in with your Google account." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -358404,6 +358405,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "在結束 Coincide 或清除還原記錄之前，你可以還原此次刪除。專案中的檔案不會變更。"
+          }
+        }
+      }
+    },
+    "You don’t need Google’s Antigravity app: Coincide downloads the runtime itself and keeps your Google sign-in in its own Antigravity profile." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Antigravity-App von Google brauchst du nicht: Coincide lädt die Laufzeitumgebung selbst und speichert deine Google-Anmeldung in einem eigenen Antigravity-Profil."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No necesitas la app Antigravity de Google: Coincide descarga el runtime por sí mismo y guarda tu inicio de sesión de Google en su propio perfil de Antigravity."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No necesitas la app Antigravity de Google: Coincide descarga el runtime por sí mismo y guarda tu inicio de sesión de Google en su propio perfil de Antigravity."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vous n’avez pas besoin de l’app Antigravity de Google : Coincide télécharge lui-même le runtime et conserve votre connexion Google dans son propre profil Antigravity."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "आपको Google के Antigravity ऐप की ज़रूरत नहीं है: Coincide रनटाइम खुद डाउनलोड करता है और आपका Google साइन इन अपनी अलग Antigravity प्रोफ़ाइल में रखता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anda tidak memerlukan aplikasi Antigravity dari Google: Coincide mengunduh runtime-nya sendiri dan menyimpan info masuk Google Anda di profil Antigravity miliknya sendiri."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Non ti serve l'app Antigravity di Google: Coincide scarica da sé il runtime e conserva il tuo accesso Google in un proprio profilo di Antigravity."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "GoogleのAntigravityアプリは必要ありません。Coincideがランタイムを自分でダウンロードし、Googleのサインイン情報を独自のAntigravityプロファイルに保存します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google의 Antigravity 앱은 필요하지 않습니다. Coincide가 런타임을 직접 다운로드하고 Google 로그인을 자체 Antigravity 프로필에 보관합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Je hebt de Antigravity-app van Google niet nodig: Coincide downloadt de runtime zelf en bewaart je Google-login in een eigen Antigravity-profiel."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aplikacja Antigravity od Google nie jest potrzebna: Coincide samodzielnie pobiera środowisko uruchomieniowe i przechowuje Twoje logowanie Google we własnym profilu Antigravity."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Você não precisa do app Antigravity do Google: o Coincide baixa o runtime por conta própria e mantém seu login do Google em um perfil próprio do Antigravity."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Приложение Antigravity от Google не нужно: Coincide самостоятельно загружает среду выполнения и хранит ваш вход в Google в собственном профиле Antigravity."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google'ın Antigravity uygulamasına ihtiyacınız yok: Coincide çalışma ortamını kendisi indirir ve Google girişinizi kendi Antigravity profilinde tutar."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Програма Antigravity від Google не потрібна: Coincide самостійно завантажує середовище виконання і зберігає ваш вхід у Google у власному профілі Antigravity."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bạn không cần ứng dụng Antigravity của Google: Coincide tự tải runtime và lưu thông tin đăng nhập Google của bạn trong hồ sơ Antigravity riêng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "你无需安装 Google 的 Antigravity 应用：Coincide 会自行下载运行时，并将你的 Google 登录信息保存在其专属的 Antigravity 配置中。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "你不需要 Google 的 Antigravity App：Coincide 會自行下載執行環境，並將你的 Google 登入資訊保存在自己的 Antigravity 設定檔中。"
           }
         }
       }

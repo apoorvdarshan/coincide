@@ -148,7 +148,7 @@ struct ProviderSetupGuide {
             ("curl -fsSL https://opencode.ai/install | bash", "opencode auth login", URL(string: "https://opencode.ai"), nil)
         case .antigravity:
             (nil, nil, URL(string: "https://antigravity.google"),
-             String(localized: "Install Antigravity, open it once and sign in with your Google account."))
+             String(localized: "You don’t need Google’s Antigravity app: Coincide downloads the runtime itself and keeps your Google sign-in in its own Antigravity profile."))
         }
     }
 
