@@ -289,6 +289,21 @@
   .agent b { font: 600 clamp(22px, 2.6vw, 34px)/1 var(--display); letter-spacing: -.03em; transition: transform .45s var(--ease), color .3s; }
   .agent:hover b { transform: translateX(8px); color: #fff; }
   .agent span { color: var(--faint); font: 13px var(--mono); text-align: right; }
+  .votes { margin-top: 56px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .vote { position: relative; overflow: hidden; display: grid; justify-items: start; gap: 12px; padding: 28px 28px 24px; border: 0; border-radius: 22px; background: var(--plate); color: var(--silver); font: inherit; text-align: left; cursor: pointer; box-shadow: inset 0 0 0 1px var(--rule); transition: transform .18s var(--ease), background .3s, box-shadow .3s; -webkit-tap-highlight-color: transparent; user-select: none; }
+  .vote:hover { background: #161B42; box-shadow: inset 0 0 0 1px rgba(147,166,255,.35); }
+  .vote:active { transform: scale(.97); }
+  .vote:focus-visible { outline: 2px solid var(--signal-hi); outline-offset: 3px; }
+  .vote svg { width: 36px; height: 36px; color: var(--signal-hi); transition: transform .45s var(--spring); }
+  .vote:hover svg { transform: rotate(-8deg) scale(1.08); }
+  .vote b { font: 600 clamp(24px, 2.6vw, 34px)/1 var(--display); letter-spacing: -.03em; }
+  .vote .n { display: inline-block; margin-top: 10px; font: 500 clamp(32px, 3.6vw, 48px)/1 var(--mono); color: #fff; font-variant-numeric: tabular-nums; }
+  .vote small { margin-top: -6px; color: var(--faint); font: 13px var(--mono); }
+  .vote.bump .n { animation: vote-bump .35s var(--spring); }
+  .vote .plus { position: absolute; right: 24px; top: 20px; color: var(--signal-hi); font: 600 18px var(--mono); pointer-events: none; animation: vote-plus .9s var(--ease) forwards; }
+  @keyframes vote-bump { 40% { transform: scale(1.14); color: var(--signal-hi); } }
+  @keyframes vote-plus { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-30px); } }
+  @media (max-width: 760px) { .votes { grid-template-columns: 1fr; } }
 
   /* Close */
   .close { text-align: center; padding: clamp(120px, 15vw, 200px) 0 clamp(80px, 10vw, 130px); position: relative; overflow: hidden; }
@@ -541,6 +556,18 @@
     </div>
   </section>
 
+  <section class="s" id="platforms">
+    <div class="wrap">
+      <h2 class="rv">Not on a Mac?</h2>
+      <p class="lede rv" style="--d:.08s">Coincide is coming to Windows, Linux and Android, each built natively for its platform. Tap the one you want. Every tap counts.</p>
+      <div class="votes rv" style="--d:.14s">
+        <button class="vote" type="button" data-platform="windows" aria-label="I want Coincide on Windows"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.6 10.4 4.5v7H3zM11.4 4.4 21 3v8.5h-9.6zM3 12.5h7.4v7L3 18.4zM11.4 12.5H21V21l-9.6-1.4z"/></svg><b>Windows</b><span class="n">–</span><small>taps so far</small></button>
+        <button class="vote" type="button" data-platform="linux" aria-label="I want Coincide on Linux"><svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M12 2c-2.2 0-3.6 1.9-3.6 4.4 0 1.3.3 2.2-.6 3.6C6.5 12 5 14.3 5 16.6c0 1 .4 1.8 1 2.3-.6.4-1 1-1 1.6C5 21.6 6.6 22 8.3 22c1.3 0 2.4-.4 3.7-.4s2.4.4 3.7.4c1.7 0 3.3-.4 3.3-1.5 0-.6-.4-1.2-1-1.6.6-.5 1-1.3 1-2.3 0-2.3-1.5-4.6-2.8-6.6-.9-1.4-.6-2.3-.6-3.6C15.6 3.9 14.2 2 12 2Zm-1.6 4.2a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6Zm3.2 0a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6ZM12 8.6l1.6 1-1.6 1-1.6-1Z"/></svg><b>Linux</b><span class="n">–</span><small>taps so far</small></button>
+        <button class="vote" type="button" data-platform="android" aria-label="I want Coincide on Android"><svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="m7.6 3.4 1.3 2.3A7.3 7.3 0 0 1 12 5c1.1 0 2.2.3 3.1.7l1.3-2.3.9.5-1.3 2.3A6.9 6.9 0 0 1 19 11.6H5a6.9 6.9 0 0 1 3-5.4L6.7 3.9Zm1.6 4.9a.95.95 0 1 0 0 1.9.95.95 0 0 0 0-1.9Zm5.6 0a.95.95 0 1 0 0 1.9.95.95 0 0 0 0-1.9ZM5 12.6h14v6.2a2.2 2.2 0 0 1-2.2 2.2H7.2A2.2 2.2 0 0 1 5 18.8Z"/></svg><b>Android</b><span class="n">–</span><small>taps so far</small></button>
+      </div>
+    </div>
+  </section>
+
   <section class="close" id="get">
     <div class="wrap">
       <div class="rv"><img class="medal" id="medal" src="img/icon-tight.png" alt="The Coincide icon: Janus, one face old and one young, joined by a blue line"></div>
@@ -558,6 +585,26 @@
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const motion = document.documentElement.classList.contains('js');
   const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+  // Platform interest: every tap adds one to a public count the site's Worker keeps (worker/index.js).
+  {
+    const votes = $$('.vote'), shown = {}, format = new Intl.NumberFormat();
+    const paint = counts => votes.forEach(vote => {
+      const platform = vote.dataset.platform;
+      shown[platform] = Math.max(shown[platform] ?? 0, counts[platform] ?? 0);
+      $('.n', vote).textContent = format.format(shown[platform]);
+    });
+    const send = request => fetch(request.url, request).then(r => r.ok ? r.json() : null).then(counts => counts && paint(counts)).catch(() => {});
+    send({ url: '/api/interest' });
+    votes.forEach(vote => vote.addEventListener('click', () => {
+      const platform = vote.dataset.platform;
+      shown[platform] = (shown[platform] ?? 0) + 1;
+      $('.n', vote).textContent = format.format(shown[platform]);
+      vote.classList.remove('bump'); void vote.offsetWidth; vote.classList.add('bump');
+      if (!reduce) { const plus = document.createElement('span'); plus.className = 'plus'; plus.textContent = '+1'; vote.append(plus); setTimeout(() => plus.remove(), 900); }
+      send({ url: '/api/interest/' + platform, method: 'POST' });
+    }));
+  }
 
   // Whatever happens to animation timers, the hero is fully shown after its intro.
   setTimeout(() => document.documentElement.classList.add('settled'), 2200);
