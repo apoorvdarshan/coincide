@@ -47,5 +47,5 @@ sed 's/Coincide-#{version}.dmg/Other.dmg/' "$work/before.rb" >"$work/other.rb"
 cmp -s "$work/coincide.rb" "$work/before.rb" || fail "a refused update changed the cask"
 pass "cask update"
 
-(cd npm && node --test test/)
+(cd npm && node --test "test/*.test.mjs")
 pass "npm installer"
