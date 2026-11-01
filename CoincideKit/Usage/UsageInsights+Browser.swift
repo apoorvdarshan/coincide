@@ -52,6 +52,7 @@ extension UsageInsights {
             switch source {
             case .chatGPT: await ChatGPTCodexBilling.read(cookie: cookie, fetch: fetch)
             case .claudeConsole: await ClaudeConsoleBilling.read(cookie: cookie, fetch: fetch)
+            case .openCodeConsole: await OpenCodeConsoleBilling.read(cookie: cookie, fetch: fetch)
             }
         // Turned off while the read ran: keep nothing.
         guard isBrowserSignInEnabled(source) else { return forgetBrowserUsage(source) }
@@ -66,7 +67,9 @@ extension UsageInsights {
             state.problem = problem
             // Without a sign-in (or access), the last figures are no longer the user's to see; a passing failure
             // (offline, a server error) keeps them, noted as not current.
-            if problem.needsSignIn || problem == .forbidden || problem == .noAPIOrganization { state.reading = nil }
+            if problem.needsSignIn || problem == .forbidden || problem == .noAPIOrganization || problem == .noBilling {
+                state.reading = nil
+            }
         }
         browserStates[source] = state
         changed()
@@ -118,6 +121,8 @@ extension UsageInsights {
     ///   email goes to no account rather than to the wrong one.
     /// - The Claude Console: Anthropic API-key accounts, whose credit it is; with none, the default Claude account
     ///   (a subscription's API credit shows in the Console too).
+    /// - The OpenCode Console: the default OpenCode account, which signs in to the Console or holds a Zen key, and
+    ///   accounts with an OpenCode Zen key. Accounts with another provider's key spend nothing from Zen.
     nonisolated static func browserTargets(
         _ source: BrowserUsageSource, accounts: [(account: ProviderAccount, label: String?)], email: String?
     ) -> Set<String> {
@@ -136,6 +141,12 @@ extension UsageInsights {
             }
             if !keys.isEmpty { return Set(keys.map(\.account.id)) }
             return accounts.contains { $0.account.isDefault } ? [ProviderAccount.defaultID] : []
+        case .openCodeConsole:
+            return Set(
+                accounts.filter {
+                    $0.account.isDefault
+                        || ($0.account.auth == .apiKey && APIKeyUsage.service(forVariable: $0.account.keyVariable) == .openCodeZen)
+                }.map(\.account.id))
         }
     }
 
@@ -185,6 +196,11 @@ extension UsageInsights {
         if source == .claudeConsole, state.reading != nil {
             // The Console's balance answers the note that the API can't show it.
             merged.notes.removeAll { $0 == AnthropicAdminUsage.balanceNote }
+        }
+        if source == .openCodeConsole, state.reading != nil {
+            // So does the OpenCode Console's, for a Zen key.
+            let unanswered = Set(APIKeyUsage.notes(for: .openCodeZen))
+            merged.notes.removeAll { unanswered.contains($0) }
         }
         return merged
     }

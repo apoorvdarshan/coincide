@@ -180,6 +180,147 @@ struct BrowserUsageTests {
         #expect(reading.figures.first { $0.id == "console_balance" }?.remaining == 187.25)
     }
 
+    // MARK: OpenCode Console
+
+    private static let workspace = "wrk_01SYNTHETICWORKSPACE000001"
+    private static let otherWorkspace = "wrk_01SYNTHETICWORKSPACE000002"
+    private static let openCodeCookie = "__Host-console_session=cs-test; other=1"
+
+    /// The billing drawer's answer, in the shape the Console's web app decodes (`BillingStatus` inside it).
+    private static func drawer(available: String = #""1240000000""#, extra: String = "") -> String {
+        """
+        {"admins":[{"name":"Synthetic Admin","avatarUrl":null}],"hasPaymentMethod":true,
+         "billing":{"billingMode":"prepaid","mode":"pay-as-you-go","balanceMicroCents":\(available),"creditLimitMicroCents":null,
+           "availableMicroCents":\(available),"canPurchaseCredits":true,"canEnableAutoRecharge":true\(extra)},
+         "autoRecharge":null,"funded":true,"overdue":false}
+        """
+    }
+
+    /// A fetch that answers the workspace list, and each workspace's drawer by its `x-org-id` header.
+    private static func openCodeFetch(_ log: Log, orgs: (Int, String), drawers: [String: (Int, String)]) -> UsageLimitsFetch {
+        { request in
+            log.add(request)
+            switch request.url!.path {
+            case "/console/api/orgs": return respond(request, orgs.0, orgs.1)
+            case "/console/api/billing/drawer/status":
+                let answer = drawers[request.value(forHTTPHeaderField: "x-org-id") ?? ""] ?? (403, #"{"_tag":"Forbidden"}"#)
+                return respond(request, answer.0, answer.1)
+            default: return respond(request, 404, "{}")
+            }
+        }
+    }
+
+    private static let oneWorkspace = #"[{"id":"\#(workspace)","name":"Default","avatarUrl":null,"blocked":false}]"#
+
+    @Test func theZenBalanceIsWhatTheBillingDrawerSaysIsLeft() async throws {
+        let log = Log()
+        let outcome = await OpenCodeConsoleBilling.read(
+            cookie: Self.openCodeCookie,
+            fetch: Self.openCodeFetch(log, orgs: (200, Self.oneWorkspace), drawers: [Self.workspace: (200, Self.drawer())]), now: now)
+        guard case .reading(let reading) = outcome else {
+            Issue.record("Expected a reading, got \(outcome)")
+            return
+        }
+        #expect(log.paths == ["/console/api/orgs", "/console/api/billing/drawer/status"])
+        // Every request is a GET to opencode.ai with the cookie in its header, never in the URL; the workspace goes in
+        // the Console's own header.
+        #expect(log.requests.allSatisfy { $0.httpMethod == "GET" && $0.url!.host == "opencode.ai" })
+        #expect(log.requests.allSatisfy { $0.value(forHTTPHeaderField: "Cookie") == Self.openCodeCookie })
+        #expect(log.requests.allSatisfy { !$0.url!.absoluteString.contains("cs-test") && $0.url!.query == nil })
+        #expect(log.requests[1].value(forHTTPHeaderField: "x-org-id") == Self.workspace)
+        #expect(reading.source == .openCodeConsole)
+        #expect(reading.identity == "Default")
+        let balance = try #require(reading.figures.first)
+        #expect(reading.figures.count == 1)
+        #expect(balance.id == "zen_balance_" + Self.workspace)
+        #expect(balance.remaining == 12.4)
+        #expect(balance.unit == .currency("USD"))
+        #expect(balance.detail == nil)
+        // A prepaid balance has no total, so Coincide's highest-seen mark measures it.
+        #expect(UsageBalanceMarks.isBareBalance(balance))
+    }
+
+    @Test func zenAmountsAreMicroCentsAsTextOrNumbers() throws {
+        func workspace(_ billing: String) -> OpenCodeConsoleBilling.Workspace? {
+            guard let json = JSONValue.parse(#"{"billing":\#(billing)}"#),
+                case .workspace(let workspace)? = OpenCodeConsoleBilling.billing(json, id: "wrk_1", name: nil)
+            else { return nil }
+            return workspace
+        }
+        #expect(workspace(#"{"availableMicroCents":250000000}"#)?.available == 2.5)
+        #expect(workspace(#"{"availableMicroCents":"1"}"#)?.available == 0.000_000_01)
+        // A balance below zero (an overshoot) has nothing left.
+        #expect(workspace(#"{"availableMicroCents":"-500000000"}"#)?.available == 0)
+        // An invoiced workspace measures against its credit limit.
+        let invoiced = try #require(
+            workspace(#"{"mode":"invoiceable","creditLimitMicroCents":"50000000000","availableMicroCents":"40000000000"}"#))
+        #expect(invoiced.creditLimit == 500 && invoiced.available == 400)
+        let figure = try #require(OpenCodeConsoleBilling.figures([invoiced]).first)
+        #expect(figure.limit == 500 && figure.remaining == 400 && !UsageBalanceMarks.isBareBalance(figure))
+        // A pay-as-you-go workspace's limit field is ignored.
+        #expect(workspace(#"{"mode":"pay-as-you-go","creditLimitMicroCents":0,"availableMicroCents":"0"}"#)?.creditLimit == nil)
+        // Amounts that aren't whole micro-cents aren't amounts.
+        for bad in [#""12.5""#, #""lots""#, "1.5", #""""#, "null", #""1e9""#] {
+            #expect(OpenCodeConsoleBilling.microCents(JSONValue.parse("[\(bad)]")?.array?.first) == nil, "\(bad)")
+        }
+        let none = try #require(JSONValue.parse(#"{"billing":null,"funded":false}"#))
+        #expect(OpenCodeConsoleBilling.billing(none, id: "wrk_1", name: nil) == .noBilling)
+        #expect(OpenCodeConsoleBilling.billing(.array([]), id: "wrk_1", name: nil) == nil)
+    }
+
+    @Test func severalWorkspacesEachShowTheirBalanceByName() async throws {
+        let orgs = """
+            [{"id":"\(Self.workspace)","name":"Personal","avatarUrl":null,"blocked":false},
+             {"id":"\(Self.otherWorkspace)","name":"Team","avatarUrl":null,"blocked":false},
+             {"id":"wrk_01SYNTHETICWORKSPACE000003","name":"No Access","avatarUrl":null,"blocked":false}]
+            """
+        let outcome = await OpenCodeConsoleBilling.read(
+            cookie: Self.openCodeCookie,
+            fetch: Self.openCodeFetch(
+                Log(), orgs: (200, orgs),
+                drawers: [Self.workspace: (200, Self.drawer()), Self.otherWorkspace: (200, Self.drawer(available: "1200000000"))]),
+            now: now)
+        guard case .reading(let reading) = outcome else {
+            Issue.record("Expected a reading, got \(outcome)")
+            return
+        }
+        // The workspace the member may not see is left out.
+        #expect(reading.figures.map(\.detail) == ["Personal", "Team"])
+        #expect(reading.figures.map(\.remaining) == [12.4, 12])
+        #expect(Set(reading.figures.map(\.id)).count == 2)
+    }
+
+    @Test func zenFailuresSayWhy() async {
+        func read(orgs: (Int, String) = (200, Self.oneWorkspace), drawer: (Int, String) = (200, Self.drawer())) async
+            -> BrowserUsageOutcome
+        {
+            await OpenCodeConsoleBilling.read(
+                cookie: "__Host-console_session=x", fetch: Self.openCodeFetch(Log(), orgs: orgs, drawers: [Self.workspace: drawer]),
+                now: now)
+        }
+        // No sign-in cookie: nothing is sent.
+        let log = Log()
+        let none = Self.openCodeFetch(log, orgs: (200, Self.oneWorkspace), drawers: [:])
+        #expect(await OpenCodeConsoleBilling.read(cookie: "other=1", fetch: none, now: now) == .problem(.notSignedIn))
+        #expect(await OpenCodeConsoleBilling.read(cookie: nil, fetch: none, now: now) == .problem(.notSignedIn))
+        #expect(log.requests.isEmpty)
+        // The Console answers a refused cookie with 401.
+        #expect(await read(orgs: (401, #"{"_tag":"Unauthorized"}"#)) == .problem(.sessionExpired))
+        #expect(await read(orgs: (429, "")) == .problem(.rateLimited))
+        #expect(await read(orgs: (503, "")) == .problem(.unavailable(503)))
+        #expect(await read(orgs: (200, "<html>Just a moment…</html>")) == .problem(.unrecognized))
+        // An ID that couldn't be a workspace's never goes into a header.
+        #expect(await read(orgs: (200, #"[{"id":"wrk_1\r\nX: y","name":"Bad"}]"#)) == .problem(.unrecognized))
+        #expect(await read(orgs: (200, "[]")) == .problem(.noBilling))
+        #expect(await read(drawer: (200, #"{"billing":null,"funded":false}"#)) == .problem(.noBilling))
+        #expect(await read(drawer: (403, #"{"_tag":"Forbidden"}"#)) == .problem(.forbidden))
+        #expect(await read(drawer: (200, #"{"billing":{"availableMicroCents":"lots"}}"#)) == .problem(.unrecognized))
+        #expect(await read(drawer: (500, "")) == .problem(.unavailable(500)))
+        let offline = await OpenCodeConsoleBilling.read(
+            cookie: "__Host-console_session=x", fetch: { _ in throw URLError(.notConnectedToInternet) }, now: now)
+        #expect(offline == .problem(.offline))
+    }
+
     // MARK: chatgpt.com
 
     private static let session = #"{"user":{"email":"me@example.com","name":"Me"},"accessToken":"at-test-token","expires":"2026-11-01"}"#
@@ -301,6 +442,33 @@ struct BrowserUsageTests {
         let key = ProviderAccount(id: "key", provider: .claude, name: "API", auth: .apiKey)
         #expect(UsageInsights.browserTargets(.claudeConsole, accounts: [(main, nil), (key, nil)], email: nil) == [key.id])
         #expect(UsageInsights.browserTargets(.claudeConsole, accounts: [(main, nil)], email: nil) == [main.id])
+    }
+
+    @Test func zenDetailsGoToTheDefaultOpenCodeAccountAndZenKeys() {
+        let main = ProviderAccount.defaultAccount(for: .opencode)
+        let zen = ProviderAccount(id: "zen", provider: .opencode, name: "Zen", auth: .apiKey, apiKeyVariable: "OPENCODE_API_KEY")
+        let router = ProviderAccount(id: "router", provider: .opencode, name: "Router", auth: .apiKey, apiKeyVariable: "OPENROUTER_API_KEY")
+        let accounts: [(account: ProviderAccount, label: String?)] = [(main, nil), (zen, nil), (router, nil)]
+        #expect(UsageInsights.browserTargets(.openCodeConsole, accounts: accounts, email: nil) == [main.id, zen.id])
+        #expect(UsageInsights.browserTargets(.openCodeConsole, accounts: [(router, nil)], email: nil).isEmpty)
+    }
+
+    @Test func aZenReadingKeepsTheGoWindowsAndAnswersTheKeysNote() throws {
+        let go = UsageLimitWindow(id: "go_weekly", kind: .weekly, label: "Go · Weekly", usedPercent: 20, resetsAt: now.addingTimeInterval(86_400))
+        let agent = UsageLimits(windows: [go], checkedAt: now, notes: APIKeyUsage.notes(for: .openCodeZen))
+        let reading = OpenCodeConsoleBilling.reading(
+            [OpenCodeConsoleBilling.Workspace(id: Self.workspace, name: "Default", available: 12.4, creditLimit: nil)], checkedAt: now)
+        let merged = try #require(
+            UsageInsights.adding(BrowserUsageState(source: .openCodeConsole, reading: reading, checkedAt: now), history: (nil, nil), to: agent, now: now))
+        #expect(merged.windows == [go])
+        #expect(merged.figures.map(\.remaining) == [12.4])
+        #expect(merged.notes.isEmpty)
+        // Without a sign-in the account says so and keeps what OpenCode reports.
+        let failed = try #require(
+            UsageInsights.adding(
+                BrowserUsageState(source: .openCodeConsole, problem: .notSignedIn, checkedAt: now), history: (nil, nil), to: nil, now: now))
+        #expect(failed.windows.isEmpty && failed.figures.isEmpty)
+        #expect(failed.notes == ["Couldn’t read opencode.ai. You aren’t signed in there in Coincide’s browser. Showing Coincide’s own record."])
     }
 
     @Test func browserFiguresFillInWithoutOverridingTheAgents() throws {

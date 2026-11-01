@@ -903,6 +903,7 @@ private struct BrowserSignInRow: View {
         switch source {
         case .chatGPT: String(localized: "Codex: Use my browser sign-in for extra details")
         case .claudeConsole: String(localized: "Claude: Use my browser sign-in for extra details")
+        case .openCodeConsole: String(localized: "OpenCode: Use my browser sign-in for extra details")
         }
     }
 
@@ -914,6 +915,10 @@ private struct BrowserSignInRow: View {
             String(
                 localized:
                     "Reads your prepaid API credit balance from the Claude Console (platform.claude.com), with your sign-in in Coincide’s browser."
+            )
+        case .openCodeConsole:
+            String(
+                localized: "Reads your OpenCode Zen credit balance from the OpenCode Console (opencode.ai), with your sign-in in Coincide’s browser."
             )
         }
     }

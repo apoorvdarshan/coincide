@@ -195824,6 +195824,118 @@
         }
       }
     },
+    "No OpenCode Go plan limits reported. To show your OpenCode Zen balance, turn on “OpenCode: Use my browser sign-in for extra details” in Settings › Usage." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Limits des OpenCode-Go-Plans gemeldet. Um dein OpenCode-Zen-Guthaben anzuzeigen, schalte „OpenCode: Meine Browser-Anmeldung für zusätzliche Details verwenden“ unter Einstellungen › Nutzung ein."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se informan límites del plan OpenCode Go. Para ver tu saldo de OpenCode Zen, activa «OpenCode: Usar mi sesión del navegador para más detalles» en Ajustes › Uso."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se informan límites del plan OpenCode Go. Para ver tu saldo de OpenCode Zen, activa «OpenCode: Usar mi sesión del navegador para más detalles» en Configuración › Uso."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucune limite du forfait OpenCode Go signalée. Pour afficher votre solde OpenCode Zen, activez « OpenCode : Utiliser ma connexion du navigateur pour plus de détails » dans Réglages › Utilisation."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode Go प्लान की कोई सीमा नहीं बताई गई। अपना OpenCode Zen बैलेंस दिखाने के लिए सेटिंग्स › उपयोग में “OpenCode: अतिरिक्त जानकारी के लिए मेरे ब्राउज़र साइन-इन का इस्तेमाल करें” चालू करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tidak ada batas paket OpenCode Go yang dilaporkan. Untuk menampilkan saldo OpenCode Zen Anda, nyalakan “OpenCode: Gunakan info masuk browser saya untuk detail tambahan” di Pengaturan › Penggunaan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nessun limite del piano OpenCode Go segnalato. Per mostrare il saldo di OpenCode Zen, attiva “OpenCode: Usa il mio accesso nel browser per altri dettagli” in Impostazioni › Utilizzo."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode Go プランの上限は報告されていません。OpenCode Zen の残高を表示するには、設定 › 使用量で「OpenCode: 詳細情報にブラウザのサインインを使用」をオンにしてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode Go 플랜 한도가 보고되지 않았습니다. OpenCode Zen 잔액을 보려면 설정 › 사용량에서 ‘OpenCode: 추가 세부 정보에 내 브라우저 로그인 사용’을 켜십시오."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geen limieten van het OpenCode Go-abonnement gemeld. Zet ‘OpenCode: Gebruik mijn browseraanmelding voor extra details’ aan in Instellingen › Gebruik om je OpenCode Zen-tegoed te tonen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Brak zgłoszonych limitów planu OpenCode Go. Aby zobaczyć saldo OpenCode Zen, włącz „OpenCode: Użyj logowania w przeglądarce, by zobaczyć więcej” w Ustawienia › Użycie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhum limite do plano OpenCode Go informado. Para mostrar seu saldo do OpenCode Zen, ative “OpenCode: Usar meu login do navegador para mais detalhes” em Ajustes › Uso."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Лимиты тарифа OpenCode Go не сообщаются. Чтобы показать баланс OpenCode Zen, включите «OpenCode: Использовать мой вход в браузере для подробностей» в разделе Настройки › Использование."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode Go plan sınırı bildirilmedi. OpenCode Zen bakiyenizi göstermek için Ayarlar › Kullanım’da “OpenCode: Ek ayrıntılar için tarayıcı girişimi kullan” seçeneğini açın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ліміти тарифу OpenCode Go не повідомляються. Щоб показати баланс OpenCode Zen, увімкніть «OpenCode: Використовувати мій вхід у браузері для подробиць» у розділі Параметри › Використання."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không có giới hạn gói OpenCode Go nào được báo cáo. Để hiển thị số dư OpenCode Zen, hãy bật “OpenCode: Dùng phiên đăng nhập trình duyệt để xem thêm chi tiết” trong Cài đặt › Mức sử dụng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未报告 OpenCode Go 套餐限额。要显示你的 OpenCode Zen 余额，请在“设置 › 用量”中打开“OpenCode:使用我的浏览器登录获取更多详情”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "未回報 OpenCode Go 方案限額。若要顯示你的 OpenCode Zen 餘額，請在「設定 › 用量」中開啟「OpenCode:使用我的瀏覽器登入取得更多詳細資訊」。"
+          }
+        }
+      }
+    },
     "No Projects" : {
       "localizations" : {
         "de" : {
@@ -217782,6 +217894,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "OpenCode 自行開始工作。"
+          }
+        }
+      }
+    },
+    "OpenCode: Use my browser sign-in for extra details" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Meine Browser-Anmeldung für zusätzliche Details verwenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Usar mi sesión del navegador para más detalles"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Usar mi sesión del navegador para más detalles"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode : Utiliser ma connexion du navigateur pour plus de détails"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: अतिरिक्त जानकारी के लिए मेरे ब्राउज़र साइन-इन का इस्तेमाल करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Gunakan info masuk browser saya untuk detail tambahan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Usa il mio accesso nel browser per altri dettagli"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: 詳細情報にブラウザのサインインを使用"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: 추가 세부 정보에 내 브라우저 로그인 사용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Gebruik mijn browseraanmelding voor extra details"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Użyj logowania w przeglądarce, by zobaczyć więcej"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Usar meu login do navegador para mais detalhes"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Использовать мой вход в браузере для подробностей"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Ek ayrıntılar için tarayıcı girişimi kullan"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Використовувати мій вхід у браузері для подробиць"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode: Dùng phiên đăng nhập trình duyệt để xem thêm chi tiết"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode:使用我的浏览器登录获取更多详情"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OpenCode:使用我的瀏覽器登入取得更多詳細資訊"
           }
         }
       }
@@ -239966,6 +240190,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "正在讀取瀏覽器資料…"
+          }
+        }
+      }
+    },
+    "Reads your OpenCode Zen credit balance from the OpenCode Console (opencode.ai), with your sign-in in Coincide’s browser." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Liest dein OpenCode-Zen-Guthaben in der OpenCode Console (opencode.ai), mit deiner Anmeldung im Browser von Coincide."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lee tu saldo de crédito de OpenCode Zen en OpenCode Console (opencode.ai), con tu sesión en el navegador de Coincide."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lee tu saldo de crédito de OpenCode Zen en OpenCode Console (opencode.ai), con tu sesión en el navegador de Coincide."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lit votre solde de crédits OpenCode Zen dans l’OpenCode Console (opencode.ai), avec votre connexion dans le navigateur de Coincide."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide के ब्राउज़र में आपके साइन-इन से OpenCode Console (opencode.ai) पर आपका OpenCode Zen क्रेडिट बैलेंस पढ़ता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Membaca saldo kredit OpenCode Zen Anda dari OpenCode Console (opencode.ai), dengan info masuk Anda di browser Coincide."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Legge il saldo del tuo credito OpenCode Zen nella OpenCode Console (opencode.ai), con il tuo accesso nel browser di Coincide."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide のブラウザでのサインインを使って、OpenCode Console(opencode.ai)から OpenCode Zen のクレジット残高を読み取ります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 브라우저의 로그인으로 OpenCode Console(opencode.ai)에서 OpenCode Zen 크레딧 잔액을 읽습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leest je OpenCode Zen-tegoed in de OpenCode Console (opencode.ai), met je aanmelding in de browser van Coincide."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Odczytuje saldo środków OpenCode Zen z OpenCode Console (opencode.ai), korzystając z Twojego logowania w przeglądarce Coincide."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lê seu saldo de crédito do OpenCode Zen no OpenCode Console (opencode.ai), com seu login no navegador do Coincide."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Читает баланс кредитов OpenCode Zen в OpenCode Console (opencode.ai) с помощью вашего входа в браузере Coincide."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide tarayıcısındaki girişinizle OpenCode Console’dan (opencode.ai) OpenCode Zen kredi bakiyenizi okur."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Читає баланс кредитів OpenCode Zen в OpenCode Console (opencode.ai) за допомогою вашого входу в браузері Coincide."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đọc số dư tín dụng OpenCode Zen của bạn từ OpenCode Console (opencode.ai), bằng phiên đăng nhập của bạn trong trình duyệt của Coincide."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用你在 Coincide 浏览器中的登录,从 OpenCode Console(opencode.ai)读取你的 OpenCode Zen 额度余额。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用你在 Coincide 瀏覽器中的登入,從 OpenCode Console(opencode.ai)讀取你的 OpenCode Zen 額度餘額。"
           }
         }
       }
@@ -323145,6 +323481,118 @@
         }
       }
     },
+    "This account has no OpenCode Console workspace with billing." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieses Konto hat keinen Workspace mit Abrechnung in der OpenCode Console."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta cuenta no tiene un espacio de trabajo con facturación en OpenCode Console."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta cuenta no tiene un espacio de trabajo con facturación en OpenCode Console."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce compte n’a pas d’espace de travail avec facturation dans l’OpenCode Console."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस खाते में बिलिंग वाला कोई OpenCode Console वर्कस्पेस नहीं है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Akun ini tidak memiliki ruang kerja OpenCode Console dengan penagihan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questo account non ha uno spazio di lavoro con fatturazione nella OpenCode Console."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このアカウントには請求が設定された OpenCode Console のワークスペースがありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 계정에는 결제가 설정된 OpenCode Console 워크스페이스가 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dit account heeft geen werkruimte met facturering in de OpenCode Console."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "To konto nie ma obszaru roboczego z rozliczeniami w OpenCode Console."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta conta não tem um espaço de trabalho com cobrança no OpenCode Console."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "У этого аккаунта нет рабочего пространства с оплатой в OpenCode Console."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu hesabın faturalandırması olan bir OpenCode Console çalışma alanı yok."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей обліковий запис не має робочого простору з оплатою в OpenCode Console."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tài khoản này không có không gian làm việc có thanh toán trên OpenCode Console."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此账户没有设置了账单的 OpenCode Console 工作区。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此帳號沒有設定帳單的 OpenCode Console 工作區。"
+          }
+        }
+      }
+    },
     "This account may not see its billing." : {
       "localizations" : {
         "de" : {
@@ -355559,6 +356007,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "輪到你在瀏覽器中操作"
+          }
+        }
+      }
+    },
+    "Zen balance" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zen-Guthaben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo de Zen"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo de Zen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solde Zen"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zen बैलेंस"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo Zen"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo Zen"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zen 残高"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zen 잔액"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zen-tegoed"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo Zen"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saldo do Zen"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Баланс Zen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zen bakiyesi"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Баланс Zen"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Số dư Zen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zen 余额"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zen 餘額"
           }
         }
       }
