@@ -18,7 +18,7 @@ cua_team=YCK386LBJ7
 fail() { echo "error: $*" >&2; exit 1; }
 
 check_app() {
-    local app="$1" version="$2" team="$3" file info flags signer
+    local app="$1" version="$2" team="$3" file info flags signer entitlements
     [ -d "$app" ] || fail "$app doesn't exist"
     [ "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" = "$bundle_id" ] \
         || fail "$app isn't $bundle_id"
@@ -42,7 +42,8 @@ check_app() {
         if [[ "$info" == *executable* ]] && (( (flags & 0x10000) == 0 )); then
             fail "$relative doesn't have the hardened runtime"
         fi
-        if codesign -d --entitlements - --xml "$file" 2>/dev/null | grep -q get-task-allow; then
+        entitlements="$(codesign -d --entitlements - --xml "$file" 2>/dev/null || true)"
+        if [[ "$entitlements" == *get-task-allow* ]]; then
             fail "$relative has the get-task-allow entitlement, which notarization refuses"
         fi
     done < <(find "$app" -type f -print0)
@@ -51,10 +52,17 @@ check_app() {
     echo "$app: $count Mach-O files, all universal, signed, timestamped; executables hardened"
 }
 
+# gatekeeper TYPE PATH: `spctl --assess` must accept it as notarized.
+gatekeeper() {
+    local assessment
+    assessment="$(spctl --assess --type "$1" -vvv "$2" 2>&1)" || fail "Gatekeeper rejects $2: $assessment"
+    echo "$assessment"
+    [[ "$assessment" == *"source=Notarized Developer ID"* ]] || fail "Gatekeeper doesn't see $2 as notarized"
+}
+
 check_notarized_app() {
     xcrun stapler validate "$1"
-    spctl --assess --type execute -vvv "$1" 2>&1 | tee /dev/stderr | grep -q 'source=Notarized Developer ID' \
-        || fail "Gatekeeper doesn't see $1 as notarized"
+    gatekeeper execute "$1"
 }
 
 mode="${1:-}"
@@ -74,8 +82,7 @@ release)
 
     codesign --verify --strict --verbose=2 "$dmg"
     xcrun stapler validate "$dmg"
-    spctl --assess --type install -vvv "$dmg" 2>&1 | tee /dev/stderr | grep -q 'source=Notarized Developer ID' \
-        || fail "Gatekeeper doesn't see $(basename "$dmg") as notarized"
+    gatekeeper install "$dmg"
     mkdir "$mount"
     hdiutil attach -quiet -readonly -nobrowse -noautoopen -mountpoint "$mount" "$dmg"
     [ "$(readlink "$mount/Applications")" = /Applications ] || fail "the DMG has no Applications link"
