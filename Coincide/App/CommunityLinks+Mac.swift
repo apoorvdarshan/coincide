@@ -3,8 +3,9 @@ import CoincideKit
 import CoincideRemoteKit
 import SwiftUI
 
-/// Help & Community on the Mac: Settings › About, the Help menu and the command palette list `CommunityLink.allCases`
-/// with these titles and symbols, so a link added there shows up in all three.
+/// Help & Community on the Mac: Settings › About, the Help menu and the command palette list the links offered on the
+/// Mac (`CommunityLink.offered(on: .mac)`) with these titles and symbols, so a link added there shows up in all three;
+/// the rail has buttons for a few (`NavigationRailViewController.communityLinks`).
 extension CommunityLink {
     /// The link's name in Settings.
     var title: String {
@@ -14,6 +15,7 @@ extension CommunityLink {
         case .requestFeature: String(localized: "Request a Feature")
         case .joinDiscord: String(localized: "Join the Discord")
         case .starOnGitHub: String(localized: "Star on GitHub")
+        case .supportOnKoFi: String(localized: "Support on Ko-fi")
         case .x: "X"
         case .instagram: "Instagram"
         case .linkedIn: "LinkedIn"
@@ -30,6 +32,7 @@ extension CommunityLink {
         case .reportIssue, .requestFeature: String(localized: "On GitHub or Discord")
         case .joinDiscord: "discord.gg/DETrbhDVqw"
         case .starOnGitHub: String(localized: "Coincide is open source under the MIT License")
+        case .supportOnKoFi: String(localized: "Buy Apoorv a coffee")
         case .x: CoincideLinks.xHandle
         case .instagram: CoincideLinks.instagramHandle
         case .linkedIn: "linkedin.com/showcase/coincide-dev"
@@ -44,6 +47,7 @@ extension CommunityLink {
     var menuTitle: String {
         switch self {
         case .getHelp: String(localized: "Get Help on Discord")
+        case .supportOnKoFi: String(localized: "Support Coincide on Ko-fi")
         case .reportIssue, .requestFeature: command?.title ?? title
         case .x: "X: \(CoincideLinks.xHandle)"
         case .instagram: "Instagram: \(CoincideLinks.instagramHandle)"
@@ -68,6 +72,7 @@ extension CommunityLink {
         case .requestFeature: "lightbulb.fill"
         case .joinDiscord: "bubble.left.and.bubble.right.fill"
         case .starOnGitHub: "star.fill"
+        case .supportOnKoFi: "heart.fill"
         case .x: "at"
         case .instagram: "camera.fill"
         case .linkedIn: "person.2.fill"
@@ -84,6 +89,7 @@ extension CommunityLink {
         case .requestFeature: .orange
         case .joinDiscord: .indigo
         case .starOnGitHub: .gray
+        case .supportOnKoFi: .pink
         case .x: .black
         case .instagram: .pink
         case .linkedIn: .blue
@@ -106,6 +112,7 @@ extension CommunityLink {
                      "enhancement", "feedback", "github", "discord", "help"]
         case .joinDiscord: words = ["discord", "community", "chat", "server", "join", "invite"]
         case .starOnGitHub: words = ["github", "star", "source", "code", "open source", "license", "mit", "repository"]
+        case .supportOnKoFi: words = ["support", "donate", "donation", "tip", "coffee", "ko-fi", "kofi", "sponsor", "fund"]
         case .x: words = ["x", "twitter", "follow", "social", CoincideLinks.xHandle]
         case .instagram: words = ["instagram", "follow", "social", CoincideLinks.instagramHandle]
         case .linkedIn: words = ["linkedin", "follow", "social", "company"]

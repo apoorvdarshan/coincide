@@ -161,7 +161,7 @@ struct HelpCommunitySections: View {
     var body: some View {
         ForEach(CommunityLink.Group.allCases, id: \.self) { group in
             Section {
-                ForEach(CommunityLink.links(in: group)) { link in
+                ForEach(CommunityLink.links(in: group, on: .mac)) { link in
                     AboutLink(
                         symbol: link.symbol, color: link.tint, title: link.title, detail: link.detail,
                         url: link.url().absoluteString, action: { link.open() })

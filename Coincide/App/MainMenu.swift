@@ -255,7 +255,7 @@ final class MainMenu: NSObject, NSMenuDelegate {
         let menu = NSMenu(title: String(localized: "Help"))
         for group in CommunityLink.Group.allCases {
             if !menu.items.isEmpty { menu.addItem(.separator()) }
-            for link in CommunityLink.links(in: group) {
+            for link in CommunityLink.links(in: group, on: .mac) {
                 let action = #selector(AppDelegate.openCommunityLink(_:))
                 let entry = link.command.map { item(link.menuTitle, action, $0) } ?? item(link.menuTitle, action)
                 entry.target = appDelegate
