@@ -111,8 +111,8 @@ final class QuitShortcut {
     }
 }
 
-/// The small hint ⌘Q shows: "Hold ⌘Q to quit" over a bar that fills while it is held. It floats near the top center of
-/// the main window, or of the screen when the window is hidden, and never takes clicks or focus.
+/// The hint ⌘Q shows: "Hold ⌘Q to quit" over a bar that fills while it is held, large enough to read at a glance. It
+/// floats in the center of the main window, or of the screen when the window is hidden, and never takes clicks or focus.
 final class QuitHintHUD {
     let panel: NSPanel
     private let bar = ThemedProgressBar(fraction: 0, color: Theme.accent)
@@ -125,7 +125,7 @@ final class QuitHintHUD {
 
     init() {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 220, height: 64), styleMask: [.borderless, .nonactivatingPanel],
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 110), styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: true)
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -137,20 +137,21 @@ final class QuitHintHUD {
         panel.collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
 
         let label = NSTextField(labelWithString: String(localized: "Hold ⌘Q to quit"))
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.font = .systemFont(ofSize: 24, weight: .semibold)
         label.textColor = Theme.ink
         label.alignment = .center
         let stack = NSStackView(views: [label, bar])
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 18, bottom: 14, right: 18)
+        stack.spacing = 16
+        stack.edgeInsets = NSEdgeInsets(top: 26, left: 36, bottom: 28, right: 36)
         NSLayoutConstraint.activate([
             bar.widthAnchor.constraint(equalTo: label.widthAnchor),
-            label.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
+            label.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
+            bar.heightAnchor.constraint(equalToConstant: 8),
         ])
         let surface = FlatSurfaceView(style: .floating)
-        surface.cornerRadius = 12
+        surface.cornerRadius = 20
         surface.contentView = stack
         panel.contentView = surface
         panel.setContentSize(stack.fittingSize)
@@ -163,12 +164,12 @@ final class QuitHintHUD {
         let size = panel.frame.size
         let origin: NSPoint
         if let window, window.isVisible, !window.isMiniaturized {
-            // Below the title bar and toolbar, centered on the window.
-            let top = window.contentLayoutRect.maxY + window.frame.minY
-            origin = NSPoint(x: window.frame.midX - size.width / 2, y: top - size.height - 16)
+            // Centered on the window's content, below the title bar and toolbar.
+            let content = window.contentLayoutRect.offsetBy(dx: window.frame.minX, dy: window.frame.minY)
+            origin = NSPoint(x: content.midX - size.width / 2, y: content.midY - size.height / 2)
         } else {
             let screen = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? .zero
-            origin = NSPoint(x: screen.midX - size.width / 2, y: screen.maxY - size.height - 40)
+            origin = NSPoint(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2)
         }
         panel.setFrameOrigin(origin)
         guard !isShown else { return }
