@@ -178,7 +178,8 @@ struct CommunityLinksTests {
             #expect(item.target === appDelegate)
             #expect(item.action == #selector(AppDelegate.openCommunityLink(_:)))
             #expect(item.representedObject as? String == link.rawValue)
-            #expect(item.identifier == link.command.map { NSUserInterfaceItemIdentifier.keyCommand($0) })
+            // Only the two reports are commands with a shortcut of their own (AppKit names the others after their action).
+            #expect(item.identifier.flatMap(KeyCommand.init(menuItemIdentifier:)) == link.command)
             #expect(item.keyEquivalent.isEmpty)
         }
         #expect(NSApp.windows.filter(\.isVisible).isEmpty)
