@@ -67,7 +67,7 @@ app)
 release)
     dmg="$path/Coincide-$version.dmg"
     zip="$path/Coincide-macos-universal.zip"
-    [ -f "$dmg" ] && [ -f "$zip" ] || fail "$path is missing Coincide-$version.dmg or Coincide-macos-universal.zip"
+    if [ ! -f "$dmg" ] || [ ! -f "$zip" ]; then fail "$path is missing Coincide-$version.dmg or Coincide-macos-universal.zip"; fi
     work="$(mktemp -d)"
     mount="$work/volume"
     trap 'hdiutil detach -quiet "$mount" 2>/dev/null || true; rm -rf "$work"' EXIT
