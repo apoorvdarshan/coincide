@@ -27,7 +27,7 @@ open Coincide.xcodeproj
 
 To try your build, install and sign in to at least one agent CLI (see [Agents](README.md#agents)). Debug builds (Xcode's, the tests' and agents') are a separate app, Coincide Debug, with bundle ID `com.apoorvdarshan.coincide.debug`: they keep their data in `~/Library/Application Support/Coincide Debug` and have their own background jobs, Keychain items and macOS permissions, so they never touch an installed Coincide. Set `COINCIDE_DATA_DIR` to use a scratch folder instead.
 
-Xcode registers every app it builds with Launch Services, and macOS can pick any registered copy with the installed app's bundle ID for its notification icon or to open a notification click. When you're done with a build you won't install (a Release staged for testing, or any DerivedData folder), unregister it with `scripts/unregister-builds.sh <DerivedData folder or .app>`. `scripts/local-ci.sh` does this for everything it builds.
+Xcode registers every app it builds with Launch Services, and macOS can pick any registered copy with the installed app's bundle ID for its notification icon or to open a notification click. When you're done with a build you won't install (a Release staged for testing, or any DerivedData folder), unregister it with `scripts/unregister-builds.sh <DerivedData folder or .app>`.
 
 Builds are signed ad hoc by default. If your agent configuration lives in a protected folder (for example `~/.claude/CLAUDE.md` linked into `~/Documents`), macOS asks Coincide for access the first time an agent reads it, and an ad-hoc build gets a new identity on every build, so it asks again each time. To keep the answer, sign your builds with your own identity: create a gitignored `Local.xcconfig` in the repository root, as described in `Signing.xcconfig`, then run `xcodegen generate`.
 
@@ -40,6 +40,7 @@ Builds are signed ad hoc by default. If your agent configuration lives in a prot
 | `CoincideKitTests/` | Unit tests (Swift Testing) and opt-in live provider tests |
 | `Fuzz/` | libFuzzer targets for the parsers in CoincideKit (see [Fuzzing](#fuzzing)) |
 | `scripts/` | Maintenance scripts, such as `sync-strings.sh` |
+| `website/` | The [coincide.dev](https://coincide.dev) website: static files in `public/`, served by Cloudflare Workers; deploy with `wrangler deploy` from this folder |
 
 ## Code style
 

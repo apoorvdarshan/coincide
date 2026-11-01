@@ -24,3 +24,6 @@ xcuserdata/
 
 # CFBundleVersion, written by scripts/build-number.sh when the project is generated
 /BuildNumber.xcconfig
+
+# Wrangler's local cache (website/)
+.wrangler/
