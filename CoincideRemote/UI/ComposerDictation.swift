@@ -150,7 +150,9 @@ struct DictationButton: View {
             Image(systemName: dictation.isActive ? "mic.fill" : "mic")
                 .font(.body.weight(.medium))
                 .foregroundStyle(dictation.isActive ? theme.accent : theme.secondaryInk)
-                .frame(width: 40, height: 44)
+                // Wider when a large text size makes the symbol wider, so it never runs into attach or send.
+                .padding(.horizontal, 2)
+                .frame(minWidth: 40, minHeight: 44)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
