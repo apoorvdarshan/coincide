@@ -12,6 +12,7 @@ The first public release of Coincide, a native macOS app for the coding agents y
 - Plan mode, approvals or full access, questions answered inline, attachments, `@` file mentions and `/` commands.
 - Git built in: diffs, per-turn checkpoints, worktrees, commits, pushes and pull requests, and a GitHub PR workspace.
 - An integrated terminal and a browser in every thread, which agents can drive when you allow it.
+- Passkeys in the browser: sign in with passkeys saved in Bitwarden (you confirm each sign-in, with optional Touch ID), or sign in with your passkey in your default browser and import that sign-in into Coincide.
 - Computer Use (off by default), scheduled tasks, bots, dictation, Keep Awake, a usage dashboard and the `coincide` command-line tool.
 - 19 languages (machine-translated; corrections are welcome).
 - Ships as a notarized universal DMG for Apple silicon and Intel Macs, with `brew install --cask apoorvdarshan/tap/coincide` and `npx coincide-dev` as other ways to install. Coincide → Check for Updates installs later releases.
