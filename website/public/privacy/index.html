@@ -175,7 +175,7 @@
     <h2 id="connections">Other connections the app makes</h2>
     <p>Apart from your agents, Coincide connects to other services only for these features. None of them sends anything to us.</p>
     <h3>Update checks</h3>
-    <p>When you choose Check for Updates, or once a day if you turn on automatic checks (off by default), Coincide asks GitHub’s public Releases API for the latest version. Downloading an update fetches it from GitHub. As with any request, GitHub sees your IP address.</p>
+    <p>When you choose Check for Updates, and once a day while automatic checks are on (on by default; turn them off in Settings › About), Coincide asks GitHub’s public Releases API for the latest version. Downloading an update fetches it from GitHub. As with any request, GitHub sees your IP address.</p>
     <h3>Usage limits</h3>
     <p>To show how much of your plans you’ve used, Coincide asks Claude Code and Codex through their own tools, and calls Cursor, xAI (Grok Build), OpenCode, Google’s Cloud Code service (Antigravity) and OpenRouter directly, with the sign-in or key that agent already keeps on your Mac. The credential goes only in a request header to that provider’s own address. Coincide reads Cursor’s sign-in from the Keychain only if you allow it in Settings. Anthropic API-key rate limits are read only when you ask, with a one-token request on that key. If you add an Anthropic Admin API key, Coincide reads your organization’s usage and cost reports from Anthropic.</p>
     <h3>Usage from provider websites (off by default)</h3>
