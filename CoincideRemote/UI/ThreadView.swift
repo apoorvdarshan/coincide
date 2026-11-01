@@ -254,6 +254,8 @@ struct ThreadView: View {
     @State private var usageWarning: RemoteUsageWarning?
     /// The thread's schedules, from the clock in its header.
     @State private var showsSchedules = false
+    /// The composer's message field, which a tap on the transcript leaves.
+    @FocusState private var composerFocused: Bool
 
     var body: some View {
         let blocks = TranscriptBlock.build(
@@ -295,7 +297,10 @@ struct ThreadView: View {
         .scrollPosition(id: scrollAnchor, anchor: .top)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
-        .scrollDismissesKeyboard(.interactively)
+        // Scrolling the transcript or tapping it puts the keyboard away. The tap goes to links, buttons, menus and text
+        // selection in the messages as well.
+        .scrollDismissesKeyboard(.immediately)
+        .simultaneousGesture(TapGesture().onEnded { if composerFocused { composerFocused = false } })
         .background(theme.content)
         .overlay {
             if model.isLoading, model.items.isEmpty { ProgressView() }
@@ -310,7 +315,7 @@ struct ThreadView: View {
                 WaitingBanner(model: model)
                 QueueStrip(model: model)
                 UsageWarningBanner(model: model, warning: $usageWarning)
-                ComposerView(model: model)
+                ComposerView(model: model, focused: $composerFocused)
                 CheckoutRow(summary: model.summary)
             }
             .modifier(UsageWarningPolling(model: model, warning: $usageWarning))

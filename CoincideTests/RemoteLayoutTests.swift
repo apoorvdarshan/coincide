@@ -96,6 +96,63 @@ struct RemoteLayoutTests {
         #expect(footer.size.height == CGFloat(footer.chips.map(\.line).max()! + 1) * 70)
     }
 
+    /// A model with effort and speed at the default text size: model, effort, speed, access and mode, each 44 points
+    /// as its symbol.
+    private let fullMenus = [
+        RemoteLayout.Chip(full: 120, compact: 44), RemoteLayout.Chip(full: 96, compact: 44), RemoteLayout.Chip(full: 98, compact: 44),
+        RemoteLayout.Chip(full: 118, compact: 44), RemoteLayout.Chip(full: 72, compact: 44),
+    ]
+    /// Attach (40), dictation (40) and send or stop (44), flush.
+    private let attachDictateAndSend: CGFloat = 124
+    /// The footer of an iPhone's composer, by screen width: 10 points of margin and 8 of the composer's padding on
+    /// each side, less the 4 the footer reaches into it (`ComposerFooterLayout.bleed`).
+    private let phoneFooters: [(screen: CGFloat, footer: CGFloat)] = [375, 390, 393, 402, 420, 430, 440].map { ($0, $0 - 28) }
+
+    @Test func everyControlFitsOnOneLineOnEveryPhone() {
+        for (screen, width) in phoneFooters {
+            let idle = RemoteLayout.footer(
+                width: width, chips: fullMenus, fixed: attachDictateAndSend, height: 44, spacing: 0, inset: 4)
+            expectWellFormed(idle, width: width)
+            #expect(idle.chips.allSatisfy { $0.line == 0 }, "\(screen)-point phone, idle")
+            #expect(idle.size.height == 44)
+            // While the agent works, steer or queue joins them. Narrower phones choose the speed in the model's menu
+            // (`ComposerControls.foldsSpeed`), one menu fewer; an iPhone Air and wider keep it.
+            let unfolded = RemoteLayout.footerMinimumWidth(chips: fullMenus, pinned: [steer], fixed: attachDictateAndSend, spacing: 0)
+            let menus = unfolded <= width ? fullMenus : fullMenus.enumerated().filter { $0.offset != 2 }.map(\.element)
+            #expect((unfolded <= width) == (screen >= 420), "\(screen)-point phone folds the speed only when it must")
+            let running = RemoteLayout.footer(
+                width: width, chips: menus, pinned: [steer], fixed: attachDictateAndSend, height: 44, spacing: 0, inset: 4)
+            expectWellFormed(running, width: width)
+            #expect(running.chips.allSatisfy { $0.line == 0 }, "\(screen)-point phone while the agent works")
+            #expect(running.pinned.allSatisfy { $0.isCompact })
+        }
+    }
+
+    @Test func theFirstMenuLinesUpWithTheMessageUntilItNeedsTheRoom() {
+        // A 393-point phone has room to spare: the model's menu starts 4 points in, under the message's text.
+        let roomy = RemoteLayout.footer(width: 365, chips: fullMenus, fixed: attachDictateAndSend, height: 44, spacing: 0, inset: 4)
+        #expect(roomy.chips.first?.frame.minX == 4)
+        // A 375-point phone needs those 4 points for its last menu.
+        let tight = RemoteLayout.footer(width: 347, chips: fullMenus, fixed: attachDictateAndSend, height: 44, spacing: 0, inset: 4)
+        #expect(tight.chips.first?.frame.minX == 0)
+        #expect(tight.chips.allSatisfy { $0.isCompact && $0.line == 0 })
+        // The trailing controls end at the footer's edge either way.
+        #expect(roomy.fixed.maxX == 365 && tight.fixed.maxX == 347)
+    }
+
+    @Test func theFooterTakesOneLineExactlyWhenItsMinimumWidthFits() {
+        for width in stride(from: CGFloat(240), through: 520, by: 3) {
+            for pinned in [[], [steer]] {
+                let minimum = RemoteLayout.footerMinimumWidth(chips: fullMenus, pinned: pinned, fixed: attachDictateAndSend, spacing: 0)
+                let footer = RemoteLayout.footer(
+                    width: width, chips: fullMenus, pinned: pinned, fixed: attachDictateAndSend, height: 44, spacing: 0, inset: 4)
+                expectWellFormed(footer, width: width)
+                #expect((footer.size.height == 44) == (width >= minimum), "at \(width) with a minimum of \(minimum)")
+                #expect(footer.chips.count == fullMenus.count)
+            }
+        }
+    }
+
     // MARK: Pictures
 
     /// The room a picture has: inside the user's bubble on an iPhone (282), a folded Duo (358), an unfolded Duo (561),

@@ -21,7 +21,8 @@ struct ComposerView: View {
     @AppStorage("composer.returnSends") private var returnSends = true
     /// Dictation with Apple's on-device recognition.
     @State private var dictation = RemoteDictation()
-    @FocusState private var focused: Bool
+    /// The message field's focus, which the thread clears when the transcript is tapped.
+    var focused: FocusState<Bool>.Binding
 
     private var draft: Binding<ComposerDraft> {
         Binding(get: { client.drafts[model.id] ?? ComposerDraft() }, set: { client.drafts[model.id] = $0 })
@@ -37,14 +38,15 @@ struct ComposerView: View {
             if !suggestions.isEmpty, completionWord != nil { suggestionList }
             if !draft.wrappedValue.images.isEmpty { attachmentStrip }
             if dictation.isActive { DictationBar(dictation: dictation) }
+            // Two lines tall before it grows, with room above them, as the Mac's composer.
             TextField(placeholder, text: draft.text, axis: .vertical)
-                .lineLimit(1...8)
-                .focused($focused)
+                .lineLimit(2...8)
+                .focused(focused)
                 .foregroundStyle(theme.ink)
                 .tint(theme.accent)
                 .submitLabel(.return)
                 .padding(.horizontal, 6)
-                .padding(.top, 6)
+                .padding(.top, 12)
                 .accessibilityLabel(Text("Message"))
                 // A hardware keyboard sends with Return, as on the Mac; Shift-Return adds a line.
                 .onKeyPress(.return, phases: .down) { press in
@@ -57,16 +59,13 @@ struct ComposerView: View {
                     return .handled
                 }
             // The Mac composer's footer: its menus from the leading edge, then steer or queue, attach and send, which
-            // never move. Menus that don't fit with their labels show their symbols (`RemoteLayout.footer`).
-            ComposerFooterLayout {
-                if let summary { ComposerControls(thread: summary) }
-                if model.turn.isRunning {
-                    followUpMenu.layoutValue(key: ComposerFooterRole.self, value: .pinned)
-                }
-                attachMenu.layoutValue(key: ComposerFooterRole.self, value: .fixed)
-                DictationButton(dictation: dictation, draft: draft.text).layoutValue(key: ComposerFooterRole.self, value: .fixed)
-                sendButton.layoutValue(key: ComposerFooterRole.self, value: .fixed)
+            // never move. Menus that don't fit with their labels show their symbols (`RemoteLayout.footer`). When even
+            // that takes two lines (a phone while the agent works), the speed moves into the model's menu.
+            ViewThatFits(in: .horizontal) {
+                footer(foldsSpeed: false)
+                if let summary, ComposerControls.offersSpeeds(summary, in: client) { footer(foldsSpeed: true) }
             }
+            .padding(.horizontal, -ComposerFooterLayout.bleed)
         }
         .task(id: completionWord) { await loadSuggestions() }
         #if DEBUG
@@ -114,6 +113,18 @@ struct ComposerView: View {
             Text(dictation.error ?? "")
         }
         .disabled(!client.isConnected)
+    }
+
+    private func footer(foldsSpeed: Bool) -> some View {
+        ComposerFooterLayout(inset: ComposerFooterLayout.bleed) {
+            if let summary { ComposerControls(thread: summary, foldsSpeed: foldsSpeed) }
+            if model.turn.isRunning {
+                followUpMenu.layoutValue(key: ComposerFooterRole.self, value: .pinned)
+            }
+            attachMenu.layoutValue(key: ComposerFooterRole.self, value: .fixed)
+            DictationButton(dictation: dictation, draft: draft.text).layoutValue(key: ComposerFooterRole.self, value: .fixed)
+            sendButton.layoutValue(key: ComposerFooterRole.self, value: .fixed)
+        }
     }
 
     private var placeholder: String {
@@ -216,9 +227,11 @@ struct ComposerView: View {
             }
             Button { showsFiles = true } label: { Label("Files", systemImage: "folder") }
         } label: {
+            // Wider when a large text size makes the symbol wider, so it never runs into dictation.
             Image(systemName: "paperclip")
                 .font(.body.weight(.medium))
-                .frame(width: 40, height: 44)
+                .padding(.horizontal, 2)
+                .frame(minWidth: 40, minHeight: 44)
                 .contentShape(.rect)
         }
         .foregroundStyle(theme.secondaryInk)
@@ -441,17 +454,39 @@ enum ImageShrinker {
 /// The footer's menus, each a glass button showing the current choice.
 struct ComposerControls: View {
     let thread: RemoteThreadSummary
+    /// Whether the speed is chosen in the model's menu, as in the Mac's model picker, rather than in a menu of its own:
+    /// for a footer that otherwise wouldn't fit on one line. The model's mark then carries the Mac's bolt while the
+    /// model runs fast.
+    var foldsSpeed = false
     @Environment(RemoteClient.self) private var client
     @Environment(\.theme) private var theme
 
     /// The agent's mark grows with the text beside it.
     @ScaledMetric(relativeTo: .subheadline) private var logoSize: CGFloat = 14
+    /// The bolt on the agent's mark while the speed is in its menu and the model runs fast.
+    @ScaledMetric(relativeTo: .subheadline) private var boltSize: CGFloat = 9
 
-    private var provider: RemoteProvider? { client.provider(thread.selection.provider) }
-    private var currentModel: RemoteModel? { provider?.models.first { $0.id == thread.selection.modelID } }
+    private var currentModel: RemoteModel? { Self.model(of: thread, in: client) }
+
+    static func model(of thread: RemoteThreadSummary, in client: RemoteClient) -> RemoteModel? {
+        client.provider(thread.selection.provider)?.models.first { $0.id == thread.selection.modelID }
+    }
+
+    /// Whether the footer shows a speed menu, which `foldsSpeed` moves into the model's menu.
+    static func offersSpeeds(_ thread: RemoteThreadSummary, in client: RemoteClient) -> Bool {
+        model(of: thread, in: client)?.speeds.isEmpty == false
+    }
+
+    /// The thread's faster speed, nil while it runs at the standard one.
+    private var fastSpeed: RemoteSpeed? { currentModel?.speeds.first { $0.id == thread.selection.speed } }
+    private var speedTitle: String { fastSpeed?.name ?? String(localized: "Standard") }
 
     var body: some View {
         Menu {
+            if foldsSpeed, let speeds = currentModel?.speeds, !speeds.isEmpty {
+                // One row naming the speed, opening its choices, above the agents' models.
+                speedPicker(speeds).pickerStyle(.menu)
+            }
             ForEach(client.workspace.providers) { provider in
                 if provider.accounts.count > 1 {
                     Menu(provider.name) {
@@ -469,13 +504,25 @@ struct ComposerControls: View {
             }
         } label: {
             ComposerChip(menu: true) {
+                // The bolt sits on the mark's corner, so the menu still keeps its chevron as a symbol.
+                let fast = foldsSpeed && fastSpeed != nil
                 AgentLogo(provider: thread.selection.provider, size: logoSize)
+                    .padding(.trailing, fast ? boltSize * 0.3 : 0)
+                    .overlay(alignment: .bottomTrailing) {
+                        if fast {
+                            Image(systemName: Self.fastSymbol).font(.system(size: boltSize, weight: .heavy))
+                                .foregroundStyle(theme.accent)
+                                .offset(y: boltSize * 0.2)
+                        }
+                    }
             } label: {
                 Text(thread.selection.modelName)
                 if let account = thread.selection.accountName { Text("· \(account)").foregroundStyle(theme.secondaryInk) }
             }
         }
         .accessibilityLabel(Text("Model: \(thread.selection.modelName)"))
+        .accessibilityValue(
+            foldsSpeed && Self.offersSpeeds(thread, in: client) ? Text("Speed: \(speedTitle)") : Text(verbatim: ""))
 
         if let efforts = currentModel?.efforts, !efforts.isEmpty {
             Menu {
@@ -492,24 +539,18 @@ struct ComposerControls: View {
             .accessibilityLabel(Text("Effort: \(Self.effortTitle(thread.selection.effort ?? currentModel?.defaultEffort ?? ""))"))
         }
 
-        if let speeds = currentModel?.speeds, !speeds.isEmpty {
+        if !foldsSpeed, let speeds = currentModel?.speeds, !speeds.isEmpty {
             Menu {
-                Picker(
-                    "Speed",
-                    selection: setting(thread.selection.speed ?? RemoteThreadSettings.standardSpeed) {
-                        RemoteThreadSettings(threadID: thread.id, speed: $0)
-                    }
-                ) {
-                    Text("Standard").tag(RemoteThreadSettings.standardSpeed)
-                    ForEach(speeds) { speed in Text(speed.name).tag(speed.id) }
-                }
+                speedPicker(speeds)
             } label: {
+                // The Mac's symbols (`ComposerSpeedControl`): a gauge at the standard speed, a bolt when faster.
                 ComposerChip(menu: true) {
-                    Image(systemName: "gauge.with.needle")
+                    Image(systemName: fastSpeed == nil ? "gauge.with.dots.needle.50percent" : Self.fastSymbol)
                 } label: {
-                    Text(speeds.first { $0.id == thread.selection.speed }?.name ?? String(localized: "Standard"))
+                    Text(speedTitle)
                 }
             }
+            .accessibilityLabel(Text("Speed: \(speedTitle)"))
         }
 
         Menu {
@@ -538,6 +579,21 @@ struct ComposerControls: View {
         }
         .accessibilityLabel(Text("Mode: \(thread.interactionMode == "plan" ? String(localized: "Plan") : String(localized: "Build"))"))
         .accessibilityHint(Text("Switches between building and planning"))
+    }
+
+    /// A faster speed, as the Mac marks it.
+    static let fastSymbol = "bolt.fill"
+
+    private func speedPicker(_ speeds: [RemoteSpeed]) -> some View {
+        Picker(
+            "Speed",
+            selection: setting(thread.selection.speed ?? RemoteThreadSettings.standardSpeed) {
+                RemoteThreadSettings(threadID: thread.id, speed: $0)
+            }
+        ) {
+            Text("Standard").tag(RemoteThreadSettings.standardSpeed)
+            ForEach(speeds) { speed in Text(speed.name).tag(speed.id) }
+        }
     }
 
     /// An effort level as the Mac's composer names it (`ComposerMenus.effortTitle`), in the phone's language.
@@ -596,8 +652,9 @@ struct ComposerControls: View {
 }
 
 /// One of the composer's menus as the Mac's footer draws it: borderless, a symbol and the current choice, and a small
-/// chevron when it opens a menu. A full-height touch target without a capsule around it. Offered less room than its
-/// label needs, it shows its symbol alone (its accessibility label still says the choice).
+/// chevron when it opens a menu. A full-height touch target without a capsule around it, never narrower than 44 points.
+/// Offered less room than its label needs, it shows its symbol and chevron, then its symbol alone (its accessibility
+/// label still says the choice).
 struct ComposerChip<Symbol: View, Label: View>: View {
     var menu: Bool
     /// The label's color when it marks something on (Plan mode); the theme's text otherwise.
@@ -608,16 +665,20 @@ struct ComposerChip<Symbol: View, Label: View>: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            chip(showsLabel: true)
-            chip(showsLabel: false)
+            chip(showsLabel: true, showsChevron: menu)
+            chip(showsLabel: false, showsChevron: menu)
+            if menu { chip(showsLabel: false, showsChevron: false) }
         }
     }
 
-    private func chip(showsLabel: Bool) -> some View {
-        HStack(spacing: 5) {
+    /// Each form keeps its own size whatever it's offered, so the footer measures the narrowest one truly
+    /// (`ComposerFooterLayout`). A symbol and chevron sit closer and need little padding of their own: the 44-point
+    /// frame spaces them, and every menu keeps its chevron at the default text size.
+    private func chip(showsLabel: Bool, showsChevron: Bool) -> some View {
+        HStack(spacing: showsLabel ? 5 : 3) {
             symbol
             if showsLabel { label }
-            if menu {
+            if showsChevron {
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(theme.tertiaryInk)
@@ -626,9 +687,9 @@ struct ComposerChip<Symbol: View, Label: View>: View {
         .font(.subheadline.weight(.medium))
         .foregroundStyle(color ?? theme.ink)
         .lineLimit(1)
-        .fixedSize()
-        .padding(.horizontal, 6)
+        .padding(.horizontal, showsLabel ? 6 : 2)
         .frame(minWidth: 44, minHeight: 44)
+        .fixedSize()
         .contentShape(.rect)
     }
 }
@@ -648,11 +709,25 @@ nonisolated enum ComposerFooterRole: LayoutValueKey {
 /// The composer's footer, placed by `RemoteLayout.footer`: menus never run under steer, attach or send, at any width or
 /// text size.
 struct ComposerFooterLayout: Layout {
+    /// How far the footer reaches into the composer's padding on each side. Send then sits as far from the composer's
+    /// edge as from its bottom, and a 375-point phone has room for every control on one line.
+    static let bleed: CGFloat = 4
+
     /// The menus' own padding already sets them apart, as on the Mac's footer; a 390-point phone keeps the model's name.
     var spacing: CGFloat = 0
+    /// Room before the first menu while there is some to spare (`RemoteLayout.footer`): with `bleed`, its symbol lines
+    /// up with the message.
+    var inset: CGFloat = 0
 
+    /// Offered any width, the footer is as wide as its narrowest single line, so `ViewThatFits` takes the first footer
+    /// that fits on one line.
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? subviews.reduce(0) { $0 + $1.sizeThatFits(.unspecified).width + spacing }
+        guard let width = proposal.width, width.isFinite else {
+            let sizes = measure(subviews)
+            return CGSize(
+                width: RemoteLayout.footerMinimumWidth(chips: sizes.chips, pinned: sizes.pinned, fixed: sizes.fixed, spacing: spacing),
+                height: sizes.height)
+        }
         return footer(width: width, subviews).size
     }
 
@@ -679,18 +754,32 @@ struct ComposerFooterLayout: Layout {
     }
 
     private func footer(width: CGFloat, _ subviews: Subviews) -> RemoteLayout.Footer {
+        let sizes = measure(subviews)
+        return RemoteLayout.footer(
+            width: width, chips: sizes.chips, pinned: sizes.pinned, fixed: sizes.fixed, height: sizes.height, spacing: spacing,
+            inset: inset)
+    }
+
+    private func measure(_ subviews: Subviews) -> (chips: [RemoteLayout.Chip], pinned: [RemoteLayout.Chip], fixed: CGFloat, height: CGFloat) {
         func chip(_ subview: LayoutSubview) -> RemoteLayout.Chip {
-            // Offered a little less than its label needs, a menu shows its symbol alone (`ComposerChip`): that's its
-            // narrowest form. (Offered no width at all, a menu doesn't report its symbol's real width at large sizes.)
+            // Offered a little less than each form needs, a menu shows its next narrower one (`ComposerChip`): its symbol
+            // and chevron, then its symbol alone. (Offered no width at all, a menu doesn't report its real width at large
+            // sizes.)
             let full = subview.sizeThatFits(.unspecified).width
-            let compact = subview.sizeThatFits(ProposedViewSize(width: max(0, full - 1), height: nil)).width
-            return RemoteLayout.Chip(full: full, compact: min(full, compact))
+            var compact = full
+            for _ in 0..<2 {
+                let narrower = subview.sizeThatFits(ProposedViewSize(width: max(0, compact - 1), height: nil)).width
+                guard narrower < compact else { break }
+                compact = narrower
+            }
+            return RemoteLayout.Chip(full: full, compact: compact)
         }
         let fixed = subviews.filter { $0[ComposerFooterRole.self] == .fixed }.map { $0.sizeThatFits(.unspecified).width }
         let height = subviews.map { $0.sizeThatFits(.unspecified).height }.max() ?? 44
-        return RemoteLayout.footer(
-            width: width, chips: subviews.filter { $0[ComposerFooterRole.self] == .chip }.map(chip),
-            pinned: subviews.filter { $0[ComposerFooterRole.self] == .pinned }.map(chip),
-            fixed: fixed.reduce(0, +) + spacing * CGFloat(max(0, fixed.count - 1)), height: max(44, height), spacing: spacing)
+        return (
+            subviews.filter { $0[ComposerFooterRole.self] == .chip }.map(chip),
+            subviews.filter { $0[ComposerFooterRole.self] == .pinned }.map(chip),
+            fixed.reduce(0, +) + spacing * CGFloat(max(0, fixed.count - 1)), max(44, height)
+        )
     }
 }
