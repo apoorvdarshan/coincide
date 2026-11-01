@@ -124,7 +124,7 @@ test("/ask defers, sends the key only in a header and replies without mentions",
   assert.equal(calls.gemini.length, 1);
   assert.equal(calls.gemini[0].init.headers["x-goog-api-key"], GEMINI_KEY);
   assert.ok(!calls.gemini[0].url.includes(GEMINI_KEY));
-  assert.match(calls.gemini[0].body.systemInstruction.parts[0].text, /^You are Janus/);
+  assert.match(calls.gemini[0].body.systemInstruction.parts[0].text, /^You are Brulee/);
   assert.equal(calls.gemini[0].body.contents[0].parts[0].text, "Which macOS do I need?");
   assert.equal(calls.replies.length, 1);
   assert.equal(calls.replies[0].content, "Coincide runs on macOS 26 or later.");

@@ -1,4 +1,4 @@
-// Janus, the Coincide Discord bot: slash commands, issue-closure replies, release
+// Brulee, the Coincide Discord bot: slash commands, issue-closure replies, release
 // announcements and spam moderation. See README.md in this folder. Only public IDs
 // belong here; secrets are set with `wrangler secret put` and never committed.
 {
@@ -22,10 +22,10 @@
     "DISCORD_MODERATION_ENABLED": "true",
     "DISCORD_MODERATION_LOG_CHANNEL_ID": "1566353958543560714",
     "DISCORD_GEMINI_MODEL": "gemini-3.5-flash-lite",
-    "DISCORD_BOT_NAME": "Janus",
+    "DISCORD_BOT_NAME": "Brulee",
     "DISCORD_INVITE_URL": "https://discord.gg/DETrbhDVqw"
   },
-  // Cooldowns, replay markers, issue-closure routing and seen releases. Janus's own
+  // Cooldowns, replay markers, issue-closure routing and seen releases. Brulee's own
   // namespace, separate from every other app's bot.
   "kv_namespaces": [{ "binding": "DISCORD_STATE", "id": "076da39ea1cd450eab1b8e72b12cf047" }],
   "durable_objects": {

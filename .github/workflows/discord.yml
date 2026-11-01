@@ -1,4 +1,4 @@
-# Unit tests for Janus, the Coincide Discord bot (discord/). The Worker has no npm
+# Unit tests for Brulee, the Coincide Discord bot (discord/). The Worker has no npm
 # dependencies, so this is plain Node: `node --test` runs discord/worker/*.test.mjs.
 # Runs only when the bot or this workflow changes. Deploying stays manual (see discord/README.md).
 

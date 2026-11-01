@@ -12,7 +12,7 @@ const commands = [
   {
     type: 1,
     name: "ask",
-    description: "Ask Janus about Coincide. Your question goes to Google Gemini; the answer is visible here.",
+    description: "Ask Brulee about Coincide. Your question goes to Google Gemini; the answer is visible here.",
     options: [{
       type: 3,
       name: "question",
@@ -91,9 +91,9 @@ async function main() {
     return;
   }
   const token = process.env.DISCORD_BOT_TOKEN?.trim();
-  if (!token) throw new Error("Set DISCORD_BOT_TOKEN (Janus's bot token) in the env file.");
+  if (!token) throw new Error("Set DISCORD_BOT_TOKEN (Brulee's bot token) in the env file.");
 
-  // Verify the token belongs to Janus and can see the Coincide server before changing anything.
+  // Verify the token belongs to Brulee and can see the Coincide server before changing anything.
   const app = await discord("/oauth2/applications/@me", token);
   if (app.id !== APPLICATION_ID) throw new Error("DISCORD_BOT_TOKEN belongs to a different application. No commands were changed.");
   const guild = await discord(`/guilds/${GUILD_ID}`, token);
