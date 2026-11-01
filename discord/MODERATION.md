@@ -9,7 +9,7 @@ The `DiscordModeration` Durable Object in the `coincide-discord` Worker scans th
 - Third incident after that timeout: delete and ban automatically. There is no approval queue, and the ban does not delete the member's other messages.
 - Thirty days without a strike resets the count. Bans are never lifted automatically.
 - More spam during an active timeout is removed without another strike or a longer timeout. Longer existing timeouts are never shortened. Messages from before moderation was first turned on are ignored.
-- Exempt before anything happens: Apoorv's user ID `823100527675965480`, the server owner, bots, webhooks, system messages, administrators, and members whose role is at or above Janus's role.
+- Exempt before anything happens: Apoorv's user ID `823100527675965480`, the server owner, bots, webhooks, system messages, administrators, and members whose role is at or above Brulee's role.
 
 Triggers are narrow and deterministic:
 
@@ -26,7 +26,7 @@ Discord's native AutoMod rules (see [README.md](README.md)) block some messages 
 
 Worker variables in [`wrangler.jsonc`](wrangler.jsonc): `DISCORD_MODERATION_ENABLED` must be `true` (anything else stops scanning), plus `DISCORD_GUILD_ID`, `DISCORD_APPLICATION_ID` and `DISCORD_MODERATION_LOG_CHANNEL_ID` (#mod-log). The `DISCORD_MODERATION` binding is a SQLite-backed Durable Object from migration `discord-moderation-v1`. It uses the Worker's `DISCORD_BOT_TOKEN`.
 
-Every scan first checks that the server owner is `823100527675965480`, the token belongs to Janus, the application has the Message Content intent, Janus can delete messages, time members out and ban, and #mod-log is private (`@everyone` denied View Channel, only the owner and Janus allowed). If any check fails, the scan stops and logs the reason; nothing is enforced on a misconfigured server. Channels Janus can't read are skipped with a warning.
+Every scan first checks that the server owner is `823100527675965480`, the token belongs to Brulee, the application has the Message Content intent, Brulee can delete messages, time members out and ban, and #mod-log is private (`@everyone` denied View Channel, only the owner and Brulee allowed). If any check fails, the scan stops and logs the reason; nothing is enforced on a misconfigured server. Channels Brulee can't read are skipped with a warning.
 
 To turn moderation off, set `DISCORD_MODERATION_ENABLED` to `false` and redeploy. That does not undo existing timeouts or bans. A healthy scan logs `discord_moderation_scan_ok` (`wrangler tail coincide-discord`).
 
