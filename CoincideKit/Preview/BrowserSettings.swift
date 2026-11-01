@@ -24,6 +24,9 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
     /// Agents Coincide starts get the enabled password managers' unlocked sessions (Bitwarden's `BW_SESSION`), so
     /// they can use the managers' command-line tools, for API keys and tokens, without asking. On by default.
     public var agentsUsePasswordManagers: Bool
+    /// Pages can sign in with passkeys saved in Bitwarden while Bitwarden is turned on and unlocked, each time after the
+    /// user confirms (`PasskeySignIn`). On by default.
+    public var usesBitwardenPasskeys: Bool
     /// What the address bar searches with when what's typed isn't an address.
     public var searchEngine: SearchEngine
 
@@ -37,6 +40,7 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
         offersToSaveLogins = true
         neverSaveSites = []
         agentsUsePasswordManagers = true
+        usesBitwardenPasskeys = true
         searchEngine = .google
     }
 
@@ -56,6 +60,7 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
         offersToSaveLogins = value(.offersToSaveLogins, defaults.offersToSaveLogins)
         neverSaveSites = value(.neverSaveSites, defaults.neverSaveSites)
         agentsUsePasswordManagers = value(.agentsUsePasswordManagers, defaults.agentsUsePasswordManagers)
+        usesBitwardenPasskeys = value(.usesBitwardenPasskeys, defaults.usesBitwardenPasskeys)
         searchEngine = value(.searchEngine, defaults.searchEngine)
     }
 
