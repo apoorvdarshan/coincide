@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The notarized release (scripts/release/build.sh) runs with the hardened runtime, which blocks these resources
+	     unless the app claims them. Dictation (Settings › Voice) records the microphone; Computer Use's helper sends
+	     Apple Events as Coincide's child. Neither needs a provisioning profile. The other .entitlements files in this
+	     folder carry the same two keys, so a hardened build signed with any of them keeps both features. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>

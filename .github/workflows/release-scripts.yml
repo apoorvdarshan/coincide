@@ -1,0 +1,51 @@
+# The release scripts' tests (scripts/release/test.sh): ShellCheck, the version and release notes checks, the Homebrew
+# cask update and the npm installer's tests. release.yml runs them again before every release; this catches a break in
+# the pull request that causes it.
+
+name: Release scripts
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-scripts.yml"
+      - ".github/workflows/release.yml"
+      - "scripts/release/**"
+      - "npm/**"
+      - "CHANGELOG.md"
+      - "project.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-scripts.yml"
+      - ".github/workflows/release.yml"
+      - "scripts/release/**"
+      - "npm/**"
+      - "CHANGELOG.md"
+      - "project.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to a pull request replaces its older run; main and manual runs are never cancelled.
+concurrency:
+  group: release-scripts-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Release script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Run tests
+        run: scripts/release/test.sh
