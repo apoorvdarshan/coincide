@@ -126,11 +126,12 @@ public nonisolated struct BitwardenProvider: PasswordProvider {
         return LoginSecret(username: secret.username, password: secret.password, totp: code)
     }
 
-    private func run(_ arguments: [String]) async throws -> String {
+    /// Runs `bw` with the session. Secrets it needs go in `input` (its standard input), never in `arguments`.
+    func run(_ arguments: [String], input: String? = nil) async throws -> String {
         guard let bw = await runner.locate("bw") else { throw PasswordProviderError.notInstalled("Bitwarden CLI") }
         let environment = environment
         guard !environment.isEmpty else { throw PasswordProviderError.locked }
-        let result = await runner.run(bw, arguments + ["--nointeraction"], environment: environment, input: nil)
+        let result = await runner.run(bw, arguments + ["--nointeraction"], environment: environment, input: input)
         guard result.succeeded else {
             if result.stderr.localizedCaseInsensitiveContains("locked") { throw PasswordProviderError.locked }
             throw PasswordProviderError.failed(OnePasswordProvider.firstLine(result.stderr))

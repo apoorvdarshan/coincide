@@ -2,7 +2,7 @@
 
 Coincide ports the design and behavior of T3 Code, and some prompts and wording are adapted from it. The terminal uses SwiftTerm.
 Computer Use runs Cua Driver, bundled unmodified in `Coincide.app/Contents/Helpers`.
-Dictation with Whisper on the Mac uses WhisperKit.
+Dictation with Whisper on the Mac uses WhisperKit. Passkey sign-in checks sites against the Public Suffix List.
 
 ## T3 Code
 
@@ -124,6 +124,26 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Public Suffix List
+
+https://publicsuffix.org, Mozilla's list of domain suffixes under which separate parties register names, bundled
+unmodified as `CoincideKit/Preview/WebAuthn/public_suffix_list.dat` (inside `CoincideKit.framework/Resources`) under the
+Mozilla Public License 2.0. Its version is on the file's `// VERSION:` line; `scripts/update-public-suffix-list.sh`
+replaces it with the current list. Signing in with a Bitwarden passkey uses it to decide which relying party IDs a
+site may claim. The file is its own source form; the license is at https://mozilla.org/MPL/2.0/.
+
+```
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+```
+
+## Bitwarden clients
+
+Signing in with Bitwarden passkeys follows the behavior of Bitwarden's open-source clients
+(https://github.com/bitwarden/clients): how passkeys are stored and matched, the authenticator data flags and counter
+rule, and the page script's approach. Coincide's code is its own; no Bitwarden code is included.
 
 ## Browser and password manager logos
 

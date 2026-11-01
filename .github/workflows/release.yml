@@ -158,8 +158,9 @@ jobs:
           security import "$certificate" -k "$KEYCHAIN" -f pkcs12 -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null
           rm -f "$certificate"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$KEYCHAIN" >/dev/null
-          # In front of the search list, so codesign finds the identity.
-          read -r -a others < <(security list-keychains -d user | tr -d '"' | tr '\n' ' ')
+          # In front of the search list, so codesign finds the identity. (macOS's /bin/bash is 3.2: no mapfile.)
+          others=()
+          while IFS= read -r line; do line="${line#*\"}"; others+=("${line%\"*}"); done < <(security list-keychains -d user)
           security list-keychains -d user -s "$KEYCHAIN" "${others[@]}"
           security find-identity -v -p codesigning "$KEYCHAIN" | grep -F '"Developer ID Application: Apoorv Darshan (23RV7FYH36)"'
 
