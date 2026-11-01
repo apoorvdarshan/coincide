@@ -460,7 +460,9 @@ struct SettingsSearchResults: View {
                 ]),
         ]
         // Help & Community, Follow, and Contact & Legal, in About.
-        entries += CommunityLink.allCases.map { SettingsSearchEntry(title: $0.title, pane: .section(.about), keywords: $0.keywords) }
+        entries += CommunityLink.offered(on: .mac).map {
+            SettingsSearchEntry(title: $0.title, pane: .section(.about), keywords: $0.keywords)
+        }
         for kind in kinds {
             entries.append(
                 SettingsSearchEntry(

@@ -10,6 +10,8 @@ public enum CoincideLinks {
     public static let discordBugReports = URL(string: "https://discord.com/channels/1566352780862427258/1566353951299862598")!
     public static let discordFeatureRequests = URL(
         string: "https://discord.com/channels/1566352780862427258/1566353955494039602")!
+    /// Donations, on the Mac only ("Buy Apoorv a Coffee").
+    public static let koFi = URL(string: "https://ko-fi.com/apoorvdarshan")!
     public static let x = URL(string: "https://x.com/apoorvdarshan")!
     public static let xHandle = "@apoorvdarshan"
     public static let instagram = URL(string: "https://instagram.com/apoorvcodes")!
@@ -25,9 +27,10 @@ public enum CoincideLinks {
     public static let remoteAppStoreReview: URL? = nil
 }
 
-/// Help & Community, as both apps list it in Settings and the Mac also in its Help menu and command palette: help and
-/// reports, the Discord server and the source code, the developer's accounts, and contact and legal pages. Each app
-/// supplies the titles and symbols; every place lists `allCases`, so a link added here shows up in all of them.
+/// Help & Community, as both apps list it in Settings and the Mac also in its Help menu, command palette and rail: help
+/// and reports, the Discord server and the source code, the developer's accounts, and contact and legal pages. Each
+/// app supplies the titles and symbols and lists the links `offered(on:)` its platform, so a link added here shows up
+/// in every place of the apps that offer it.
 ///
 /// Report an Issue and Request a Feature offer a choice: the repository's GitHub issue form, or the Discord channel
 /// whose slash command files the same public issue for people without a GitHub account. A bug report's form fills in
@@ -40,12 +43,21 @@ public enum CommunityLink: String, CaseIterable, Sendable, Identifiable {
     case requestFeature
     case joinDiscord
     case starOnGitHub
+    /// Ko-fi donations, which only the Mac offers.
+    case supportOnKoFi
     case x
     case instagram
     case linkedIn
     case contact
     case privacyPolicy
     case termsOfService
+
+    /// The app listing the links.
+    public enum Platform: Sendable {
+        case mac
+        /// Coincide Remote on iPhone and iPad.
+        case remote
+    }
 
     /// How the links are grouped, in order: under Help & Community, Follow, and Contact & Legal.
     public enum Group: String, CaseIterable, Sendable {
@@ -58,14 +70,27 @@ public enum CommunityLink: String, CaseIterable, Sendable, Identifiable {
 
     public var group: Group {
         switch self {
-        case .getHelp, .reportIssue, .requestFeature, .joinDiscord, .starOnGitHub: .community
+        case .getHelp, .reportIssue, .requestFeature, .joinDiscord, .starOnGitHub, .supportOnKoFi: .community
         case .x, .instagram, .linkedIn: .follow
         case .contact, .privacyPolicy, .termsOfService: .contact
         }
     }
 
-    /// The links of `group`, in order.
-    public static func links(in group: Group) -> [CommunityLink] { allCases.filter { $0.group == group } }
+    /// Whether the app on `platform` lists the link: everything but Ko-fi is on both, and Ko-fi only on the Mac.
+    public func isOffered(on platform: Platform) -> Bool {
+        switch self {
+        case .supportOnKoFi: platform == .mac
+        default: true
+        }
+    }
+
+    /// The links the app on `platform` lists, in order.
+    public static func offered(on platform: Platform) -> [CommunityLink] { allCases.filter { $0.isOffered(on: platform) } }
+
+    /// The links of `group` the app on `platform` lists, in order.
+    public static func links(in group: Group, on platform: Platform) -> [CommunityLink] {
+        offered(on: platform).filter { $0.group == group }
+    }
 
     /// The issue form's file in `.github/ISSUE_TEMPLATE`, for the two that open one.
     public var template: String? {
@@ -110,6 +135,7 @@ public enum CommunityLink: String, CaseIterable, Sendable, Identifiable {
         case .getHelp: return CoincideLinks.discordHelp
         case .joinDiscord: return CoincideLinks.discordInvite
         case .starOnGitHub: return CoincideLinks.repository
+        case .supportOnKoFi: return CoincideLinks.koFi
         case .x: return CoincideLinks.x
         case .instagram: return CoincideLinks.instagram
         case .linkedIn: return CoincideLinks.linkedIn

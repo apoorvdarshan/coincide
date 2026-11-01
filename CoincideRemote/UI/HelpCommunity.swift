@@ -3,8 +3,9 @@ import StoreKit
 import SwiftUI
 import UIKit
 
-/// Help & Community on the phone, as in the Mac's Settings › About: each `CommunityLink` with its title and tile. A bug
-/// report's GitHub form has the versions of both apps and both systems filled in.
+/// Help & Community on the phone, as in the Mac's Settings › About: each link offered here
+/// (`CommunityLink.offered(on: .remote)`, which leaves out the Mac's Ko-fi link) with its title and tile. A bug report's
+/// GitHub form has the versions of both apps and both systems filled in.
 extension CommunityLink {
     var title: String {
         switch self {
@@ -13,6 +14,8 @@ extension CommunityLink {
         case .requestFeature: String(localized: "Request a Feature")
         case .joinDiscord: String(localized: "Join the Discord")
         case .starOnGitHub: String(localized: "Star on GitHub")
+        // Mac only (`isOffered(on:)`), so never listed here.
+        case .supportOnKoFi: "Ko-fi"
         case .x: "X"
         case .instagram: "Instagram"
         case .linkedIn: "LinkedIn"
@@ -39,6 +42,7 @@ extension CommunityLink {
         case .requestFeature: "lightbulb.fill"
         case .joinDiscord: "bubble.left.and.bubble.right.fill"
         case .starOnGitHub: "star.fill"
+        case .supportOnKoFi: "heart.fill"
         case .x: "at"
         case .instagram: "camera.fill"
         case .linkedIn: "person.2.fill"
@@ -56,6 +60,7 @@ extension CommunityLink {
         case .requestFeature: "orange"
         case .joinDiscord: "indigo"
         case .starOnGitHub: "gray"
+        case .supportOnKoFi: "pink"
         case .x: "black"
         case .instagram: "pink"
         case .linkedIn: "blue"
@@ -73,6 +78,7 @@ extension CommunityLink {
         case .requestFeature: [String(localized: "Idea"), String(localized: "Feedback"), "GitHub", "Discord", "feature"]
         case .joinDiscord: ["Discord", "community", "server"]
         case .starOnGitHub: ["GitHub", "source", "open source", "MIT"]
+        case .supportOnKoFi: []
         case .x: ["twitter", "follow", CoincideLinks.xHandle]
         case .instagram: ["follow", CoincideLinks.instagramHandle]
         case .linkedIn: ["follow"]
@@ -126,7 +132,7 @@ struct HelpCommunityRows: View {
     var body: some View {
         ForEach(CommunityLink.Group.allCases, id: \.self) { group in
             SidebarHeader(Text(CommunityLink.title(of: group))).sidebarRow()
-            ForEach(CommunityLink.links(in: group)) { link in CommunityLinkRow(link: link) }
+            ForEach(CommunityLink.links(in: group, on: .remote)) { link in CommunityLinkRow(link: link) }
             if group == .community { RateRemoteRow() }
         }
     }
