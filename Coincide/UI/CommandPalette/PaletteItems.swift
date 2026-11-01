@@ -249,7 +249,7 @@ struct PaletteCatalog {
                 id: "action:settings", title: String(localized: "Open Settings"), icon: symbol("gearshape"), trailing: "⌘,",
                 keywords: ["settings", "preferences", "configuration"], behavior: .run { SettingsWindowController.shared.show() }))
         // Help & Community, as in the Help menu.
-        for link in CommunityLink.allCases {
+        for link in CommunityLink.offered(on: .mac) {
             items.append(
                 PaletteItem(
                     id: "help:\(link.rawValue)", title: link.menuTitle, subtitle: String(localized: "Help"),

@@ -396,7 +396,8 @@ struct PaletteCatalogTests {
         // Then Help & Community, as in the Help menu.
         let ids = more.map(\.id)
         #expect(ids.filter { !$0.hasPrefix("help:") }.suffix(3) == ["action:appearance", "action:refresh-agents", "action:settings"])
-        #expect(ids.suffix(CommunityLink.allCases.count) == CommunityLink.allCases.map { "help:\($0.rawValue)" })
+        let links = CommunityLink.offered(on: .mac)
+        #expect(ids.suffix(links.count) == links.map { "help:\($0.rawValue)" })
         #expect(!more.contains { $0.id == "action:pin" || $0.id == "action:sidebar" })
     }
 }

@@ -45,6 +45,7 @@ struct CommunityLinksTests {
             .getHelp: "https://discord.com/channels/1566352780862427258/1566353949336797275",
             .joinDiscord: "https://discord.gg/DETrbhDVqw",
             .starOnGitHub: "https://github.com/apoorvdarshan/coincide",
+            .supportOnKoFi: "https://ko-fi.com/apoorvdarshan",
             .x: "https://x.com/apoorvdarshan",
             .instagram: "https://instagram.com/apoorvcodes",
             .linkedIn: "https://www.linkedin.com/showcase/coincide-dev",
@@ -63,10 +64,39 @@ struct CommunityLinksTests {
     }
 
     @Test func linksAreGroupedInOrder() {
-        #expect(CommunityLink.links(in: .community) == [.getHelp, .reportIssue, .requestFeature, .joinDiscord, .starOnGitHub])
-        #expect(CommunityLink.links(in: .follow) == [.x, .instagram, .linkedIn])
-        #expect(CommunityLink.links(in: .contact) == [.contact, .privacyPolicy, .termsOfService])
-        #expect(CommunityLink.Group.allCases.flatMap(CommunityLink.links(in:)) == CommunityLink.allCases)
+        #expect(CommunityLink.links(in: .community, on: .mac)
+            == [.getHelp, .reportIssue, .requestFeature, .joinDiscord, .starOnGitHub, .supportOnKoFi])
+        #expect(CommunityLink.links(in: .follow, on: .mac) == [.x, .instagram, .linkedIn])
+        #expect(CommunityLink.links(in: .contact, on: .mac) == [.contact, .privacyPolicy, .termsOfService])
+        #expect(CommunityLink.Group.allCases.flatMap { CommunityLink.links(in: $0, on: .mac) } == CommunityLink.allCases)
+    }
+
+    /// Ko-fi is the Mac's alone: Coincide Remote lists every other link, in the same groups and order.
+    @Test func koFiIsOnlyOnTheMac() {
+        #expect(CommunityLink.offered(on: .mac) == CommunityLink.allCases)
+        #expect(CommunityLink.offered(on: .remote) == CommunityLink.allCases.filter { $0 != .supportOnKoFi })
+        #expect(CommunityLink.links(in: .community, on: .remote)
+            == [.getHelp, .reportIssue, .requestFeature, .joinDiscord, .starOnGitHub])
+        #expect(CommunityLink.links(in: .follow, on: .remote) == CommunityLink.links(in: .follow, on: .mac))
+        #expect(CommunityLink.links(in: .contact, on: .remote) == CommunityLink.links(in: .contact, on: .mac))
+        #expect(!CommunityLink.supportOnKoFi.isOffered(on: .remote))
+    }
+
+    /// Coincide Remote builds only for iOS, so its views can't run here; its sources must list the links offered on
+    /// the phone, never all of them or the Mac's.
+    @Test func coincideRemoteListsOnlyThePhonesLinks() throws {
+        let folder = Self.repository.appendingPathComponent("CoincideRemote")
+        let files = try #require(FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        var listings = 0
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            #expect(!source.contains("CommunityLink.allCases"), "\(file.lastPathComponent)")
+            #expect(!source.contains("on: .mac"), "\(file.lastPathComponent)")
+            listings += source.components(separatedBy: "on: .remote)").count - 1
+        }
+        // The Settings rows and Settings search.
+        #expect(listings >= 2)
     }
 
     @Test func aBugReportFillsInOnlyTheVersions() {
@@ -169,12 +199,14 @@ struct CommunityLinksTests {
         let help = try #require(menu.items.last?.submenu)
         #expect(help.title == "Help")
         #expect(help.items.map { $0.isSeparatorItem ? "-" : $0.title } == [
-            "Get Help on Discord", "Report an Issue…", "Request a Feature…", "Join the Discord", "Star on GitHub", "-",
+            "Get Help on Discord", "Report an Issue…", "Request a Feature…", "Join the Discord", "Star on GitHub",
+            "Support Coincide on Ko-fi", "-",
             "X: @apoorvdarshan", "Instagram: @apoorvcodes", "LinkedIn", "-",
             "Contact: apoorv@fud-ai.app", "Privacy Policy", "Terms of Service",
         ])
         let entries = help.items.filter { !$0.isSeparatorItem }
-        for (item, link) in zip(entries, CommunityLink.allCases) {
+        #expect(entries.count == CommunityLink.offered(on: .mac).count)
+        for (item, link) in zip(entries, CommunityLink.offered(on: .mac)) {
             #expect(item.target === appDelegate)
             #expect(item.action == #selector(AppDelegate.openCommunityLink(_:)))
             #expect(item.representedObject as? String == link.rawValue)
@@ -188,7 +220,7 @@ struct CommunityLinksTests {
     @Test func thePaletteFindsTheLinks() throws {
         let (core, more) = PaletteCatalog(windowController: nil).actions()
         let items = core + more
-        for link in CommunityLink.allCases {
+        for link in CommunityLink.offered(on: .mac) {
             let item = try #require(items.first { $0.id == "help:\(link.rawValue)" }, "\(link)")
             #expect(item.title == link.menuTitle)
             #expect(item.trailing == nil)
@@ -209,6 +241,7 @@ struct CommunityLinksTests {
             ("Report an Issue", ["report", "bug", "feedback", "discord"]), ("Request a Feature", ["feature", "idea"]),
             ("Join the Discord", ["discord", "community"]), ("Star on GitHub", ["star", "open source"]),
             ("Privacy Policy", ["privacy"]), ("Terms of Service", ["terms"]), ("Contact", ["email"]),
+            ("Support on Ko-fi", ["ko-fi", "donate", "coffee"]),
             ("X", ["twitter"]), ("LinkedIn", ["linkedin"]),
         ]
         for (title, queries) in cases {

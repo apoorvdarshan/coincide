@@ -1,5 +1,6 @@
 import AppKit
 import CoincideKit
+import CoincideRemoteKit
 
 /// The window's content: the navigation rail, then the split view of the thread list, chat and diff. The rail stays
 /// when the thread list closes.
@@ -39,8 +40,8 @@ final class MainRootViewController: NSViewController {
 }
 
 /// The slim column at the window's left edge with a button for each place in the app: the thread list, a new thread,
-/// search, the terminal (when it opens along the bottom), the project's editor, usage, instructions, the agents and
-/// settings. Whatever opens on the right (every schedule, the diff, the pull requests, the browser preview, and the
+/// search, the terminal (when it opens along the bottom), the project's editor, Help & Community's GitHub, Discord and
+/// Ko-fi links, usage, instructions, the agents and settings. Whatever opens on the right (every schedule, the diff, the pull requests, the browser preview, and the
 /// terminal when it goes there) has its button on the right too, in the toolbar (`InspectorPanelButtons`), never here.
 /// Buttons send their actions up the responder chain, the way menu items do, so they run whatever the menu bar would.
 final class NavigationRailViewController: NSViewController {
@@ -74,6 +75,17 @@ final class NavigationRailViewController: NSViewController {
     private lazy var settingsButton = RailButton(
         symbol: "gearshape", label: String(localized: "Settings"), command: nil,
         action: #selector(AppDelegate.showSettings(_:)))
+    /// Help & Community links with a button above the bottom group, which open as their rows in Settings › About do.
+    static let communityLinks: [CommunityLink] = [.starOnGitHub, .joinDiscord, .supportOnKoFi]
+    private(set) lazy var communityButtons: [RailButton] = Self.communityLinks.map { link in
+        let button = RailButton(
+            symbol: Self.railSymbol(link), label: link.menuTitle, command: nil, action: #selector(openCommunityLink(_:)),
+            target: self)
+        button.identifier = NSUserInterfaceItemIdentifier(Self.communityPrefix + link.rawValue)
+        button.hint = link.detail
+        return button
+    }
+    private static let communityPrefix = "community."
 
     init(store: AppStore = .shared, openInChooser: OpenTargetChooser? = nil) {
         self.store = store
@@ -88,7 +100,13 @@ final class NavigationRailViewController: NSViewController {
         let root = RailBackgroundView()
         let top = stack([threadsButton, newThreadButton, searchButton])
         let panels = stack([terminalButton, openInButton])
-        let bottom = stack([usageButton, instructionsButton, agentsButton, settingsButton])
+        let bottom = stack(communityButtons + [usageButton, instructionsButton, agentsButton, settingsButton])
+        // When the window is too short for every button, the bottom group may shrink and lets the community buttons go
+        // (Ko-fi, then GitHub, then Discord) rather than overlap the buttons above it.
+        bottom.setClippingResistancePriority(.defaultLow, for: .vertical)
+        for (button, priority) in zip(communityButtons, Self.communityVisibility) {
+            bottom.setVisibilityPriority(priority, for: button)
+        }
         let divider = RailDivider()
         for view in [top, divider, panels, bottom] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -177,6 +195,29 @@ final class NavigationRailViewController: NSViewController {
     @objc private func showUsage(_ sender: Any?) {
         UsageNavigation.show()
     }
+
+    @objc private func openCommunityLink(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue, id.hasPrefix(Self.communityPrefix),
+            let link = CommunityLink(rawValue: String(id.dropFirst(Self.communityPrefix.count)))
+        else { return }
+        link.open()
+    }
+
+    /// The rail's outline symbols for `communityLinks`.
+    private static func railSymbol(_ link: CommunityLink) -> String {
+        switch link {
+        case .starOnGitHub: "star"
+        case .joinDiscord: "bubble.left.and.bubble.right"
+        case .supportOnKoFi: "heart"
+        default: link.symbol
+        }
+    }
+
+    /// How firmly each of `communityLinks` stays when the rail runs out of room: Discord longest, Ko-fi least.
+    private static let communityVisibility: [NSStackView.VisibilityPriority] = [
+        NSStackView.VisibilityPriority(rawValue: 850), NSStackView.VisibilityPriority(rawValue: 900),
+        NSStackView.VisibilityPriority(rawValue: 800),
+    ]
 }
 
 /// A square button in the rail: a symbol that brightens on hover and sits on a soft fill while its panel is open.

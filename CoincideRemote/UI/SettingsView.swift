@@ -593,7 +593,9 @@ struct SettingsSearchResults: View {
         let search = SearchMatch(query)
         let panes = allPanes.filter { search.isEmpty || search.matches($0.title) }
         let hits = search.isEmpty ? [] : settingHits(search)
-        let links = search.isEmpty ? [] : CommunityLink.allCases.filter { search.matches(([$0.title] + $0.keywords).joined(separator: " ")) }
+        let links = search.isEmpty ? [] : CommunityLink.offered(on: .remote).filter {
+            search.matches(([$0.title] + $0.keywords).joined(separator: " "))
+        }
         List {
             if !panes.isEmpty {
                 SidebarHeader(Text("Panes")).sidebarRow()
