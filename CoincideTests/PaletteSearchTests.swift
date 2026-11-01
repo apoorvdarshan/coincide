@@ -392,7 +392,9 @@ struct PaletteCatalogTests {
         let (core, more) = PaletteCatalog(windowController: nil).actions()
         #expect(core.map(\.id).contains("action:add-project"))
         #expect(!core.contains { ["action:terminal", "action:diff", "action:find", "action:stop"].contains($0.id) })
-        #expect(more.map(\.id).suffix(3) == ["action:appearance", "action:refresh-agents", "action:settings"])
+        #expect(more.map(\.id).suffix(5) == [
+            "action:appearance", "action:refresh-agents", "action:settings", "help:reportIssue", "help:requestFeature",
+        ])
         #expect(!more.contains { $0.id == "action:pin" || $0.id == "action:sidebar" })
     }
 }
