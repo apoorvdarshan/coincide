@@ -119,7 +119,7 @@ struct BotsView: View {
         .overlay {
             if !search.isEmpty, bots.isEmpty {
                 ContentUnavailableView.search(text: query)
-            } else if bots.isEmpty, client.isConnected {
+            } else if bots.isEmpty, client.showsConnected {
                 ContentUnavailableView {
                     // The Mac's own characters, not a stock symbol: the bot a new one starts as.
                     VStack(spacing: 12) {

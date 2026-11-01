@@ -195,7 +195,7 @@ struct ProjectsView: View {
         .overlay {
             if !search.isEmpty, shown.isEmpty, pinned.isEmpty {
                 ContentUnavailableView.search(text: query)
-            } else if projects.isEmpty, pinned.isEmpty, client.isConnected {
+            } else if projects.isEmpty, pinned.isEmpty, client.showsConnected {
                 ContentUnavailableView {
                     Label("No Projects", systemImage: "folder")
                 } description: {
@@ -371,7 +371,7 @@ struct ChatsView: View {
         .overlay {
             if !search.isEmpty, threads.isEmpty {
                 ContentUnavailableView.search(text: query)
-            } else if threads.isEmpty, client.isConnected {
+            } else if threads.isEmpty, client.showsConnected {
                 ContentUnavailableView {
                     Label("No Chats", systemImage: "bubble.left.and.bubble.right")
                 } description: {

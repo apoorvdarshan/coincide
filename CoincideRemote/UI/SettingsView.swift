@@ -230,9 +230,10 @@ struct SettingsMacCard: View {
     }
 
     private var status: String {
-        switch client.phase {
+        switch client.shownPhase {
         case .connected: String(localized: "Connected")
-        case .connecting: String(localized: "Connecting…")
+        // Nil: reconnecting quietly with nothing to go on showing, as at launch.
+        case .connecting, nil: String(localized: "Connecting…")
         case .offline: String(localized: "Offline")
         case .needsPairing: String(localized: "Pair Again")
         case .idle: String(localized: "Not connected")
@@ -240,10 +241,10 @@ struct SettingsMacCard: View {
     }
 
     private var statusColor: Color {
-        switch client.phase {
+        switch client.shownPhase {
         case .connected: .green
         case .offline, .needsPairing: .orange
-        case .connecting, .idle: theme.tertiaryInk
+        case .connecting, .idle, nil: theme.tertiaryInk
         }
     }
 }
@@ -315,7 +316,7 @@ struct MacsSettingsPane: View {
                                     .font(.caption2.monospaced()).foregroundStyle(theme.secondaryInk).lineLimit(2)
                             }
                             Spacer()
-                            if client.mac?.serverID == mac.serverID, client.isConnected {
+                            if client.mac?.serverID == mac.serverID, client.showsConnected {
                                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                                     .accessibilityLabel(Text("Connected"))
                             }
@@ -368,9 +369,9 @@ struct MacsSettingsPane: View {
 
     private func status(_ mac: SavedMac) -> String {
         if client.mac?.serverID == mac.serverID {
-            switch client.phase {
+            switch client.shownPhase {
             case .connected: return String(localized: "Connected")
-            case .connecting: return String(localized: "Connecting…")
+            case .connecting, nil: return String(localized: "Connecting…")
             case .offline(let message): return message
             case .needsPairing(let message): return message
             case .idle: return String(localized: "Not connected")
