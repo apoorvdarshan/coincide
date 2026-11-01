@@ -124,55 +124,69 @@ public nonisolated enum BrowserCatalog {
     /// (`NSWorkspace` in the app; a fake in tests). Nothing here opens a browser's data files or another app's
     /// container, so detection never prompts; only scanning does.
     public static func detect(home: URL, appURL: (String) -> URL?) -> [Detected] {
+        all.compactMap { detect($0, home: home, appURL: appURL) }
+    }
+
+    /// One browser, as `detect(home:appURL:)` finds it; nil when it has neither an installed app nor data here.
+    public static func detect(_ definition: Definition, home: URL, appURL: (String) -> URL?) -> Detected? {
         let support = home.appendingPathComponent("Library/Application Support", isDirectory: true)
-        let manager = FileManager.default
-        var result: [Detected] = []
-        for definition in all {
-            let app = definition.bundleIDs.lazy.compactMap(appURL).first
-            switch definition.engine {
-            case .chromium:
-                let root = support.appendingPathComponent(definition.supportPath, isDirectory: true)
-                // Chrome turns on macOS's protection of its data folder, which only Full Disk Access gets past.
-                if isDenied(root) {
-                    result.append(Detected(definition: definition, appURL: app, profiles: [],
-                        status: .needsFullDiskAccess, kinds: [.cookies, .history, .bookmarks]))
-                    continue
-                }
-                let profiles = chromiumProfiles(in: root)
-                guard app != nil || !profiles.isEmpty else { continue }
-                result.append(Detected(definition: definition, appURL: app, profiles: profiles,
-                    status: .available, kinds: [.cookies, .history, .bookmarks]))
-            case .firefox:
-                let root = support.appendingPathComponent(definition.supportPath, isDirectory: true)
-                if isDenied(root) {
-                    result.append(Detected(definition: definition, appURL: app, profiles: [],
-                        status: .needsFullDiskAccess, kinds: [.cookies, .history, .bookmarks]))
-                    continue
-                }
-                let profiles = FirefoxProfileReader.profiles(in: root).filter { manager.fileExists(atPath: $0.folder.path) }
-                    .map { Profile(name: $0.name, folder: $0.folder) }
-                guard app != nil || !profiles.isEmpty else { continue }
-                result.append(Detected(definition: definition, appURL: app, profiles: profiles,
-                    status: .available, kinds: [.cookies, .history, .bookmarks]))
-            case .webkit(let cookies, let history, let bookmarks, let probe):
-                guard app != nil else { continue }
-                var kinds: Set<BrowserImportKind> = [.cookies]
-                if history != nil { kinds.insert(.history) }
-                if bookmarks != nil { kinds.insert(.bookmarks) }
-                var status = Status.available
-                if let probe {
-                    if isDenied(home.appendingPathComponent(probe)) { status = .needsFullDiskAccess }
-                } else if !cookies.contains(where: { isReadable(home.appendingPathComponent($0)) }) {
-                    status = .unsupported(.unreadableFormat)
-                }
-                result.append(Detected(definition: definition, appURL: app, profiles: [Profile(name: definition.name, folder: home)],
-                    status: status, kinds: kinds))
-            case .unsupported(let reason):
-                guard app != nil else { continue }
-                result.append(Detected(definition: definition, appURL: app, profiles: [], status: .unsupported(reason), kinds: []))
+        let app = definition.bundleIDs.lazy.compactMap(appURL).first
+        switch definition.engine {
+        case .chromium:
+            let root = support.appendingPathComponent(definition.supportPath, isDirectory: true)
+            // Chrome turns on macOS's protection of its data folder, which only Full Disk Access gets past.
+            if isDenied(root) {
+                return Detected(definition: definition, appURL: app, profiles: [],
+                    status: .needsFullDiskAccess, kinds: [.cookies, .history, .bookmarks])
+            }
+            let profiles = chromiumProfiles(in: root)
+            guard app != nil || !profiles.isEmpty else { return nil }
+            return Detected(definition: definition, appURL: app, profiles: profiles,
+                status: .available, kinds: [.cookies, .history, .bookmarks])
+        case .firefox:
+            let root = support.appendingPathComponent(definition.supportPath, isDirectory: true)
+            if isDenied(root) {
+                return Detected(definition: definition, appURL: app, profiles: [],
+                    status: .needsFullDiskAccess, kinds: [.cookies, .history, .bookmarks])
+            }
+            let profiles = FirefoxProfileReader.profiles(in: root).filter { FileManager.default.fileExists(atPath: $0.folder.path) }
+                .map { Profile(name: $0.name, folder: $0.folder) }
+            guard app != nil || !profiles.isEmpty else { return nil }
+            return Detected(definition: definition, appURL: app, profiles: profiles,
+                status: .available, kinds: [.cookies, .history, .bookmarks])
+        case .webkit(let cookies, let history, let bookmarks, let probe):
+            guard app != nil else { return nil }
+            var kinds: Set<BrowserImportKind> = [.cookies]
+            if history != nil { kinds.insert(.history) }
+            if bookmarks != nil { kinds.insert(.bookmarks) }
+            var status = Status.available
+            if let probe {
+                if isDenied(home.appendingPathComponent(probe)) { status = .needsFullDiskAccess }
+            } else if !cookies.contains(where: { isReadable(home.appendingPathComponent($0)) }) {
+                status = .unsupported(.unreadableFormat)
+            }
+            return Detected(definition: definition, appURL: app, profiles: [Profile(name: definition.name, folder: home)],
+                status: status, kinds: kinds)
+        case .unsupported(let reason):
+            guard app != nil else { return nil }
+            return Detected(definition: definition, appURL: app, profiles: [], status: .unsupported(reason), kinds: [])
+        }
+    }
+
+    /// The profile a link opened from another app lands in, so the newest sign-ins are there: a Chromium browser's
+    /// last used one (`profile.last_used` in `Local State`), else the first listed (Chromium's `Default`, Firefox's
+    /// default profile, a WebKit browser's only one).
+    public static func preferredProfile(of browser: Detected, home: URL) -> Profile? {
+        if case .chromium = browser.definition.engine {
+            let root = home.appendingPathComponent("Library/Application Support", isDirectory: true)
+                .appendingPathComponent(browser.definition.supportPath, isDirectory: true)
+            let lastUsed = (try? Data(contentsOf: root.appendingPathComponent("Local State")))
+                .flatMap { JSONValue.parse($0)?.at("profile.last_used")?.string }
+            if let lastUsed, let profile = browser.profiles.first(where: { $0.folder.lastPathComponent == lastUsed }) {
+                return profile
             }
         }
-        return result
+        return browser.profiles.first
     }
 
     /// `Default`, `Profile 1`… with their names from `Local State`, or the folder itself for browsers (Opera) that
