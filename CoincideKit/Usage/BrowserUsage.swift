@@ -1,8 +1,9 @@
 import Foundation
 
 /// A website whose usage pages Coincide may read with the user's sign-in in its own browser profile, for details the
-/// agents' official APIs don't give: chatgpt.com for Codex's credit limit and credit history, and the Claude Console
-/// (platform.claude.com) for the prepaid API credit balance. Each is off until the user turns it on in Settings › Usage.
+/// agents' official APIs don't give: chatgpt.com for Codex's credit limit and credit history, the Claude Console
+/// (platform.claude.com) for the prepaid API credit balance, and the OpenCode Console (opencode.ai) for the Zen credit
+/// balance. Each is off until the user turns it on in Settings › Usage.
 ///
 /// These are the websites' own internal endpoints, not public APIs, so they may change without notice; a read that
 /// fails leaves what Coincide shows without them and says why. The sign-in never leaves the Mac: its cookies go only
@@ -11,6 +12,7 @@ import Foundation
 public enum BrowserUsageSource: String, Codable, CaseIterable, Sendable, Identifiable {
     case chatGPT = "chatgpt"
     case claudeConsole = "claude-console"
+    case openCodeConsole = "opencode-console"
 
     public nonisolated var id: String { rawValue }
 
@@ -19,6 +21,7 @@ public enum BrowserUsageSource: String, Codable, CaseIterable, Sendable, Identif
         switch self {
         case .chatGPT: .codex
         case .claudeConsole: .claude
+        case .openCodeConsole: .opencode
         }
     }
 
@@ -27,6 +30,7 @@ public enum BrowserUsageSource: String, Codable, CaseIterable, Sendable, Identif
         switch self {
         case .chatGPT: "chatgpt.com"
         case .claudeConsole: "platform.claude.com"
+        case .openCodeConsole: "opencode.ai"
         }
     }
 
@@ -35,6 +39,7 @@ public enum BrowserUsageSource: String, Codable, CaseIterable, Sendable, Identif
         switch self {
         case .chatGPT: URL(string: "https://chatgpt.com/codex/cloud/settings/analytics")!
         case .claudeConsole: URL(string: "https://platform.claude.com/settings/billing")!
+        case .openCodeConsole: URL(string: "https://opencode.ai/console")!
         }
     }
 }
@@ -49,6 +54,8 @@ public enum BrowserUsageProblem: Sendable, Hashable {
     case forbidden
     /// The Claude account has no Console API organization.
     case noAPIOrganization
+    /// The OpenCode account has no Console workspace with billing.
+    case noBilling
     /// The site answered in a shape Coincide doesn't know: it may have changed.
     case unrecognized
     case rateLimited
@@ -64,6 +71,7 @@ public enum BrowserUsageProblem: Sendable, Hashable {
         case .sessionExpired: String(localized: "The sign-in has expired. Sign in again.")
         case .forbidden: String(localized: "This account may not see its billing.")
         case .noAPIOrganization: String(localized: "This account has no Claude Console API organization.")
+        case .noBilling: String(localized: "This account has no OpenCode Console workspace with billing.")
         case .unrecognized: String(localized: "The page has changed in a way Coincide doesn’t understand.")
         case .rateLimited: String(localized: "Too many requests. Coincide will try again later.")
         case .unavailable(let status): String(localized: "The site answered with error \(status).")
@@ -178,7 +186,7 @@ public enum BrowserCookieHeader {
     }
 }
 
-/// Requests both readers send: read-only GETs that carry the profile's cookies for the one site, follow no redirect
+/// Requests the readers send: read-only GETs that carry the profile's cookies for the one site, follow no redirect
 /// (`UsageLimitsHTTP.live`), and cache nothing.
 enum BrowserUsageHTTP {
     nonisolated static func get(_ url: URL, cookie: String, headers: [String: String] = [:], timeout: TimeInterval = 15) -> URLRequest {

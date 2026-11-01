@@ -192,6 +192,11 @@ enum UsageFormat {
             return String(localized: "Turn on “Show account usage” in Settings › Cursor to read the plan’s limits.")
         case .claude, .codex:
             return String(localized: "No plan limits reported. Accounts that use an API key have none.")
+        case .opencode where !settings.usageBrowserSignIn.contains(.openCodeConsole):
+            return String(
+                localized:
+                    "No OpenCode Go plan limits reported. To show your OpenCode Zen balance, turn on “OpenCode: Use my browser sign-in for extra details” in Settings › Usage."
+            )
         default:
             return String(localized: "Not available: \(account.provider.displayName) reports no plan limits for this account.")
         }
