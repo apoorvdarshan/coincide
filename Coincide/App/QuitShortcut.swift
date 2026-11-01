@@ -200,3 +200,5 @@ final class QuitHintHUD {
         }
     }
 }
+
+// Fast path check: a Swift change must run the build (#200). Never merged.
