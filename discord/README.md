@@ -78,6 +78,7 @@ In the [Developer Portal](https://discord.com/developers/applications/1566350650
 
 - Interactions Endpoint URL: `https://discord.coincide.dev/api/discord/interactions`. Discord checks it with a signed PING when it is saved.
 - Public Bot: off. Installation: guild install only, no install link.
+- Terms of Service URL: `https://coincide.dev/terms#janus`. Privacy Policy URL: `https://coincide.dev/privacy#discord` (portal only).
 - Message Content intent: on (the limited flag, needed by moderation). Presence and Server Members intents: off.
 - Name, avatar and description can be changed with `PATCH /users/@me` (bot username and avatar) and `PATCH /applications/@me` (icon, description); the application name changes only in the portal.
 
@@ -96,6 +97,8 @@ KV keys: `releases:v1:seeded` (time of the first run) and `releases:v1:seen:<rel
 Events are queued in KV before the webhook is acknowledged, delivered right away, and retried every five minutes in batches of 25 for up to seven days (`issue-close:pending:<number>:<closed at>`). A completion marker (`issue-close:sent:…`) and a deterministic Discord nonce prevent repeat replies to the same closure; a later closure after reopening can notify again. KV is eventually consistent, so this is best-effort, not exactly-once. If queueing fails the webhook answers 503; redeliver it from the repository's webhook settings once things recover. Delete an `issue-close:link:` key to stop notifications for that report.
 
 ## Data handling
+
+The published [Privacy Policy](https://coincide.dev/privacy#discord) and [Terms](https://coincide.dev/terms#janus) cover the server and Janus; they are also the application's Privacy Policy and Terms of Service URLs.
 
 - Only text people submit with a command is sent to Google Gemini. Gemini's own terms govern what it keeps; no retention promise is made beyond them.
 - `/bug` and `/feature` publish the report, unchanged, plus any AI summary in a public GitHub issue. Discord usernames and IDs are not added, and `@` mentions are neutralized.
