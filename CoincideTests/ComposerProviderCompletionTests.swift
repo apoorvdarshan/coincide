@@ -58,4 +58,25 @@ struct ComposerProviderCompletionTests {
         }
         Issue.record("The already typed $ did not refresh for \(kind.rawValue)")
     }
+
+    /// A list that arrives after its window left the screen, such as commands or pull requests that took a while,
+    /// stays hidden: ordering it in would bring the window back with it.
+    @Test func aListThatArrivesAfterItsWindowLeftTheScreenStaysHidden() {
+        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 800, height: 400),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.alphaValue = 0
+        let anchor = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 60))
+        window.contentView?.addSubview(anchor)
+        let suggestions = ComposerSuggestionPanel()
+        window.orderBack(nil)
+        defer { suggestions.hide(); window.orderOut(nil) }
+        suggestions.show([], emptyText: "Loading…", listLabel: "Commands", above: anchor)
+        #expect(suggestions.isVisible)
+        suggestions.hide()
+        window.orderOut(nil)
+        suggestions.show([], emptyText: "No matching files or folders.", listLabel: "Files and folders", above: anchor)
+        #expect(!suggestions.isVisible)
+        #expect(!window.isVisible)
+        #expect(window.childWindows?.isEmpty ?? true)
+    }
 }

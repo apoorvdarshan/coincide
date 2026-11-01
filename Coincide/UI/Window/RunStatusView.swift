@@ -13,9 +13,14 @@ final class RunStatusView: NSView {
         case approval(count: Int)
     }
 
-    /// Transparent space inside this toolbar item separates the two independently drawn pills, including
-    /// toolbars the user has already customized and saved.
-    static let leadingGap: CGFloat = 8
+    /// The space between the scripts' pill and this one, which are drawn independently, including in toolbars the user
+    /// has already customized and saved.
+    static let pillSpacing: CGFloat = 8
+    /// The part of `pillSpacing` this item leaves transparent inside itself: what the toolbar's own spacing doesn't
+    /// give. macOS 27.2 places toolbar items flush, so all of it; 27.0 pads every item's view by 4 points a side, so
+    /// none, and the narrowest window still has room for the status.
+    private(set) var leadingGap: CGFloat = RunStatusView.pillSpacing
+    private var leadingConstraint: NSLayoutConstraint?
     private let pill = NSView()
     private let spinner = NSProgressIndicator()
     private let icon = NSImageView()
@@ -59,8 +64,10 @@ final class RunStatusView: NSView {
         pill.layer?.cornerCurve = .continuous
         addSubview(pill)
         pill.addSubview(stack)
+        let leading = pill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: leadingGap)
+        leadingConstraint = leading
         NSLayoutConstraint.activate([
-            pill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.leadingGap),
+            leading,
             pill.trailingAnchor.constraint(equalTo: trailingAnchor),
             pill.topAnchor.constraint(equalTo: topAnchor),
             pill.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -98,11 +105,23 @@ final class RunStatusView: NSView {
     override var intrinsicContentSize: NSSize {
         let widths: [CGFloat] = [spinner.isHidden ? nil : 14, icon.isHidden ? nil : 14,
             ceil(label.intrinsicContentSize.width), stopButton.isHidden ? nil : 24].compactMap { $0 }
-        return NSSize(width: Self.leadingGap + 20 + widths.reduce(0, +) + CGFloat(max(0, widths.count - 1)) * 6, height: 28)
+        return NSSize(width: leadingGap + 20 + widths.reduce(0, +) + CGFloat(max(0, widths.count - 1)) * 6, height: 28)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    /// The toolbar insets this view by its padding inside the item's container, and the item before it by as much, so
+    /// the toolbar's spacing between the two is twice this view's origin there.
+    override func layout() {
+        super.layout()
+        guard superview != nil else { return }
+        let gap = max(0, Self.pillSpacing - 2 * max(0, frame.minX))
+        guard gap != leadingGap else { return }
+        leadingGap = gap
+        leadingConstraint?.constant = gap
+        invalidateIntrinsicContentSize()
+    }
 
     /// The stop button's tooltip names Stop's shortcut, which the user can change.
     @objc private func keyBindingsChanged() {
