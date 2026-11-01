@@ -3,14 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Coincide: six coding agents, one moment</title>
-<meta name="description" content="Coincide runs Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity at the same time in one native Mac app.">
+<title>Coincide: every coding agent in one native Mac app</title>
+<meta name="description" content="Run Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity side by side in one native Mac app, and switch agents mid-thread. Free and open source.">
 <meta name="theme-color" content="#0A0D24">
 <link rel="canonical" href="https://coincide.dev/">
+<!-- site-alternates -->
+<!-- /site-alternates -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
 <meta property="og:url" content="https://coincide.dev/">
-<meta property="og:title" content="Coincide: every agent, one moment">
+<meta property="og:title" content="Coincide: every coding agent in one native Mac app">
 <meta property="og:description" content="Your coding agents and bots, side by side in one native Mac app.">
 <meta property="og:image" content="https://coincide.dev/img/og.jpg">
 <meta property="og:image:width" content="1200">
@@ -18,11 +21,18 @@
 <meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:site" content="@apoorvdarshan">
-<link rel="icon" href="img/icon-tight-96.png">
-<link rel="apple-touch-icon" href="img/icon-tight.png">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Coincide: every coding agent in one native Mac app">
+<meta name="twitter:description" content="Your coding agents and bots, side by side in one native Mac app.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<!-- site-schema -->
+<!-- /site-schema -->
 <script>
   // Motion is an enhancement: without it (or with Reduce Motion on) everything is simply shown.
   if (!matchMedia('(prefers-reduced-motion: reduce)').matches && 'IntersectionObserver' in window) document.documentElement.classList.add('js');
@@ -276,6 +286,10 @@
   .item h3 { margin: 0; font: 600 21px/1.25 var(--display); letter-spacing: -.02em; transition: color .3s; }
   .item:hover h3 { color: #fff; }
   .item p { grid-column: 2; margin: 0; color: var(--ash); font-size: 16px; max-width: 30em; }
+  .item h3 a:hover { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
+  .more { margin: 34px 0 0; font: 14px var(--mono); }
+  .more a, .cast-note a, .install .meta a { color: var(--signal-hi); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(147,166,255,.4); }
+  .more a:hover, .cast-note a:hover, .install .meta a:hover { text-decoration-color: currentColor; }
   kbd { font: 500 13px var(--mono); padding: 1px 7px; border-radius: 6px; background: var(--plate); box-shadow: inset 0 -1px 0 rgba(0,0,0,.6), inset 0 0 0 1px var(--rule); color: var(--silver); }
 
   /* Agents */
@@ -324,9 +338,6 @@
   .install .meta b { color: var(--ash); font-weight: 500; }
   .close .install + .actions { margin-top: 30px; }
   @media (max-width: 520px) { .cmd .via { display: none; } .cmd code { font-size: 13px; } }
-  footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px; padding: 26px var(--pad) calc(40px + env(safe-area-inset-bottom)); max-width: 1280px; margin: 0 auto; border-top: 1px solid var(--rule); color: var(--faint); font: 13px var(--mono); }
-  footer a { transition: color .2s; } footer a:hover { color: var(--silver); }
-  footer .links { display: flex; flex-wrap: wrap; gap: 8px 18px; }
   .star { display: inline-flex; align-items: center; gap: 7px; height: 40px; padding: 0 14px; border-radius: 999px; color: var(--silver); font-weight: 600; font-size: 14.5px; box-shadow: inset 0 0 0 1px rgba(220,216,207,.22); transition: background .2s; }
   .star:hover { background: rgba(220,216,207,.07); }
   .star svg { width: 16px; height: 16px; }
@@ -397,8 +408,8 @@
 
 <header class="bar" id="bar">
   <div class="top">
-    <a class="brand" href="#top"><img src="img/icon-tight-96.png" alt="">Coincide</a>
-    <nav aria-label="Sections"><a href="#both">The app</a><a href="#bots">Bots</a><a href="#features">Features</a><a href="#agents">Agents</a></nav>
+    <a class="brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a></nav>
     <a class="star" href="https://github.com/apoorvdarshan/coincide" aria-label="Star Coincide on GitHub"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.39-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>Star</a>
     <a class="get" href="#get">Get Coincide</a>
   </div>
@@ -421,12 +432,12 @@
 
       <div class="tracks" id="tracks" role="img" aria-label="A timeline of six agents working at the same time, each on its own lane, with a playhead moving across">
         <div class="ruler"><span></span><div class="ticks" id="ticks"></div></div>
-        <div class="lane" style="--c: var(--claude)"><div class="who"><i><img src="img/logo-claude.png" alt=""></i><div><b>Claude Code</b><small>Fix the bot editor sheet</small></div></div><div class="track" data-lane="0"></div></div>
-        <div class="lane" style="--c: var(--codex)"><div class="who"><i><img src="img/logo-codex.png" alt=""></i><div><b>Codex</b><small>Translate 53 new strings</small></div></div><div class="track" data-lane="1"></div></div>
-        <div class="lane" style="--c: var(--cursor)"><div class="who"><i><img src="img/logo-cursor.png" alt=""></i><div><b>Cursor</b><small>Review pull request #178</small></div></div><div class="track" data-lane="2"></div></div>
-        <div class="lane" style="--c: var(--grok)"><div class="who"><i><img src="img/logo-grok.png" alt=""></i><div><b>Grok Build</b><small>Explain this stack trace</small></div></div><div class="track" data-lane="3"></div></div>
-        <div class="lane" style="--c: var(--opencode)"><div class="who"><i><img src="img/logo-opencode.png" alt=""></i><div><b>OpenCode</b><small>Write the release notes</small></div></div><div class="track" data-lane="4"></div></div>
-        <div class="lane" style="--c: var(--antigravity)"><div class="who"><i><img src="img/logo-antigravity.png" alt=""></i><div><b>Antigravity</b><small>Plan the launch post</small></div></div><div class="track" data-lane="5"></div></div>
+        <div class="lane" style="--c: var(--claude)"><div class="who"><i><img src="/img/logo-claude.png" alt="" width="18" height="18"></i><div><b>Claude Code</b><small>Fix the bot editor sheet</small></div></div><div class="track" data-lane="0"></div></div>
+        <div class="lane" style="--c: var(--codex)"><div class="who"><i><img src="/img/logo-codex.png" alt="" width="18" height="18"></i><div><b>Codex</b><small>Translate 53 new strings</small></div></div><div class="track" data-lane="1"></div></div>
+        <div class="lane" style="--c: var(--cursor)"><div class="who"><i><img src="/img/logo-cursor.png" alt="" width="18" height="18"></i><div><b>Cursor</b><small>Review pull request #178</small></div></div><div class="track" data-lane="2"></div></div>
+        <div class="lane" style="--c: var(--grok)"><div class="who"><i><img src="/img/logo-grok.png" alt="" width="18" height="18"></i><div><b>Grok Build</b><small>Explain this stack trace</small></div></div><div class="track" data-lane="3"></div></div>
+        <div class="lane" style="--c: var(--opencode)"><div class="who"><i><img src="/img/logo-opencode.png" alt="" width="18" height="18"></i><div><b>OpenCode</b><small>Write the release notes</small></div></div><div class="track" data-lane="4"></div></div>
+        <div class="lane" style="--c: var(--antigravity)"><div class="who"><i><img src="/img/logo-antigravity.png" alt="" width="18" height="18"></i><div><b>Antigravity</b><small>Plan the launch post</small></div></div><div class="track" data-lane="5"></div></div>
         <div class="playhead" id="playhead" data-t="0:00"></div>
       </div>
       <div class="tracks-foot">
@@ -462,20 +473,20 @@
               <div class="row"><svg class="ic"><use href="#i-search"/></svg><span class="t">Search</span></div>
               <div class="row"><svg class="ic"><use href="#i-clock"/></svg><span class="t">Scheduled</span><span class="m">2</span></div>
               <div class="head">Bots<span><svg class="ic"><use href="#i-more"/></svg><svg class="ic"><use href="#i-plus"/></svg></span></div>
-              <div class="bot"><img src="img/bot-brulee.png" alt=""><div><b>Brulee</b><small>Morning standup</small></div><span class="m">2m</span></div>
-              <div class="bot"><img src="img/bot-teddy.png" alt=""><div><b>Teddy</b><small>Release notes every Friday</small></div><span class="m">1h</span></div>
+              <div class="bot"><img src="/img/bot-brulee.png" alt="" width="26" height="26"><div><b>Brulee</b><small>Morning standup</small></div><span class="m">2m</span></div>
+              <div class="bot"><img src="/img/bot-teddy.png" alt="" width="26" height="26"><div><b>Teddy</b><small>Release notes every Friday</small></div><span class="m">1h</span></div>
               <div class="head">Projects<span><svg class="ic"><use href="#i-more"/></svg><svg class="ic"><use href="#i-folder"/></svg></span></div>
               <div class="row"><svg class="ic"><use href="#i-chev-d"/></svg><svg class="ic"><use href="#i-folder"/></svg><span class="t">coincide</span></div>
               <div class="row sub sel"><span class="spin"></span><span class="t">Fix the bot editor sheet</span><span class="m run" data-clock>0:42</span></div>
               <div class="row sub"><span class="spin"></span><span class="t">Translate new strings</span><span class="m run">1:08</span></div>
-              <div class="row sub"><img class="p inv" src="img/logo-cursor.png" alt=""><span class="t">Review pull request #178</span><span class="m">4m</span></div>
+              <div class="row sub"><img class="p inv" src="/img/logo-cursor.png" alt="" width="14" height="14"><span class="t">Review pull request #178</span><span class="m">4m</span></div>
               <div class="row"><svg class="ic"><use href="#i-chev-r"/></svg><svg class="ic"><use href="#i-folder"/></svg><span class="t">fud-ai</span></div>
               <div class="row"><svg class="ic"><use href="#i-chev-r"/></svg><svg class="ic"><use href="#i-folder"/></svg><span class="t">verceltics</span></div>
               <div class="head">Chats<span><svg class="ic"><use href="#i-more"/></svg><svg class="ic"><use href="#i-compose"/></svg></span></div>
-              <div class="row"><img class="p" src="img/logo-antigravity.png" alt=""><span class="t">Plan the launch post</span><span class="m">1h</span></div>
-              <div class="row"><img class="p inv" src="img/logo-grok.png" alt=""><span class="t">Explain this stack trace</span><span class="m">3h</span></div>
-              <div class="row"><img class="p inv" src="img/logo-opencode.png" alt=""><span class="t">Write the release notes</span><span class="m">1d</span></div>
-              <div class="row"><img class="p" src="img/logo-claude.png" alt=""><span class="t">Rename threads with ⌘R</span><span class="m">2d</span></div>
+              <div class="row"><img class="p" src="/img/logo-antigravity.png" alt="" width="14" height="14"><span class="t">Plan the launch post</span><span class="m">1h</span></div>
+              <div class="row"><img class="p inv" src="/img/logo-grok.png" alt="" width="14" height="14"><span class="t">Explain this stack trace</span><span class="m">3h</span></div>
+              <div class="row"><img class="p inv" src="/img/logo-opencode.png" alt="" width="14" height="14"><span class="t">Write the release notes</span><span class="m">1d</span></div>
+              <div class="row"><img class="p" src="/img/logo-claude.png" alt="" width="14" height="14"><span class="t">Rename threads with ⌘R</span><span class="m">2d</span></div>
             </div>
             <div class="main">
               <div class="tbar">
@@ -497,7 +508,7 @@
                 </div>
                 <div class="you">Push it and open a pull request.</div>
                 <div class="turn">
-                  <div class="working"><img src="img/logo-claude.png" alt="">Working for 23s</div>
+                  <div class="working"><img src="/img/logo-claude.png" alt="" width="15" height="15">Working for 23s</div>
                   <div class="tool st-wait"><span class="spin"></span>git push origin bot-editor-fix<span class="hint">waiting for you</span></div>
                   <div class="tool st-done"><svg class="ic ok"><use href="#i-check"/></svg>Pushed bot-editor-fix and opened pull request #177</div>
                 </div>
@@ -506,7 +517,7 @@
                 <div class="composer">
                   <div class="txt"><span id="typed"></span></div>
                   <div class="chips">
-                    <span><img src="img/logo-claude.png" alt="">Opus 5.5<svg class="ic dn"><use href="#i-chev-d"/></svg></span>
+                    <span><img src="/img/logo-claude.png" alt="" width="14" height="14">Opus 5.5<svg class="ic dn"><use href="#i-chev-d"/></svg></span>
                     <span><svg class="ic"><use href="#i-brain"/></svg>High<svg class="ic dn"><use href="#i-chev-d"/></svg></span>
                     <span><svg class="ic"><use href="#i-gauge"/></svg>Standard<svg class="ic dn"><use href="#i-chev-d"/></svg></span>
                     <span><svg class="ic"><use href="#i-lock"/></svg>Full access<svg class="ic dn"><use href="#i-chev-d"/></svg></span>
@@ -528,15 +539,15 @@
       <h2 class="rv">Meet the cast.</h2>
       <p class="lede rv" style="--d:.08s">Bots are standing assistants with a face, a personality and a job. Give one a morning routine and it shows up every weekday at nine.</p>
       <div class="cast" id="cast">
-        <button class="member rv" data-react="hop" aria-label="Brulee, cheerful: Hi there! So glad you stopped by. What are we doing today?"><span class="bubble" aria-hidden="true">Hi there! So glad you stopped by. What are we doing today?</span><span class="lean"><span class="char"><img class="open" src="img/bot-brulee.png" alt=""><img class="shut" src="img/bot-brulee-blink.png" alt=""></span></span><b>Brulee</b><small>cheerful</small></button>
-        <button class="member rv" data-react="tilt" aria-label="Alien, curious: Ooh, something new? Tell me more. What are we exploring?"><span class="bubble" aria-hidden="true">Ooh, something new? Tell me more. What are we exploring?</span><span class="lean"><span class="char"><img class="open" src="img/bot-alien.png" alt=""><img class="shut" src="img/bot-alien-blink.png" alt=""></span></span><b>Alien</b><small>curious</small></button>
-        <button class="member rv" data-react="nod" aria-label="Teddy, mentor: Hi! Tell me what you’re working on, and we’ll go through it together."><span class="bubble" aria-hidden="true">Hi! Tell me what you’re working on, and we’ll go through it together.</span><span class="lean"><span class="char"><img class="open" src="img/bot-teddy.png" alt=""><img class="shut" src="img/bot-teddy-blink.png" alt=""></span></span><b>Teddy</b><small>mentor</small></button>
-        <button class="member rv" data-react="spin" aria-label="Star, coach: Let’s make today count. What’s the one thing you want done?"><span class="bubble" aria-hidden="true">Let’s make today count. What’s the one thing you want done?</span><span class="lean"><span class="char"><img class="open" src="img/bot-star.png" alt=""><img class="shut" src="img/bot-star-blink.png" alt=""></span></span><b>Star</b><small>coach</small></button>
-        <button class="member rv" data-react="wobble" aria-label="Cherry, witty: Ah, a fresh puzzle. My favorite kind. What have you got?"><span class="bubble" aria-hidden="true">Ah, a fresh puzzle. My favorite kind. What have you got?</span><span class="lean"><span class="char"><img class="open" src="img/bot-cherry.png" alt=""><img class="shut" src="img/bot-cherry-blink.png" alt=""></span></span><b>Cherry</b><small>witty</small></button>
-        <button class="member rv" data-react="shake" aria-label="Croissant, calm and concise: Hello. What do you need?"><span class="bubble" aria-hidden="true">Hello. What do you need?</span><span class="lean"><span class="char"><img class="open" src="img/bot-croissant.png" alt=""><img class="shut" src="img/bot-croissant-blink.png" alt=""></span></span><b>Croissant</b><small>concise</small></button>
-        <button class="member rv" data-react="jelly" aria-label="Bomboloni, gentle: Hey, no rush at all. What can I help you with?"><span class="bubble" aria-hidden="true">Hey, no rush at all. What can I help you with?</span><span class="lean"><span class="char"><img class="open" src="img/bot-bomboloni.png" alt=""><img class="shut" src="img/bot-bomboloni-blink.png" alt=""></span></span><b>Bomboloni</b><small>gentle</small></button>
+        <button class="member rv" data-react="hop" aria-label="Brulee, cheerful: Hi there! So glad you stopped by. What are we doing today?"><span class="bubble" aria-hidden="true">Hi there! So glad you stopped by. What are we doing today?</span><span class="lean"><span class="char"><img class="open" src="/img/bot-brulee.png" alt="" width="240" height="240" loading="lazy"><img class="shut" src="/img/bot-brulee-blink.png" alt="" width="240" height="240" loading="lazy"></span></span><b>Brulee</b><small>cheerful</small></button>
+        <button class="member rv" data-react="tilt" aria-label="Alien, curious: Ooh, something new? Tell me more. What are we exploring?"><span class="bubble" aria-hidden="true">Ooh, something new? Tell me more. What are we exploring?</span><span class="lean"><span class="char"><img class="open" src="/img/bot-alien.png" alt="" width="240" height="240" loading="lazy"><img class="shut" src="/img/bot-alien-blink.png" alt="" width="240" height="240" loading="lazy"></span></span><b>Alien</b><small>curious</small></button>
+        <button class="member rv" data-react="nod" aria-label="Teddy, mentor: Hi! Tell me what you’re working on, and we’ll go through it together."><span class="bubble" aria-hidden="true">Hi! Tell me what you’re working on, and we’ll go through it together.</span><span class="lean"><span class="char"><img class="open" src="/img/bot-teddy.png" alt="" width="240" height="240" loading="lazy"><img class="shut" src="/img/bot-teddy-blink.png" alt="" width="240" height="240" loading="lazy"></span></span><b>Teddy</b><small>mentor</small></button>
+        <button class="member rv" data-react="spin" aria-label="Star, coach: Let’s make today count. What’s the one thing you want done?"><span class="bubble" aria-hidden="true">Let’s make today count. What’s the one thing you want done?</span><span class="lean"><span class="char"><img class="open" src="/img/bot-star.png" alt="" width="240" height="240" loading="lazy"><img class="shut" src="/img/bot-star-blink.png" alt="" width="240" height="240" loading="lazy"></span></span><b>Star</b><small>coach</small></button>
+        <button class="member rv" data-react="wobble" aria-label="Cherry, witty: Ah, a fresh puzzle. My favorite kind. What have you got?"><span class="bubble" aria-hidden="true">Ah, a fresh puzzle. My favorite kind. What have you got?</span><span class="lean"><span class="char"><img class="open" src="/img/bot-cherry.png" alt="" width="240" height="240" loading="lazy"><img class="shut" src="/img/bot-cherry-blink.png" alt="" width="240" height="240" loading="lazy"></span></span><b>Cherry</b><small>witty</small></button>
+        <button class="member rv" data-react="shake" aria-label="Croissant, calm and concise: Hello. What do you need?"><span class="bubble" aria-hidden="true">Hello. What do you need?</span><span class="lean"><span class="char"><img class="open" src="/img/bot-croissant.png" alt="" width="240" height="240" loading="lazy"><img class="shut" src="/img/bot-croissant-blink.png" alt="" width="240" height="240" loading="lazy"></span></span><b>Croissant</b><small>concise</small></button>
+        <button class="member rv" data-react="jelly" aria-label="Bomboloni, gentle: Hey, no rush at all. What can I help you with?"><span class="bubble" aria-hidden="true">Hey, no rush at all. What can I help you with?</span><span class="lean"><span class="char"><img class="open" src="/img/bot-bomboloni.png" alt="" width="240" height="240" loading="lazy"><img class="shut" src="/img/bot-bomboloni-blink.png" alt="" width="240" height="240" loading="lazy"></span></span><b>Bomboloni</b><small>gentle</small></button>
       </div>
-      <p class="cast-note rv">Hover or tap one to say hello.</p>
+      <p class="cast-note rv">Hover or tap one to say hello. <a href="/features/bots">How bots work</a></p>
     </div>
   </section>
 
@@ -544,13 +555,14 @@
     <div class="wrap">
       <h2 class="rv">The rest of the job.</h2>
       <div class="list">
-        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M12 3v3M12 18v3M3 12h3M18 12h3"/><path pathLength="1" d="M17 12a5 5 0 1 1-10 0a5 5 0 1 1 10 0"/></svg><h3>Agents outlive the app</h3><p>A background host keeps every turn running when you quit or update Coincide. Open it again and the reply is still streaming.</p></div>
-        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path pathLength="1" d="M3 9h18"/></svg><h3>Appshots</h3><p>Press both <kbd>⌘</kbd> keys in any app. Coincide comes forward with that window attached, ready for your question.</p></div>
-        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M20 13a8 8 0 1 1-16 0a8 8 0 1 1 16 0"/><path pathLength="1" d="M12 9v4l2.5 2M9 2h6"/></svg><h3>Scheduled tasks</h3><p>“Every Friday at six.” The prompt lands in the same thread, waits its turn if the agent is busy, and only runs once you approve it.</p></div>
-        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path pathLength="1" d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><h3>Voice</h3><p>Dictate with Apple's on-device speech, a local Whisper model, or your own OpenAI or Groq key.</p></div>
-        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M5 3l14 8-6 2-3 6z"/></svg><h3>Computer Use</h3><p>An agent clicks through native Mac apps with its own cursor, on any display, while you keep yours.</p></div>
-        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><h3>Keep Awake</h3><p>Long jobs keep the Mac running, even on battery, and it sleeps again once the agents finish.</p></div>
+        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M12 3v3M12 18v3M3 12h3M18 12h3"/><path pathLength="1" d="M17 12a5 5 0 1 1-10 0a5 5 0 1 1 10 0"/></svg><h3><a href="/features/background-agents">Agents outlive the app</a></h3><p>A background host keeps every turn running when you quit or update Coincide. Open it again and the reply is still streaming.</p></div>
+        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path pathLength="1" d="M3 9h18"/></svg><h3><a href="/features/appshots">Appshots</a></h3><p>Press both <kbd>⌘</kbd> keys in any app. Coincide comes forward with that window attached, ready for your question.</p></div>
+        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M20 13a8 8 0 1 1-16 0a8 8 0 1 1 16 0"/><path pathLength="1" d="M12 9v4l2.5 2M9 2h6"/></svg><h3><a href="/features/scheduled-tasks">Scheduled tasks</a></h3><p>“Every Friday at six.” The prompt lands in the same thread, waits its turn if the agent is busy, and only runs once you approve it.</p></div>
+        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path pathLength="1" d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><h3><a href="/features/dictation">Voice</a></h3><p>Dictate with Apple's on-device speech, a local Whisper model, or your own OpenAI or Groq key.</p></div>
+        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M5 3l14 8-6 2-3 6z"/></svg><h3><a href="/features/computer-use">Computer Use</a></h3><p>An agent clicks through native Mac apps with its own cursor, on any display, while you keep yours.</p></div>
+        <div class="item rv"><svg class="draw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><h3><a href="/features/keep-awake">Keep Awake</a></h3><p>Long jobs keep the Mac running, even on battery, and it sleeps again once the agents finish.</p></div>
       </div>
+      <p class="more rv"><a href="/features">See every feature</a></p>
     </div>
   </section>
 
@@ -559,13 +571,14 @@
       <h2 class="rv">Bring your own agents.</h2>
       <p class="lede rv" style="--d:.08s">Coincide drives each provider's own tool with your sign-in or API key. Nothing is resold or routed through anyone else.</p>
       <div class="agents">
-        <div class="agent rv" style="--c: var(--claude)"><i><img src="img/logo-claude.png" alt=""></i><b>Claude Code</b><span>Anthropic</span></div>
-        <div class="agent rv" style="--c: var(--codex)"><i><img src="img/logo-codex.png" alt=""></i><b>Codex</b><span>OpenAI</span></div>
-        <div class="agent rv" style="--c: var(--cursor)"><i><img src="img/logo-cursor.png" alt=""></i><b>Cursor</b><span>Anysphere</span></div>
-        <div class="agent rv" style="--c: var(--grok)"><i><img src="img/logo-grok.png" alt=""></i><b>Grok Build</b><span>xAI</span></div>
-        <div class="agent rv" style="--c: var(--opencode)"><i><img src="img/logo-opencode.png" alt=""></i><b>OpenCode</b><span>open source</span></div>
-        <div class="agent rv" style="--c: var(--antigravity)"><i><img src="img/logo-antigravity.png" alt=""></i><b>Antigravity</b><span>Google</span></div>
+        <a class="agent rv" href="/agents/claude-code" style="--c: var(--claude)"><i><img src="/img/logo-claude.png" alt="" width="30" height="30"></i><b>Claude Code</b><span>Anthropic</span></a>
+        <a class="agent rv" href="/agents/codex" style="--c: var(--codex)"><i><img src="/img/logo-codex.png" alt="" width="30" height="30"></i><b>Codex</b><span>OpenAI</span></a>
+        <a class="agent rv" href="/agents/cursor" style="--c: var(--cursor)"><i><img src="/img/logo-cursor.png" alt="" width="30" height="30"></i><b>Cursor</b><span>Anysphere</span></a>
+        <a class="agent rv" href="/agents/grok-build" style="--c: var(--grok)"><i><img src="/img/logo-grok.png" alt="" width="30" height="30"></i><b>Grok Build</b><span>xAI</span></a>
+        <a class="agent rv" href="/agents/opencode" style="--c: var(--opencode)"><i><img src="/img/logo-opencode.png" alt="" width="30" height="30"></i><b>OpenCode</b><span>open source</span></a>
+        <a class="agent rv" href="/agents/antigravity" style="--c: var(--antigravity)"><i><img src="/img/logo-antigravity.png" alt="" width="30" height="30"></i><b>Antigravity</b><span>Google</span></a>
       </div>
+      <p class="more rv"><a href="/agents">How Coincide works with each agent</a></p>
     </div>
   </section>
 
@@ -583,7 +596,7 @@
 
   <section class="close" id="get">
     <div class="wrap">
-      <div class="rv"><img class="medal" id="medal" src="img/icon-tight.png" alt="The Coincide icon: Janus, one face old and one young, joined by a blue line"></div>
+      <div class="rv"><img class="medal" id="medal" src="/img/icon-288.webp" width="144" height="144" loading="lazy" alt="The Coincide icon: Janus, one face old and one young, joined by a blue line"></div>
       <h2 class="rv" style="--d:.08s">Two faces. One window.</h2>
       <p class="lede rv" style="--d:.14s">Free and open source, for macOS 26 or later on Apple silicon and Intel. Pick the way you like to install apps.</p>
       <div class="install rv" style="--d:.2s">
@@ -593,6 +606,7 @@
           <div class="cmd"><span class="via">npm</span><code>npx coincide-dev</code><button class="copy" type="button" data-copy="npx coincide-dev" aria-label="Copy the npm command"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
         </div>
         <p class="meta">Notarized by Apple · updates itself<span class="downloads" id="downloads" hidden> · <b></b> downloads</span></p>
+        <p class="meta"><a href="/download">System requirements, updates and uninstalling</a> · <a href="/changelog">What’s new in 0.1.0</a></p>
       </div>
       <div class="actions rv" style="--d:.26s"><a class="btn alt" href="https://github.com/apoorvdarshan/coincide"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.39-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>Star on GitHub</a><a class="btn alt" href="https://discord.gg/DETrbhDVqw"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.32 4.37A19.8 19.8 0 0 0 15.4 2.85a13.8 13.8 0 0 0-.63 1.29 18.4 18.4 0 0 0-5.53 0 13 13 0 0 0-.64-1.29 19.7 19.7 0 0 0-4.92 1.52C.53 9.05-.32 13.6.1 18.1a19.9 19.9 0 0 0 6.04 3.05 14.7 14.7 0 0 0 1.29-2.1 12.9 12.9 0 0 1-2.04-.97l.5-.39a14.2 14.2 0 0 0 12.22 0l.5.39c-.65.38-1.33.71-2.04.98a14.5 14.5 0 0 0 1.29 2.09 19.8 19.8 0 0 0 6.04-3.05c.5-5.22-.84-9.73-3.58-13.73ZM8.02 15.33c-1.18 0-2.16-1.08-2.16-2.42 0-1.33.95-2.42 2.16-2.42 1.2 0 2.18 1.1 2.16 2.42 0 1.34-.96 2.42-2.16 2.42Zm7.96 0c-1.18 0-2.16-1.08-2.16-2.42 0-1.33.96-2.42 2.16-2.42 1.21 0 2.18 1.1 2.16 2.42 0 1.34-.95 2.42-2.16 2.42Z"/></svg>Join the Discord</a><a class="btn alt" href="https://www.producthunt.com/products/coincide"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.5a10.5 10.5 0 1 0 0 21 10.5 10.5 0 0 0 0-21Zm1.4 12.6h-3.1V17H8V7h5.4a3.55 3.55 0 0 1 0 7.1Zm0-4.8h-3.1v2.5h3.1a1.25 1.25 0 0 0 0-2.5Z"/></svg>Upvote on Product Hunt</a><a class="btn alt" href="https://x.com/apoorvdarshan"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.75 3h3.07l-6.7 7.66L22 21h-6.17l-4.83-6.32L5.47 21H2.4l7.17-8.2L2 3h6.33l4.37 5.78L17.75 3Zm-1.08 16.2h1.7L7.4 4.74H5.58l11.09 14.46Z"/></svg>Follow @apoorvdarshan</a></div>
       <p class="follow rv" style="--d:.32s">Open source under the MIT license. Built by Apoorv Darshan: <a href="https://x.com/apoorvdarshan">@apoorvdarshan</a> on X, <a href="https://instagram.com/apoorvcodes">@apoorvcodes</a> on Instagram. Coincide is on <a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a> too.</p>
@@ -600,7 +614,8 @@
   </section>
 </main>
 
-<footer><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="links"><a href="https://github.com/apoorvdarshan/coincide">GitHub</a><a href="https://discord.gg/DETrbhDVqw">Discord</a><a href="https://www.producthunt.com/products/coincide">Product Hunt</a><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></span></footer>
+<!-- site-footer -->
+<!-- /site-footer -->
 
 <script>
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;

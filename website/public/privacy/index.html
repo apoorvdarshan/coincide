@@ -12,12 +12,21 @@
 <meta property="og:url" content="https://coincide.dev/privacy">
 <meta property="og:title" content="Coincide Privacy Policy">
 <meta property="og:description" content="What stays on your Mac, what your agents send to their providers, and every other service involved.">
+<meta property="og:locale" content="en_US">
 <meta property="og:image" content="https://coincide.dev/img/og.jpg">
-<link rel="icon" href="/img/icon-tight-96.png">
-<link rel="apple-touch-icon" href="/img/icon-tight.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<!-- site-schema -->
+<!-- /site-schema -->
 <style>
   :root {
     --night: #0A0D24;
@@ -41,13 +50,6 @@
   :focus-visible { outline: 2px solid var(--signal-hi); outline-offset: 3px; border-radius: 6px; }
   .skip { position: absolute; left: -9999px; }
   .skip:focus { left: 16px; top: 12px; z-index: 10; padding: 8px 14px; border-radius: 999px; background: var(--silver); color: var(--night); text-decoration: none; }
-
-  .top { display: flex; align-items: center; gap: 24px; max-width: 1280px; margin: 0 auto; padding: 22px var(--pad); }
-  .brand { display: flex; align-items: center; gap: 11px; color: var(--silver); font-weight: 650; font-size: 18px; letter-spacing: -.01em; text-decoration: none; }
-  .brand img { width: 30px; height: 30px; }
-  .top nav { display: flex; gap: 22px; margin-left: auto; font-size: 15px; }
-  .top nav a { color: var(--ash); text-decoration: none; transition: color .2s; }
-  .top nav a:hover, .top nav a[aria-current="page"] { color: var(--silver); }
 
   main { max-width: calc(720px + 2 * var(--pad)); margin: 0 auto; padding: clamp(24px, 6vw, 64px) var(--pad) clamp(64px, 9vw, 112px); }
   .eyebrow { margin: 0 0 14px; color: var(--signal-hi); font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
@@ -76,21 +78,15 @@
   .toc a { color: var(--silver); text-decoration-color: var(--rule); }
   .toc a:hover { color: #fff; text-decoration-color: currentColor; }
 
-  footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px; max-width: 1280px; margin: 0 auto; padding: 26px var(--pad) calc(40px + env(safe-area-inset-bottom)); border-top: 1px solid var(--rule); color: var(--faint); font: 13px var(--mono); }
-  footer a { color: inherit; text-decoration: none; transition: color .2s; }
-  footer a:hover { color: var(--silver); }
-  footer .links { display: flex; flex-wrap: wrap; gap: 8px 18px; }
-
   @media (max-width: 600px) {
     body { font-size: 16.5px; }
     .intro { font-size: 18px; }
     .toc ol { columns: 1; }
     .summary { padding: 20px 20px 22px; }
   }
-  @media (max-width: 380px) { .top { gap: 14px; } .top nav { gap: 14px; font-size: 14px; } }
   @media print {
     html, body { background: #fff; color: #000; }
-    .top nav, .skip, .toc { display: none; }
+    .skip, .toc { display: none; }
     a { color: #000; }
     .summary, code, pre { background: none; border-color: #ccc; }
     h3, strong { color: #000; }
@@ -99,12 +95,11 @@
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
-<header class="top">
-  <a class="brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
-  <nav aria-label="Legal"><a href="/privacy" aria-current="page">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
-</header>
+<!-- site-header -->
+<!-- /site-header -->
 
 <main id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><span aria-current="page">Privacy Policy</span></li></ol></nav>
   <p class="eyebrow">Legal</p>
   <h1>Privacy Policy</h1>
   <p class="updated">Last updated: <time datetime="2026-11-01">November 1, 2026</time></p>
@@ -308,9 +303,7 @@
   </section>
 </main>
 
-<footer>
-  <span>© 2026 Apoorv Darshan</span>
-  <span class="links"><a href="/privacy" aria-current="page">Privacy</a><a href="/terms">Terms</a><a href="mailto:apoorv@fud-ai.app">Contact</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></span>
-</footer>
+<!-- site-footer -->
+<!-- /site-footer -->
 </body>
 </html>
