@@ -251,6 +251,7 @@ enum PasskeyFixture {
     var choose: (PasskeySignInPrompt) -> BitwardenPasskey? = { $0.choices.first }
     var verification = PasskeyUserVerification.verified
     var onConfirm: (() async -> Void)?
+    var onVerify: (() async -> Void)?
 
     func confirm(_ prompt: PasskeySignInPrompt) async -> BitwardenPasskey? {
         prompts.append(prompt)
@@ -260,6 +261,7 @@ enum PasskeyFixture {
 
     func verifyUser(reason: String) async -> PasskeyUserVerification {
         reasons.append(reason)
+        await onVerify?()
         return verification
     }
 }
@@ -299,20 +301,111 @@ final class FakePasskeyVault: PasskeyVault, @unchecked Sendable {
             mediation: mediation)
     }
 
-    @Test func signsInAfterTheClickAndTouchID() async throws {
+    static let guarded = BitwardenPasskey(itemID: "r", itemName: "", userName: "r", rpID: "github.com", storedCredentialID: "b64.BQ",
+        credentialID: Data([5]), userHandle: nil, counter: 0, discoverable: true, requiresReprompt: true)
+
+    /// `PasskeySignIn.answer` for github.com, asking for Touch ID on every sign-in only when `touchID` is on.
+    static func answer(_ request: WebAuthnGetRequest = PasskeySignInTests.request(), vault: PasskeyVault, ui: PasskeySignInUI,
+        touchID: Bool = false, from origin: WebAuthnOrigin = PasskeySignInTests.origin) async -> WebAuthnReply {
+        await PasskeySignIn.answer(request, from: origin, vault: vault, ui: ui, alwaysVerifiesUser: touchID)
+    }
+
+    /// Bitwarden's browser extension's way, and the setting's default: the click is the confirmation, and the assertion
+    /// says the user was present but not verified.
+    @Test func signsInAfterTheClickAloneByDefault() async throws {
+        #expect(!BrowserSettings().confirmsPasskeysWithTouchID)
+        for verification in [WebAuthnGetRequest.UserVerification.preferred, .discouraged] {
+            let vault = FakePasskeyVault([Self.octocat])
+            let ui = FakeSignInUI()
+            let reply = await Self.answer(Self.request(rpID: "github.com", verification: verification), vault: vault, ui: ui)
+            #expect(ui.prompts.map(\.title) == ["Sign in to github.com as octocat with your Bitwarden passkey?"])
+            #expect(ui.prompts.first?.verifiesUser == false && ui.prompts.first?.detail == "")
+            #expect(ui.reasons.isEmpty, "no Touch ID for \(verification)")
+            let clientData = WebAuthnAssertion.clientDataJSON(challenge: Data(repeating: 9, count: 32), origin: "https://github.com")
+            #expect(vault.signed == [.init(itemID: "a", rpID: "github.com", clientDataJSON: clientData, userVerified: false)])
+            guard case .credential(let credential) = reply else { Issue.record("\(reply)"); return }
+            #expect(credential.message == [
+                "id": "AQ", "clientDataJSON": Base64URL.encode(clientData), "authenticatorData": "AQ", "signature": "Ag", "userHandle": "Bw",
+            ])
+            #expect(reply.message["status"] == "ok")
+        }
+    }
+
+    @Test func theTouchIDSettingVerifiesEverySignIn() async throws {
+        for verification in [WebAuthnGetRequest.UserVerification.preferred, .discouraged, .required] {
+            let vault = FakePasskeyVault([Self.octocat])
+            let ui = FakeSignInUI()
+            let reply = await Self.answer(Self.request(verification: verification), vault: vault, ui: ui, touchID: true)
+            #expect(reply.message["status"] == "ok")
+            #expect(ui.prompts.first?.verifiesUser == true)
+            #expect(ui.prompts.first?.detail == "You’ll confirm with Touch ID or your Mac password next.")
+            #expect(ui.reasons == ["sign in to github.com with your Bitwarden passkey"])
+            #expect(vault.signed.map(\.userVerified) == [true], "\(verification)")
+        }
+        // Failing or cancelling Touch ID signs nothing.
         let vault = FakePasskeyVault([Self.octocat])
         let ui = FakeSignInUI()
-        let reply = await PasskeySignIn.answer(Self.request(rpID: "github.com"), from: Self.origin, vault: vault, ui: ui)
-        #expect(ui.prompts.map(\.title) == ["Sign in to github.com as octocat with your Bitwarden passkey?"])
+        ui.verification = .failed
+        #expect(await Self.answer(vault: vault, ui: ui, touchID: true) == .notAllowed)
+        #expect(ui.reasons.count == 1 && vault.signed.isEmpty)
+        // A Mac that can't verify (no Touch ID, no password): the click alone counts, without the UV flag.
+        ui.verification = .unavailable
+        #expect(await Self.answer(vault: vault, ui: ui, touchID: true).message["status"] == "ok")
+        #expect(vault.signed.map(\.userVerified) == [false])
+    }
+
+    /// With the setting off, a site that requires user verification still gets Touch ID or the password, and the UV
+    /// flag only when that succeeded.
+    @Test func aSiteThatRequiresVerificationStillGetsTouchID() async throws {
+        let vault = FakePasskeyVault([Self.octocat])
+        let ui = FakeSignInUI()
+        #expect(await Self.answer(Self.request(verification: .required), vault: vault, ui: ui).message["status"] == "ok")
+        #expect(ui.prompts.first?.verifiesUser == true)
         #expect(ui.prompts.first?.detail == "You’ll confirm with Touch ID or your Mac password next.")
         #expect(ui.reasons == ["sign in to github.com with your Bitwarden passkey"])
-        let clientData = WebAuthnAssertion.clientDataJSON(challenge: Data(repeating: 9, count: 32), origin: "https://github.com")
-        #expect(vault.signed == [.init(itemID: "a", rpID: "github.com", clientDataJSON: clientData, userVerified: true)])
-        guard case .credential(let credential) = reply else { Issue.record("\(reply)"); return }
-        #expect(credential.message == [
-            "id": "AQ", "clientDataJSON": Base64URL.encode(clientData), "authenticatorData": "AQ", "signature": "Ag", "userHandle": "Bw",
-        ])
-        #expect(reply.message["status"] == "ok")
+        #expect(vault.signed.map(\.userVerified) == [true])
+        for verification in [PasskeyUserVerification.failed, .unavailable] {
+            ui.verification = verification
+            #expect(await Self.answer(Self.request(verification: .required), vault: vault, ui: ui) == .notAllowed, "\(verification)")
+        }
+        #expect(vault.signed.count == 1 && ui.reasons.count == 3)
+    }
+
+    /// Bitwarden's master password re-prompt always needs Touch ID or the password; when a re-prompt item is among
+    /// several choices, the sheet says so and every choice verifies.
+    @Test func aRepromptItemNeedsTouchID() async throws {
+        let vault = FakePasskeyVault([Self.guarded])
+        let ui = FakeSignInUI()
+        #expect(await Self.answer(vault: vault, ui: ui).message["status"] == "ok")
+        #expect(ui.prompts.first?.detail == "You’ll confirm with Touch ID or your Mac password next.")
+        #expect(ui.reasons.count == 1 && vault.signed.map(\.userVerified) == [true])
+        for verification in [PasskeyUserVerification.failed, .unavailable] {
+            ui.verification = verification
+            #expect(await Self.answer(vault: vault, ui: ui) == .notAllowed, "\(verification)")
+        }
+        #expect(vault.signed.count == 1)
+
+        let mixed = FakePasskeyVault([Self.octocat, Self.guarded])
+        let picker = FakeSignInUI()
+        picker.choose = { $0.choices.first { $0.itemID == "a" } }
+        #expect(await Self.answer(vault: mixed, ui: picker).message["status"] == "ok")
+        #expect(picker.prompts.first?.detail == "Choose an account. You’ll confirm with Touch ID or your Mac password next.")
+        #expect(picker.reasons.count == 1 && mixed.signed.map(\.itemID) == ["a"] && mixed.signed.map(\.userVerified) == [true])
+    }
+
+    /// The sheet's second line says who asked, whether to pick an account, and whether Touch ID comes next.
+    @Test func theSheetSaysWhatComesNext() {
+        let touchID = " You’ll confirm with Touch ID or your Mac password next."
+        for verifies in [false, true] {
+            let tail = verifies ? touchID : ""
+            func detail(_ requester: String, _ choices: [BitwardenPasskey]) -> String {
+                PasskeySignInPrompt(site: "github.com", requester: requester, choices: choices, verifiesUser: verifies).detail
+            }
+            #expect(detail("github.com", [Self.octocat]) == String(tail.dropFirst()))
+            #expect(detail("github.com", [Self.octocat, Self.hubot]) == "Choose an account." + tail)
+            #expect(detail("gist.github.com", [Self.octocat]) == "The request comes from gist.github.com." + tail)
+            #expect(detail("gist.github.com", [Self.octocat, Self.hubot]) == "The request comes from gist.github.com. Choose an account." + tail)
+        }
     }
 
     @Test func aSubdomainSignsInToItsParentAndSaysWhoAsked() async throws {
@@ -321,21 +414,23 @@ final class FakePasskeyVault: PasskeyVault, @unchecked Sendable {
         let ui = FakeSignInUI()
         let origin = try #require(WebAuthnOrigin(scheme: "https", host: "accounts.google.com", port: 0))
         let vault = FakePasskeyVault([google])
-        let reply = await PasskeySignIn.answer(Self.request(rpID: "google.com"), from: origin, vault: vault, ui: ui)
+        let reply = await Self.answer(Self.request(rpID: "google.com"), vault: vault, ui: ui, from: origin)
         #expect(reply.message["status"] == "ok")
-        #expect(ui.prompts.first?.detail == "The request comes from accounts.google.com. You’ll confirm with Touch ID or your Mac password next.")
+        #expect(ui.prompts.first?.detail == "The request comes from accounts.google.com.")
         #expect(vault.signed.first?.clientDataJSON == WebAuthnAssertion.clientDataJSON(challenge: Data(repeating: 9, count: 32),
             origin: "https://accounts.google.com"))
+        _ = await Self.answer(Self.request(rpID: "google.com"), vault: vault, ui: ui, touchID: true, from: origin)
+        #expect(ui.prompts.last?.detail == "The request comes from accounts.google.com. You’ll confirm with Touch ID or your Mac password next.")
     }
 
     @Test func severalMatchesLetTheUserPick() async throws {
         let vault = FakePasskeyVault([Self.octocat, Self.hubot])
         let ui = FakeSignInUI()
         ui.choose = { $0.choices.last }
-        let reply = await PasskeySignIn.answer(Self.request(), from: Self.origin, vault: vault, ui: ui)
+        let reply = await Self.answer(vault: vault, ui: ui)
         let prompt = try #require(ui.prompts.first)
         #expect(prompt.title == "Sign in to github.com with your Bitwarden passkey?")
-        #expect(prompt.detail == "Choose an account. You’ll confirm with Touch ID or your Mac password next.")
+        #expect(prompt.detail == "Choose an account.")
         #expect(prompt.choices.map(\.itemID) == ["b", "a"] && prompt.choices.map(prompt.label(for:)) == ["hubot · GitHub (work)", "octocat · GitHub"])
         #expect(vault.signed.map(\.itemID) == ["a"])
         guard case .credential(let credential) = reply else { Issue.record("\(reply)"); return }
@@ -344,39 +439,42 @@ final class FakePasskeyVault: PasskeyVault, @unchecked Sendable {
         let stranger = BitwardenPasskey(itemID: "z", itemName: "", userName: "z", rpID: "github.com", storedCredentialID: "b64.CQ",
             credentialID: Data([9]), userHandle: nil, counter: 0, discoverable: true)
         ui.choose = { _ in stranger }
-        #expect(await PasskeySignIn.answer(Self.request(), from: Self.origin, vault: vault, ui: ui) == .notAllowed)
-        #expect(vault.signed.count == 1)
+        #expect(await Self.answer(vault: vault, ui: ui) == .notAllowed)
+        #expect(await Self.answer(vault: vault, ui: ui, touchID: true) == .notAllowed)
+        #expect(vault.signed.count == 1 && ui.reasons.isEmpty)
     }
 
-    @Test func cancellingOrFailingVerificationSignsNothing() async throws {
-        let vault = FakePasskeyVault([Self.octocat])
-        let ui = FakeSignInUI()
-        ui.choose = { _ in nil }
-        #expect(await PasskeySignIn.answer(Self.request(), from: Self.origin, vault: vault, ui: ui) == .notAllowed)
-        #expect(ui.reasons.isEmpty)
-        ui.choose = { $0.choices.first }
-        ui.verification = .failed
-        #expect(await PasskeySignIn.answer(Self.request(), from: Self.origin, vault: vault, ui: ui) == .notAllowed)
-        // A Mac that can't verify: the click alone counts, without the UV flag, unless the site requires verification.
-        ui.verification = .unavailable
-        #expect(await PasskeySignIn.answer(Self.request(verification: .required), from: Self.origin, vault: vault, ui: ui) == .notAllowed)
-        #expect(vault.signed.isEmpty)
-        #expect(await PasskeySignIn.answer(Self.request(verification: .preferred), from: Self.origin, vault: vault, ui: ui).message["status"] == "ok")
-        #expect(vault.signed.map(\.userVerified) == [false])
-        // Bitwarden's re-prompt needs real verification.
-        let guarded = BitwardenPasskey(itemID: "r", itemName: "", userName: "r", rpID: "github.com", storedCredentialID: "b64.BQ",
-            credentialID: Data([5]), userHandle: nil, counter: 0, discoverable: true, requiresReprompt: true)
-        #expect(await PasskeySignIn.answer(Self.request(), from: Self.origin, vault: FakePasskeyVault([guarded]), ui: ui) == .notAllowed)
+    @Test func cancellingTheSheetSignsNothing() async throws {
+        for touchID in [false, true] {
+            for verification in [WebAuthnGetRequest.UserVerification.preferred, .required] {
+                let vault = FakePasskeyVault([Self.octocat])
+                let ui = FakeSignInUI()
+                ui.choose = { _ in nil }
+                #expect(await Self.answer(Self.request(verification: verification), vault: vault, ui: ui, touchID: touchID) == .notAllowed)
+                #expect(ui.prompts.count == 1 && ui.reasons.isEmpty && vault.signed.isEmpty)
+            }
+        }
     }
 
     @Test func aCancelledRequestSignsNothing() async throws {
+        // While the sheet is up, with or without Touch ID to follow.
+        for touchID in [false, true] {
+            let vault = FakePasskeyVault([Self.octocat])
+            let ui = FakeSignInUI()
+            var task: Task<WebAuthnReply, Never>?
+            ui.onConfirm = { task?.cancel() }
+            task = Task { await Self.answer(vault: vault, ui: ui, touchID: touchID) }
+            #expect(await task?.value == .notAllowed)
+            #expect(ui.reasons.isEmpty && vault.signed.isEmpty)
+        }
+        // During Touch ID, even when it then reports success.
         let vault = FakePasskeyVault([Self.octocat])
         let ui = FakeSignInUI()
         var task: Task<WebAuthnReply, Never>?
-        ui.onConfirm = { task?.cancel() }
-        task = Task { await PasskeySignIn.answer(Self.request(), from: Self.origin, vault: vault, ui: ui) }
+        ui.onVerify = { task?.cancel() }
+        task = Task { await Self.answer(Self.request(verification: .required), vault: vault, ui: ui) }
         #expect(await task?.value == .notAllowed)
-        #expect(vault.signed.isEmpty)
+        #expect(ui.reasons.count == 1 && vault.signed.isEmpty)
     }
 
     @Test func refusesRPIDsTheOriginCantClaim() async throws {
@@ -384,7 +482,8 @@ final class FakePasskeyVault: PasskeyVault, @unchecked Sendable {
             let vault = FakePasskeyVault([Self.octocat])
             let ui = FakeSignInUI()
             let origin = try #require(WebAuthnOrigin(scheme: "https", host: host, port: 0))
-            let reply = await PasskeySignIn.answer(Self.request(rpID: rpID), from: origin, vault: vault, ui: ui)
+            let reply = await PasskeySignIn.answer(Self.request(rpID: rpID), from: origin, vault: vault, ui: ui,
+                alwaysVerifiesUser: false)
             #expect(reply == .invalidRPID, "\(host) claiming \(rpID)")
             #expect(reply.message["name"] == "SecurityError")
             #expect(ui.prompts.isEmpty && vault.signed.isEmpty)
@@ -392,7 +491,7 @@ final class FakePasskeyVault: PasskeyVault, @unchecked Sendable {
         // A page on evil.com asking for its own RP ID finds none of github.com's passkeys.
         let ui = FakeSignInUI()
         let evil = try #require(WebAuthnOrigin(scheme: "https", host: "evil.com", port: 0))
-        #expect(await PasskeySignIn.answer(Self.request(), from: evil, vault: FakePasskeyVault([Self.octocat]), ui: ui) == .fallback)
+        #expect(await Self.answer(vault: FakePasskeyVault([Self.octocat]), ui: ui, from: evil) == .fallback)
         #expect(ui.prompts.isEmpty)
     }
 
@@ -401,18 +500,19 @@ final class FakePasskeyVault: PasskeyVault, @unchecked Sendable {
         let vault = FakePasskeyVault([Self.octocat])
         // Autofill-style and silent requests never prompt or sign.
         for mediation in [WebAuthnGetRequest.Mediation.conditional, .silent] {
-            #expect(await PasskeySignIn.answer(Self.request(mediation: mediation), from: Self.origin, vault: vault, ui: ui) == .fallback)
+            for touchID in [false, true] {
+                #expect(await Self.answer(Self.request(mediation: mediation), vault: vault, ui: ui, touchID: touchID) == .fallback)
+            }
         }
         // No matching passkey; Bitwarden locked or failing; only security keys allowed.
-        #expect(await PasskeySignIn.answer(Self.request(allow: [.init(id: Data([8]))]), from: Self.origin, vault: vault, ui: ui) == .fallback)
-        #expect(await PasskeySignIn.answer(Self.request(), from: Self.origin, vault: FakePasskeyVault(nil), ui: ui) == .fallback)
-        #expect(await PasskeySignIn.answer(Self.request(allow: [.init(id: Data([1]), transports: ["usb", "nfc"])]), from: Self.origin,
-            vault: vault, ui: ui) == .fallback)
-        #expect(await PasskeySignIn.answer(Self.request(), from: Self.origin, vault: vault, ui: ui, suffixes: nil) == .fallback)
-        #expect(ui.prompts.isEmpty && vault.signed.isEmpty)
+        #expect(await Self.answer(Self.request(allow: [.init(id: Data([8]))]), vault: vault, ui: ui) == .fallback)
+        #expect(await Self.answer(vault: FakePasskeyVault(nil), ui: ui) == .fallback)
+        #expect(await Self.answer(Self.request(allow: [.init(id: Data([1]), transports: ["usb", "nfc"])]), vault: vault, ui: ui) == .fallback)
+        #expect(await PasskeySignIn.answer(Self.request(), from: Self.origin, vault: vault, ui: ui, alwaysVerifiesUser: false, suffixes: nil)
+            == .fallback)
+        #expect(ui.prompts.isEmpty && ui.reasons.isEmpty && vault.signed.isEmpty)
         // A credential the site lists with "internal" among its transports is still offered.
-        let reply = await PasskeySignIn.answer(Self.request(allow: [.init(id: Data([1]), transports: ["internal", "hybrid"])]),
-            from: Self.origin, vault: vault, ui: ui)
+        let reply = await Self.answer(Self.request(allow: [.init(id: Data([1]), transports: ["internal", "hybrid"])]), vault: vault, ui: ui)
         #expect(reply.message["status"] == "ok")
         #expect(WebAuthnReply.fallback.message == ["status": "fallback"])
         #expect(WebAuthnReply.notAllowed.message["name"] == "NotAllowedError")
@@ -424,6 +524,7 @@ final class FakePasskeyVault: PasskeyVault, @unchecked Sendable {
         let sessions = MemorySecretStore()
         let vault = PasswordVault(settings: settings, providers: [BitwardenProvider(runner: FakeRunner(installed: ["bw"]), sessions: sessions)])
         #expect(BrowserSettings().usesBitwardenPasskeys)
+        #expect(!BrowserSettings().confirmsPasskeysWithTouchID && !settings.settings.confirmsPasskeysWithTouchID)
         #expect(vault.bitwardenPasskeys == nil)
         settings.update { $0.passwordManagers = [.bitwarden] }
         #expect(vault.bitwardenPasskeys == nil)
@@ -431,8 +532,14 @@ final class FakePasskeyVault: PasskeyVault, @unchecked Sendable {
         #expect(vault.bitwardenPasskeys != nil)
         settings.update { $0.usesBitwardenPasskeys = false }
         #expect(vault.bitwardenPasskeys == nil)
-        // Settings saved before the switch existed have it on.
+        // Settings saved before the switches existed have passkeys on and Touch ID for every sign-in off.
         let old = try JSONDecoder().decode(BrowserSettings.self, from: Data(#"{"passwordManagers": ["bitwarden"]}"#.utf8))
-        #expect(old.usesBitwardenPasskeys)
+        #expect(old.usesBitwardenPasskeys && !old.confirmsPasskeysWithTouchID)
+        // The Touch ID switch is saved in browser.json like the others, and doesn't turn passkeys on or off.
+        settings.update { $0.confirmsPasskeysWithTouchID = true }
+        let reloaded = BrowserSettingsStore(directory: folder.url).settings
+        #expect(reloaded.confirmsPasskeysWithTouchID && !reloaded.usesBitwardenPasskeys)
+        let encoded = try JSONEncoder().encode(reloaded)
+        #expect(try JSONDecoder().decode(BrowserSettings.self, from: encoded).confirmsPasskeysWithTouchID)
     }
 }

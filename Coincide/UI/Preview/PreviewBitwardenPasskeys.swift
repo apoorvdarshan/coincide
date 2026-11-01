@@ -5,19 +5,22 @@ import WebKit
 
 /// Signs pages in with the user's Bitwarden passkeys, Coincide acting as the authenticator the way Bitwarden's browser
 /// extension does in browsers: `BitwardenPasskeyScript` forwards a main frame's `navigator.credentials.get`, and this
-/// answers it once the user clicks Sign In in a sheet and confirms with Touch ID or the Mac's password
-/// (`PasskeySignIn`). The origin is WebKit's record of the frame, never the page's word; the private key is read from
-/// `bw` for that one signature and never reaches the page.
+/// answers it once the user clicks Sign In in a sheet, then confirms with Touch ID or the Mac's password when the
+/// setting, the site or the Bitwarden item asks for that (`PasskeySignIn`). The origin is WebKit's record of the frame,
+/// never the page's word; the private key is read from `bw` for that one signature and never reaches the page.
 final class BitwardenPasskeyHandler: NSObject, WKScriptMessageHandlerWithReply {
     /// The browser's password managers; tests replace it.
     var vault: () -> PasskeyVault? = { PreviewSessions.shared.vault.bitwardenPasskeys }
+    /// Settings › Browser › Passwords › "Confirm passkey sign-ins with Touch ID", read when a request starts; tests
+    /// replace it.
+    var alwaysVerifiesUser: () -> Bool = { PreviewSessions.shared.profile.settings.settings.confirmsPasskeysWithTouchID }
     /// Whether the user can see `webView` and its window can take a sheet now, so the prompt would be seen; tests
     /// replace it. Requests from tabs in the background or browsers running headless go to the notice instead.
     var isShown: (WKWebView) -> Bool = { webView in
         guard let window = webView.window else { return false }
         return window.isVisible && window.attachedSheet == nil && !PreviewParking.shared.isParked(webView)
     }
-    /// The sheet and Touch ID for a sign-in in `webView`; tests replace it.
+    /// The sheet, and Touch ID when it's needed, for a sign-in in `webView`; tests replace it.
     var makeUI: (WKWebView) -> PasskeySignInUI? = { webView in webView.window.map { PasskeySheetUI(window: $0, webView: webView) } }
     /// Sign-ins waiting on the user, one per web view.
     private var pending: [ObjectIdentifier: PendingSignIn] = [:]
@@ -77,8 +80,9 @@ final class BitwardenPasskeyHandler: NSObject, WKScriptMessageHandlerWithReply {
             reply(WebAuthnReply.pending.message, nil)
             return
         }
+        let alwaysVerifies = alwaysVerifiesUser()
         let task = Task { @MainActor in
-            await PasskeySignIn.answer(request, from: origin, vault: vault, ui: ui)
+            await PasskeySignIn.answer(request, from: origin, vault: vault, ui: ui, alwaysVerifiesUser: alwaysVerifies)
         }
         let sign = PendingSignIn(id: request.id, task: task)
         pending[key] = sign
@@ -118,7 +122,7 @@ private final class PendingSignIn {
 }
 
 /// "Sign in to github.com as octocat with your Bitwarden passkey?" as a sheet on the browser's window, with an
-/// account picker when several passkeys match, then Touch ID or the Mac's password.
+/// account picker when several passkeys match, then Touch ID or the Mac's password when the sign-in needs it.
 @MainActor
 final class PasskeySheetUI: PasskeySignInUI {
     private weak var window: NSWindow?
