@@ -203,8 +203,9 @@ struct ConnectionStatusRow: View {
 
     var body: some View {
         Group {
-            switch client.phase {
-            case .connected:
+            switch client.shownPhase {
+            // Connected, or reconnecting quietly within the grace period (`RemoteClient.shownPhase`): the list as is.
+            case .connected, nil:
                 EmptyView()
             case .connecting(let name):
                 Label {
