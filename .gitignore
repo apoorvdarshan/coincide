@@ -27,3 +27,7 @@ xcuserdata/
 
 # Wrangler's local cache (website/)
 .wrangler/
+
+# Python bytecode from scripts
+__pycache__/
+*.pyc
