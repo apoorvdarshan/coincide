@@ -199,6 +199,9 @@ final class BotEditor: NSViewController, NSTextFieldDelegate, NSTextViewDelegate
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
+        // Overlay, as the app's other scrolling panels are, so the sheet is its content's width whatever the scroll bar
+        // setting: with a mouse attached, a legacy scroller would add its 17 points beside the content.
+        scroll.scrollerStyle = .overlay
         scroll.borderType = .noBorder
         scroll.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(scroll)
