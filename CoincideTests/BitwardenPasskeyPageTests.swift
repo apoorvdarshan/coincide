@@ -247,14 +247,15 @@ import WebKit
         #expect(!entitled.webView.configuration.userContentController.userScripts.contains { $0.source == BitwardenPasskeyScript.source })
     }
 
-    /// Plain http pages other than localhost don't get the script at all.
+    /// Plain http pages other than localhost don't get the script (WebKit doesn't even give them the credentials API).
     @Test func insecurePagesAreLeftAlone() async throws {
         let page = try await open("http://example.com/", vault: SigningVault(), ui: ClickingUI())
         defer { page.close() }
         let out = try await page.run("""
-            return {wrapped: CredentialsContainer.prototype.get.toString().includes('coincideBitwardenPasskey') ||
-                CredentialsContainer.prototype.get.toString().includes('describeRequest')};
+            const api = typeof CredentialsContainer === 'function';
+            return {wrapped: api && String(CredentialsContainer.prototype.get).includes('describeRequest'),
+                uv: typeof PublicKeyCredential === 'function' && String(PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable).includes('isAvailable')};
             """)
-        #expect(out["wrapped"] as? Bool == false)
+        #expect(out["wrapped"] as? Bool == false && out["uv"] as? Bool == false)
     }
 }
