@@ -27,6 +27,10 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
     /// Pages can sign in with passkeys saved in Bitwarden while Bitwarden is turned on and unlocked, each time after the
     /// user confirms (`PasskeySignIn`). On by default.
     public var usesBitwardenPasskeys: Bool
+    /// Every Bitwarden passkey sign-in also asks for Touch ID or the Mac's password after the user clicks Sign In. Off by
+    /// default, like Bitwarden's browser extension: the click is enough unless the site requires user verification or
+    /// the Bitwarden item has master password re-prompt on.
+    public var confirmsPasskeysWithTouchID: Bool
     /// What the address bar searches with when what's typed isn't an address.
     public var searchEngine: SearchEngine
 
@@ -41,6 +45,7 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
         neverSaveSites = []
         agentsUsePasswordManagers = true
         usesBitwardenPasskeys = true
+        confirmsPasskeysWithTouchID = false
         searchEngine = .google
     }
 
@@ -61,6 +66,7 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
         neverSaveSites = value(.neverSaveSites, defaults.neverSaveSites)
         agentsUsePasswordManagers = value(.agentsUsePasswordManagers, defaults.agentsUsePasswordManagers)
         usesBitwardenPasskeys = value(.usesBitwardenPasskeys, defaults.usesBitwardenPasskeys)
+        confirmsPasskeysWithTouchID = value(.confirmsPasskeysWithTouchID, defaults.confirmsPasskeysWithTouchID)
         searchEngine = value(.searchEngine, defaults.searchEngine)
     }
 

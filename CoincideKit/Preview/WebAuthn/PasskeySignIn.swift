@@ -53,11 +53,14 @@ public nonisolated struct PasskeySignInPrompt: Sendable, Equatable {
     /// The host of the page that asked, shown when it isn't the site itself (`accounts.google.com` for `google.com`).
     public let requester: String
     public let choices: [BitwardenPasskey]
+    /// Touch ID or the Mac's password follows the click, whichever account is chosen.
+    public let verifiesUser: Bool
 
-    public init(site: String, requester: String, choices: [BitwardenPasskey]) {
+    public init(site: String, requester: String, choices: [BitwardenPasskey], verifiesUser: Bool) {
         self.site = site
         self.requester = requester
         self.choices = choices
+        self.verifiesUser = verifiesUser
     }
 
     public var title: String {
@@ -67,13 +70,19 @@ public nonisolated struct PasskeySignInPrompt: Sendable, Equatable {
         return String(localized: "Sign in to \(site) with your Bitwarden passkey?")
     }
 
+    /// Who asked when it isn't the site, whether to pick an account, and whether Touch ID or the password comes next;
+    /// empty when there is nothing to add.
     public var detail: String {
-        switch (choices.count > 1, requester != site) {
-        case (false, false): String(localized: "You’ll confirm with Touch ID or your Mac password next.")
-        case (true, false): String(localized: "Choose an account. You’ll confirm with Touch ID or your Mac password next.")
-        case (false, true): String(localized: "The request comes from \(requester). You’ll confirm with Touch ID or your Mac password next.")
-        case (true, true):
+        switch (choices.count > 1, requester != site, verifiesUser) {
+        case (false, false, true): String(localized: "You’ll confirm with Touch ID or your Mac password next.")
+        case (true, false, true): String(localized: "Choose an account. You’ll confirm with Touch ID or your Mac password next.")
+        case (false, true, true): String(localized: "The request comes from \(requester). You’ll confirm with Touch ID or your Mac password next.")
+        case (true, true, true):
             String(localized: "The request comes from \(requester). Choose an account. You’ll confirm with Touch ID or your Mac password next.")
+        case (false, false, false): ""
+        case (true, false, false): String(localized: "Choose an account.")
+        case (false, true, false): String(localized: "The request comes from \(requester).")
+        case (true, true, false): String(localized: "The request comes from \(requester). Choose an account.")
         }
     }
 
@@ -106,14 +115,17 @@ public protocol PasskeySignInUI: AnyObject {
 }
 
 /// Answers a page's passkey request with a Bitwarden passkey, Bitwarden's browser extension's way, but only after the
-/// user clicks Sign In and then confirms with Touch ID or the Mac's password.
+/// user clicks Sign In, which is the user presence the assertion reports. Touch ID or the Mac's password follows when
+/// the user asked for it on every sign-in (`BrowserSettings.confirmsPasskeysWithTouchID`), the site requires user
+/// verification, or a matching Bitwarden item has master password re-prompt on; the assertion says the user was
+/// verified only when that succeeded.
 @MainActor
 public enum PasskeySignIn {
     /// `origin` is the requesting frame's, from WebKit. Requests Coincide can't serve (none of the user's passkeys
     /// match, Bitwarden is unavailable, conditional or silent mediation) fall back to the browser; requests it refuses
-    /// fail like a browser's.
+    /// fail like a browser's. `alwaysVerifiesUser` asks for Touch ID or the password even when the site doesn't need it.
     public static func answer(_ request: WebAuthnGetRequest, from origin: WebAuthnOrigin, vault: PasskeyVault, ui: PasskeySignInUI,
-        suffixes: PublicSuffixList? = PublicSuffixList.bundled) async -> WebAuthnReply {
+        alwaysVerifiesUser: Bool, suffixes: PublicSuffixList? = PublicSuffixList.bundled) async -> WebAuthnReply {
         guard let suffixes else { return .fallback }
         // Never sign without an explicit click: requests the page makes on its own (autofill-style, silent) aren't offered.
         guard request.mediation == .optional || request.mediation == .required else { return .fallback }
@@ -126,15 +138,20 @@ public enum PasskeySignIn {
         guard !Task.isCancelled else { return .notAllowed }
         let matches = BitwardenPasskey.matching(all, rpID: rpID, allowCredentials: allowed.map(\.id))
         guard !matches.isEmpty else { return .fallback }
-        let prompt = PasskeySignInPrompt(site: rpID, requester: origin.host, choices: matches)
+        // Decided before asking, so the sheet can say whether Touch ID comes next: a re-prompt item among the choices
+        // makes every choice verify.
+        let verifies = alwaysVerifiesUser || request.userVerification == .required || matches.contains(where: \.requiresReprompt)
+        let prompt = PasskeySignInPrompt(site: rpID, requester: origin.host, choices: matches, verifiesUser: verifies)
         guard let choice = await ui.confirm(prompt), matches.contains(choice), !Task.isCancelled else { return .notAllowed }
-        let userVerified: Bool
-        switch await ui.verifyUser(reason: prompt.verificationReason) {
-        case .verified: userVerified = true
-        case .unavailable:
-            guard request.userVerification != .required, !choice.requiresReprompt else { return .notAllowed }
-            userVerified = false
-        case .failed: return .notAllowed
+        // The UV flag is set only when Touch ID or the password succeeded for this request.
+        var userVerified = false
+        if verifies {
+            switch await ui.verifyUser(reason: prompt.verificationReason) {
+            case .verified: userVerified = true
+            case .unavailable:
+                guard request.userVerification != .required, !choice.requiresReprompt else { return .notAllowed }
+            case .failed: return .notAllowed
+            }
         }
         guard !Task.isCancelled else { return .notAllowed }
         let clientData = WebAuthnAssertion.clientDataJSON(challenge: request.challenge, origin: origin.serialized)
@@ -362,8 +379,9 @@ public nonisolated enum BitwardenPasskeyScript {
             define(wrapped, 'length', {value: original.length});
             define(Container.prototype, 'get', {...descriptor, value: wrapped});
 
-            // Bitwarden is a platform authenticator that verifies the user (Touch ID or the Mac's password) while it is
-            // connected; without it, the browser's own answers stand. Autofill-style sign-in isn't offered.
+            // Bitwarden is a platform authenticator that can verify the user (Touch ID or the Mac's password, asked
+            // whenever a site requires it) while it is connected; without it, the browser's own answers stand.
+            // Autofill-style sign-in isn't offered.
             const replaceStatic = (name, make) => {
                 const own = describe(Credential, name);
                 if (!own || typeof own.value !== 'function') return;

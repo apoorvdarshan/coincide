@@ -69378,6 +69378,118 @@
         }
       }
     },
+    "Choose an account." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wähle einen Account."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige una cuenta."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige una cuenta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Choisissez un compte."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कोई खाता चुनें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pilih akun."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Scegli un account."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アカウントを選択してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "계정을 선택하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kies een account."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wybierz konto."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escolha uma conta."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выберите учётную запись."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir hesap seçin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Виберіть обліковий запис."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy chọn một tài khoản."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "选择一个账户。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "選擇一個帳號。"
+          }
+        }
+      }
+    },
     "Choose an account. You’ll confirm with Touch ID or your Mac password next." : {
       "localizations" : {
         "de" : {
@@ -81991,6 +82103,118 @@
         }
       }
     },
+    "Coincide always asks for Touch ID or your Mac password after you click Sign In. When this is off, it asks only when the site requires it or the Bitwarden item has master password re-prompt on." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide fragt immer nach Touch ID oder deinem Mac-Passwort, nachdem du auf „Anmelden“ geklickt hast. Ist das aus, fragt Coincide nur, wenn die Website es verlangt oder für den Bitwarden-Eintrag die erneute Abfrage des Master-Passworts aktiviert ist."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide siempre pide Touch ID o la contraseña de tu Mac después de que hagas clic en Iniciar sesión. Si esta opción está desactivada, solo la pide cuando el sitio lo exige o el elemento de Bitwarden tiene activada la nueva solicitud de la contraseña maestra."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide siempre pide Touch ID o la contraseña de tu Mac después de que hagas clic en Iniciar sesión. Si esta opción está desactivada, solo la pide cuando el sitio lo exige o el elemento de Bitwarden tiene activada la nueva solicitud de la contraseña maestra."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide demande toujours Touch ID ou le mot de passe de votre Mac après que vous avez cliqué sur Se connecter. Si cette option est désactivée, il ne le demande que si le site l’exige ou si la nouvelle demande du mot de passe principal est activée pour l’élément Bitwarden."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "साइन इन करें पर क्लिक करने के बाद Coincide हमेशा Touch ID या आपका Mac पासवर्ड मांगता है। इसे बंद करने पर वह तभी मांगता है जब साइट को इसकी ज़रूरत हो या Bitwarden आइटम के लिए मास्टर पासवर्ड दोबारा पूछना चालू हो।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide selalu meminta Touch ID atau kata sandi Mac setelah Anda mengeklik Masuk. Jika ini nonaktif, Coincide hanya memintanya saat situs mengharuskannya atau item Bitwarden mengaktifkan permintaan ulang kata sandi utama."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide chiede sempre Touch ID o la password del Mac dopo che fai clic su Accedi. Se l’opzione è disattivata, la chiede solo quando il sito lo richiede o quando per l’elemento di Bitwarden è attiva la nuova richiesta della password principale."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "「サインイン」をクリックした後、Coincide は常に Touch ID または Mac のパスワードを求めます。オフにすると、サイトが求める場合か、Bitwarden の項目でマスターパスワードの再入力が有効な場合にのみ求めます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로그인을 클릭하면 Coincide가 항상 Touch ID 또는 Mac 암호를 요청합니다. 이 옵션을 끄면 사이트에서 요구하거나 Bitwarden 항목에 마스터 비밀번호 재확인이 켜져 있을 때만 요청합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide vraagt altijd om Touch ID of je Mac-wachtwoord nadat je op Log in hebt geklikt. Als dit uit staat, vraagt Coincide er alleen om als de site het vereist of als voor het Bitwarden-item opnieuw vragen om het hoofdwachtwoord aan staat."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide zawsze prosi o Touch ID lub hasło do Maca po kliknięciu Zaloguj się. Gdy ta opcja jest wyłączona, prosi tylko wtedy, gdy wymaga tego witryna lub element Bitwarden ma włączone ponowne pytanie o hasło główne."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide sempre pede o Touch ID ou a senha do Mac depois que você clica em Entrar. Com esta opção desativada, ele só pede quando o site exige ou quando o item do Bitwarden tem a nova solicitação da senha mestra ativada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide всегда запрашивает Touch ID или пароль Mac после того, как вы нажмёте «Войти». Если этот параметр выключен, он запрашивает их, только когда этого требует сайт или для элемента Bitwarden включён повторный запрос мастер-пароля."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oturum Aç’a tıkladıktan sonra Coincide her zaman Touch ID veya Mac parolanızı ister. Bu kapalıyken yalnızca site gerektirdiğinde veya Bitwarden öğesinde ana parolayı yeniden sorma açık olduğunda ister."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide завжди запитує Touch ID або пароль Mac після того, як ви натиснете «Увійти». Якщо цей параметр вимкнено, він запитує їх, лише коли цього вимагає сайт або для елемента Bitwarden увімкнено повторний запит головного пароля."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide luôn yêu cầu Touch ID hoặc mật khẩu máy Mac sau khi bạn bấm Đăng nhập. Khi tắt tùy chọn này, Coincide chỉ yêu cầu khi trang web bắt buộc hoặc mục Bitwarden bật yêu cầu nhập lại mật khẩu chính."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "点按“登录”后，Coincide 总会要求使用触控 ID 或 Mac 密码。关闭此选项后，仅当网站要求或该 Bitwarden 项目开启了主密码重新提示时才会要求。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "按一下「登入」後，Coincide 一律會要求使用 Touch ID 或 Mac 密碼。關閉此選項後，只有在網站要求或該 Bitwarden 項目開啟了主密碼重新提示時才會要求。"
+          }
+        }
+      }
+    },
     "Coincide can replace each link with a copy of the master, so every agent keeps its instructions, or leave the links as they are." : {
       "localizations" : {
         "de" : {
@@ -92409,6 +92633,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "刪除對話前先確認"
+          }
+        }
+      }
+    },
+    "Confirm passkey sign-ins with Touch ID" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passkey-Anmeldungen mit Touch ID bestätigen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmar con Touch ID los inicios de sesión con llave de acceso"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmar con Touch ID los inicios de sesión con llave de acceso"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmer avec Touch ID les connexions par clé d’identification"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पासकी साइन-इन की पुष्टि Touch ID से करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Konfirmasi proses masuk dengan kunci sandi menggunakan Touch ID"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conferma con Touch ID gli accessi con passkey"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "パスキーでのサインインを Touch ID で確認"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Touch ID로 패스키 로그인 확인"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aanmeldingen met toegangssleutel bevestigen met Touch ID"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Potwierdzaj logowanie kluczem dostępu za pomocą Touch ID"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Confirmar com o Touch ID as entradas com chave de acesso"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Подтверждать вход с ключом доступа через Touch ID"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçiş anahtarıyla oturum açmaları Touch ID ile onayla"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Підтверджувати вхід із ключем доступу через Touch ID"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Xác nhận đăng nhập bằng khóa truy cập với Touch ID"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用触控 ID 确认通行密钥登录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 Touch ID 確認通行密鑰登入"
           }
         }
       }
@@ -317806,6 +318142,230 @@
         }
       }
     },
+    "The request comes from %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Anfrage kommt von %@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud procede de %@."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud viene de %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La demande provient de %@."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह अनुरोध %@ से आया है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permintaan ini berasal dari %@."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La richiesta proviene da %@."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このリクエストは %@ からのものです。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 요청은 %@에서 왔습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het verzoek komt van %@."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prośba pochodzi z %@."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A solicitação vem de %@."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запрос пришёл от %@."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İstek %@ adresinden geliyor."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запит надійшов від %@."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yêu cầu đến từ %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此请求来自 %@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此要求來自 %@。"
+          }
+        }
+      }
+    },
+    "The request comes from %@. Choose an account." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Anfrage kommt von %@. Wähle einen Account."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud procede de %@. Elige una cuenta."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud viene de %@. Elige una cuenta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La demande provient de %@. Choisissez un compte."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह अनुरोध %@ से आया है। कोई खाता चुनें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permintaan ini berasal dari %@. Pilih akun."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La richiesta proviene da %@. Scegli un account."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このリクエストは %@ からのものです。アカウントを選択してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 요청은 %@에서 왔습니다. 계정을 선택하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het verzoek komt van %@. Kies een account."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prośba pochodzi z %@. Wybierz konto."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A solicitação vem de %@. Escolha uma conta."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запрос пришёл от %@. Выберите учётную запись."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İstek %@ adresinden geliyor. Bir hesap seçin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запит надійшов від %@. Виберіть обліковий запис."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yêu cầu đến từ %@. Hãy chọn một tài khoản."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此请求来自 %@。选择一个账户。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此要求來自 %@。選擇一個帳號。"
+          }
+        }
+      }
+    },
     "The request comes from %@. Choose an account. You’ll confirm with Touch ID or your Mac password next." : {
       "localizations" : {
         "de" : {
@@ -352688,6 +353248,7 @@
       }
     },
     "When a site asks for a passkey you saved in Bitwarden, Coincide offers to sign in with it, and you confirm each sign-in with Touch ID or your Mac password. Coincide reads the passkey with Bitwarden’s tool on this Mac, only to answer the site, and never sends it anywhere else." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -352795,6 +353356,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "當網站要求你儲存在 Bitwarden 中的通行密鑰時，Coincide 會提供用它登入，每次登入都需以 Touch ID 或 Mac 密碼確認。Coincide 在這台 Mac 上透過 Bitwarden 的工具讀取通行密鑰，僅用於回應該網站，絕不會傳送到其他任何地方。"
+          }
+        }
+      }
+    },
+    "When a site asks for a passkey you saved in Bitwarden, Coincide offers to sign in with it, and you confirm each sign-in. Coincide reads the passkey with Bitwarden’s tool on this Mac, only to answer the site, and never sends it anywhere else." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wenn eine Website nach einem Passkey fragt, den du in Bitwarden gespeichert hast, bietet Coincide an, dich damit anzumelden, und du bestätigst jede Anmeldung. Coincide liest den Passkey mit dem Tool von Bitwarden auf diesem Mac, nur um der Website zu antworten, und sendet ihn nirgendwohin sonst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando un sitio pide una llave de acceso que guardaste en Bitwarden, Coincide ofrece iniciar sesión con ella, y confirmas cada inicio de sesión. Coincide lee la llave de acceso con la herramienta de Bitwarden en este Mac, solo para responder al sitio, y nunca la envía a ningún otro lugar."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando un sitio pide una llave de acceso que guardaste en Bitwarden, Coincide ofrece iniciar sesión con ella, y confirmas cada inicio de sesión. Coincide lee la llave de acceso con la herramienta de Bitwarden en esta Mac, solo para responder al sitio, y nunca la envía a ningún otro lugar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quand un site demande une clé d’identification enregistrée dans Bitwarden, Coincide propose de vous connecter avec, et vous confirmez chaque connexion. Coincide lit la clé d’identification avec l’outil de Bitwarden sur ce Mac, uniquement pour répondre au site, et ne l’envoie nulle part ailleurs."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जब कोई साइट Bitwarden में सहेजी गई आपकी पासकी मांगती है, तो Coincide उससे साइन इन करने की पेशकश करता है, और आप हर साइन-इन की पुष्टि करते हैं। Coincide इस Mac पर Bitwarden के टूल से पासकी केवल साइट को जवाब देने के लिए पढ़ता है, और उसे कहीं और नहीं भेजता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saat situs meminta kunci sandi yang Anda simpan di Bitwarden, Coincide menawarkan untuk masuk dengannya, dan Anda mengonfirmasi setiap proses masuk. Coincide membaca kunci sandi dengan alat Bitwarden di Mac ini, hanya untuk menjawab situs, dan tidak pernah mengirimkannya ke tempat lain."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando un sito chiede una passkey che hai salvato in Bitwarden, Coincide propone di accedere con quella, e confermi ogni accesso. Coincide legge la passkey con lo strumento di Bitwarden su questo Mac, solo per rispondere al sito, e non la invia da nessun’altra parte."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden に保存したパスキーをサイトが求めると、Coincide はそのパスキーでのサインインを提案し、サインインのたびにあなたが確認します。Coincide はサイトに応答するためだけに、この Mac 上で Bitwarden のツールを使ってパスキーを読み取り、ほかの場所には一切送信しません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사이트에서 Bitwarden에 저장한 패스키를 요청하면 Coincide가 해당 패스키로 로그인하도록 제안하며, 매번 로그인을 직접 확인합니다. Coincide는 사이트에 응답하기 위해서만 이 Mac에서 Bitwarden 도구로 패스키를 읽으며, 다른 곳으로는 절대 보내지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Als een site vraagt om een toegangssleutel die je in Bitwarden hebt bewaard, biedt Coincide aan om daarmee in te loggen, en je bevestigt elke aanmelding. Coincide leest de toegangssleutel met de tool van Bitwarden op deze Mac, alleen om de site te antwoorden, en stuurt hem nergens anders naartoe."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gdy witryna prosi o klucz dostępu zapisany w Bitwarden, Coincide proponuje zalogowanie się nim, a każde logowanie potwierdzasz. Coincide odczytuje klucz dostępu narzędziem Bitwarden na tym Macu, tylko aby odpowiedzieć witrynie, i nigdzie indziej go nie wysyła."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando um site pede uma chave de acesso salva no Bitwarden, o Coincide oferece entrar com ela, e você confirma cada entrada. O Coincide lê a chave de acesso com a ferramenta do Bitwarden neste Mac, apenas para responder ao site, e nunca a envia para outro lugar."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Когда сайт запрашивает ключ доступа, сохранённый в Bitwarden, Coincide предлагает войти с ним, а каждый вход вы подтверждаете. Coincide читает ключ доступа инструментом Bitwarden на этом Mac только для ответа сайту и никуда больше его не отправляет."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir site Bitwarden’a kaydettiğiniz bir geçiş anahtarını istediğinde Coincide onunla oturum açmayı önerir ve her oturum açmayı siz onaylarsınız. Coincide geçiş anahtarını yalnızca siteye yanıt vermek için bu Mac’te Bitwarden’ın aracıyla okur ve başka hiçbir yere göndermez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Коли сайт запитує ключ доступу, збережений у Bitwarden, Coincide пропонує увійти з ним, а кожен вхід ви підтверджуєте. Coincide читає ключ доступу інструментом Bitwarden на цьому Mac лише для відповіді сайту й нікуди більше його не надсилає."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khi một trang web yêu cầu khóa truy cập bạn đã lưu trong Bitwarden, Coincide sẽ đề nghị đăng nhập bằng khóa đó, và bạn xác nhận mỗi lần đăng nhập. Coincide đọc khóa truy cập bằng công cụ của Bitwarden trên máy Mac này, chỉ để trả lời trang web, và không bao giờ gửi nó đi nơi khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "当网站请求你存储在 Bitwarden 中的通行密钥时，Coincide 会提供使用它登录，每次登录都需经你确认。Coincide 在这台 Mac 上通过 Bitwarden 的工具读取通行密钥，仅用于回应该网站，绝不会将其发送到其他任何地方。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "當網站要求你儲存在 Bitwarden 中的通行密鑰時，Coincide 會提供用它登入，每次登入都需經你確認。Coincide 在這台 Mac 上透過 Bitwarden 的工具讀取通行密鑰，僅用於回應該網站，絕不會傳送到其他任何地方。"
           }
         }
       }
