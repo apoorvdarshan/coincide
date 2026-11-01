@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>A browser in every thread for your agents · Coincide</title>
+<meta name="description" content="Each Coincide thread has its own WebKit browser that you and your agent can both use: shared sign-ins, imports from other browsers and Agent Control.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/browser">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/browser">
+<meta property="og:title" content="A browser in every thread for your agents · Coincide">
+<meta property="og:description" content="Each Coincide thread has its own WebKit browser that you and your agent can both use: shared sign-ins, imports from other browsers and Agent Control.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="A browser in every thread for your agents · Coincide">
+<meta name="twitter:description" content="Each Coincide thread has its own WebKit browser that you and your agent can both use: shared sign-ins, imports from other browsers and Agent Control.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/browser#page","url":"https://coincide.dev/features/browser","name":"A browser in every thread for your agents · Coincide","description":"Each Coincide thread has its own WebKit browser that you and your agent can both use: shared sign-ins, imports from other browsers and Agent Control.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/browser#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Browser in every thread","item":"https://coincide.dev/features/browser"}],"@id":"https://coincide.dev/features/browser#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Browser in every thread</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>A browser in every thread</h1>
+    <p class="lede">Every thread in Coincide has its own browser panel: a WebKit page beside the conversation, with its own tabs and back and forward history. You can browse in it, and the thread’s agent can use it too, in the background, to check the page it just built or look something up while signed in as you.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2 id="open">Open it</h2>
+<p>Choose View › Show Browser Preview, or click the globe button at the top right of the window. The address bar takes web addresses, local servers such as <code>localhost:3000</code>, IP addresses and file paths, and searches anything else with the search engine you pick in Settings › Browser: Google (the default), DuckDuckGo, Bing, Brave Search, Ecosia or Kagi.</p>
+<p>A thread keeps up to 20 tabs (<kbd>⌘</kbd><kbd>T</kbd> opens one in the panel, <kbd>⌘</kbd><kbd>W</kbd> closes it), and remembers them across relaunches. Bookmark a page with the star in the address bar; bookmarks and history are listed in the panel and in Settings › Browser.</p>
+<p>Web links you click in a conversation open in this browser, and <kbd>⌘</kbd>-click opens your default browser. If you’d rather have it the other way round, turn on “Open links in your default browser” in Settings › General.</p>
+
+<h2 id="profile">One profile, or private sessions</h2>
+<p>By default all threads share one persistent browser profile, so a site you sign in to in one thread stays signed in in the others, and after you relaunch. Each thread still has its own pages and history.</p>
+<p>Turn on “Use private sessions” in Settings › Browser and each thread’s browser gets its own temporary storage instead, cleared when Coincide quits. Private sessions don’t use imported cookies or saved sign-ins. “Clear Browsing Data…” in the same pane removes cookies and site data, history, or both; bookmarks are kept.</p>
+
+<h2 id="import">Bring your sign-ins from another browser</h2>
+<p>Settings › Browser › Import… copies cookies and sign-ins, history and bookmarks from a browser on your Mac, and lets you pick which sites’ cookies to bring. Coincide reads a copy of the browser’s data on your Mac; nothing is sent anywhere.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Browsers</th><th scope="col">Notes</th></tr></thead><tbody><tr><td>Safari, Safari Technology Preview, Orion</td><td>macOS protects Safari’s data, so Coincide asks for Full Disk Access when it needs it and shows where to grant it.</td></tr><tr><td>Chrome, Chromium, Brave, Edge, Arc, Dia, Vivaldi, Opera, Opera GX, Yandex, Perplexity Comet, Sidekick, Thorium, Helium</td><td>macOS asks once whether Coincide may use the browser’s key in your Keychain to read its cookies; choose Allow.</td></tr><tr><td>Firefox, LibreWolf, Zen, Floorp, Waterfox</td><td>Profiles are listed separately.</td></tr><tr><td>DuckDuckGo</td><td>Not supported: it keeps its data in a form only it can read.</td></tr></tbody></table></div>
+
+<h2 id="agent-control">Agent Control: what agents can do</h2>
+<p>With Agent Control on (the default for new threads), the thread’s agent can drive its browser through a private connection on your Mac that only that thread can use. It works for every agent that has a shell tool, since agents reach it with <code>curl</code>; there’s no MCP server to set up. Agents can:</p>
+<ul>
+  <li>open pages and search, read a page’s text and its buttons and fields, click, type (rich editors included), press keys, scroll and wait for an element;</li>
+  <li>take screenshots, including full-page ones, and switch to a mobile, tablet or desktop viewport for layout checks;</li>
+  <li>answer page dialogs, attach local files to an upload field, work inside embedded frames, open and switch tabs, and read the page’s recent console messages and JavaScript errors;</li>
+  <li>download files, which are saved in their own folder under <code>~/Downloads/Coincide</code> and never opened automatically.</li>
+</ul>
+<p>The agent works in the background while the panel is closed. When it needs you, for a sign-in, a CAPTCHA, a two-factor code, a payment or a personal choice, it opens the panel with a short note saying what to do, and waits for you to click <strong>Done</strong>.</p>
+
+<h3 id="limits">What agents can’t do</h3>
+<ul>
+  <li>They can’t read cookies, site storage or what’s typed in password fields, and they can’t run arbitrary JavaScript in the page.</li>
+  <li>They don’t see your passwords or one-time codes. When an agent asks Coincide to sign in, you choose whether to allow it, and Coincide types the login itself. <a href="/features/browser-passwords">Saved logins and password managers</a> explains how.</li>
+  <li>They’re told to treat page content as untrusted data, not instructions, and never to try to solve or bypass CAPTCHAs or bot checks.</li>
+  <li>Access is limited to the thread’s own browser and ends when you turn Agent Control off or quit Coincide.</li>
+</ul>
+<p>To turn Agent Control off for one thread, use the Agent Control button in its browser panel. To change the default for new threads, use “Agent Control in new threads” in Settings › Browser.</p>
+
+<h2 id="privacy">Privacy</h2>
+<p>Pages load from their own sites, as in any browser. What an agent reads or captures from a page goes to that agent’s provider as part of the conversation, so keep Agent Control off in threads where that matters. The <a href="/privacy">privacy policy</a> covers the browser in detail.</p>
+
+<h2 id="not-yet">Limitations</h2>
+<ul>
+  <li>Passkeys from iCloud Keychain and other system passkey providers aren’t available in Coincide’s browser yet. Bitwarden passkeys are, and for other sites you can sign in in your own browser and import that sign-in; see <a href="/features/passkeys">passkeys</a>.</li>
+  <li>The browser is for web pages. To let agents use native Mac apps, turn on <a href="/features/computer-use">Computer Use</a>.</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/browser-passwords"><b>Passwords and logins</b><span>Fill sign-ins from your Keychain, 1Password or Bitwarden, and let agents sign in without seeing passwords.</span></a></li><li><a class="card" href="/features/passkeys"><b>Passkeys</b><span>Sign in with Bitwarden passkeys in Coincide’s browser, or import a passkey sign-in from your own browser.</span></a></li><li><a class="card" href="/features/computer-use"><b>Computer Use</b><span>Agents see and operate native Mac apps through a bundled helper, with their own cursor. Off by default.</span></a></li><li><a class="card" href="/docs/rich-output"><b>Rich agent output</b><span>How agents show images, audio, video and sandboxed interactive HTML or SVG previews in a thread, and the limits.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

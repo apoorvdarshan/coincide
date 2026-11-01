@@ -2,8 +2,11 @@
 // build.mjs renders each page in pages/ through render() and injects header() and footer() into the hand-written
 // pages (the home page, privacy and terms) between their <!-- site-header --> / <!-- site-footer --> markers.
 
+import { readFileSync } from "node:fs";
+
 export const ORIGIN = "https://coincide.dev";
-export const VERSION = "0.1.0";
+// The latest release: the first numbered section of the repository's CHANGELOG.md.
+export const VERSION = readFileSync(new URL("../../CHANGELOG.md", import.meta.url), "utf8").match(/^## (\d+\.\d+\.\d+)\s*$/m)[1];
 export const DMG = "https://github.com/apoorvdarshan/coincide/releases/latest/download/Coincide.dmg";
 export const REPO = "https://github.com/apoorvdarshan/coincide";
 export const LINKS = {

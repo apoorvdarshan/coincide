@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Coincide vs T3 Code: the native Mac port compared</title>
+<meta name="description" content="Coincide is a native AppKit port of T3 Code. How the two differ: platforms, Electron versus AppKit, supported agents, remote access and licenses.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/compare/t3-code">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/compare/t3-code">
+<meta property="og:title" content="Coincide vs T3 Code: the native Mac port compared">
+<meta property="og:description" content="Coincide is a native AppKit port of T3 Code. How the two differ: platforms, Electron versus AppKit, supported agents, remote access and licenses.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Coincide vs T3 Code: the native Mac port compared">
+<meta name="twitter:description" content="Coincide is a native AppKit port of T3 Code. How the two differ: platforms, Electron versus AppKit, supported agents, remote access and licenses.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Article","@id":"https://coincide.dev/compare/t3-code#page","url":"https://coincide.dev/compare/t3-code","name":"Coincide vs T3 Code: the native Mac port compared","description":"Coincide is a native AppKit port of T3 Code. How the two differ: platforms, Electron versus AppKit, supported agents, remote access and licenses.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/compare/t3-code#breadcrumb"},"headline":"Coincide vs T3 Code","datePublished":"2026-11-01","dateModified":"2026-11-01","author":{"@id":"https://coincide.dev/#apoorv"},"publisher":{"@id":"https://coincide.dev/#organization"},"image":"https://coincide.dev/img/og.jpg","mainEntityOfPage":"https://coincide.dev/compare/t3-code","about":{"@id":"https://coincide.dev/#app"}},{"@type":"Person","@id":"https://coincide.dev/#apoorv","name":"Apoorv Darshan","url":"https://github.com/apoorvdarshan","sameAs":["https://github.com/apoorvdarshan","https://x.com/apoorvdarshan","https://instagram.com/apoorvcodes"]},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Compare","item":"https://coincide.dev/compare"},{"@type":"ListItem","position":3,"name":"vs T3 Code","item":"https://coincide.dev/compare/t3-code"}],"@id":"https://coincide.dev/compare/t3-code#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/compare">Compare</a></li><li><span aria-current="page">vs T3 Code</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Compare</p>
+    <h1>Coincide vs T3 Code</h1>
+    <p class="lede">Coincide started as a native AppKit port of T3 Code, the open-source agent app from T3 Tools. The two share a design and an idea, bringing the agents you already pay for into one app. They differ in how they’re built and where they run.</p>
+    <p class="updated">Updated <time datetime="2026-11-01">November 1, 2026</time></p>
+  </header>
+  <div class="prose">
+
+<p><a href="https://github.com/pingdotgg/t3code">T3 Code</a> calls itself an “agent harness control surface”: it controls the agents on your machine from a desktop app, a web app and mobile apps. Coincide ports T3 Code’s design and behavior, under T3 Code’s MIT license, to a native Mac app. Facts about T3 Code below come from its <a href="https://github.com/pingdotgg/t3code#readme">README</a>, <a href="https://github.com/pingdotgg/t3code/blob/main/docs/user/faq.md">FAQ</a> and <a href="https://github.com/pingdotgg/t3code/blob/main/docs/user/remote-access.md">remote access guide</a>.</p>
+
+<h2 id="at-a-glance">At a glance</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col"></th><th scope="col">T3 Code</th><th scope="col">Coincide</th></tr></thead><tbody><tr><td>Made by</td><td>T3 Tools</td><td>Apoorv Darshan, porting T3 Code</td></tr><tr><td>How it’s built</td><td>An “Electron-based desktop app,” a web app and a <code>t3</code> server</td><td>A native AppKit app, with SwiftUI where it fits, such as Settings</td></tr><tr><td>Platforms</td><td>macOS, Windows and Linux desktop apps, a web client, and iOS and Android apps</td><td>macOS 26 or later, Apple silicon and Intel; an iPhone and iPad companion, Coincide Remote, is coming soon</td></tr><tr><td>Agents</td><td>Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity and fx, per its README</td><td>Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity</td></tr><tr><td>License and price</td><td>“Free and open source (MIT)”</td><td>Free and open source (MIT)</td></tr><tr><td>Where agents run</td><td>Wherever T3 Code runs: “your desktop, a server, a VPS”</td><td>On the Mac where Coincide is installed</td></tr></tbody></table></div>
+
+<h2 id="native">Electron and a server, or AppKit</h2>
+<p>T3 Code’s desktop app is built on Electron, with a Node server behind a web interface; the same server powers its web client and lets other devices connect. Coincide rebuilds the interface with AppKit and drives each agent from native Swift code, with no web server in between, so it uses macOS’s own windows, menus, keyboard shortcuts, accessibility and notifications. Coincide’s <a href="/docs/build-from-source">source</a> is Swift, built with Xcode and XcodeGen.</p>
+<p>Being native also makes room for Mac-specific features: <a href="/features/computer-use">Computer Use</a> for operating other Mac apps, <a href="/features/appshots">Appshots</a> to attach another app’s window, <a href="/features/keep-awake">Keep Awake</a> for MacBooks, <a href="/features/dictation">dictation</a> with Apple’s on-device speech or a local Whisper model, and a <a href="/features/browser">browser</a> that signs in with your Keychain, 1Password or Bitwarden, including <a href="/features/passkeys">Bitwarden passkeys</a>.</p>
+
+<h2 id="remote">Remote access</h2>
+<p>Remote use is central to T3 Code. Its FAQ says: “Run <code>npx t3 up</code> on that machine and you get really good remote support,” through T3 Connect (a Cloudflare tunnel set up by T3’s relay), LAN pairing or Tailscale, with the web client and phone apps as remotes. Coincide runs on your Mac only. Its iPhone and iPad companion, <a href="/features/coincide-remote">Coincide Remote</a>, isn’t released yet; it’s designed to connect straight to your Mac over your local network or Tailscale, with no relay server.</p>
+
+<h2 id="agents">Agents</h2>
+<p>Both apps drive the agents’ own tools with your existing subscriptions. T3 Code’s README also lists fx, which Coincide doesn’t support. In Coincide, each agent has a page describing exactly what works: <a href="/agents/claude-code">Claude Code</a>, <a href="/agents/codex">Codex</a>, <a href="/agents/cursor">Cursor</a>, <a href="/agents/grok-build">Grok Build</a>, <a href="/agents/opencode">OpenCode</a> and <a href="/agents/antigravity">Antigravity</a>. <a href="/features/switch-agents">Switching agents mid-thread</a> gives the next agent a recap of the turns it missed.</p>
+
+<h2 id="data">Data and telemetry</h2>
+<p>T3 Code’s FAQ says your code and prompts go from your machine to your provider, not to T3, and that T3 Code sends “basic product usage events” without prompts or file contents, which <code>T3CODE_TELEMETRY_ENABLED=false</code> turns off. Coincide’s own code has no analytics or tracking, and it keeps its data in <code>~/Library/Application Support/Coincide</code>; the <a href="/privacy">privacy policy</a> lists every connection the app makes.</p>
+
+<h2 id="t3-better">When T3 Code is the better choice</h2>
+<ul>
+  <li>You work on Windows or Linux, or want a web client.</li>
+  <li>Your agents run on a server or VPS and you drive them from a laptop or phone.</li>
+  <li>You want the original project, or agents Coincide doesn’t support, such as fx.</li>
+</ul>
+
+<h2 id="coincide-better">When Coincide is the better choice</h2>
+<ul>
+  <li>You work on a Mac and prefer a native AppKit app.</li>
+  <li>You want Mac features such as Computer Use, Appshots, Keep Awake and Keychain sign-ins around your agents.</li>
+  <li>You want turns to keep running after you quit the app; Coincide’s <a href="/features/background-agents">background agent host</a> does this without extra setup.</li>
+</ul>
+
+<p class="note">Checked on November 1, 2026 against T3 Code’s <a href="https://github.com/pingdotgg/t3code#readme">README</a>, <a href="https://github.com/pingdotgg/t3code/blob/main/docs/user/faq.md">FAQ</a>, <a href="https://github.com/pingdotgg/t3code/blob/main/docs/user/remote-access.md">remote access guide</a> and <a href="https://t3.codes">t3.codes</a>; products change, so check their sites. T3 Code is a product of T3 Tools Inc.; Coincide credits it as the original design but isn’t affiliated with or endorsed by T3 Tools. Agent names are trademarks of their owners.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/coincide-remote"><b>Coincide Remote</b><span>Coming soon: follow and steer your Mac’s agents from iPhone or iPad, connected directly to your Mac.</span></a></li><li><a class="card" href="/features/switch-agents"><b>Switch agents mid-thread</b><span>Hand a conversation to another agent; it gets a recap of the turns it missed and works in the same folder.</span></a></li><li><a class="card" href="/agents"><b>Agents</b><span>The six agents Coincide works with, and what each one supports.</span></a></li><li><a class="card" href="/compare/conductor"><b>vs Conductor</b><span>Two Mac apps for running agents in parallel: workspaces per task, or threads that can change agents.</span></a></li><li><a class="card" href="/docs/build-from-source"><b>Build from source</b><span>Build Coincide with Xcode and XcodeGen, and keep Debug builds apart from your installed app.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

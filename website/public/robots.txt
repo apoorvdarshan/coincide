@@ -1,0 +1,6 @@
+# coincide.dev: everything is open to crawlers except the Worker's small JSON API.
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://coincide.dev/sitemap.xml

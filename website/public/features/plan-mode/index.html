@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plan mode for Claude Code, Codex and more · Coincide</title>
+<meta name="description" content="Put a Coincide thread in plan mode so the agent investigates and proposes a plan without editing files, then implement it in one click.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/plan-mode">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/plan-mode">
+<meta property="og:title" content="Plan mode for Claude Code, Codex and more · Coincide">
+<meta property="og:description" content="Put a Coincide thread in plan mode so the agent investigates and proposes a plan without editing files, then implement it in one click.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Plan mode for Claude Code, Codex and more · Coincide">
+<meta name="twitter:description" content="Put a Coincide thread in plan mode so the agent investigates and proposes a plan without editing files, then implement it in one click.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/plan-mode#page","url":"https://coincide.dev/features/plan-mode","name":"Plan mode for Claude Code, Codex and more · Coincide","description":"Put a Coincide thread in plan mode so the agent investigates and proposes a plan without editing files, then implement it in one click.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/plan-mode#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Plan mode","item":"https://coincide.dev/features/plan-mode"}],"@id":"https://coincide.dev/features/plan-mode#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Plan mode</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>Plan first, then build</h1>
+    <p class="lede">In plan mode the agent reads, searches and asks questions, then returns a concrete plan instead of changing your code. You refine the plan in the same thread and start the work when it’s right.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2>Turning it on</h2>
+<p>Every thread is in either <strong>Build</strong> or <strong>Plan</strong> mode, shown on the mode button in the composer. To switch:</p>
+<ul>
+  <li>press <kbd>⇧</kbd><kbd>Tab</kbd> in the composer;</li>
+  <li>type <code>/plan</code>, or <code>/build</code> (also <code>/default</code>) to go back;</li>
+  <li>use Thread › Plan Mode, or Switch to Plan Mode in the <a href="/features/command-palette">command palette</a>.</li>
+</ul>
+<p>A project can start its new threads in plan mode: set Mode in the project’s Project Defaults… (see <a href="/features/projects-and-threads">Projects and threads</a>).</p>
+
+<h2>Working with the plan</h2>
+<ol>
+  <li>Describe what you want and send it. The agent investigates with read-only actions and may ask you questions, which you answer inline.</li>
+  <li>When it proposes a plan, a <strong>Plan ready</strong> card appears above the composer with the plan itself. You can collapse it to a preview, open it in the transcript, copy it or hide it.</li>
+  <li>To change the plan, just type: in plan mode a new message refines the plan rather than starting the work.</li>
+  <li>When you’re happy, click <strong>Implement</strong>. Coincide switches the thread to build mode and asks the agent to implement the plan.</li>
+</ol>
+<p>Because the plan stays in the thread, you can also <a href="/features/switch-agents">switch agents</a> between planning and building: one agent plans, and another receives the plan in its recap and carries it out.</p>
+
+<h2>How each agent plans</h2>
+<p>Coincide uses each agent’s own plan mode where it has one, so the agent’s safeguards apply. Where it doesn’t, Coincide asks for a plan in the prompt.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Agent</th><th scope="col">How plan mode works</th></tr></thead><tbody><tr><td>Claude Code</td><td>Claude Code’s own plan permission mode. When Claude presents its plan, Coincide shows it and Claude waits for you. If Claude enters plan mode by itself during a build turn, you’re asked whether to <strong>Implement</strong> or <strong>Keep planning</strong>, with room to say what should change.</td></tr><tr><td>Codex</td><td>Codex’s plan collaboration mode, with its plan tool.</td></tr><tr><td>Cursor</td><td>Cursor’s own plan mode over the Agent Client Protocol; Cursor’s plans show in the card.</td></tr><tr><td>OpenCode</td><td>OpenCode’s built-in plan agent, with a rule that denies file edits.</td></tr><tr><td>Grok Build</td><td>Grok Build has no plan mode Coincide can select, so Coincide sends instructions with your message: investigate read-only, don’t edit files, return a concrete plan. Grok’s plan is captured when it finishes.</td></tr><tr><td>Antigravity</td><td>Coincide sends the same plan instructions with your message, and switches Antigravity to a plan mode if its runtime offers one.</td></tr></tbody></table></div>
+
+<h2>Limits to keep in mind</h2>
+<ul>
+  <li>For Grok Build and Antigravity, plan mode is a request in the prompt. A well-behaved agent follows it, but nothing technically stops an edit. If that matters, also choose Ask for approval so every command and edit needs your OK; see <a href="/features/approvals">Approvals and questions</a>.</li>
+  <li>Even with native plan modes, agents can still read files and run read-only commands, and what they read goes to their provider like any turn.</li>
+  <li>Switching back to build mode returns the agent to the thread’s normal mode and access setting with the next message.</li>
+  <li>The Implement button sends a short message (“Implement the plan.”) in build mode; you can instead switch with <kbd>⇧</kbd><kbd>Tab</kbd> and write your own instructions.</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/approvals"><b>Approvals and questions</b><span>Let agents run freely or approve each command and edit, per thread, and answer agents’ questions inline.</span></a></li><li><a class="card" href="/features/composer"><b>Composer</b><span>Attachments, @ file mentions, slash commands, quotes and diff comments, and steering or queueing while an agent works.</span></a></li><li><a class="card" href="/features/switch-agents"><b>Switch agents mid-thread</b><span>Hand a conversation to another agent; it gets a recap of the turns it missed and works in the same folder.</span></a></li><li><a class="card" href="/agents/claude-code"><b><i><img src="/img/logo-claude.png" alt="" width="21" height="21" loading="lazy"></i>Claude Code</b><span>Anthropic’s agent through its own CLI, with your Claude plan or API key. Plan mode, steering, subagents and fast mode.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

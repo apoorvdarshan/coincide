@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>coincide command-line reference · Coincide</title>
+<meta name="description" content="Every command, option and exit status of coincide, the tool that lists, starts, steers and answers Coincide threads from Terminal or an agent.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/docs/cli">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/docs/cli">
+<meta property="og:title" content="coincide command-line reference · Coincide">
+<meta property="og:description" content="Every command, option and exit status of coincide, the tool that lists, starts, steers and answers Coincide threads from Terminal or an agent.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="coincide command-line reference · Coincide">
+<meta name="twitter:description" content="Every command, option and exit status of coincide, the tool that lists, starts, steers and answers Coincide threads from Terminal or an agent.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://coincide.dev/docs/cli#page","url":"https://coincide.dev/docs/cli","name":"coincide command-line reference · Coincide","description":"Every command, option and exit status of coincide, the tool that lists, starts, steers and answers Coincide threads from Terminal or an agent.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/docs/cli#breadcrumb"},"headline":"coincide command reference","datePublished":"2026-11-01","dateModified":"2026-11-01","author":{"@id":"https://coincide.dev/#apoorv"},"publisher":{"@id":"https://coincide.dev/#organization"},"image":"https://coincide.dev/img/og.jpg","mainEntityOfPage":"https://coincide.dev/docs/cli","about":{"@id":"https://coincide.dev/#app"}},{"@type":"Person","@id":"https://coincide.dev/#apoorv","name":"Apoorv Darshan","url":"https://github.com/apoorvdarshan","sameAs":["https://github.com/apoorvdarshan","https://x.com/apoorvdarshan","https://instagram.com/apoorvcodes"]},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://coincide.dev/docs"},{"@type":"ListItem","position":3,"name":"Command-line reference","item":"https://coincide.dev/docs/cli"}],"@id":"https://coincide.dev/docs/cli#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs" aria-current="true">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/docs">Docs</a></li><li><span aria-current="page">Command-line reference</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Reference</p>
+    <h1><code>coincide</code> command reference</h1>
+    <p class="lede">The <code>coincide</code> tool talks to the running Coincide app and does what you’d otherwise do in its window: list projects, agents and threads, start a thread, send a message, wait for the reply, approve a request or answer a question. This page lists everything it accepts.</p>
+    <p class="updated">Updated <time datetime="2026-11-01">November 1, 2026</time></p>
+  </header>
+  <div class="prose">
+
+<nav class="toc" aria-label="On this page"><p>On this page</p><ol>
+  <li><a href="#setup">Where it comes from</a></li>
+  <li><a href="#names">Naming threads and projects</a></li>
+  <li><a href="#commands">Commands</a></li>
+  <li><a href="#options">Global options</a></li>
+  <li><a href="#sending">Sending, waiting and reading</a></li>
+  <li><a href="#answers">Approvals and questions</a></li>
+  <li><a href="#exit">Exit status</a></li>
+  <li><a href="#json">JSON output</a></li>
+  <li><a href="#security">How it connects</a></li>
+</ol></nav>
+
+<h2 id="setup">Where it comes from</h2>
+<p>The tool ships inside the app, at <code>Coincide.app/Contents/Helpers/coincide</code>. It only works while Coincide is running with <strong>Command-line control</strong> on, in Settings › General › Command Line. That setting is on by default.</p>
+<ul>
+  <li><strong>In Terminal.</strong> At launch, Coincide links the tool into the first folder it can write to among <code>/opt/homebrew/bin</code>, <code>/usr/local/bin</code> and <code>~/.local/bin</code>, preferring one that’s already on your shell’s <code>PATH</code>. Settings › General › Command Line shows where it went. If that folder isn’t on your <code>PATH</code>, the setting tells you which folder to add. Coincide never replaces another program called <code>coincide</code>: it shows “… already exists and isn’t Coincide’s tool, so it was left alone.”</li>
+  <li><strong>For agents.</strong> Every agent Coincide starts gets the tool on its <code>PATH</code>, plus <code>COINCIDE_CONTROL_SOCKET</code> and <code>COINCIDE_THREAD_ID</code>, so it can run <code>coincide</code> without any setup and refer to its own thread as <code>this</code>. When Command-line control is off, agents get none of these.</li>
+</ul>
+<p>Run <code>coincide help</code> (or <code>-h</code>, <code>--help</code>) for the built-in summary.</p>
+
+<h2 id="names">Naming threads and projects</h2>
+<p>Commands that take <code>THREAD</code> accept, in this order:</p>
+<ul>
+  <li><code>this</code>: the thread whose agent is running the command. It works only inside a thread Coincide started; elsewhere you get “<code>this</code> works only inside a thread Coincide started.”</li>
+  <li>a full thread ID, or a unique start of one at least four characters long;</li>
+  <li>the thread’s exact title (case doesn’t matter).</li>
+</ul>
+<p>If a name matches more than one thread, the command lists the matches and stops, so use the ID. Archived threads are found too.</p>
+<p><code>--project P</code> accepts a project’s ID (or a unique start of it), its name, or its folder path (<code>~</code> works). <code>chats</code> means the chats that have no project.</p>
+
+<h2 id="commands">Commands</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>coincide projects</code></td><td>Lists projects: ID, name and folder.</td></tr><tr><td><code>coincide threads [--project P | --chats] [--archived] [--running]</code></td><td>Lists threads, newest first, with ID, state (idle, starting, running, needs approval, has a question, archived), project and title. <code>--archived</code> includes archived threads; <code>--running</code> shows only those starting or running.</td></tr><tr><td><code>coincide agents</code></td><td>Lists each agent with its ID, name and state, and under it the models it offers, with their reasoning-effort levels.</td></tr><tr><td><code>coincide new [--chat | --project P] [--agent A] [--model M] [--effort E] [--access full|approval] [--plan] [--title T] [--wait] [--timeout S] [--open] [MESSAGE…]</code></td><td>Starts a chat (the default) or a thread in a project, applies the options, and sends <code>MESSAGE</code> if you give one. With <code>--wait</code> it prints the reply when the turn ends.</td></tr><tr><td><code>coincide send THREAD [--wait] [--timeout S] [--alternate] MESSAGE…</code></td><td>Sends a message to a thread. While a turn runs, the message steers or queues as that thread’s follow-up setting says; <code>--alternate</code> does the other.</td></tr><tr><td><code>coincide wait THREAD [--timeout S]</code></td><td>Waits until the thread’s turn ends or the agent needs you, then prints the latest replies.</td></tr><tr><td><code>coincide read THREAD [--count N]</code></td><td>Prints the latest turn’s replies, or the last <code>N</code> replies.</td></tr><tr><td><code>coincide status THREAD</code></td><td>Shows the thread’s state, agent and model, how many messages are queued, and any approval or question waiting, with its ID.</td></tr><tr><td><code>coincide stop THREAD</code></td><td>Stops the running turn.</td></tr><tr><td><code>coincide approve THREAD [--item ID] [--always]</code></td><td>Approves the waiting approval request. <code>--always</code> picks the request’s “always allow” choice when it has one.</td></tr><tr><td><code>coincide deny THREAD [--item ID] [--message TEXT]</code></td><td>Denies it. <code>--message</code> goes to the agent when the request accepts a reason.</td></tr><tr><td><code>coincide questions THREAD</code></td><td>Shows the agent’s waiting questions, with each question’s ID and its choices.</td></tr><tr><td><code>coincide answer THREAD [--item ID] [--answer QUESTION=ANSWER …] [ANSWER…]</code></td><td>Answers them. With a single question, just give the answer.</td></tr><tr><td><code>coincide archive THREAD</code>, <code>coincide unarchive THREAD</code></td><td>Moves the thread to or from the archive.</td></tr><tr><td><code>coincide open THREAD</code></td><td>Brings Coincide forward and shows the thread.</td></tr><tr><td><code>coincide help</code></td><td>Prints the summary.</td></tr></tbody></table></div>
+<h3>Options of <code>new</code></h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">Option</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>--chat</code> / <code>--project P</code></td><td>Where the thread goes. A chat is the default; you can’t give both.</td></tr><tr><td><code>--agent A</code></td><td>The agent, by ID (<code>claude</code>, <code>codex</code>, <code>cursor</code>, <code>grok</code>, <code>opencode</code>, <code>antigravity</code>), name or the start of its name. Without it, the thread uses your default for new threads.</td></tr><tr><td><code>--model M</code></td><td>A model of that agent, by ID, name or the start of either. Without <code>--agent</code>, it’s looked up in the new thread’s default agent. Run <code>coincide agents</code> for the list.</td></tr><tr><td><code>--effort E</code></td><td>The reasoning effort, as <code>coincide agents</code> lists it for the model.</td></tr><tr><td><code>--access full|approval</code></td><td>Full access, or ask for approval (<code>fullAccess</code> and <code>ask</code> work too).</td></tr><tr><td><code>--plan</code></td><td>Starts the thread in plan mode.</td></tr><tr><td><code>--title T</code></td><td>Names the thread.</td></tr><tr><td><code>--wait</code>, <code>--timeout S</code></td><td>Waits for the reply; needs a message.</td></tr><tr><td><code>--open</code></td><td>Shows the new thread in Coincide’s window.</td></tr></tbody></table></div>
+
+<h2 id="options">Global options</h2>
+<ul>
+  <li><code>--json</code> prints JSON instead of text (see <a href="#json">below</a>).</li>
+  <li><code>--socket PATH</code> talks to another socket than <code>COINCIDE_CONTROL_SOCKET</code> or the default, <code>~/Library/Application Support/Coincide/control.sock</code>.</li>
+  <li>A <code>MESSAGE</code> of <code>-</code> is read from standard input, so you can pipe a file or another command’s output into a thread.</li>
+  <li>Options can go anywhere. After <code>--</code>, everything is part of the message, even words that start with <code>--</code>.</li>
+  <li>Options take their value as the next word or after <code>=</code>, as in <code>--timeout=600</code>.</li>
+</ul>
+
+<h2 id="sending">Sending, waiting and reading</h2>
+<p><code>send</code> reports how the message was delivered: <code>sent</code> when the thread was idle, <code>queued</code> for after the running turn, <code>steered</code> into the running turn, or <code>interrupting</code> when the thread’s follow-up setting is Interrupt. Steering works with Claude Code, Codex and OpenCode; with the other agents a steered message is queued. See <a href="/features/composer">the composer</a> for how follow-ups behave.</p>
+<p><code>--wait</code> and <code>wait</code> poll the thread about once a second until its turn ends (including any queued messages) or it waits for an approval or an answer. The default timeout is 1,800 seconds; <code>--timeout 0</code> waits as long as it takes. When the wait times out, the turn keeps running and the command prints “Still working; stopped waiting.”</p>
+<p>The replies printed are the agent’s messages and errors after your last message. <code>read --count N</code> prints the last <code>N</code> replies instead, whatever turn they came from.</p>
+
+<h2 id="answers">Approvals and questions</h2>
+<p>A thread that runs with <a href="/features/approvals">Ask for approval</a> stops at each command or file change the agent wants to make. <code>status</code> and a waiting <code>--wait</code> show each request’s ID. With one request waiting you can leave out <code>--item</code>; with several, Coincide lists their IDs and asks you to pick one.</p>
+<p>For questions, <code>questions</code> prints each question’s ID and choices. Answer one question with plain text, or several with <code>--answer QUESTION=ANSWER</code>, repeated as often as needed (repeat the same question to give it several answers).</p>
+
+<h2 id="exit">Exit status</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Status</th><th scope="col">Meaning</th></tr></thead><tbody><tr><td><code>0</code></td><td>Done.</td></tr><tr><td><code>1</code></td><td>Failed, for example Coincide isn’t reachable or a thread or model doesn’t exist. The reason goes to standard error.</td></tr><tr><td><code>2</code></td><td>Wrong usage: an unknown command or option, or a missing value.</td></tr><tr><td><code>3</code></td><td>The thread waits for an approval or an answer.</td></tr><tr><td><code>4</code></td><td>Timed out while waiting.</td></tr></tbody></table></div>
+<p>When Coincide isn’t running, or Command-line control is off, every command fails with “Couldn’t reach Coincide at … Is Coincide running, with Settings › General › Command-line control on?”</p>
+
+<h2 id="json">JSON output</h2>
+<p>With <code>--json</code>, each command prints one compact JSON value. Lists (<code>projects</code>, <code>threads</code>, <code>agents</code>, <code>questions</code>) print arrays. Commands that wait print an object with <code>threadID</code>, <code>state</code> (<code>done</code>, <code>needsInput</code> or <code>timedOut</code>), <code>replies</code> (an array of strings) and, when something waits for you, <code>waiting</code>; <code>new</code> and <code>send</code> add <code>delivery</code>. <code>read</code> prints <code>threadID</code>, <code>running</code> and <code>replies</code>.</p>
+<pre><code># Start a Codex chat, wait for the answer and keep only the text
+coincide new --agent codex --wait --json &quot;List the TODOs in this repo&quot; | jq -r '.replies[]'</code></pre>
+
+<h2 id="security">How it connects</h2>
+<p>The tool sends requests over a Unix socket in Coincide’s data folder, one line of JSON each way. The socket is created for your user only, and Coincide checks that each connection comes from your user. There’s no network access and no pairing. That also means any process running as your Mac user can control threads while Command-line control is on; turn it off in Settings › General › Command Line if you don’t want that. When the data folder’s path is too long for a socket (with a long <code>COINCIDE_DATA_DIR</code>, say), the socket goes in your temporary folder instead.</p>
+<p>A Debug build of Coincide (built from source) has its own data folder and socket, and its tool talks only to it. It leaves Terminal’s <code>coincide</code> to the installed app.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/command-line"><b>Command line</b><span>Start threads, send messages, wait for replies and answer approvals from Terminal, scripts or another agent.</span></a></li><li><a class="card" href="/docs/environment-variables"><b>Environment variables</b><span>Variables Coincide reads, the ones it gives agents, terminals and scripts, and those it sets for each agent account.</span></a></li><li><a class="card" href="/features/approvals"><b>Approvals and questions</b><span>Let agents run freely or approve each command and edit, per thread, and answer agents’ questions inline.</span></a></li><li><a class="card" href="/features/background-agents"><b>Background agents</b><span>A background agent host keeps every turn running when you quit, update or crash Coincide.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

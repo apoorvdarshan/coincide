@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Coincide FAQ: free, open source, agents, data, Intel</title>
+<meta name="description" content="Answers about Coincide: is it free and open source, which agents it supports, API keys, where data is stored, Intel Macs, updates and privacy.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/faq">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/faq">
+<meta property="og:title" content="Coincide FAQ: free, open source, agents, data, Intel">
+<meta property="og:description" content="Answers about Coincide: is it free and open source, which agents it supports, API keys, where data is stored, Intel Macs, updates and privacy.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Coincide FAQ: free, open source, agents, data, Intel">
+<meta name="twitter:description" content="Answers about Coincide: is it free and open source, which agents it supports, API keys, where data is stored, Intel Macs, updates and privacy.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"FAQPage","@id":"https://coincide.dev/faq#page","url":"https://coincide.dev/faq","name":"Coincide FAQ: free, open source, agents, data, Intel","description":"Answers about Coincide: is it free and open source, which agents it supports, API keys, where data is stored, Intel Macs, updates and privacy.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/faq#breadcrumb"},"mainEntity":[{"@type":"Question","name":"Is Coincide free?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Yes. Coincide is free, with no paid tier, account or sign-up. You do need at least one coding agent, and those are billed by their providers under your own plans or API keys; Coincide never resells, proxies or meters their tokens.\u003c/p>"}},{"@type":"Question","name":"Is Coincide open source?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Yes, under the MIT license. The source code, issues and releases are on \u003ca href=\"https://github.com/apoorvdarshan/coincide\">GitHub\u003c/a>. Coincide is a native AppKit port of \u003ca href=\"https://github.com/pingdotgg/t3code\">T3 Code\u003c/a>, which is also MIT-licensed.\u003c/p>"}},{"@type":"Question","name":"Which coding agents does Coincide support?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Six: \u003ca href=\"/agents/claude-code\">Claude Code\u003c/a>, \u003ca href=\"/agents/codex\">Codex\u003c/a>, \u003ca href=\"/agents/cursor\">Cursor\u003c/a> (its command-line agent), \u003ca href=\"/agents/grok-build\">Grok Build\u003c/a>, \u003ca href=\"/agents/opencode\">OpenCode\u003c/a> and \u003ca href=\"/agents/antigravity\">Antigravity\u003c/a>. Coincide runs each one’s own command-line tool, so you need to install and sign in to at least one.\u003c/p>"}},{"@type":"Question","name":"Do I need API keys?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>No. Coincide uses the sign-in each agent’s tool already has, so a Claude or ChatGPT subscription, a Cursor plan or a Grok login works as it does in Terminal. API keys are optional: you can add them as extra accounts for an agent, and Coincide keeps them in your macOS Keychain. See \u003ca href=\"/docs/agent-accounts\">Agent accounts\u003c/a>.\u003c/p>"}},{"@type":"Question","name":"Does Coincide send my code or conversations to a Coincide server?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>No. There’s no Coincide server or account, and Coincide’s own code has no ads, analytics or tracking. Your agents send your messages, and what they read for you, to their own providers, as they would in Terminal. The \u003ca href=\"/privacy\">privacy policy\u003c/a> lists every connection the app makes.\u003c/p>"}},{"@type":"Question","name":"Where does Coincide store my data?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>On your Mac: projects, threads, settings and history in \u003ccode>~/Library/Application Support/Coincide\u003c/code>, secrets in your login Keychain, and the browser’s data in \u003ccode>~/Library/WebKit\u003c/code>. \u003ca href=\"/docs/data-storage\">Where Coincide keeps its data\u003c/a> lists every location.\u003c/p>"}},{"@type":"Question","name":"Does Coincide run on Intel Macs?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Yes. Coincide is a universal app for Apple silicon and Intel Macs. It needs macOS 26 or later.\u003c/p>"}},{"@type":"Question","name":"Which version of macOS do I need?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>macOS 26 or later. Building it from source needs Xcode 27 or later.\u003c/p>"}},{"@type":"Question","name":"How do I install Coincide?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Download the notarized \u003ca href=\"https://github.com/apoorvdarshan/coincide/releases/latest/download/Coincide.dmg\">Coincide.dmg\u003c/a>, run \u003ccode>brew install --cask apoorvdarshan/tap/coincide\u003c/code>, or run \u003ccode>npx coincide-dev\u003c/code>. The \u003ca href=\"/download\">download page\u003c/a> explains each one.\u003c/p>"}},{"@type":"Question","name":"How does Coincide update?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Coincide checks GitHub for a new release once a day (you can turn this off in Settings › About) and when you choose Coincide › Check for Updates. It downloads and installs an update only when you ask, and installs it after you quit. See \u003ca href=\"/docs/updating\">Updating Coincide\u003c/a>.\u003c/p>"}},{"@type":"Question","name":"Can I switch agents in the middle of a conversation?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Yes. Type \u003ccode>/codex\u003c/code>, \u003ccode>/claude\u003c/code> or another agent’s command, or pick another agent’s model. The next agent gets a recap of the turns it missed and continues in the same folder; switch back, and the earlier agent resumes its own session. See \u003ca href=\"/features/switch-agents\">Switching agents\u003c/a>.\u003c/p>"}},{"@type":"Question","name":"Do agents keep working after I quit Coincide?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Yes, by default. Agents run in Coincide’s background agent host, so a turn keeps going when you quit or update the app, and when you reopen it the reply is still there. See \u003ca href=\"/features/background-agents\">Agents that outlive the app\u003c/a>.\u003c/p>"}},{"@type":"Question","name":"Is it safe to give an agent full access?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Full access lets an agent run commands and change files without asking, which is fast but means you trust it with your project and your Mac. Choose Ask for approval in the composer to approve each command and file change instead. Either way, in a git repository Coincide creates a checkpoint before each turn (on by default), so you can revert a turn’s changes. See \u003ca href=\"/features/approvals\">Approvals and full access\u003c/a>.\u003c/p>"}},{"@type":"Question","name":"Is there a Windows, Linux or Android version?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Not yet. Coincide is a native Mac app. Versions for Windows, Linux and Android are planned, each built natively; the “Not on a Mac?” buttons on the \u003ca href=\"/\">home page\u003c/a> count how many people want each one.\u003c/p>"}},{"@type":"Question","name":"Is there an iPhone or iPad app?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Coincide Remote, a companion for iPhone and iPad that connects directly to Coincide on your Mac, is coming soon. It hasn’t been released yet. See \u003ca href=\"/features/coincide-remote\">Coincide Remote\u003c/a>.\u003c/p>"}},{"@type":"Question","name":"What languages is Coincide available in?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>19: English, Chinese (Simplified and Traditional), Dutch, French, German, Hindi, Indonesian, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Spanish (Spain and Latin America), Turkish, Ukrainian and Vietnamese. The translations are machine-made and marked for review; \u003ca href=\"/docs/translations\">corrections are welcome\u003c/a>.\u003c/p>"}},{"@type":"Question","name":"Can I use Antigravity safely with Coincide?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Google’s Antigravity terms restrict third-party tools, and Google has suspended accounts for it. Coincide shows a notice and asks you to acknowledge it before you sign in. Gemini API keys aren’t affected. Read the \u003ca href=\"/agents/antigravity\">Antigravity page\u003c/a> before using a Google subscription.\u003c/p>"}},{"@type":"Question","name":"Is Coincide affiliated with Anthropic, OpenAI, Cursor, xAI or Google?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>No. Coincide is an independent open-source project by Apoorv Darshan. The agents’ names and logos are trademarks of their owners and are used only to identify them.\u003c/p>"}},{"@type":"Question","name":"How do I report a bug or ask for a feature?","acceptedAnswer":{"@type":"Answer","text":"\u003cp>Use the \u003ca href=\"https://github.com/apoorvdarshan/coincide/issues/new?template=bug_report.yml\">bug report\u003c/a> or \u003ca href=\"https://github.com/apoorvdarshan/coincide/issues/new?template=feature_request.yml\">feature request\u003c/a> forms on GitHub, or the \u003ccode>/bug\u003c/code> and \u003ccode>/feature\u003c/code> commands in the \u003ca href=\"https://discord.gg/DETrbhDVqw\">Coincide Discord\u003c/a>, which need no GitHub account. Both become public GitHub issues. Report security problems privately through \u003ca href=\"https://github.com/apoorvdarshan/coincide/security/advisories/new\">GitHub’s private vulnerability reporting\u003c/a>.\u003c/p>"}}]},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"FAQ","item":"https://coincide.dev/faq"}],"@id":"https://coincide.dev/faq#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq" aria-current="true">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><span aria-current="page">FAQ</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">FAQ</p>
+    <h1>Frequently asked questions</h1>
+    <p class="lede">Short answers, with links to the pages that go into detail.</p>
+    
+  </header>
+  <div class="prose faq">
+<h2 id="is-coincide-free">Is Coincide free?</h2>
+<p>Yes. Coincide is free, with no paid tier, account or sign-up. You do need at least one coding agent, and those are billed by their providers under your own plans or API keys; Coincide never resells, proxies or meters their tokens.</p>
+
+<h2 id="is-coincide-open-source">Is Coincide open source?</h2>
+<p>Yes, under the MIT license. The source code, issues and releases are on <a href="https://github.com/apoorvdarshan/coincide">GitHub</a>. Coincide is a native AppKit port of <a href="https://github.com/pingdotgg/t3code">T3 Code</a>, which is also MIT-licensed.</p>
+
+<h2 id="which-coding-agents-does-coincide-support">Which coding agents does Coincide support?</h2>
+<p>Six: <a href="/agents/claude-code">Claude Code</a>, <a href="/agents/codex">Codex</a>, <a href="/agents/cursor">Cursor</a> (its command-line agent), <a href="/agents/grok-build">Grok Build</a>, <a href="/agents/opencode">OpenCode</a> and <a href="/agents/antigravity">Antigravity</a>. Coincide runs each one’s own command-line tool, so you need to install and sign in to at least one.</p>
+
+<h2 id="do-i-need-api-keys">Do I need API keys?</h2>
+<p>No. Coincide uses the sign-in each agent’s tool already has, so a Claude or ChatGPT subscription, a Cursor plan or a Grok login works as it does in Terminal. API keys are optional: you can add them as extra accounts for an agent, and Coincide keeps them in your macOS Keychain. See <a href="/docs/agent-accounts">Agent accounts</a>.</p>
+
+<h2 id="does-coincide-send-my-code-or-conversations-to-a">Does Coincide send my code or conversations to a Coincide server?</h2>
+<p>No. There’s no Coincide server or account, and Coincide’s own code has no ads, analytics or tracking. Your agents send your messages, and what they read for you, to their own providers, as they would in Terminal. The <a href="/privacy">privacy policy</a> lists every connection the app makes.</p>
+
+<h2 id="where-does-coincide-store-my-data">Where does Coincide store my data?</h2>
+<p>On your Mac: projects, threads, settings and history in <code>~/Library/Application Support/Coincide</code>, secrets in your login Keychain, and the browser’s data in <code>~/Library/WebKit</code>. <a href="/docs/data-storage">Where Coincide keeps its data</a> lists every location.</p>
+
+<h2 id="does-coincide-run-on-intel-macs">Does Coincide run on Intel Macs?</h2>
+<p>Yes. Coincide is a universal app for Apple silicon and Intel Macs. It needs macOS 26 or later.</p>
+
+<h2 id="which-version-of-macos-do-i-need">Which version of macOS do I need?</h2>
+<p>macOS 26 or later. Building it from source needs Xcode 27 or later.</p>
+
+<h2 id="how-do-i-install-coincide">How do I install Coincide?</h2>
+<p>Download the notarized <a href="https://github.com/apoorvdarshan/coincide/releases/latest/download/Coincide.dmg">Coincide.dmg</a>, run <code>brew install --cask apoorvdarshan/tap/coincide</code>, or run <code>npx coincide-dev</code>. The <a href="/download">download page</a> explains each one.</p>
+
+<h2 id="how-does-coincide-update">How does Coincide update?</h2>
+<p>Coincide checks GitHub for a new release once a day (you can turn this off in Settings › About) and when you choose Coincide › Check for Updates. It downloads and installs an update only when you ask, and installs it after you quit. See <a href="/docs/updating">Updating Coincide</a>.</p>
+
+<h2 id="can-i-switch-agents-in-the-middle-of-a-conversat">Can I switch agents in the middle of a conversation?</h2>
+<p>Yes. Type <code>/codex</code>, <code>/claude</code> or another agent’s command, or pick another agent’s model. The next agent gets a recap of the turns it missed and continues in the same folder; switch back, and the earlier agent resumes its own session. See <a href="/features/switch-agents">Switching agents</a>.</p>
+
+<h2 id="do-agents-keep-working-after-i-quit-coincide">Do agents keep working after I quit Coincide?</h2>
+<p>Yes, by default. Agents run in Coincide’s background agent host, so a turn keeps going when you quit or update the app, and when you reopen it the reply is still there. See <a href="/features/background-agents">Agents that outlive the app</a>.</p>
+
+<h2 id="is-it-safe-to-give-an-agent-full-access">Is it safe to give an agent full access?</h2>
+<p>Full access lets an agent run commands and change files without asking, which is fast but means you trust it with your project and your Mac. Choose Ask for approval in the composer to approve each command and file change instead. Either way, in a git repository Coincide creates a checkpoint before each turn (on by default), so you can revert a turn’s changes. See <a href="/features/approvals">Approvals and full access</a>.</p>
+
+<h2 id="is-there-a-windows-linux-or-android-version">Is there a Windows, Linux or Android version?</h2>
+<p>Not yet. Coincide is a native Mac app. Versions for Windows, Linux and Android are planned, each built natively; the “Not on a Mac?” buttons on the <a href="/">home page</a> count how many people want each one.</p>
+
+<h2 id="is-there-an-iphone-or-ipad-app">Is there an iPhone or iPad app?</h2>
+<p>Coincide Remote, a companion for iPhone and iPad that connects directly to Coincide on your Mac, is coming soon. It hasn’t been released yet. See <a href="/features/coincide-remote">Coincide Remote</a>.</p>
+
+<h2 id="what-languages-is-coincide-available-in">What languages is Coincide available in?</h2>
+<p>19: English, Chinese (Simplified and Traditional), Dutch, French, German, Hindi, Indonesian, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Spanish (Spain and Latin America), Turkish, Ukrainian and Vietnamese. The translations are machine-made and marked for review; <a href="/docs/translations">corrections are welcome</a>.</p>
+
+<h2 id="can-i-use-antigravity-safely-with-coincide">Can I use Antigravity safely with Coincide?</h2>
+<p>Google’s Antigravity terms restrict third-party tools, and Google has suspended accounts for it. Coincide shows a notice and asks you to acknowledge it before you sign in. Gemini API keys aren’t affected. Read the <a href="/agents/antigravity">Antigravity page</a> before using a Google subscription.</p>
+
+<h2 id="is-coincide-affiliated-with-anthropic-openai-cur">Is Coincide affiliated with Anthropic, OpenAI, Cursor, xAI or Google?</h2>
+<p>No. Coincide is an independent open-source project by Apoorv Darshan. The agents’ names and logos are trademarks of their owners and are used only to identify them.</p>
+
+<h2 id="how-do-i-report-a-bug-or-ask-for-a-feature">How do I report a bug or ask for a feature?</h2>
+<p>Use the <a href="https://github.com/apoorvdarshan/coincide/issues/new?template=bug_report.yml">bug report</a> or <a href="https://github.com/apoorvdarshan/coincide/issues/new?template=feature_request.yml">feature request</a> forms on GitHub, or the <code>/bug</code> and <code>/feature</code> commands in the <a href="https://discord.gg/DETrbhDVqw">Coincide Discord</a>, which need no GitHub account. Both become public GitHub issues. Report security problems privately through <a href="https://github.com/apoorvdarshan/coincide/security/advisories/new">GitHub’s private vulnerability reporting</a>.</p>
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/download"><b>Download</b><span>The notarized DMG, Homebrew or npm, with system requirements, updates and uninstalling.</span></a></li><li><a class="card" href="/agents"><b>Agents</b><span>The six agents Coincide works with, and what each one supports.</span></a></li><li><a class="card" href="/privacy"><b>Privacy Policy</b><span>What stays on your Mac, what your agents send to their providers, and every other connection.</span></a></li><li><a class="card" href="/docs/troubleshooting"><b>Troubleshooting</b><span>What Coincide’s error messages mean and how to fix them: missing or signed-out agents, updates, Gatekeeper and more.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

@@ -54,6 +54,14 @@ export const EN = {
   },
 };
 
+// The copy buttons' accessible label, per language.
+const COPY = {
+  de: "Befehl kopieren", es: "Copiar el comando", fr: "Copier la commande", hi: "कमांड कॉपी करें", id: "Salin perintah",
+  it: "Copia il comando", ja: "コマンドをコピー", ko: "명령어 복사", nl: "Opdracht kopiëren", pl: "Kopiuj polecenie",
+  "pt-BR": "Copiar o comando", ru: "Скопировать команду", tr: "Komutu kopyala", uk: "Скопіювати команду",
+  vi: "Sao chép lệnh", "zh-Hans": "复制命令", "zh-Hant": "複製指令",
+};
+
 const FEATURE_PATHS = [
   "/features/switch-agents", "/features/model-picker", "/features/projects-and-threads", "/features/plan-mode",
   "/features/git", "/features/browser", "/features/background-agents", "/features/scheduled-tasks",
@@ -91,9 +99,9 @@ export function localizedHome({ lang, path, nativeName, ogLocale, title, descrip
 
 <h2>${t.installTitle}</h2>
 <p>${t.homebrew}</p>
-${cmd("brew install --cask apoorvdarshan/tap/coincide")}
+${cmd("brew install --cask apoorvdarshan/tap/coincide", COPY[lang])}
 <p>${t.npm}</p>
-${cmd("npx coincide-dev")}
+${cmd("npx coincide-dev", COPY[lang])}
 
 <h2>${t.agentsTitle}</h2>
 <p>${t.agentsText}</p>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Coincide vs the Claude desktop app for Claude Code</title>
+<meta name="description" content="How Coincide and Anthropic’s Claude desktop app differ for Claude Code: platforms, agents, sessions, worktrees and plans, checked against Anthropic’s docs.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/compare/claude-desktop">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/compare/claude-desktop">
+<meta property="og:title" content="Coincide vs the Claude desktop app for Claude Code">
+<meta property="og:description" content="How Coincide and Anthropic’s Claude desktop app differ for Claude Code: platforms, agents, sessions, worktrees and plans, checked against Anthropic’s docs.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Coincide vs the Claude desktop app for Claude Code">
+<meta name="twitter:description" content="How Coincide and Anthropic’s Claude desktop app differ for Claude Code: platforms, agents, sessions, worktrees and plans, checked against Anthropic’s docs.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Article","@id":"https://coincide.dev/compare/claude-desktop#page","url":"https://coincide.dev/compare/claude-desktop","name":"Coincide vs the Claude desktop app for Claude Code","description":"How Coincide and Anthropic’s Claude desktop app differ for Claude Code: platforms, agents, sessions, worktrees and plans, checked against Anthropic’s docs.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/compare/claude-desktop#breadcrumb"},"headline":"Coincide vs the Claude desktop app","datePublished":"2026-11-01","dateModified":"2026-11-01","author":{"@id":"https://coincide.dev/#apoorv"},"publisher":{"@id":"https://coincide.dev/#organization"},"image":"https://coincide.dev/img/og.jpg","mainEntityOfPage":"https://coincide.dev/compare/claude-desktop","about":{"@id":"https://coincide.dev/#app"}},{"@type":"Person","@id":"https://coincide.dev/#apoorv","name":"Apoorv Darshan","url":"https://github.com/apoorvdarshan","sameAs":["https://github.com/apoorvdarshan","https://x.com/apoorvdarshan","https://instagram.com/apoorvcodes"]},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Compare","item":"https://coincide.dev/compare"},{"@type":"ListItem","position":3,"name":"vs Claude desktop app","item":"https://coincide.dev/compare/claude-desktop"}],"@id":"https://coincide.dev/compare/claude-desktop#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/compare">Compare</a></li><li><span aria-current="page">vs Claude desktop app</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Compare</p>
+    <h1>Coincide vs the Claude desktop app</h1>
+    <p class="lede">Anthropic’s Claude desktop app has a Code tab that runs Claude Code with a graphical interface. Coincide also runs Claude Code in a Mac window, next to Codex, Cursor, Grok Build, OpenCode and Antigravity. Here’s how they differ.</p>
+    <p class="updated">Updated <time datetime="2026-11-01">November 1, 2026</time></p>
+  </header>
+  <div class="prose">
+
+<p>Both apps give Claude Code a window with sessions, diffs and a terminal. The main difference is scope: the Claude desktop app is Anthropic’s own app, built around Claude, with cloud and remote environments; Coincide is an open-source Mac app that drives the agent CLIs you already have, Claude Code among them, and lets one thread move between them. Facts about the Claude desktop app below come from Anthropic’s <a href="https://code.claude.com/docs/en/desktop-quickstart">desktop quickstart</a> and <a href="https://code.claude.com/docs/en/desktop">Code tab reference</a>.</p>
+
+<h2 id="at-a-glance">At a glance</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col"></th><th scope="col">Claude desktop app (Code tab)</th><th scope="col">Coincide</th></tr></thead><tbody><tr><td>Made by</td><td>Anthropic</td><td>Apoorv Darshan; open source under the MIT license</td></tr><tr><td>Platforms</td><td>macOS (universal), Windows (x64 and ARM64) and Linux in beta (Ubuntu and Debian), per the <a href="https://code.claude.com/docs/en/desktop-quickstart">quickstart</a></td><td>macOS 26 or later, Apple silicon and Intel</td></tr><tr><td>Agents</td><td>Claude Code</td><td>Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity</td></tr><tr><td>Claude Code itself</td><td>Included: “you don’t need to install Node.js or the CLI”</td><td>The <code>claude</code> CLI you install and sign in to</td></tr><tr><td>Plan for Claude Code</td><td>“Claude Code requires a Pro, Max, Ultra, Team, or Enterprise subscription”</td><td>Whatever your Claude Code sign-in allows: a Claude plan or an Anthropic API key. Coincide itself is free</td></tr><tr><td>Where sessions run</td><td>Local, Cloud (on Anthropic’s infrastructure), SSH, and WSL on Windows</td><td>On your Mac</td></tr><tr><td>Parallel work</td><td>Parallel sessions, each optionally in a Git worktree under <code>.claude/worktrees/</code></td><td>Threads in a sidebar, each optionally in a worktree under <code>~/.coincide/worktrees</code></td></tr></tbody></table></div>
+
+<h2 id="agents">One agent or several</h2>
+<p>The Code tab is Claude Code: its model picker offers Claude models. Coincide shows the models of every agent you’ve installed and signed in to in <a href="/features/model-picker">one picker</a>, and you can <a href="/features/switch-agents">switch agents in the middle of a thread</a>. Each agent keeps its own native session, and the one you switch to gets a recap of the turns it missed, so a Claude Code thread can continue in Codex and come back.</p>
+<p>When Coincide runs Claude Code, it talks to the CLI the way the Agent SDK does, with your existing sign-in. <a href="/agents/claude-code">Claude Code in Coincide</a> covers the details: models and effort levels, fast mode, steering a running turn, and usage limits.</p>
+
+<h2 id="environments">Where the agent runs</h2>
+<p>The Claude desktop app can run a session locally, in the cloud on Anthropic-managed infrastructure (Anthropic says cloud sessions “continue even if you close the app”), on a remote machine over SSH, or inside WSL on Windows. Coincide runs every agent on the Mac it’s installed on. To keep work going without the window, it starts agents in a <a href="/features/background-agents">background agent host</a> that keeps turns running when you quit or update Coincide, and <a href="/features/keep-awake">Keep Awake</a> can keep a MacBook from sleeping while they work.</p>
+
+<h2 id="permissions">Permissions and planning</h2>
+<p>Anthropic’s docs list five permission modes for the Code tab: Manual, Accept edits, Plan, Auto (a background classifier checks actions) and Bypass permissions. Coincide offers two access levels in its composer for every agent, <a href="/features/approvals">Ask for approval or Full access</a>, plus <a href="/features/plan-mode">plan mode</a>. For Claude Code, Ask for approval uses Claude Code’s default mode and Full access its bypass mode; if Claude Code’s own settings don’t allow bypassing, Coincide falls back to auto mode and then to asking.</p>
+
+<h2 id="review">Reviewing and shipping changes</h2>
+<p>The Code tab has a diff view where you comment on lines and submit the comments together, a <code>/code-review</code> command, and pull request monitoring through the GitHub CLI that can fix failing checks and merge when ready. Coincide shows <a href="/features/git">unified or side-by-side diffs</a> for uncommitted changes, the branch and each turn, keeps checkpoints to revert a turn, and <a href="/features/pull-requests">opens pull requests</a> on GitHub, GitLab, Bitbucket, Azure DevOps and Forgejo/Codeberg, with a GitHub PR workspace for checks and reviews.</p>
+
+<h2 id="tools">Browser, computer use and extras</h2>
+<ul>
+  <li><strong>Browser.</strong> Anthropic’s Browser pane previews your app and “uses a clean browser profile, separate from your personal browser.” Coincide’s <a href="/features/browser">browser</a> lives in each thread, keeps one persistent profile so sign-ins last, can import cookies from your browsers, and lets agents drive it when you allow it.</li>
+  <li><strong>Computer use.</strong> Anthropic describes computer use in the desktop app as “a research preview on macOS and Windows,” off by default and available on Pro, Max and Ultra plans. Coincide’s <a href="/features/computer-use">Computer Use</a> is also off by default; it runs a bundled copy of Cua Driver and works with any of its agents.</li>
+  <li><strong>Beyond code.</strong> The Claude desktop app also has Chat and Cowork, connectors (MCP servers with a graphical setup), plugins, skills and scheduled tasks. Coincide has <a href="/features/bots">bots</a>, <a href="/features/scheduled-tasks">scheduled tasks</a> and <a href="/features/dictation">dictation</a>, and no chat product of its own: every conversation goes to one of your agents.</li>
+</ul>
+
+<h2 id="claude-better">When the Claude desktop app is the better choice</h2>
+<ul>
+  <li>Claude Code is the only agent you use, and you want Anthropic’s own app and support.</li>
+  <li>You want sessions that run in Anthropic’s cloud, on a machine over SSH, or in WSL.</li>
+  <li>You work on Windows or Linux, or on a Mac older than macOS 26.</li>
+  <li>You want Chat, Cowork, connectors and plugins in the same app, or the Auto and Accept edits permission modes.</li>
+</ul>
+
+<h2 id="coincide-better">When Coincide is the better choice</h2>
+<ul>
+  <li>You use Claude Code alongside other agents, or want to switch agents within one conversation.</li>
+  <li>You want open-source software you can read and build yourself.</li>
+  <li>You want Mac features such as <a href="/features/appshots">Appshots</a>, Keep Awake and on-device dictation around your agents.</li>
+</ul>
+<p>The two can share one setup: Anthropic says the desktop app “reads the same settings files as the CLI,” and Coincide runs the CLI itself.</p>
+
+<p class="note">Checked on November 1, 2026 against Anthropic’s <a href="https://code.claude.com/docs/en/desktop-quickstart">desktop quickstart</a> and <a href="https://code.claude.com/docs/en/desktop">Code tab documentation</a>; products change, so check their sites. Claude and Claude Code are trademarks of Anthropic; Coincide isn’t affiliated with or endorsed by Anthropic.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/agents/claude-code"><b><i><img src="/img/logo-claude.png" alt="" width="21" height="21" loading="lazy"></i>Claude Code</b><span>Anthropic’s agent through its own CLI, with your Claude plan or API key. Plan mode, steering, subagents and fast mode.</span></a></li><li><a class="card" href="/features/switch-agents"><b>Switch agents mid-thread</b><span>Hand a conversation to another agent; it gets a recap of the turns it missed and works in the same folder.</span></a></li><li><a class="card" href="/features/approvals"><b>Approvals and questions</b><span>Let agents run freely or approve each command and edit, per thread, and answer agents’ questions inline.</span></a></li><li><a class="card" href="/compare/codex-app"><b>vs Codex app</b><span>OpenAI’s Codex workspace inside the ChatGPT app, or Codex as one of six agents in an open-source Mac app.</span></a></li><li><a class="card" href="/compare/terminal"><b>vs Terminal</b><span>The same agent CLIs, with or without a window around them: what Coincide adds and when Terminal is enough.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

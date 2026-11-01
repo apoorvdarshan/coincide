@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Coincide: agenci do kodowania w natywnej aplikacji na Maca</title>
+<meta name="description" content="Claude Code, Codex, Cursor, Grok Build, OpenCode i Antigravity obok siebie w jednej natywnej aplikacji na Maca, ze zmianą agenta w trakcie wątku.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/pl">
+<link rel="alternate" hreflang="en" href="https://coincide.dev/">
+<link rel="alternate" hreflang="de" href="https://coincide.dev/de">
+<link rel="alternate" hreflang="es" href="https://coincide.dev/es">
+<link rel="alternate" hreflang="fr" href="https://coincide.dev/fr">
+<link rel="alternate" hreflang="hi" href="https://coincide.dev/hi">
+<link rel="alternate" hreflang="id" href="https://coincide.dev/id">
+<link rel="alternate" hreflang="it" href="https://coincide.dev/it">
+<link rel="alternate" hreflang="ja" href="https://coincide.dev/ja">
+<link rel="alternate" hreflang="ko" href="https://coincide.dev/ko">
+<link rel="alternate" hreflang="nl" href="https://coincide.dev/nl">
+<link rel="alternate" hreflang="pl" href="https://coincide.dev/pl">
+<link rel="alternate" hreflang="pt-BR" href="https://coincide.dev/pt-br">
+<link rel="alternate" hreflang="ru" href="https://coincide.dev/ru">
+<link rel="alternate" hreflang="tr" href="https://coincide.dev/tr">
+<link rel="alternate" hreflang="uk" href="https://coincide.dev/uk">
+<link rel="alternate" hreflang="vi" href="https://coincide.dev/vi">
+<link rel="alternate" hreflang="zh-Hans" href="https://coincide.dev/zh-hans">
+<link rel="alternate" hreflang="zh-Hant" href="https://coincide.dev/zh-hant">
+<link rel="alternate" hreflang="x-default" href="https://coincide.dev/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="pl_PL">
+<meta property="og:url" content="https://coincide.dev/pl">
+<meta property="og:title" content="Coincide: agenci do kodowania w natywnej aplikacji na Maca">
+<meta property="og:description" content="Claude Code, Codex, Cursor, Grok Build, OpenCode i Antigravity obok siebie w jednej natywnej aplikacji na Maca, ze zmianą agenta w trakcie wątku.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Coincide: agenci do kodowania w natywnej aplikacji na Maca">
+<meta name="twitter:description" content="Claude Code, Codex, Cursor, Grok Build, OpenCode i Antigravity obok siebie w jednej natywnej aplikacji na Maca, ze zmianą agenta w trakcie wątku.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/pl#page","url":"https://coincide.dev/pl","name":"Coincide: agenci do kodowania w natywnej aplikacji na Maca","description":"Claude Code, Codex, Cursor, Grok Build, OpenCode i Antigravity obok siebie w jednej natywnej aplikacji na Maca, ze zmianą agenta w trakcie wątku.","inLanguage":"pl","isPartOf":{"@id":"https://coincide.dev/#website"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Przejdź do treści</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/pl"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Menu główne"><a href="/features">Funkcje</a><a href="/agents">Agenci</a><a href="/docs">Dokumentacja</a><a href="/download">Pobierz</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Pobierz Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  
+  <header class="page-head">
+    <p class="eyebrow">Bezpłatne i open source · macOS</p>
+    <div class="title-row"><span class="mark app"><img src="/img/icon-288.webp" alt="" width="64" height="64"></span><h1>Każdy agent do kodowania. Jedna natywna aplikacja na Maca.</h1></div>
+    <p class="lede">Coincide uruchamia Claude Code, Codex, Cursor, Grok Build, OpenCode i Antigravity w jednym oknie. Każdy agent korzysta z własnego narzędzia wiersza poleceń oraz z logowania lub klucza API, które już masz, a agenta możesz zmienić w połowie wątku.</p>
+    
+  </header>
+  <div class="prose">
+
+<div class="actions"><a class="btn main" href="https://github.com/apoorvdarshan/coincide/releases/latest/download/Coincide.dmg"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.8-1.6 0-3.1 1-4 2.4-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3 2.4 1.2 0 1.7-.8 3.1-.8 1.5 0 1.9.8 3.2.8 1.3 0 2.1-1.2 2.9-2.4.9-1.3 1.3-2.6 1.3-2.7 0 0-2.4-1-2.4-4zM14 5.4c.7-.8 1.1-1.9 1-3-1 0-2.1.7-2.8 1.5-.6.7-1.2 1.8-1 2.9 1 .1 2.1-.6 2.8-1.4z"/></svg>Pobierz na Maca</a><a class="btn alt" href="/download" hreflang="en">Wszystkie sposoby instalacji</a></div>
+<p class="note">Wymaga systemu macOS 26 lub nowszego na Macu z czipem Apple lub procesorem Intel. Każde wydanie jest podpisane certyfikatem Developer ID i poświadczone notarialnie przez Apple, a Coincide aktualizuje się samo.</p>
+
+<h2>Instalacja z wiersza poleceń</h2>
+<p>Przez Homebrew:</p>
+<div class="cmd"><code>brew install --cask apoorvdarshan/tap/coincide</code><button class="copy" type="button" hidden data-copy="brew install --cask apoorvdarshan/tap/coincide" aria-label="Kopiuj polecenie"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M4.5 13V6.2c0-1 .8-1.7 1.7-1.7H13"/></svg></button></div>
+<p>Przez npm (Node.js 18 lub nowszy), który sprawdza sumę kontrolną, podpis i poświadczenie notarialne pobranego pliku:</p>
+<div class="cmd"><code>npx coincide-dev</code><button class="copy" type="button" hidden data-copy="npx coincide-dev" aria-label="Kopiuj polecenie"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M4.5 13V6.2c0-1 .8-1.7 1.7-1.7H13"/></svg></button></div>
+
+<h2>Korzystaj z własnych agentów</h2>
+<p>Zainstaluj co najmniej jednego agenta i zaloguj się do niego. Coincide uruchamia na Twoim Macu własne narzędzie tego agenta, więc Twoje obecne subskrypcje nadal działają. Nigdy nie odsprzedaje Twoich tokenów, nie przepuszcza ich przez proxy i ich nie nalicza.</p>
+<ul class="cards"><li><a class="card" href="/agents/claude-code" hreflang="en"><b><i><img src="/img/logo-claude.png" alt="" width="21" height="21" loading="lazy"></i>Claude Code</b></a></li><li><a class="card" href="/agents/codex" hreflang="en"><b><i><img src="/img/logo-codex.png" alt="" width="21" height="21" loading="lazy"></i>Codex</b></a></li><li><a class="card" href="/agents/cursor" hreflang="en"><b><i><img src="/img/logo-cursor.png" alt="" width="21" height="21" loading="lazy"></i>Cursor</b></a></li><li><a class="card" href="/agents/grok-build" hreflang="en"><b><i><img src="/img/logo-grok.png" alt="" width="21" height="21" loading="lazy"></i>Grok Build</b></a></li><li><a class="card" href="/agents/opencode" hreflang="en"><b><i><img src="/img/logo-opencode.png" alt="" width="21" height="21" loading="lazy"></i>OpenCode</b></a></li><li><a class="card" href="/agents/antigravity" hreflang="en"><b><i><img src="/img/logo-antigravity.png" alt="" width="21" height="21" loading="lazy"></i>Antigravity</b></a></li></ul>
+
+<h2>Co daje Coincide</h2>
+<ul class="cards"><li><a class="card" href="/features/switch-agents" hreflang="en"><b>Zmiana agenta w trakcie wątku</b><span>Kolejny agent dostaje podsumowanie tur, które go ominęły, i kontynuuje w tym samym folderze. Gdy wrócisz do poprzedniego, wznowi on własną sesję.</span></a></li><li><a class="card" href="/features/model-picker" hreflang="en"><b>Jeden wybór modelu</b><span>Modele wszystkich zainstalowanych i zalogowanych agentów w jednym menu, z poziomem rozumowania i trybem szybkim tam, gdzie agent je obsługuje.</span></a></li><li><a class="card" href="/features/projects-and-threads" hreflang="en"><b>Projekty i wątki</b><span>Pasek boczny z wyszukiwaniem, przypinaniem, archiwizowaniem i odkładaniem na później oraz paleta poleceń pod ⌘K.</span></a></li><li><a class="card" href="/features/plan-mode" hreflang="en"><b>Tryb planowania i zatwierdzanie</b><span>Pozwól agentowi najpierw zaplanować pracę, zatwierdzaj każde polecenie i każdą zmianę pliku albo daj mu pełny dostęp.</span></a></li><li><a class="card" href="/features/git" hreflang="en"><b>Wbudowany Git</b><span>Diffy, punkty kontrolne dla każdej tury, worktree, commity, pushe i pull requesty.</span></a></li><li><a class="card" href="/features/browser" hreflang="en"><b>Przeglądarka w każdym wątku</b><span>Obok terminala w każdym wątku. Agenci mogą otwierać strony, czytać je i klikać w nich, jeśli na to pozwolisz.</span></a></li><li><a class="card" href="/features/background-agents" hreflang="en"><b>Agenci działają dalej</b><span>Proces w tle kontynuuje rozpoczęte tury, gdy zamkniesz lub zaktualizujesz Coincide.</span></a></li><li><a class="card" href="/features/scheduled-tasks" hreflang="en"><b>Zaplanowane zadania i boty</b><span>Wysyłaj prompt w każdy dzień roboczy o dziewiątej albo nadaj botowi osobowość i zadanie.</span></a></li><li><a class="card" href="/features/computer-use" hreflang="en"><b>Obsługa komputera</b><span>Domyślnie wyłączona. Po jej włączeniu agenci mogą obsługiwać inne aplikacje na Macu własnym kursorem.</span></a></li><li><a class="card" href="/features/dictation" hreflang="en"><b>Dyktowanie</b><span>Rozpoznawanie mowy Apple na urządzeniu, lokalny model Whisper albo Twój własny klucz OpenAI lub Groq.</span></a></li><li><a class="card" href="/features/usage-dashboard" hreflang="en"><b>Panel użycia</b><span>Limity użycia Twoich planów dla każdego agenta oraz lokalna historia ostatnich tur.</span></a></li><li><a class="card" href="/features/command-line" hreflang="en"><b>Polecenie coincide</b><span>Agenci i skrypty mogą z Terminala tworzyć wątki, wysyłać wiadomości i czekać na odpowiedzi.</span></a></li></ul>
+
+<h2>Coincide po polsku</h2>
+<p>Coincide jest dostępne w 19 językach. Korzysta z języka wybranego dla Twojego Maca albo z tego, który ustawisz dla Coincide w Ustawieniach systemowych › Ogólne › Język i region. Tłumaczenia są maszynowe i oznaczone do weryfikacji, więc poprawki są mile widziane. <a href="/docs/translations" hreflang="en">Jak pomóc w tłumaczeniu</a></p>
+
+<h2>Wkrótce: Coincide Remote</h2>
+<p>Aplikacja towarzysząca na iPhone’a i iPada, która łączy się bezpośrednio z Coincide na Twoim Macu przez Twoją własną sieć lub Tailscale. Nie została jeszcze wydana.</p>
+
+<h2>Open source</h2>
+<p>Coincide jest bezpłatne i udostępnione na licencji MIT. Kod źródłowy, zgłoszenia i wydania są na GitHubie, a społeczność spotyka się na Discordzie. Twórcą Coincide jest Apoorv Darshan.</p>
+<div class="actions"><a class="btn alt" href="https://github.com/apoorvdarshan/coincide">Coincide na GitHubie</a><a class="btn alt" href="https://discord.gg/DETrbhDVqw">Dołącz do Discorda</a></div>
+<p class="note">Dokumentacja i strony z opisem funkcji w tym serwisie są po angielsku.</p>
+  </div>
+  
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>Natywna aplikacja na Maca dla agentów do kodowania, których już używasz. Bezpłatna i open source na licencji MIT.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+<script>
+  // Copy buttons for commands: shown only when there's a clipboard to copy to.
+  document.querySelectorAll('.cmd .copy').forEach(button => {
+    if (!navigator.clipboard) return;
+    button.hidden = false;
+    button.addEventListener('click', () => navigator.clipboard.writeText(button.dataset.copy).then(() => {
+      button.classList.add('done');
+      setTimeout(() => button.classList.remove('done'), 1400);
+    }).catch(() => {}));
+  });
+</script>
+</body>
+</html>

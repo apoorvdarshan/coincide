@@ -24,9 +24,9 @@ export const HANDWRITTEN = [
   { file: "index.html", path: "/", updated: "2026-11-01", lang: "en", group: "home", name: "Home",
     title: "Coincide: every coding agent in one native Mac app" },
   { file: "privacy/index.html", path: "/privacy", updated: "2026-11-01", lang: "en", name: "Privacy Policy",
-    title: "Privacy Policy · Coincide" },
+    title: "Privacy Policy · Coincide", summary: "What stays on your Mac, what your agents send to their providers, and every other connection." },
   { file: "terms/index.html", path: "/terms", updated: "2026-11-01", lang: "en", name: "Terms of Service",
-    title: "Terms of Service · Coincide" },
+    title: "Terms of Service · Coincide", summary: "The MIT-licensed software, your agent accounts, community rules and the limits of responsibility." },
 ];
 
 /** Structured data for a hand-written page. */
@@ -140,7 +140,10 @@ function makeSite(pages) {
     if (byPath.has(page.path)) throw new Error(`two pages for ${page.path}`);
     byPath.set(page.path, page);
   }
-  const named = new Map([["/", { name: "Home", path: "/" }], ...[...byPath].map(([p, page]) => [p, page])]);
+  const named = new Map([
+    ...HANDWRITTEN.map((h) => [h.path, { name: h.name, path: h.path, summary: h.summary ?? "" }]),
+    ...[...byPath].map(([p, page]) => [p, page]),
+  ]);
   // Links to pages that don't exist are collected and fail the build (warnings with --dry).
   const missing = new Set();
   const get = (path) => {

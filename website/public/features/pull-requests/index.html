@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Commits, pushes and pull requests · Coincide</title>
+<meta name="description" content="Commit, push and open pull or merge requests on GitHub, GitLab, Azure DevOps, Forgejo or Bitbucket from Coincide, with agent-written messages.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/pull-requests">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/pull-requests">
+<meta property="og:title" content="Commits, pushes and pull requests · Coincide">
+<meta property="og:description" content="Commit, push and open pull or merge requests on GitHub, GitLab, Azure DevOps, Forgejo or Bitbucket from Coincide, with agent-written messages.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Commits, pushes and pull requests · Coincide">
+<meta name="twitter:description" content="Commit, push and open pull or merge requests on GitHub, GitLab, Azure DevOps, Forgejo or Bitbucket from Coincide, with agent-written messages.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/pull-requests#page","url":"https://coincide.dev/features/pull-requests","name":"Commits, pushes and pull requests · Coincide","description":"Commit, push and open pull or merge requests on GitHub, GitLab, Azure DevOps, Forgejo or Bitbucket from Coincide, with agent-written messages.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/pull-requests#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Commits and pull requests","item":"https://coincide.dev/features/pull-requests"}],"@id":"https://coincide.dev/features/pull-requests#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Commits and pull requests</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>Commits, pushes and pull requests</h1>
+    <p class="lede">When an agent’s work is ready, ship it from the diff panel: one action can create a branch, commit, push and open the pull request, with the message and description written by the thread’s own agent. For GitHub, a pull request workspace sits beside the conversation.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2>The Git actions button</h2>
+<p>At the foot of the <a href="/features/git">diff panel</a> a bar shows the branch, how it stands against its upstream, and a Git action button: a primary action for the current state plus a menu with <strong>Commit…</strong>, <strong>Push</strong>, <strong>Pull</strong> and <strong>Create Pull Request</strong> (Create Merge Request on GitLab). Actions run in sequence, so one click can commit, push and open the request. Pushing to, or opening a request from, the default branch asks first.</p>
+
+<h2>Committing</h2>
+<p>The commit sheet lists the changed files to include and a message field. Leave the message empty and the thread’s agent writes one from the changes you’re committing. <strong>Use a Feature Branch</strong> creates a branch named after the change and commits there, which is handy when you’re on <code>main</code>.</p>
+<p>The agent writes commit messages and pull request descriptions in a separate read-only session: it runs in plan mode and every approval is declined, so it can’t change anything. For a pull request it also gets a summary of the thread that made the change. If no agent is ready or it doesn’t answer in time, Coincide falls back to a plain summary of the changed files or commits.</p>
+
+<h2>Pull and merge requests on five hosts</h2>
+<p>Coincide reads the repository’s remote to tell which host it’s on, then uses that host’s own command-line tool with your existing sign-in. Nothing goes through a Coincide server.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Host</th><th scope="col">How the request is opened</th></tr></thead><tbody><tr><td>GitHub (and GitHub Enterprise)</td><td>GitHub CLI, <code>gh</code></td></tr><tr><td>GitLab</td><td>GitLab CLI, <code>glab</code>, as a merge request</td></tr><tr><td>Azure DevOps</td><td>Azure CLI, <code>az</code>, with its <code>azure-devops</code> extension</td></tr><tr><td>Forgejo and Codeberg</td><td>Gitea CLI, <code>tea</code>, which signs in to Forgejo servers</td></tr><tr><td>Bitbucket</td><td>On the web: Coincide opens Bitbucket’s page for creating the pull request</td></tr></tbody></table></div>
+<p>If an existing request already covers the branch, Coincide finds it instead of opening another. Without the host’s CLI signed in, hosts other than GitHub open their web page for creating the request. Coincide runs these tools so they never prompt and never install or update anything.</p>
+
+<h2>The GitHub pull request workspace</h2>
+<p>View › Show Pull Requests opens a panel beside the conversation, sharing the inspector with the diff, for the thread’s repository on GitHub. It lists <strong>Open Pull Requests</strong>, <strong>My Pull Requests</strong> or <strong>Review Requested</strong>, and for one pull request shows its description, reviews and checks with their status. From there you can:</p>
+<ul>
+  <li><strong>Review…</strong>: approve, comment or request changes with a message. The review is attached to the exact revision you looked at.</li>
+  <li><strong>Merge…</strong>: create a merge commit, squash and merge, or rebase and merge, as the repository allows. Coincide merges the revision you reviewed, so commits pushed after you looked aren’t merged by surprise. The branch stays, local and remote.</li>
+  <li><strong>Mark Ready for Review</strong> for a draft.</li>
+  <li><strong>Check Out in New Thread</strong>: creates a worktree on the pull request’s branch and opens a thread in it, so an agent can work on the PR without touching your checkout. It uses <code>gh pr checkout</code>, which also handles branches from forks.</li>
+  <li><strong>Mention in Message</strong>, or type <code>#</code> in the composer, to link a pull request in what you send.</li>
+</ul>
+
+<h2>What you need</h2>
+<ul>
+  <li>The host’s CLI installed and signed in, for example <code>gh auth login</code>. The pull request workspace needs <code>gh</code> and a repository on GitHub; for other hosts it says the repository is elsewhere.</li>
+  <li>A remote to push to. Without one, only Commit is available.</li>
+  <li>Committing works in any Git repository, including a thread’s <a href="/features/worktrees">worktree</a>.</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/git"><b>Diffs and checkpoints</b><span>See what each turn changed, put files back the way they were before it, and fork or rewind the conversation.</span></a></li><li><a class="card" href="/features/worktrees"><b>Worktrees</b><span>Run each thread in its own Git worktree and branch, so parallel agents never edit the same checkout.</span></a></li><li><a class="card" href="/features/composer"><b>Composer</b><span>Attachments, @ file mentions, slash commands, quotes and diff comments, and steering or queueing while an agent works.</span></a></li><li><a class="card" href="/features/approvals"><b>Approvals and questions</b><span>Let agents run freely or approve each command and edit, per thread, and answer agents’ questions inline.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

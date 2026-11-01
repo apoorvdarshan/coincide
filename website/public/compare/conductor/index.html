@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Coincide vs Conductor for parallel coding agents</title>
+<meta name="description" content="Coincide and Conductor both run coding agents on your Mac. Compare agents, workspaces, sign-in, mid-thread switching and data, using Conductor’s docs.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/compare/conductor">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/compare/conductor">
+<meta property="og:title" content="Coincide vs Conductor for parallel coding agents">
+<meta property="og:description" content="Coincide and Conductor both run coding agents on your Mac. Compare agents, workspaces, sign-in, mid-thread switching and data, using Conductor’s docs.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Coincide vs Conductor for parallel coding agents">
+<meta name="twitter:description" content="Coincide and Conductor both run coding agents on your Mac. Compare agents, workspaces, sign-in, mid-thread switching and data, using Conductor’s docs.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Article","@id":"https://coincide.dev/compare/conductor#page","url":"https://coincide.dev/compare/conductor","name":"Coincide vs Conductor for parallel coding agents","description":"Coincide and Conductor both run coding agents on your Mac. Compare agents, workspaces, sign-in, mid-thread switching and data, using Conductor’s docs.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/compare/conductor#breadcrumb"},"headline":"Coincide vs Conductor","datePublished":"2026-11-01","dateModified":"2026-11-01","author":{"@id":"https://coincide.dev/#apoorv"},"publisher":{"@id":"https://coincide.dev/#organization"},"image":"https://coincide.dev/img/og.jpg","mainEntityOfPage":"https://coincide.dev/compare/conductor","about":{"@id":"https://coincide.dev/#app"}},{"@type":"Person","@id":"https://coincide.dev/#apoorv","name":"Apoorv Darshan","url":"https://github.com/apoorvdarshan","sameAs":["https://github.com/apoorvdarshan","https://x.com/apoorvdarshan","https://instagram.com/apoorvcodes"]},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Compare","item":"https://coincide.dev/compare"},{"@type":"ListItem","position":3,"name":"vs Conductor","item":"https://coincide.dev/compare/conductor"}],"@id":"https://coincide.dev/compare/conductor#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/compare">Compare</a></li><li><span aria-current="page">vs Conductor</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Compare</p>
+    <h1>Coincide vs Conductor</h1>
+    <p class="lede">Conductor and Coincide are both Mac apps for running several coding agents at once, on your own machine, with your own subscriptions. They organize the work differently. Here’s a side-by-side based on each one’s documentation.</p>
+    <p class="updated">Updated <time datetime="2026-11-01">November 1, 2026</time></p>
+  </header>
+  <div class="prose">
+
+<p>Conductor’s <a href="https://www.conductor.build/docs">documentation</a> says it “lets you run Claude Code, Codex, Cursor, and OpenCode in parallel,” giving each task its own workspace, branch, files, terminal, diff and review path, and its <a href="https://www.conductor.build/docs/faq">FAQ</a> says it “always runs on your Mac.” Coincide also runs agents in parallel on your Mac, organized as threads in projects. Facts about Conductor below come from those pages and the others linked.</p>
+
+<h2 id="at-a-glance">At a glance</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col"></th><th scope="col">Conductor</th><th scope="col">Coincide</th></tr></thead><tbody><tr><td>Platform</td><td>Mac (“Run parallel coding agents on your Mac”)</td><td>macOS 26 or later, Apple silicon and Intel</td></tr><tr><td>Agents</td><td>Claude Code, Codex, Cursor and OpenCode (<a href="https://www.conductor.build/docs">docs</a>)</td><td>Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity</td></tr><tr><td>Unit of work</td><td>A workspace per task, with its own branch, made with Git worktrees (<a href="https://www.conductor.build/docs/concepts/workspaces-and-branches">docs</a>)</td><td>A thread per conversation; a worktree when you want one, under <code>~/.coincide/worktrees</code></td></tr><tr><td>Agent binaries</td><td>“Conductor comes with Claude Code preinstalled” and can use a system copy instead (<a href="https://www.conductor.build/docs/reference/harnesses/claude-code">docs</a>); Cursor sessions use Cursor Agent through the Cursor API</td><td>The CLIs you install and sign in to; Antigravity’s runtime is downloaded from Google when you set it up</td></tr><tr><td>Sign-in</td><td>Credentials already on your Mac, or keys you set in Settings (<a href="https://www.conductor.build/docs/faq">FAQ</a>)</td><td>Each CLI’s own sign-in, or API keys stored in your Keychain</td></tr><tr><td>Price</td><td>The FAQ calls Conductor “an amazing free tool” and says the team plans to charge for future collaboration features</td><td>Free; open source under the MIT license</td></tr><tr><td>App data</td><td><code>~/Library/Application Support/com.conductor.app</code> and <code>~/conductor</code></td><td><code>~/Library/Application Support/Coincide</code></td></tr></tbody></table></div>
+
+<h2 id="organizing">Workspaces or threads</h2>
+<p>Conductor starts from the task: each workspace is an isolated checkout on its own branch, and when the work is ready you review the diff, open a pull request, merge and archive the workspace. Coincide starts from the conversation. A <a href="/features/projects-and-threads">thread</a> can work directly in your checkout or in its own <a href="/features/worktrees">worktree</a>, and Coincide also has chats that don’t belong to any project. Both show diffs and support pull requests; Coincide adds <a href="/features/git">per-turn checkpoints</a> so you can revert a single turn.</p>
+
+<h2 id="switching">Changing agents</h2>
+<p>Coincide can <a href="/features/switch-agents">switch agents inside one thread</a>: each agent keeps its own native session, and the one you switch to gets a recap of the turns it missed, then continues in the same folder. That’s useful when one agent gets stuck, or when you want a second opinion on the same work.</p>
+
+<h2 id="agents">Agents and how they’re run</h2>
+<p>Conductor’s <a href="https://www.conductor.build/docs/reference/harnesses">harness docs</a> say its Claude Code and Codex come bundled, so you don’t install them separately. Coincide doesn’t bundle agent CLIs: it uses the ones on your Mac, with the sign-ins you already have, and tells you in Settings when one is missing or signed out. It also supports two agents Conductor’s docs don’t list, <a href="/agents/grok-build">Grok Build</a> and <a href="/agents/antigravity">Antigravity</a>. Each <a href="/agents">agent page</a> explains how Coincide drives that agent and what it can and can’t do there.</p>
+<p>Both tools leave billing with your providers. Conductor’s <a href="https://www.conductor.build/docs/reference/harnesses/claude-code">Claude Code docs</a> warn that an <code>ANTHROPIC_API_KEY</code> set in Conductor or in the shell that launches it may be used instead of your Claude subscription.</p>
+
+<h2 id="more">Beyond running agents</h2>
+<p>Coincide also includes tools that aren’t about parallel coding as such: a <a href="/features/browser">browser per thread</a> that agents can drive, <a href="/features/computer-use">Computer Use</a> for other Mac apps, <a href="/features/scheduled-tasks">scheduled tasks</a>, <a href="/features/bots">bots</a>, <a href="/features/dictation">dictation</a> and a <a href="/features/background-agents">background agent host</a> that keeps turns running after you quit. Conductor’s docs cover areas of their own, such as checks, agent modes and an API with an MCP server.</p>
+
+<h2 id="conductor-better">When Conductor is the better choice</h2>
+<ul>
+  <li>You think in tasks, each with its own branch and pull request, and want that structure built in.</li>
+  <li>You want Claude Code and Codex to come with the app rather than install them yourself.</li>
+  <li>You use Conductor’s own features, such as its API and MCP server.</li>
+</ul>
+
+<h2 id="coincide-better">When Coincide is the better choice</h2>
+<ul>
+  <li>You want to change agents within one conversation, or use Grok Build or Antigravity.</li>
+  <li>You want chats and bots alongside project work, or browser, Computer Use and schedules around your agents.</li>
+  <li>You want an open-source app you can read and build yourself.</li>
+</ul>
+
+<p class="note">Checked on November 1, 2026 against <a href="https://www.conductor.build">conductor.build</a>, Conductor’s <a href="https://www.conductor.build/docs">docs</a>, <a href="https://www.conductor.build/docs/faq">FAQ</a>, <a href="https://www.conductor.build/docs/concepts/workspaces-and-branches">workspaces</a>, <a href="https://www.conductor.build/docs/reference/harnesses">harnesses</a> and <a href="https://www.conductor.build/docs/reference/harnesses/claude-code">Claude Code</a> pages; products change, so check their sites. Conductor is a trademark of its owner; Coincide isn’t affiliated with or endorsed by Conductor.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/worktrees"><b>Worktrees</b><span>Run each thread in its own Git worktree and branch, so parallel agents never edit the same checkout.</span></a></li><li><a class="card" href="/features/switch-agents"><b>Switch agents mid-thread</b><span>Hand a conversation to another agent; it gets a recap of the turns it missed and works in the same folder.</span></a></li><li><a class="card" href="/agents"><b>Agents</b><span>The six agents Coincide works with, and what each one supports.</span></a></li><li><a class="card" href="/compare/t3-code"><b>vs T3 Code</b><span>The project Coincide is ported from: cross-platform Electron and web, or native AppKit on the Mac.</span></a></li><li><a class="card" href="/compare/codex-app"><b>vs Codex app</b><span>OpenAI’s Codex workspace inside the ChatGPT app, or Codex as one of six agents in an open-source Mac app.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

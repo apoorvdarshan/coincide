@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OpenCode in a native Mac app · Coincide</title>
+<meta name="description" content="Use OpenCode in Coincide through its local server with any provider OpenCode supports: plan agent, steering, OpenCode Go limits and Zen balance.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/agents/opencode">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/agents/opencode">
+<meta property="og:title" content="OpenCode in a native Mac app · Coincide">
+<meta property="og:description" content="Use OpenCode in Coincide through its local server with any provider OpenCode supports: plan agent, steering, OpenCode Go limits and Zen balance.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="OpenCode in a native Mac app · Coincide">
+<meta name="twitter:description" content="Use OpenCode in Coincide through its local server with any provider OpenCode supports: plan agent, steering, OpenCode Go limits and Zen balance.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/agents/opencode#page","url":"https://coincide.dev/agents/opencode","name":"OpenCode in a native Mac app · Coincide","description":"Use OpenCode in Coincide through its local server with any provider OpenCode supports: plan agent, steering, OpenCode Go limits and Zen balance.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/agents/opencode#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Agents","item":"https://coincide.dev/agents"},{"@type":"ListItem","position":3,"name":"OpenCode","item":"https://coincide.dev/agents/opencode"}],"@id":"https://coincide.dev/agents/opencode#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents" aria-current="true">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/agents">Agents</a></li><li><span aria-current="page">OpenCode</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Agent · open source</p>
+    <div class="title-row"><span class="mark"><img src="/img/logo-opencode.png" alt="OpenCode logo" width="38" height="38"></span><h1>OpenCode in Coincide</h1></div>
+    <p class="lede">OpenCode is an open-source coding agent that works with many model providers. Coincide runs its local server on your Mac and shows its sessions as native threads, with your OpenCode providers and keys.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2 id="how">How Coincide runs OpenCode</h2>
+<p>Coincide starts its own <code>opencode serve</code> on <code>127.0.0.1</code>, on a random port and with a random password, and talks to it over OpenCode’s HTTP API. OpenCode then calls the model providers you connected to it. The server listens only on your Mac and is shared by Coincide’s OpenCode threads.</p>
+<p>Coincide needs OpenCode 2 or later; with an older version it asks you to run <code>opencode upgrade</code>. It finds <code>opencode</code> on your shell’s <code>PATH</code>, in <code>~/.opencode/bin</code> and the usual install folders, or at a custom path set in Settings › OpenCode.</p>
+
+<h2 id="setup">Set it up</h2>
+<ol>
+  <li><strong>Install OpenCode</strong> (see <a href="https://opencode.ai">opencode.ai</a> for other ways):
+<div class="cmd"><code>curl -fsSL https://opencode.ai/install | bash</code><button class="copy" type="button" hidden data-copy="curl -fsSL https://opencode.ai/install | bash" aria-label="Copy the OpenCode install command"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M4.5 13V6.2c0-1 .8-1.7 1.7-1.7H13"/></svg></button></div></li>
+  <li><strong>Connect a provider</strong>, such as OpenCode Zen or your own provider account:
+<div class="cmd"><code>opencode auth login</code><button class="copy" type="button" hidden data-copy="opencode auth login" aria-label="Copy the provider sign-in command"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M4.5 13V6.2c0-1 .8-1.7 1.7-1.7H13"/></svg></button></div></li>
+  <li><strong>Open Settings › OpenCode</strong> and choose Check Again. Coincide treats OpenCode as ready once its server lists at least one model.</li>
+  <li>Choose an OpenCode model in the composer, or type <code>/opencode</code> to move the current thread to OpenCode.</li>
+</ol>
+<p>In Settings › OpenCode you can also add accounts. A login account gets its own OpenCode data folder (<code>XDG_DATA_HOME</code>) and its own <code>opencode auth login</code>. An API-key account can use OpenCode Zen, Anthropic, OpenAI, OpenRouter, Gemini, xAI, Groq, DeepSeek or Mistral, with the key kept in your Keychain. <a href="/docs/agent-accounts">Agent accounts</a> explains the options.</p>
+
+<h2 id="models">Models</h2>
+<p>Models come from OpenCode’s server as <code>provider/model</code> IDs, so every model from every provider you connected shows up in Coincide’s <a href="/features/model-picker">model picker</a>. Where a model has reasoning variants, Coincide offers them as reasoning effort. OpenCode models have no fast mode option.</p>
+
+<h2 id="features">What works with OpenCode</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">In Coincide</th><th scope="col">With OpenCode</th></tr></thead><tbody><tr><td>Plan mode</td><td>Uses OpenCode’s own <code>plan</code> agent, with file edits denied while planning.</td></tr><tr><td>Approvals</td><td>Ask for approval asks before shell commands, file edits and access outside the project folder.</td></tr><tr><td>Full access</td><td>Allows everything and answers any remaining permission requests automatically.</td></tr><tr><td>Questions</td><td>OpenCode’s forms are shown inline. Forms with links or hidden or conditional fields are declined, and OpenCode is told why.</td></tr><tr><td>Steering</td><td>Messages sent while OpenCode works steer the running turn.</td></tr><tr><td>Attachments</td><td>Images are sent to OpenCode as files; other files are mentioned by path.</td></tr><tr><td>Subagents</td><td>OpenCode’s subagent tasks and their child sessions are followed in the turn.</td></tr><tr><td>Resuming</td><td>Each thread reloads its own OpenCode session, and Coincide keeps the session’s title in step with the thread’s.</td></tr><tr><td>Usage limits</td><td>OpenCode Go plan windows, read with the key OpenCode stores. Your OpenCode Zen balance is available as an opt-in reading from the OpenCode Console in Settings › Usage.</td></tr></tbody></table></div>
+
+<h2 id="why">Why use OpenCode in Coincide</h2>
+<p>OpenCode lets one agent reach many providers, including ones the other agents don’t cover, such as OpenRouter, Groq, DeepSeek or Mistral. In Coincide those models sit in the same picker as Claude Code’s and Codex’s, and you can <a href="/features/switch-agents">switch a thread</a> between OpenCode and another agent when one of them is a better fit for the next step.</p>
+
+<h2 id="limits">Limitations</h2>
+<ul>
+  <li>OpenCode 1.x isn’t supported.</li>
+  <li>Some OpenCode form types aren’t supported and are declined.</li>
+  <li>Earlier OpenCode sessions can’t be imported; <a href="/docs/import-cli-sessions">importing</a> works for Claude Code and Codex.</li>
+  <li>Bot personalities are sent with the first message rather than as a system prompt.</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/model-picker"><b>Model picker</b><span>Every installed agent’s models in one searchable menu, with favorites, hidden models, reasoning effort and speed.</span></a></li><li><a class="card" href="/features/composer"><b>Composer</b><span>Attachments, @ file mentions, slash commands, quotes and diff comments, and steering or queueing while an agent works.</span></a></li><li><a class="card" href="/docs/agent-accounts"><b>Accounts and API keys</b><span>Add a second subscription login or an API key to any agent, pick it per thread, and see where each key is kept.</span></a></li><li><a class="card" href="/features/usage-dashboard"><b>Usage dashboard</b><span>Every agent’s plan limits and credits in one place, token activity charts and a menu bar gauge.</span></a></li><li><a class="card" href="/agents/claude-code"><b><i><img src="/img/logo-claude.png" alt="" width="21" height="21" loading="lazy"></i>Claude Code</b><span>Anthropic’s agent through its own CLI, with your Claude plan or API key. Plan mode, steering, subagents and fast mode.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+<script>
+  // Copy buttons for commands: shown only when there's a clipboard to copy to.
+  document.querySelectorAll('.cmd .copy').forEach(button => {
+    if (!navigator.clipboard) return;
+    button.hidden = false;
+    button.addEventListener('click', () => navigator.clipboard.writeText(button.dataset.copy).then(() => {
+      button.classList.add('done');
+      setTimeout(() => button.classList.remove('done'), 1400);
+    }).catch(() => {}));
+  });
+</script>
+</body>
+</html>

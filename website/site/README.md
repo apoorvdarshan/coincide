@@ -12,7 +12,11 @@ node website/site/build.mjs --dry     # build in memory and list problems, writi
 node --test website/site/             # what CI checks: files up to date, links, metadata, structured data
 ```
 
-`/changelog` is rendered from the repository's `CHANGELOG.md`, so rebuild the site after adding a release's notes.
+`/changelog` and the version shown on the site come from the repository's `CHANGELOG.md`, so rebuild the site after
+adding a release's notes.
+
+After deploying, `node website/site/indexnow.mjs` tells IndexNow search engines (Bing, Yandex and others) about every
+page in the sitemap, or only the paths you pass. Its key is the public `<key>.txt` file in `public/`.
 
 ## A page
 

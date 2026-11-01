@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Troubleshooting agents, updates and installs · Coincide</title>
+<meta name="description" content="Fixes for agents Coincide can’t find or that aren’t signed in, outdated CLIs, Antigravity sign-in, Gatekeeper, updates, the agent host and the CLI.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/docs/troubleshooting">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/docs/troubleshooting">
+<meta property="og:title" content="Troubleshooting agents, updates and installs · Coincide">
+<meta property="og:description" content="Fixes for agents Coincide can’t find or that aren’t signed in, outdated CLIs, Antigravity sign-in, Gatekeeper, updates, the agent host and the CLI.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Troubleshooting agents, updates and installs · Coincide">
+<meta name="twitter:description" content="Fixes for agents Coincide can’t find or that aren’t signed in, outdated CLIs, Antigravity sign-in, Gatekeeper, updates, the agent host and the CLI.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://coincide.dev/docs/troubleshooting#page","url":"https://coincide.dev/docs/troubleshooting","name":"Troubleshooting agents, updates and installs · Coincide","description":"Fixes for agents Coincide can’t find or that aren’t signed in, outdated CLIs, Antigravity sign-in, Gatekeeper, updates, the agent host and the CLI.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/docs/troubleshooting#breadcrumb"},"headline":"Troubleshooting","datePublished":"2026-11-01","dateModified":"2026-11-01","author":{"@id":"https://coincide.dev/#apoorv"},"publisher":{"@id":"https://coincide.dev/#organization"},"image":"https://coincide.dev/img/og.jpg","mainEntityOfPage":"https://coincide.dev/docs/troubleshooting","about":{"@id":"https://coincide.dev/#app"}},{"@type":"Person","@id":"https://coincide.dev/#apoorv","name":"Apoorv Darshan","url":"https://github.com/apoorvdarshan","sameAs":["https://github.com/apoorvdarshan","https://x.com/apoorvdarshan","https://instagram.com/apoorvcodes"]},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://coincide.dev/docs"},{"@type":"ListItem","position":3,"name":"Troubleshooting","item":"https://coincide.dev/docs/troubleshooting"}],"@id":"https://coincide.dev/docs/troubleshooting#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs" aria-current="true">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/docs">Docs</a></li><li><span aria-current="page">Troubleshooting</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Guide</p>
+    <h1>Troubleshooting</h1>
+    <p class="lede">Most problems come from an agent’s own command-line tool: it isn’t on the path Coincide sees, it isn’t signed in, or it’s too old. The messages below are the ones Coincide shows, with what to do about each.</p>
+    <p class="updated">Updated <time datetime="2026-11-01">November 1, 2026</time></p>
+  </header>
+  <div class="prose">
+
+<nav class="toc" aria-label="On this page"><p>On this page</p><ol>
+  <li><a href="#not-found">An agent isn’t found</a></li>
+  <li><a href="#sign-in">An agent isn’t signed in</a></li>
+  <li><a href="#versions">An agent is too old</a></li>
+  <li><a href="#antigravity">Antigravity</a></li>
+  <li><a href="#gatekeeper">Opening Coincide the first time</a></li>
+  <li><a href="#updates">Updates</a></li>
+  <li><a href="#host">Agents stop when Coincide quits</a></li>
+  <li><a href="#cli">The coincide command</a></li>
+  <li><a href="#report">Reporting a problem</a></li>
+</ol></nav>
+
+<h2 id="not-found">An agent isn’t found</h2>
+<p>Message: “<em>Agent</em> is not installed or could not be found on PATH.”</p>
+<p>Coincide doesn’t start agents through Terminal, so it reads your login shell’s environment once (as if you opened a new Terminal window) and adds the usual install folders: Homebrew’s, <code>/usr/local/bin</code>, <code>~/.local/bin</code>, <code>~/.bun/bin</code>, <code>~/.npm-global/bin</code>, <code>~/.cargo/bin</code>, <code>~/.grok/bin</code>, <code>~/.opencode/bin</code> and <code>~/.cursor/bin</code>.</p>
+<ol>
+  <li>Check the tool runs in a new Terminal window, for example <code>claude --version</code> or <code>cursor-agent --version</code>.</li>
+  <li>In Settings, open the agent under Providers and click <strong>Check Again</strong>. Coincide reads your shell’s environment again, so a <code>PATH</code> you just changed counts.</li>
+  <li>If it’s installed somewhere else, set <strong>Custom path</strong> under Executable to the program itself. “There’s no executable file at this path.” means the path is wrong or not executable. Leave the field empty to search the <code>PATH</code> again.</li>
+</ol>
+<p>Coincide gives your shell’s startup files 8 seconds, and falls back to zsh if your shell can’t be read. While it reads them, <code>COINCIDE_RESOLVING_ENVIRONMENT=1</code> is set, so a slow startup file can skip expensive work:</p>
+<pre><code># in ~/.zshrc
+[ -n &quot;$COINCIDE_RESOLVING_ENVIRONMENT&quot; ] &amp;&amp; return</code></pre>
+<p>Put that line after the lines that set <code>PATH</code>, so Coincide still sees it.</p>
+
+<h2 id="sign-in">An agent isn’t signed in</h2>
+<p>Coincide uses each tool’s own sign-in. Run the command in the message in Terminal, then click Check Again (or try the message again):</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Message</th><th scope="col">Run</th></tr></thead><tbody><tr><td>Claude Code is not signed in. Run <code>claude auth login</code> in Terminal, then try again.</td><td><code>claude auth login</code></td></tr><tr><td>Codex CLI is not signed in. Run <code>codex login</code> and try again.</td><td><code>codex login</code></td></tr><tr><td>Cursor isn’t signed in. Run <code>cursor-agent login</code> in Terminal, then try again.</td><td><code>cursor-agent login</code></td></tr><tr><td>Grok CLI is installed but not logged in. Run <code>grok login</code>.</td><td><code>grok login</code></td></tr><tr><td>OpenCode lists no models. Run <code>opencode auth login</code> to connect a provider.</td><td><code>opencode auth login</code></td></tr></tbody></table></div>
+<p>Each agent’s page in Settings has a <strong>Setup</strong> section with these commands and a <strong>Run in Terminal</strong> button. For extra accounts, see <a href="/docs/agent-accounts">Accounts and API keys</a>.</p>
+
+<h2 id="versions">An agent is too old</h2>
+<ul>
+  <li><strong>Codex</strong>: “Codex <em>version</em> is too old. Update the Codex CLI to 0.156 or later.” appears below 0.149. From 0.149 to 0.155 Coincide works but says “Update the Codex CLI to 0.156 or later for full support.”</li>
+  <li><strong>OpenCode</strong>: “Coincide needs OpenCode 2 or newer. Run <code>opencode upgrade</code>.”</li>
+  <li><strong>Claude Code</strong>: “The installed Claude Code is too old for <em>model</em>. Upgrade to v<em>version</em> or newer to use it.” Only that model is affected; update Claude Code to use it.</li>
+</ul>
+
+<h2 id="antigravity">Antigravity</h2>
+<p>Antigravity is set up entirely in Settings › Antigravity: <strong>Install Antigravity</strong> downloads Google’s runtime, checked against pinned checksums and Google’s signature, and <strong>Sign in with Google</strong> opens the sign-in in your browser. If you sign in on another device, copy the sign-in link and paste back the address the browser ends on.</p>
+<ul>
+  <li>“Sign in to Antigravity in Settings before you continue.” A turn needed a sign-in; do it in Settings, then send again.</li>
+  <li>“Install Antigravity first, then sign in with Google.” The runtime isn’t installed yet.</li>
+  <li>“Google doesn’t publish an Antigravity runtime for this Mac.” Google’s runtime isn’t available for this Mac.</li>
+  <li>“This Antigravity version can’t sign out. Update Antigravity.” Use <strong>Update Antigravity</strong> in the same pane.</li>
+</ul>
+<p>Before you use it, read the account-risk notice on the <a href="/agents/antigravity">Antigravity page</a>.</p>
+
+<h2 id="gatekeeper">Opening Coincide the first time</h2>
+<p>Releases are signed with Developer ID and notarized by Apple, so macOS opens them after the usual “downloaded from the Internet” question. If macOS refuses to open your copy, check it in Terminal:</p>
+<pre><code>spctl --assess --type execute -vv /Applications/Coincide.app
+codesign --verify --deep --strict -v /Applications/Coincide.app</code></pre>
+<p>A release reports <code>accepted</code> and <code>source=Notarized Developer ID</code>. If it doesn’t, delete that copy and download Coincide again from the <a href="/download">download page</a>. <code>npx coincide-dev</code> runs these checks for you and installs nothing when one fails.</p>
+
+<h2 id="updates">Updates</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Message</th><th scope="col">What it means</th></tr></thead><tbody><tr><td>Updates can only be installed by a verified Developer ID build.</td><td>Your copy was built from source or isn’t the signed release. Download the release.</td></tr><tr><td>The update failed integrity or signature verification.</td><td>The download didn’t match its checksum or wasn’t signed by Coincide’s team. Nothing was installed; check again later.</td></tr><tr><td>The update is incompatible with this app or Mac.</td><td>The release needs a newer macOS or is for another app.</td></tr><tr><td>Coincide is running. The update has not been installed.</td><td>Coincide was still running when the installer looked; quit it normally (not Force Quit).</td></tr><tr><td>The update could not be installed. The previous app has been kept.</td><td>The final step failed; your copy is unchanged. Try again, or download the release.</td></tr><tr><td>The update request failed. Try again later.</td><td>GitHub couldn’t be reached.</td></tr></tbody></table></div>
+<p>Install on Quit installs only after a normal quit, and only when no other copy of Coincide runs. If you reopen Coincide before the confirmation appears, the installer stops; wait for it. Full details in <a href="/docs/updating">Updating</a>.</p>
+
+<h2 id="host">Agents stop when Coincide quits</h2>
+<p>Settings › General › Agents says where agents run. If it shows “Agents run in Coincide”, the reason is under it:</p>
+<ul>
+  <li>“Coincide is turned off under Allow in the Background in Login Items. …” Click <strong>Open Login Items…</strong> and turn Coincide on.</li>
+  <li>“The agent host didn’t answer. Coincide keeps trying; …” New agents run in the app until the host answers. Quitting and reopening Coincide usually clears it.</li>
+  <li>“This build isn’t signed with a Developer ID, which the agent host needs.” Builds from source run agents in the app.</li>
+  <li>“The agent host is missing from this copy of Coincide. Reinstall Coincide …”</li>
+</ul>
+<p>How the host works across quits and updates is in <a href="/features/background-agents">Background agents</a>.</p>
+
+<h2 id="cli">The coincide command</h2>
+<ul>
+  <li>“Couldn’t reach Coincide at … Is Coincide running, with Settings › General › Command-line control on?” Open Coincide and check the setting.</li>
+  <li><code>command not found: coincide</code> in Terminal: Settings › General › Command Line shows where the command is installed, or which folder to add to your <code>PATH</code>.</li>
+  <li>“… already exists and isn’t Coincide’s tool, so it was left alone.” Another program is called <code>coincide</code> in that folder; Coincide won’t replace it.</li>
+</ul>
+<p>Every command is in the <a href="/docs/cli">command-line reference</a>.</p>
+
+<h2 id="report">Reporting a problem</h2>
+<p>Use <strong>Help › Report an Issue…</strong>. It opens GitHub’s bug report form with your Coincide and macOS versions filled in, and nothing is sent until you submit it. If you don’t have a GitHub account, use <code>/bug</code> in the <a href="https://discord.gg/DETrbhDVqw">Coincide Discord</a> (<strong>Help › Get Help on Discord</strong>); reports there also become public GitHub issues. Include the agent and its version, the exact steps and the error text. Never paste API keys, tokens or private code: agent output can contain them. Report security problems privately through <a href="https://github.com/apoorvdarshan/coincide/security/advisories/new">GitHub’s private vulnerability reporting</a>.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/agents"><b>Agents</b><span>The six agents Coincide works with, and what each one supports.</span></a></li><li><a class="card" href="/docs/updating"><b>Updating</b><span>How the in-app updater checks, verifies and installs new releases, and how Homebrew and npx installs update.</span></a></li><li><a class="card" href="/docs/macos-permissions"><b>macOS permissions</b><span>Each macOS permission Coincide can ask for, which feature needs it, and how to grant or take it back.</span></a></li><li><a class="card" href="/faq"><b>FAQ</b><span>Short answers to the questions people ask most.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

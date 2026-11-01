@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Build Coincide from source · Coincide</title>
+<meta name="description" content="Build the Coincide Mac app with Xcode and XcodeGen: requirements, the SwiftTerm plug-in, Cua Driver, the separate Debug app and signing your builds.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/docs/build-from-source">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/docs/build-from-source">
+<meta property="og:title" content="Build Coincide from source · Coincide">
+<meta property="og:description" content="Build the Coincide Mac app with Xcode and XcodeGen: requirements, the SwiftTerm plug-in, Cua Driver, the separate Debug app and signing your builds.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Build Coincide from source · Coincide">
+<meta name="twitter:description" content="Build the Coincide Mac app with Xcode and XcodeGen: requirements, the SwiftTerm plug-in, Cua Driver, the separate Debug app and signing your builds.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://coincide.dev/docs/build-from-source#page","url":"https://coincide.dev/docs/build-from-source","name":"Build Coincide from source · Coincide","description":"Build the Coincide Mac app with Xcode and XcodeGen: requirements, the SwiftTerm plug-in, Cua Driver, the separate Debug app and signing your builds.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/docs/build-from-source#breadcrumb"},"headline":"Build Coincide from source","datePublished":"2026-11-01","dateModified":"2026-11-01","author":{"@id":"https://coincide.dev/#apoorv"},"publisher":{"@id":"https://coincide.dev/#organization"},"image":"https://coincide.dev/img/og.jpg","mainEntityOfPage":"https://coincide.dev/docs/build-from-source","about":{"@id":"https://coincide.dev/#app"}},{"@type":"Person","@id":"https://coincide.dev/#apoorv","name":"Apoorv Darshan","url":"https://github.com/apoorvdarshan","sameAs":["https://github.com/apoorvdarshan","https://x.com/apoorvdarshan","https://instagram.com/apoorvcodes"]},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://coincide.dev/docs"},{"@type":"ListItem","position":3,"name":"Build from source","item":"https://coincide.dev/docs/build-from-source"}],"@id":"https://coincide.dev/docs/build-from-source#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents">Agents</a><a href="/docs" aria-current="true">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/docs">Docs</a></li><li><span aria-current="page">Build from source</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Guide</p>
+    <h1>Build Coincide from source</h1>
+    <p class="lede">Coincide is open source under the MIT license. You can build it yourself with Xcode, to try a change or to contribute. The release on the download page is the same code, signed and notarized.</p>
+    <p class="updated">Updated <time datetime="2026-11-01">November 1, 2026</time></p>
+  </header>
+  <div class="prose">
+
+<h2 id="requirements">Requirements</h2>
+<ul>
+  <li>macOS 26 or later</li>
+  <li>Xcode 27 or later</li>
+  <li><a href="https://github.com/yonaskolb/XcodeGen">XcodeGen</a>, which generates the Xcode project from <code>project.yml</code></li>
+  <li>At least one agent CLI, installed and signed in, to try your build (see <a href="/agents">the agents</a>)</li>
+</ul>
+
+<h2 id="build">Building</h2>
+<pre><code>brew install xcodegen
+git clone https://github.com/apoorvdarshan/coincide.git
+cd coincide
+xcodegen generate
+open Coincide.xcodeproj</code></pre>
+<p>Then build and run the Coincide scheme in Xcode. A few things happen along the way:</p>
+<ul>
+  <li><strong>The project file isn’t checked in.</strong> <code>Coincide.xcodeproj</code> is generated, so change targets, settings and packages in <code>project.yml</code>, not in Xcode’s project settings. Run <code>xcodegen generate</code> again after editing it, after adding or removing source files, and before building a Release you’ll install: it also sets the build number to the number of commits in your history, so macOS sees each installed build as new.</li>
+  <li><strong>Cua Driver is downloaded once.</strong> <code>xcodegen generate</code> first runs <code>scripts/fetch-cua-driver.sh</code>, which downloads the pinned release of Cua Driver that Computer Use bundles, checks its checksum and Cua AI’s Developer ID signature, and puts it in the gitignored <code>Vendor/</code> folder. The download is cached in <code>~/Library/Caches/Coincide</code>, so later runs work offline.</li>
+  <li><strong>SwiftTerm runs a build plug-in.</strong> It generates Swift from its own terminfo source. Xcode asks once to trust it; choose Trust &amp; Enable. On the command line, pass <code>-skipPackagePluginValidation</code> to <code>xcodebuild</code>.</li>
+</ul>
+<p>Coincide has two package dependencies, SwiftTerm (the terminal) and WhisperKit (Whisper dictation, with no bundled models).</p>
+
+<h2 id="debug">The Debug app</h2>
+<p>Debug builds, whether from Xcode, the tests or an agent, are a separate app called <strong>Coincide Debug</strong>, so they never touch your installed Coincide:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col"></th><th scope="col">Installed Coincide</th><th scope="col">Coincide Debug</th></tr></thead><tbody><tr><td>Bundle ID</td><td><code>com.apoorvdarshan.coincide</code></td><td><code>com.apoorvdarshan.coincide.debug</code></td></tr><tr><td>Data folder</td><td><code>~/Library/Application Support/Coincide</code></td><td><code>~/Library/Application Support/Coincide Debug</code></td></tr><tr><td>Keychain items, background jobs, macOS permissions</td><td>Its own</td><td>Its own</td></tr><tr><td>Agents</td><td>In the background agent host</td><td>In the app, unless you launch it with <code>COINCIDE_AGENT_HOST=1</code></td></tr><tr><td>Terminal’s <code>coincide</code></td><td>Installed by this app</td><td>Left to the installed app; agents the Debug app starts still get its own tool</td></tr></tbody></table></div>
+<p>Set <code>COINCIDE_DATA_DIR</code> to run a build against a scratch folder instead. Xcode registers every app it builds with Launch Services, and macOS can pick any registered copy for a notification’s icon or click. When you’re done with a build you won’t install, unregister it:</p>
+<pre><code>scripts/unregister-builds.sh ~/Library/Developer/Xcode/DerivedData/&lt;folder&gt;</code></pre>
+
+<h2 id="signing">Signing your builds</h2>
+<p>Builds are signed ad hoc by default, as in CI. That works, but every build gets a new identity, so macOS asks again for permissions such as access to a protected folder your agent configuration lives in. To keep your answers, sign with your own identity: create a gitignored <code>Local.xcconfig</code> in the repository root, as <code>Signing.xcconfig</code> describes, and run <code>xcodegen generate</code>.</p>
+<pre><code>// Local.xcconfig
+CODE_SIGN_IDENTITY = Developer ID Application
+DEVELOPMENT_TEAM = ABCDE12345</code></pre>
+<p>Some features need more than a signature:</p>
+<ul>
+  <li><strong>The background agent host</strong> needs a Developer ID signature; ad-hoc builds run agents in the app.</li>
+  <li><strong>The in-app updater</strong> installs updates only into a verified Developer ID build.</li>
+  <li><strong>Lock-screen alerts</strong> for Coincide Remote and <strong>passkeys</strong> in the browser need entitlements with a matching provisioning profile; <code>Signing.xcconfig</code> explains the steps. Without them the app simply leaves those features out.</li>
+</ul>
+
+<h2 id="tests">Tests</h2>
+<p>The unit tests use Swift Testing and run in CI on every pull request. To run them yourself, as CI does:</p>
+<pre><code>xcodebuild -project Coincide.xcodeproj -scheme Coincide -skipPackagePluginValidation test</code></pre>
+<p>Live provider tests drive the real agent CLIs with your own accounts and spend a little of your quota, so they run only when you set <code>TEST_RUNNER_COINCIDE_LIVE_TESTS=1</code>. The fuzzers for Coincide’s parsers live in <code>Fuzz/</code>.</p>
+
+<h2 id="contribute">Contributing</h2>
+<p>Read <a href="https://github.com/apoorvdarshan/coincide/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> before opening a pull request: it covers the project layout, code style, tests, user-facing text and the pull request checklist. Changed text needs translating too; see <a href="/docs/translations">Translations</a>. Releases are built, signed and notarized by GitHub Actions from a version tag, as <a href="https://github.com/apoorvdarshan/coincide/blob/main/docs/releasing.md">docs/releasing.md</a> describes.</p>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/docs/translations"><b>Translations</b><span>The 19 languages, how to switch Coincide’s language, and how to report or fix a translation with the catalog tools.</span></a></li><li><a class="card" href="/docs/macos-permissions"><b>macOS permissions</b><span>Each macOS permission Coincide can ask for, which feature needs it, and how to grant or take it back.</span></a></li><li><a class="card" href="/docs/data-storage"><b>Where data is stored</b><span>Every folder and Keychain item Coincide uses on your Mac, what’s in each, and how to move, back up or reset them.</span></a></li><li><a class="card" href="/download"><b>Download</b><span>The notarized DMG, Homebrew or npm, with system requirements, updates and uninstalling.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

@@ -42,7 +42,7 @@ ${table(["In Coincide", "With Codex"], [
   ["Resuming", "Each thread resumes its own Codex thread, and unarchives it in Codex if needed. If Codex no longer has it, Coincide starts a new one and tells you."],
   ["Stopping", "Stop interrupts the turn; if Codex doesn’t stop within five seconds, Coincide ends its process."],
   ["Usage limits", "For ChatGPT sign-ins, your plan’s rate limits and credits, updated live while Codex works. Optionally, credit details from chatgpt.com (off by default)."],
-  ["Importing", "Earlier Codex sessions can be ${s.link("/docs/import-cli-sessions", "imported")} and continued."],
+  ["Importing", `Earlier Codex sessions can be ${s.link("/docs/import-cli-sessions", "imported")} and continued.`],
 ])}
 
 <h2 id="switching">Using Codex with other agents</h2>

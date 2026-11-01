@@ -10,6 +10,8 @@ A native macOS app for the coding agents you already pay for — **Claude Code, 
 
 Coincide is a native AppKit port of [T3 Code](https://github.com/pingdotgg/t3code). It drives each agent's own command-line tool with the login you already have, so your existing subscriptions keep working. Coincide never sells, proxies or meters tokens.
 
+Website and docs: [coincide.dev](https://coincide.dev) · [Features](https://coincide.dev/features) · [Docs](https://coincide.dev/docs) · [FAQ](https://coincide.dev/faq)
+
 > Status: early development. Expect rough edges.
 
 ## Install

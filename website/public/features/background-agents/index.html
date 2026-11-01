@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Agents keep running after you quit · Coincide</title>
+<meta name="description" content="Coincide runs coding agents in a background host, so quitting, updating or a crash doesn’t stop a turn. Reopen it and the reply is still streaming.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/background-agents">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/background-agents">
+<meta property="og:title" content="Agents keep running after you quit · Coincide">
+<meta property="og:description" content="Coincide runs coding agents in a background host, so quitting, updating or a crash doesn’t stop a turn. Reopen it and the reply is still streaming.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Agents keep running after you quit · Coincide">
+<meta name="twitter:description" content="Coincide runs coding agents in a background host, so quitting, updating or a crash doesn’t stop a turn. Reopen it and the reply is still streaming.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/background-agents#page","url":"https://coincide.dev/features/background-agents","name":"Agents keep running after you quit · Coincide","description":"Coincide runs coding agents in a background host, so quitting, updating or a crash doesn’t stop a turn. Reopen it and the reply is still streaming.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/background-agents#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Background agents","item":"https://coincide.dev/features/background-agents"}],"@id":"https://coincide.dev/features/background-agents#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Background agents</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>Agents outlive the app</h1>
+    <p class="lede">Long agent turns shouldn’t depend on a window staying open. Coincide runs its agents in a small background process, the agent host, so you can quit Coincide, install an update or recover from a crash while an agent keeps working.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2>How it works</h2>
+<p>The agent host is a helper inside Coincide.app that macOS starts on demand as a LaunchAgent (<code>com.apoorvdarshan.coincide.agent-host</code>). It owns the agent processes for every agent, Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity alike, and keeps a log of their events. The app talks to it over a private connection on your Mac.</p>
+<ul>
+  <li><strong>When you quit,</strong> the app detaches. Turns go on, subagents and long commands included, and the host keeps logging.</li>
+  <li><strong>When you reopen Coincide,</strong> it attaches to every session the host is still running and replays what happened while it was closed, so a reply that was streaming is still streaming.</li>
+  <li><strong>When nothing is running,</strong> no turn, no approval or question waiting, no background work, the host exits on its own. It never ends a running turn silently; if it ever crashes, the thread says “The agent host stopped unexpectedly”.</li>
+</ul>
+<p>Each session is locked to the one process that runs it, so an agent is never started twice for the same thread, even across a relaunch.</p>
+
+<h2>Turning it on</h2>
+<p>It’s on by default: Settings › General › Agents › “Keep agents running when Coincide quits”. macOS has to allow it once. If Coincide is turned off under <em>Allow in the Background</em> in System Settings’ Login Items, Settings shows a notice with an <strong>Open Login Items…</strong> button; turn Coincide on there.</p>
+<p>The same section has “Close idle agents after”, which shuts down agent processes that have been idle for a while to free memory. Threads pick up where they left off on their next message.</p>
+
+<h2>Updates without interruptions</h2>
+<p>An update replaces Coincide.app while agents may still be running. The host runs from its own copy of its files, so an update never changes a running host, and macOS keeps trusting its signature:</p>
+<ul>
+  <li>If the new version speaks the same protocol, it adopts the running host’s sessions and asks it to exit once idle.</li>
+  <li>If not, the old host’s agents finish there, new sessions run in the app meanwhile, and Coincide switches to the new host once the old one is gone.</li>
+</ul>
+<p>See <a href="/docs/updating">Updating</a> for how updates are downloaded and installed.</p>
+
+<h2>When agents run in the app instead</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Situation</th><th scope="col">What happens</th></tr></thead><tbody><tr><td>The setting is off</td><td>Agents run inside Coincide and stop when it quits.</td></tr><tr><td>Coincide isn’t allowed in Login Items</td><td>Same, until you allow it.</td></tr><tr><td>The host doesn’t answer</td><td>A new turn waits a few seconds, then starts in the app. Coincide keeps trying to reach the host in the background.</td></tr><tr><td>A build without a Developer ID signature, or a development build</td><td>The host needs a signed build, so agents run in the app.</td></tr></tbody></table></div>
+<p>Settings › General › Agents shows which of these applies. Quitting asks first when agents running in the app would stop.</p>
+
+<h2>Things to know</h2>
+<ul>
+  <li>The host keeps agents running while your Mac is awake. A MacBook that sleeps pauses them; <a href="/features/keep-awake">Keep Awake</a> can keep it awake on long jobs, even with the lid closed.</li>
+  <li><a href="/features/terminal">Terminals</a> and the browser belong to the app, so they stop when Coincide quits.</li>
+  <li><a href="/features/scheduled-tasks">Scheduled tasks</a> start only while Coincide is open; a run they start keeps going after you quit, like any turn.</li>
+  <li>While Coincide is closed, the agent host posts the <a href="/features/notifications">notifications</a> itself, when a turn finishes or fails or an agent needs approval or an answer, if notifications are on. Clicking one opens Coincide.</li>
+  <li>The host runs only on your Mac and talks only to the app and the agents; it sends nothing anywhere else (see the <a href="/privacy">privacy policy</a>).</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/keep-awake"><b>Keep Awake</b><span>Keep a MacBook running agents 24/7 with the lid closed, and restore your sleep settings afterwards.</span></a></li><li><a class="card" href="/features/notifications"><b>Notifications</b><span>Hear when an agent finishes, fails, needs approval or asks a question, on the one device you’re using.</span></a></li><li><a class="card" href="/docs/updating"><b>Updating</b><span>How the in-app updater checks, verifies and installs new releases, and how Homebrew and npx installs update.</span></a></li><li><a class="card" href="/features/scheduled-tasks"><b>Scheduled tasks</b><span>Send a prompt to a thread or start a fresh one on a schedule: daily, weekdays, intervals or cron.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

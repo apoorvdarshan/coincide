@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Codex CLI in a native Mac app · Coincide</title>
+<meta name="description" content="Run OpenAI’s Codex in Coincide through codex app-server, with your ChatGPT plan or API key: plan mode, steering, service tiers and rate limits.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/agents/codex">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/agents/codex">
+<meta property="og:title" content="Codex CLI in a native Mac app · Coincide">
+<meta property="og:description" content="Run OpenAI’s Codex in Coincide through codex app-server, with your ChatGPT plan or API key: plan mode, steering, service tiers and rate limits.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Codex CLI in a native Mac app · Coincide">
+<meta name="twitter:description" content="Run OpenAI’s Codex in Coincide through codex app-server, with your ChatGPT plan or API key: plan mode, steering, service tiers and rate limits.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/agents/codex#page","url":"https://coincide.dev/agents/codex","name":"Codex CLI in a native Mac app · Coincide","description":"Run OpenAI’s Codex in Coincide through codex app-server, with your ChatGPT plan or API key: plan mode, steering, service tiers and rate limits.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/agents/codex#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Agents","item":"https://coincide.dev/agents"},{"@type":"ListItem","position":3,"name":"Codex","item":"https://coincide.dev/agents/codex"}],"@id":"https://coincide.dev/agents/codex#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features">Features</a><a href="/agents" aria-current="true">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/agents">Agents</a></li><li><span aria-current="page">Codex</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Agent · OpenAI</p>
+    <div class="title-row"><span class="mark"><img src="/img/logo-codex.png" alt="Codex logo" width="38" height="38"></span><h1>Codex in Coincide</h1></div>
+    <p class="lede">Coincide drives the Codex command-line tool you installed, through its app server, with your ChatGPT sign-in or OpenAI API key. You get Codex’s own sessions, plan mode and models, in a native Mac window next to your other agents.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2 id="how">How Coincide runs Codex</h2>
+<p>Coincide starts <code>codex app-server</code> and talks to it in JSON-RPC, the interface Codex provides for apps that embed it. Codex then talks to OpenAI (or to the provider it’s configured for) as it would in Terminal. Your <code>~/.codex</code> configuration and <code>AGENTS.md</code> files keep working, because it’s the same tool. Coincide doesn’t proxy or meter anything.</p>
+<p>Codex needs to be version 0.149 or later; Coincide asks you to update to 0.156 or later for full support. If <code>codex</code> isn’t on your shell’s <code>PATH</code>, set its location in Settings › Codex.</p>
+
+<h2 id="setup">Set it up</h2>
+<ol>
+  <li><strong>Install the Codex CLI</strong> (the <a href="https://developers.openai.com/codex/cli">official Codex CLI docs</a> list other ways to install it):
+<div class="cmd"><code>curl -fsSL https://chatgpt.com/codex/install.sh | sh</code><button class="copy" type="button" hidden data-copy="curl -fsSL https://chatgpt.com/codex/install.sh | sh" aria-label="Copy the Codex install command"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M4.5 13V6.2c0-1 .8-1.7 1.7-1.7H13"/></svg></button></div></li>
+  <li><strong>Sign in</strong> with ChatGPT, or with an API key:
+<div class="cmd"><code>codex login</code><button class="copy" type="button" hidden data-copy="codex login" aria-label="Copy the sign-in command"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9" height="9" rx="2"/><path d="M4.5 13V6.2c0-1 .8-1.7 1.7-1.7H13"/></svg></button></div></li>
+  <li><strong>Check Settings › Codex</strong> in Coincide: it shows the version and account Codex reports, and can run the commands above in Terminal. Choose Check Again once you’re signed in.</li>
+  <li><strong>Choose a Codex model</strong> in the composer, or type <code>/codex</code> in a thread that another agent started.</li>
+</ol>
+<p>Codex can sign in with ChatGPT, an OpenAI API key, Amazon Bedrock or a custom provider; Coincide shows which one is in use. To keep a second account, add it in Settings › Codex: a login account gets its own <code>CODEX_HOME</code>, and an API key is saved in your Keychain and given to that account’s Codex. See <a href="/docs/agent-accounts">Agent accounts</a>.</p>
+
+<h2 id="models">Models, effort and speed</h2>
+<p>Coincide reads the model list from Codex itself, so it shows exactly the models your account offers. For each one it offers the reasoning efforts that model supports, and the service tiers Codex reports for it (such as a faster tier) as speed options in the <a href="/features/model-picker">model picker</a>. Image attachments are offered only for models that accept images.</p>
+
+<h2 id="features">What works with Codex</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">In Coincide</th><th scope="col">With Codex</th></tr></thead><tbody><tr><td>Plan mode</td><td>Codex’s own plan collaboration mode, with its plan updates shown in the thread.</td></tr><tr><td>Approvals and full access</td><td>Ask for approval runs Codex in a read-only sandbox and asks before anything that isn’t a known-safe read. Full access never asks and lifts the sandbox.</td></tr><tr><td>Questions</td><td>Codex’s requests for input and MCP forms are answered inline. Link-style MCP requests are declined.</td></tr><tr><td>Steering</td><td>Messages you send while Codex works steer the running turn.</td></tr><tr><td>Attachments</td><td>Images go to Codex as images; other files are mentioned by path.</td></tr><tr><td>Subagents</td><td>Collaborating agents show up in the turn, and their approval requests are labelled as a subagent’s.</td></tr><tr><td>Resuming</td><td>Each thread resumes its own Codex thread, and unarchives it in Codex if needed. If Codex no longer has it, Coincide starts a new one and tells you.</td></tr><tr><td>Stopping</td><td>Stop interrupts the turn; if Codex doesn’t stop within five seconds, Coincide ends its process.</td></tr><tr><td>Usage limits</td><td>For ChatGPT sign-ins, your plan’s rate limits and credits, updated live while Codex works. Optionally, credit details from chatgpt.com (off by default).</td></tr><tr><td>Importing</td><td>Earlier Codex sessions can be <a href="/docs/import-cli-sessions">imported</a> and continued.</td></tr></tbody></table></div>
+
+<h2 id="switching">Using Codex with other agents</h2>
+<p>A common pattern is to plan or review with one agent and implement with another. When you hand a thread to Codex, it gets a recap of the turns it missed and works in the same folder, and when you switch back the earlier agent resumes its own session. <a href="/features/switch-agents">Switching agents</a> explains what the recap contains.</p>
+
+<h2 id="limits">Limitations</h2>
+<ul>
+  <li>Codex versions before 0.149 aren’t supported, and 0.149 to 0.155 work with reduced support.</li>
+  <li>Plan usage limits are read only for ChatGPT sign-ins, not for API keys or custom providers.</li>
+  <li>Coincide doesn’t provide Codex with extra “dynamic” tools of its own; Codex keeps the tools and MCP servers you configured.</li>
+  <li>OpenAI’s terms and your plan’s limits apply as usual.</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/plan-mode"><b>Plan mode</b><span>Have the agent investigate and propose a plan without changing files, refine it, then implement it with one click.</span></a></li><li><a class="card" href="/features/composer"><b>Composer</b><span>Attachments, @ file mentions, slash commands, quotes and diff comments, and steering or queueing while an agent works.</span></a></li><li><a class="card" href="/docs/import-cli-sessions"><b>Import CLI sessions</b><span>Turn Claude Code and Codex conversations from Terminal into Coincide threads that resume the same native session.</span></a></li><li><a class="card" href="/docs/troubleshooting"><b>Troubleshooting</b><span>What Coincide’s error messages mean and how to fix them: missing or signed-out agents, updates, Gatekeeper and more.</span></a></li><li><a class="card" href="/compare/codex-app"><b>vs Codex app</b><span>OpenAI’s Codex workspace inside the ChatGPT app, or Codex as one of six agents in an open-source Mac app.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+<script>
+  // Copy buttons for commands: shown only when there's a clipboard to copy to.
+  document.querySelectorAll('.cmd .copy').forEach(button => {
+    if (!navigator.clipboard) return;
+    button.hidden = false;
+    button.addEventListener('click', () => navigator.clipboard.writeText(button.dataset.copy).then(() => {
+      button.classList.add('done');
+      setTimeout(() => button.classList.remove('done'), 1400);
+    }).catch(() => {}));
+  });
+</script>
+</body>
+</html>

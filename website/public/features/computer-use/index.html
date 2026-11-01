@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Computer Use: let coding agents use Mac apps · Coincide</title>
+<meta name="description" content="Turn on Computer Use in Coincide and any agent can see and operate native Mac apps through a bundled Cua Driver helper, with its own cursor. No MCP setup.">
+<meta name="theme-color" content="#0A0D24">
+<link rel="canonical" href="https://coincide.dev/features/computer-use">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Coincide">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://coincide.dev/features/computer-use">
+<meta property="og:title" content="Computer Use: let coding agents use Mac apps · Coincide">
+<meta property="og:description" content="Turn on Computer Use in Coincide and any agent can see and operate native Mac apps through a bundled Cua Driver helper, with its own cursor. No MCP setup.">
+<meta property="og:image" content="https://coincide.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@apoorvdarshan">
+<meta name="twitter:creator" content="@apoorvdarshan">
+<meta name="twitter:title" content="Computer Use: let coding agents use Mac apps · Coincide">
+<meta name="twitter:description" content="Turn on Computer Use in Coincide and any agent can see and operate native Mac apps through a bundled Cua Driver helper, with its own cursor. No MCP setup.">
+<meta name="twitter:image" content="https://coincide.dev/img/og.jpg">
+<link rel="icon" href="/img/icon-tight-96.png" type="image/png">
+<link rel="apple-touch-icon" href="/img/icon-288.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/features/computer-use#page","url":"https://coincide.dev/features/computer-use","name":"Computer Use: let coding agents use Mac apps · Coincide","description":"Turn on Computer Use in Coincide and any agent can see and operate native Mac apps through a bundled Cua Driver helper, with its own cursor. No MCP setup.","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"breadcrumb":{"@id":"https://coincide.dev/features/computer-use#breadcrumb"},"about":{"@id":"https://coincide.dev/#app"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Features","item":"https://coincide.dev/features"},{"@type":"ListItem","position":3,"name":"Computer Use","item":"https://coincide.dev/features/computer-use"}],"@id":"https://coincide.dev/features/computer-use#breadcrumb"}]}</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header class="site-bar">
+  <div class="site-top">
+    <a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30">Coincide</a>
+    <nav class="site-nav" aria-label="Main"><a href="/features" aria-current="true">Features</a><a href="/agents">Agents</a><a href="/docs">Docs</a><a href="/download">Download</a><a href="/faq">FAQ</a><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></nav>
+    <a class="site-get" href="/download">Get Coincide</a>
+  </div>
+</header>
+
+<main class="page" id="content">
+  <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><a href="/features">Features</a></li><li><span aria-current="page">Computer Use</span></li></ol></nav>
+  <header class="page-head">
+    <p class="eyebrow">Feature</p>
+    <h1>Computer Use</h1>
+    <p class="lede">With Computer Use on, an agent in any thread can list your Mac’s apps and windows, read a window’s controls, click, type, scroll and take screenshots. It works the same for every agent Coincide runs, and it’s off until you turn it on.</p>
+    
+  </header>
+  <div class="prose">
+
+<h2 id="turn-on">Turn it on</h2>
+<ol>
+  <li>Open Settings › Computer Use and turn on “Allow agents to use this Mac”.</li>
+  <li>Grant the permissions the pane lists, Accessibility and Screen Recording, with its Grant Access and Open System Settings buttons, then come back to refresh their status.</li>
+  <li>Ask an agent to do something in a Mac app, for example “Open Notes, start a note called Groceries with today’s list, and show me a screenshot.”</li>
+</ol>
+<p>The permissions belong to Coincide itself, because Coincide runs the helper as its own child process. You grant them once, not once per agent, and you don’t have to set up an MCP server for any agent: every thread reaches Computer Use through a private connection Coincide gives it.</p>
+
+<h2 id="how">How it works</h2>
+<p>Coincide bundles <a href="https://github.com/trycua/cua">Cua Driver</a>, an open-source helper made by Cua AI (MIT license), and starts it only when an agent needs it. After about two idle minutes, or soon after every thread is done with it, the helper stops; the next request starts it again.</p>
+<p>Coincide passes agents only a fixed set of the helper’s tools:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Kind</th><th scope="col">Tools</th></tr></thead><tbody><tr><td>Look</td><td>list apps and windows, read a window’s state and the desktop, verify a result, zoom into part of a screenshot</td></tr><tr><td>Act</td><td>click, double-click, right-click, set a control’s value, type text, press keys and shortcuts, scroll, drag, move the cursor, use a menu item, launch an app, move or resize a window, run several steps in a row</td></tr></tbody></table></div>
+<p>Browser control, arbitrary scripts, installing things and changing the helper’s own configuration aren’t available through Coincide. For websites, agents use the thread’s <a href="/features/browser">Coincide browser</a> instead.</p>
+
+<h3 id="cursor">The agent’s cursor</h3>
+<p>With “Show agent cursor” on (the default), Coincide draws a cursor where the agent clicks and types, on whichever display it’s working on, so you can watch without losing your own pointer. Agents are told to work in the background where an app allows it, and to use foreground actions, which do move focus on your screen, only for the task you asked for.</p>
+
+<h3 id="one-thread">One thread at a time</h3>
+<p>Several threads can have Computer Use, but only one controls the desktop at a time. Another thread that wants it waits until the first releases it. Settings › Computer Use › Activity shows which threads are using the Mac, with Stop Computer Use and Restart Computer Use buttons.</p>
+
+<h2 id="privacy">Privacy</h2>
+<ul>
+  <li>Screenshots and window contents an agent reads go to that agent’s provider, as part of the conversation.</li>
+  <li>Cua Driver normally sends content-free telemetry to Cua AI and checks online for newer versions of itself. Coincide switches both off every time it starts the helper, so the helper sends nothing to Cua AI. It’s updated only when Coincide is.</li>
+  <li>The private connection is limited to its thread and carries a short-lived credential.</li>
+</ul>
+<p>The <a href="/privacy">privacy policy</a> has the exact settings Coincide uses.</p>
+
+<h2 id="safely">Using it safely</h2>
+<ul>
+  <li><strong>Turn it on for the job, off afterwards.</strong> Turning Computer Use off ends every agent’s access at once, and it also stops when Coincide quits.</li>
+  <li><strong>Close what you don’t want seen.</strong> An agent may take screenshots of any window it works with. Close private documents and messages first.</li>
+  <li><strong>Prefer approvals.</strong> Run threads that use Computer Use with <a href="/features/approvals">Ask for approval</a> rather than full access when the task touches anything important.</li>
+  <li><strong>Treat screens as untrusted.</strong> Agents are told that window text and screenshots are content, not instructions, but a page or document can still try to mislead an agent. Watch what it does with the agent cursor on.</li>
+  <li><strong>Stay nearby.</strong> Actions can change files, settings and messages in real apps, and there’s no undo for what another app does.</li>
+</ul>
+
+<h2 id="limits">Limitations</h2>
+<ul>
+  <li>Computer Use runs only while Coincide is open, unlike agent turns, which <a href="/features/background-agents">keep running in the background</a>.</li>
+  <li>Agents act on what the helper can see through Accessibility and screenshots; apps that expose little to Accessibility are harder to operate.</li>
+</ul>
+
+  </div>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/browser"><b>Browser in every thread</b><span>A WebKit browser beside each conversation that agents can read, click and type in, with your sign-ins.</span></a></li><li><a class="card" href="/features/appshots"><b>Appshots</b><span>Press both ⌘ keys in any app to bring that window into a chat, ready for your question.</span></a></li><li><a class="card" href="/docs/macos-permissions"><b>macOS permissions</b><span>Each macOS permission Coincide can ask for, which feature needs it, and how to grant or take it back.</span></a></li></ul></section>
+</main>
+
+<footer class="site-foot">
+  <div class="cols">
+    <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>A native Mac app for the coding agents you already use. Free and open source under the MIT license.</p></div>
+    <div><p class="h">Product</p><ul><li><a href="/features">Features</a></li><li><a href="/download">Download</a></li><li><a href="/changelog">Changelog</a></li><li><a href="/compare">Compare</a></li><li><a href="/features/coincide-remote">Coincide Remote</a></li><li><a href="/faq">FAQ</a></li></ul></div>
+    <div><p class="h">Agents</p><ul><li><a href="/agents/claude-code">Claude Code</a></li><li><a href="/agents/codex">Codex</a></li><li><a href="/agents/cursor">Cursor</a></li><li><a href="/agents/grok-build">Grok Build</a></li><li><a href="/agents/opencode">OpenCode</a></li><li><a href="/agents/antigravity">Antigravity</a></li></ul></div>
+    <div><p class="h">Docs</p><ul><li><a href="/docs">All docs</a></li><li><a href="/docs/getting-started">Getting started</a></li><li><a href="/docs/keyboard-shortcuts">Keyboard shortcuts</a></li><li><a href="/docs/cli">Command line</a></li><li><a href="/docs/troubleshooting">Troubleshooting</a></li><li><a href="/docs/uninstall">Uninstall</a></li></ul></div>
+    <div><p class="h">Community</p><ul><li><a href="https://github.com/apoorvdarshan/coincide">GitHub</a></li><li><a href="https://discord.gg/DETrbhDVqw">Discord</a></li><li><a href="https://www.producthunt.com/products/coincide">Product Hunt</a></li><li><a href="https://x.com/apoorvdarshan">X @apoorvdarshan</a></li><li><a href="https://instagram.com/apoorvcodes">Instagram @apoorvcodes</a></li><li><a href="https://www.linkedin.com/showcase/coincide-dev">LinkedIn</a></li></ul></div>
+  </div>
+  <div class="base"><span>© 2026 Apoorv Darshan · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:apoorv@fud-ai.app">apoorv@fud-ai.app</a></span><span class="langs"><a href="/" hreflang="en" lang="en">English</a> · <a href="/de" hreflang="de" lang="de">Deutsch</a> · <a href="/es" hreflang="es" lang="es">Español</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/hi" hreflang="hi" lang="hi">हिन्दी</a> · <a href="/id" hreflang="id" lang="id">Bahasa Indonesia</a> · <a href="/it" hreflang="it" lang="it">Italiano</a> · <a href="/ja" hreflang="ja" lang="ja">日本語</a> · <a href="/ko" hreflang="ko" lang="ko">한국어</a> · <a href="/nl" hreflang="nl" lang="nl">Nederlands</a> · <a href="/pl" hreflang="pl" lang="pl">Polski</a> · <a href="/pt-br" hreflang="pt-BR" lang="pt-BR">Português (Brasil)</a> · <a href="/ru" hreflang="ru" lang="ru">Русский</a> · <a href="/tr" hreflang="tr" lang="tr">Türkçe</a> · <a href="/uk" hreflang="uk" lang="uk">Українська</a> · <a href="/vi" hreflang="vi" lang="vi">Tiếng Việt</a> · <a href="/zh-hans" hreflang="zh-Hans" lang="zh-Hans">简体中文</a> · <a href="/zh-hant" hreflang="zh-Hant" lang="zh-Hant">繁體中文</a></span></div>
+</footer>
+
+</body>
+</html>

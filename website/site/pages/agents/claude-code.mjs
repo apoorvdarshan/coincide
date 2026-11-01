@@ -3,7 +3,7 @@ import { cmd, table } from "../../layout.mjs";
 export default {
   path: "/agents/claude-code",
   title: "Claude Code in a native Mac app · Coincide",
-  description: "Use Claude Code in Coincide with your Claude subscription or API key: plan mode, steering, subagents, fast mode, usage limits and switching agents mid-thread.",
+  description: "Use Claude Code in Coincide with your Claude plan or API key: plan mode, steering, subagents, fast mode, usage limits and switching agents mid-thread.",
   name: "Claude Code",
   summary: "Anthropic’s agent through its own CLI, with your Claude plan or API key. Plan mode, steering, subagents and fast mode.",
   icon: "/img/logo-claude.png",
@@ -46,8 +46,8 @@ ${table(["In Coincide", "With Claude Code"], [
   ["Attachments", "Images (PNG, JPEG, GIF, WebP) and PDFs are sent to Claude; other files are mentioned by path."],
   ["Subagents", "Subagents’ tool calls show as progress in the turn, and background work is tracked."],
   ["Resuming", "Each thread keeps its own Claude Code session. Coincide also names it after the thread, so <code>claude --resume</code> in Terminal shows the same titles."],
-  ["Usage limits", "Your plan’s session and weekly limits, read from Claude Code, in the composer and the ${s.link("/features/usage-dashboard", "usage dashboard")}."],
-  ["Importing", "Earlier Claude Code conversations can be ${s.link("/docs/import-cli-sessions", "imported")} from <code>~/.claude</code> and continued."],
+  ["Usage limits", `Your plan’s session and weekly limits, read from Claude Code, in the composer and the ${s.link("/features/usage-dashboard", "usage dashboard")}.`],
+  ["Importing", `Earlier Claude Code conversations can be ${s.link("/docs/import-cli-sessions", "imported")} from <code>~/.claude</code> and continued.`],
 ])}
 
 <h2 id="switching">Switching to and from Claude Code</h2>
