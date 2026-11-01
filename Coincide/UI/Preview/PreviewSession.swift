@@ -348,6 +348,8 @@ final class PreviewSession: NSObject {
             configuration.userContentController.addUserScript(
                 WKUserScript(source: PasskeySupport.detectionScript, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
             configuration.userContentController.add(passkeyWatcher, contentWorld: .page, name: PasskeySupport.messageHandler)
+            // Answers main frames' requests with the user's Bitwarden passkeys when it can; the rest reach the notice.
+            BitwardenPasskeyHandler.install(in: configuration)
         }
         return configuration
     }

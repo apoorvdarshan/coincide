@@ -54142,6 +54142,118 @@
         }
       }
     },
+    "Bitwarden didn’t save the passkey’s sign-in count." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden hat den Anmeldezähler des Passkeys nicht gespeichert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden no guardó el contador de inicios de sesión de la llave de acceso."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden no guardó el contador de inicios de sesión de la llave de acceso."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden n’a pas enregistré le compteur de connexions de la clé d’identification."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden ने पासकी की साइन-इन गिनती सेव नहीं की।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden tidak menyimpan penghitung masuk kunci sandi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden non ha salvato il contatore degli accessi della passkey."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden はパスキーのサインイン回数を保存しませんでした。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden이 패스키의 로그인 횟수를 저장하지 않았습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden heeft de aanmeldteller van de toegangssleutel niet bewaard."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden nie zapisał licznika logowań klucza dostępu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Bitwarden não salvou o contador de entradas da chave de acesso."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden не сохранил счётчик входов ключа доступа."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden, geçiş anahtarının oturum açma sayacını kaydetmedi."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden не зберіг лічильник входів ключа доступу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden chưa lưu bộ đếm đăng nhập của khóa truy cập."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 未保存通行密钥的登录计数。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 未儲存通行密鑰的登入次數。"
+          }
+        }
+      }
+    },
     "Blur" : {
       "localizations" : {
         "de" : {
@@ -69261,6 +69373,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "請選擇有效的時間。"
+          }
+        }
+      }
+    },
+    "Choose an account. You’ll confirm with Touch ID or your Mac password next." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wähle einen Account. Danach bestätigst du mit Touch ID oder deinem Mac-Passwort."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige una cuenta. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige una cuenta. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Choisissez un compte. Vous confirmerez ensuite avec Touch ID ou le mot de passe de votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "कोई खाता चुनें। इसके बाद आप Touch ID या अपने Mac पासवर्ड से पुष्टि करेंगे।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pilih akun. Selanjutnya Anda akan mengonfirmasi dengan Touch ID atau kata sandi Mac."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Scegli un account. Poi confermerai con Touch ID o la password del Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "アカウントを選択してください。次に Touch ID または Mac のパスワードで確認します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "계정을 선택하세요. 다음으로 Touch ID 또는 Mac 암호로 확인합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kies een account. Daarna bevestig je met Touch ID of je Mac-wachtwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wybierz konto. Następnie potwierdzisz to za pomocą Touch ID lub hasła do Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escolha uma conta. Em seguida, você vai confirmar com o Touch ID ou a senha do Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выберите учётную запись. Затем вы подтвердите вход с помощью Touch ID или пароля Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir hesap seçin. Ardından Touch ID veya Mac parolanızla onaylayacaksınız."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Виберіть обліковий запис. Потім ви підтвердите вхід за допомогою Touch ID або пароля Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hãy chọn một tài khoản. Tiếp theo, bạn sẽ xác nhận bằng Touch ID hoặc mật khẩu máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "选择一个账户。接下来，你将使用触控 ID 或 Mac 密码确认。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "選擇一個帳號。接下來，你將使用 Touch ID 或 Mac 密碼確認。"
           }
         }
       }
@@ -278416,6 +278640,118 @@
         }
       }
     },
+    "Sign In" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anmelden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Iniciar sesión"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Iniciar sesión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se connecter"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "साइन इन करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Masuk"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accedi"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サインイン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "로그인"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Log in"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zaloguj się"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Войти"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oturum Aç"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійти"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đăng nhập"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "登录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "登入"
+          }
+        }
+      }
+    },
     "Sign In Again" : {
       "localizations" : {
         "de" : {
@@ -279084,6 +279420,236 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "登入"
+          }
+        }
+      }
+    },
+    "Sign in to %@ as %@ with your Bitwarden passkey?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit deinem Bitwarden-Passkey als %2$@ bei %1$@ anmelden?"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Sign in to %1$@ as %2$@ with your Bitwarden passkey?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciar sesión en %1$@ como %2$@ con tu llave de acceso de Bitwarden?"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciar sesión en %1$@ como %2$@ con tu llave de acceso de Bitwarden?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se connecter à %1$@ en tant que %2$@ avec votre clé d’identification Bitwarden ?"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अपनी Bitwarden पासकी से %2$@ के रूप में %1$@ में साइन इन करें?"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Masuk ke %1$@ sebagai %2$@ dengan kunci sandi Bitwarden Anda?"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accedere a %1$@ come %2$@ con la tua passkey di Bitwarden?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden のパスキーを使用して %2$@ として %1$@ にサインインしますか？"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 패스키를 사용하여 %2$@(으)로 %1$@에 로그인하시겠습니까?"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inloggen bij %1$@ als %2$@ met je Bitwarden-toegangssleutel?"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalogować się do %1$@ jako %2$@ kluczem dostępu z Bitwarden?"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrar em %1$@ como %2$@ com sua chave de acesso do Bitwarden?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Войти на %1$@ как %2$@ с помощью ключа доступа из Bitwarden?"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ sitesinde %2$@ olarak Bitwarden geçiş anahtarınızla oturum açılsın mı?"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійти на %1$@ як %2$@ за допомогою ключа доступу з Bitwarden?"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đăng nhập vào %1$@ với tư cách %2$@ bằng khóa truy cập Bitwarden?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "要使用 Bitwarden 通行密钥以 %2$@ 的身份登录 %1$@ 吗？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "要使用 Bitwarden 通行密鑰以 %2$@ 的身分登入 %1$@ 嗎？"
+          }
+        }
+      }
+    },
+    "Sign in to %@ with your Bitwarden passkey?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit deinem Bitwarden-Passkey bei %@ anmelden?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciar sesión en %@ con tu llave de acceso de Bitwarden?"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Iniciar sesión en %@ con tu llave de acceso de Bitwarden?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se connecter à %@ avec votre clé d’identification Bitwarden ?"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अपनी Bitwarden पासकी से %@ में साइन इन करें?"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Masuk ke %@ dengan kunci sandi Bitwarden Anda?"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Accedere a %@ con la tua passkey di Bitwarden?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden のパスキーを使用して %@ にサインインしますか？"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 패스키를 사용하여 %@에 로그인하시겠습니까?"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inloggen bij %@ met je Bitwarden-toegangssleutel?"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zalogować się do %@ kluczem dostępu z Bitwarden?"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entrar em %@ com sua chave de acesso do Bitwarden?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Войти на %@ с помощью ключа доступа из Bitwarden?"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ sitesinde Bitwarden geçiş anahtarınızla oturum açılsın mı?"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Увійти на %@ за допомогою ключа доступу з Bitwarden?"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đăng nhập vào %@ bằng khóa truy cập Bitwarden?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "要使用 Bitwarden 通行密钥登录 %@ 吗？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "要使用 Bitwarden 通行密鑰登入 %@ 嗎？"
           }
         }
       }
@@ -314663,6 +315229,118 @@
         }
       }
     },
+    "The passkey’s sign-in count can’t go higher." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Anmeldezähler des Passkeys kann nicht weiter steigen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El contador de inicios de sesión de la llave de acceso no puede aumentar más."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El contador de inicios de sesión de la llave de acceso no puede aumentar más."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le compteur de connexions de la clé d’identification ne peut plus augmenter."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "पासकी की साइन-इन गिनती अब और नहीं बढ़ सकती।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Penghitung masuk kunci sandi tidak bisa bertambah lagi."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il contatore degli accessi della passkey non può aumentare oltre."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "パスキーのサインイン回数をこれ以上増やせません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "패스키의 로그인 횟수를 더 이상 늘릴 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De aanmeldteller van de toegangssleutel kan niet hoger."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Licznik logowań klucza dostępu nie może już wzrosnąć."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O contador de entradas da chave de acesso não pode aumentar mais."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Счётчик входов ключа доступа больше не может увеличиваться."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geçiş anahtarının oturum açma sayacı daha fazla artamaz."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Лічильник входів ключа доступу більше не може зростати."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bộ đếm đăng nhập của khóa truy cập không thể tăng thêm."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "通行密钥的登录计数无法再增加。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "通行密鑰的登入次數無法再增加。"
+          }
+        }
+      }
+    },
     "The password goes only to Bitwarden’s tool. Coincide keeps the session it returns in your Keychain until you lock it." : {
       "localizations" : {
         "de" : {
@@ -317011,6 +317689,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "此儲存庫除了指示之外還有尚未推送的變更 (%@)。Coincide 只會推送指示檔案，因此請自行推送這些變更。"
+          }
+        }
+      }
+    },
+    "The request comes from %@. Choose an account. You’ll confirm with Touch ID or your Mac password next." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Anfrage kommt von %@. Wähle einen Account. Danach bestätigst du mit Touch ID oder deinem Mac-Passwort."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud procede de %@. Elige una cuenta. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud viene de %@. Elige una cuenta. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La demande provient de %@. Choisissez un compte. Vous confirmerez ensuite avec Touch ID ou le mot de passe de votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह अनुरोध %@ से आया है। कोई खाता चुनें। इसके बाद आप Touch ID या अपने Mac पासवर्ड से पुष्टि करेंगे।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permintaan ini berasal dari %@. Pilih akun. Selanjutnya Anda akan mengonfirmasi dengan Touch ID atau kata sandi Mac."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La richiesta proviene da %@. Scegli un account. Poi confermerai con Touch ID o la password del Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このリクエストは %@ からのものです。アカウントを選択してください。次に Touch ID または Mac のパスワードで確認します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 요청은 %@에서 왔습니다. 계정을 선택하세요. 다음으로 Touch ID 또는 Mac 암호로 확인합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het verzoek komt van %@. Kies een account. Daarna bevestig je met Touch ID of je Mac-wachtwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prośba pochodzi z %@. Wybierz konto. Następnie potwierdzisz to za pomocą Touch ID lub hasła do Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A solicitação vem de %@. Escolha uma conta. Em seguida, você vai confirmar com o Touch ID ou a senha do Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запрос пришёл от %@. Выберите учётную запись. Затем вы подтвердите вход с помощью Touch ID или пароля Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İstek %@ adresinden geliyor. Bir hesap seçin. Ardından Touch ID veya Mac parolanızla onaylayacaksınız."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запит надійшов від %@. Виберіть обліковий запис. Потім ви підтвердите вхід за допомогою Touch ID або пароля Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yêu cầu đến từ %@. Hãy chọn một tài khoản. Tiếp theo, bạn sẽ xác nhận bằng Touch ID hoặc mật khẩu máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此请求来自 %@。选择一个账户。接下来，你将使用触控 ID 或 Mac 密码确认。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此要求來自 %@。選擇一個帳號。接下來，你將使用 Touch ID 或 Mac 密碼確認。"
+          }
+        }
+      }
+    },
+    "The request comes from %@. You’ll confirm with Touch ID or your Mac password next." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Anfrage kommt von %@. Danach bestätigst du mit Touch ID oder deinem Mac-Passwort."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud procede de %@. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La solicitud viene de %@. A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La demande provient de %@. Vous confirmerez ensuite avec Touch ID ou le mot de passe de votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह अनुरोध %@ से आया है। इसके बाद आप Touch ID या अपने Mac पासवर्ड से पुष्टि करेंगे।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permintaan ini berasal dari %@. Selanjutnya Anda akan mengonfirmasi dengan Touch ID atau kata sandi Mac."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La richiesta proviene da %@. Poi confermerai con Touch ID o la password del Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このリクエストは %@ からのものです。次に Touch ID または Mac のパスワードで確認します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 요청은 %@에서 왔습니다. 다음으로 Touch ID 또는 Mac 암호로 확인합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Het verzoek komt van %@. Daarna bevestig je met Touch ID of je Mac-wachtwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prośba pochodzi z %@. Następnie potwierdzisz to za pomocą Touch ID lub hasła do Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A solicitação vem de %@. Em seguida, você vai confirmar com o Touch ID ou a senha do Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запрос пришёл от %@. Затем вы подтвердите вход с помощью Touch ID или пароля Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "İstek %@ adresinden geliyor. Ardından Touch ID veya Mac parolanızla onaylayacaksınız."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Запит надійшов від %@. Потім ви підтвердите вхід за допомогою Touch ID або пароля Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yêu cầu đến từ %@. Tiếp theo, bạn sẽ xác nhận bằng Touch ID hoặc mật khẩu máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此请求来自 %@。接下来，你将使用触控 ID 或 Mac 密码确认。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此要求來自 %@。接下來，你將使用 Touch ID 或 Mac 密碼確認。"
           }
         }
       }
@@ -344759,6 +345661,118 @@
         }
       }
     },
+    "Use passkeys from Bitwarden" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Passkeys aus Bitwarden verwenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usar llaves de acceso de Bitwarden"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usar llaves de acceso de Bitwarden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Utiliser les clés d’identification de Bitwarden"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden की पासकी इस्तेमाल करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gunakan kunci sandi dari Bitwarden"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usa le passkey di Bitwarden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden のパスキーを使用"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 패스키 사용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toegangssleutels uit Bitwarden gebruiken"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Używaj kluczy dostępu z Bitwarden"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Usar chaves de acesso do Bitwarden"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Использовать ключи доступа из Bitwarden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden’daki geçiş anahtarlarını kullan"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Використовувати ключі доступу з Bitwarden"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dùng khóa truy cập từ Bitwarden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 Bitwarden 中的通行密钥"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 Bitwarden 中的通行密鑰"
+          }
+        }
+      }
+    },
     "Use private sessions" : {
       "localizations" : {
         "de" : {
@@ -351560,6 +352574,118 @@
         }
       }
     },
+    "When a site asks for a passkey you saved in Bitwarden, Coincide offers to sign in with it, and you confirm each sign-in with Touch ID or your Mac password. Coincide reads the passkey with Bitwarden’s tool on this Mac, only to answer the site, and never sends it anywhere else." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wenn eine Website nach einem Passkey fragt, den du in Bitwarden gespeichert hast, bietet Coincide an, dich damit anzumelden, und du bestätigst jede Anmeldung mit Touch ID oder deinem Mac-Passwort. Coincide liest den Passkey mit dem Tool von Bitwarden auf diesem Mac, nur um der Website zu antworten, und sendet ihn nirgendwohin sonst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando un sitio pide una llave de acceso que guardaste en Bitwarden, Coincide ofrece iniciar sesión con ella, y confirmas cada inicio de sesión con Touch ID o la contraseña de tu Mac. Coincide lee la llave de acceso con la herramienta de Bitwarden en este Mac, solo para responder al sitio, y nunca la envía a ningún otro lugar."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando un sitio pide una llave de acceso que guardaste en Bitwarden, Coincide ofrece iniciar sesión con ella, y confirmas cada inicio de sesión con Touch ID o la contraseña de tu Mac. Coincide lee la llave de acceso con la herramienta de Bitwarden en esta Mac, solo para responder al sitio, y nunca la envía a ningún otro lugar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quand un site demande une clé d’identification enregistrée dans Bitwarden, Coincide propose de vous connecter avec, et vous confirmez chaque connexion avec Touch ID ou le mot de passe de votre Mac. Coincide lit la clé d’identification avec l’outil de Bitwarden sur ce Mac, uniquement pour répondre au site, et ne l’envoie nulle part ailleurs."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जब कोई साइट Bitwarden में सहेजी गई आपकी पासकी मांगती है, तो Coincide उससे साइन इन करने की पेशकश करता है, और आप हर साइन-इन की पुष्टि Touch ID या अपने Mac पासवर्ड से करते हैं। Coincide इस Mac पर Bitwarden के टूल से पासकी केवल साइट को जवाब देने के लिए पढ़ता है, और उसे कहीं और नहीं भेजता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saat situs meminta kunci sandi yang Anda simpan di Bitwarden, Coincide menawarkan untuk masuk dengannya, dan Anda mengonfirmasi setiap proses masuk dengan Touch ID atau kata sandi Mac. Coincide membaca kunci sandi dengan alat Bitwarden di Mac ini, hanya untuk menjawab situs, dan tidak pernah mengirimkannya ke tempat lain."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando un sito chiede una passkey che hai salvato in Bitwarden, Coincide propone di accedere con quella, e confermi ogni accesso con Touch ID o la password del Mac. Coincide legge la passkey con lo strumento di Bitwarden su questo Mac, solo per rispondere al sito, e non la invia da nessun’altra parte."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden に保存したパスキーをサイトが求めると、Coincide はそのパスキーでのサインインを提案します。サインインのたびに Touch ID または Mac のパスワードで確認します。Coincide はサイトに応答するためだけに、この Mac 上で Bitwarden のツールを使ってパスキーを読み取り、ほかの場所には一切送信しません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "사이트에서 Bitwarden에 저장한 패스키를 요청하면 Coincide가 해당 패스키로 로그인하도록 제안하며, 매번 Touch ID 또는 Mac 암호로 로그인을 확인합니다. Coincide는 사이트에 응답하기 위해서만 이 Mac에서 Bitwarden 도구로 패스키를 읽으며, 다른 곳으로는 절대 보내지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Als een site vraagt om een toegangssleutel die je in Bitwarden hebt bewaard, biedt Coincide aan om daarmee in te loggen, en je bevestigt elke aanmelding met Touch ID of je Mac-wachtwoord. Coincide leest de toegangssleutel met de tool van Bitwarden op deze Mac, alleen om de site te antwoorden, en stuurt hem nergens anders naartoe."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gdy witryna prosi o klucz dostępu zapisany w Bitwarden, Coincide proponuje zalogowanie się nim, a każde logowanie potwierdzasz za pomocą Touch ID lub hasła do Maca. Coincide odczytuje klucz dostępu narzędziem Bitwarden na tym Macu, tylko aby odpowiedzieć witrynie, i nigdzie indziej go nie wysyła."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando um site pede uma chave de acesso salva no Bitwarden, o Coincide oferece entrar com ela, e você confirma cada entrada com o Touch ID ou a senha do Mac. O Coincide lê a chave de acesso com a ferramenta do Bitwarden neste Mac, apenas para responder ao site, e nunca a envia para outro lugar."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Когда сайт запрашивает ключ доступа, сохранённый в Bitwarden, Coincide предлагает войти с ним, а каждый вход вы подтверждаете с помощью Touch ID или пароля Mac. Coincide читает ключ доступа инструментом Bitwarden на этом Mac только для ответа сайту и никуда больше его не отправляет."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir site Bitwarden’a kaydettiğiniz bir geçiş anahtarını istediğinde Coincide onunla oturum açmayı önerir ve her oturum açmayı Touch ID veya Mac parolanızla onaylarsınız. Coincide geçiş anahtarını yalnızca siteye yanıt vermek için bu Mac’te Bitwarden’ın aracıyla okur ve başka hiçbir yere göndermez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Коли сайт запитує ключ доступу, збережений у Bitwarden, Coincide пропонує увійти з ним, а кожен вхід ви підтверджуєте за допомогою Touch ID або пароля Mac. Coincide читає ключ доступу інструментом Bitwarden на цьому Mac лише для відповіді сайту й нікуди більше його не надсилає."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khi một trang web yêu cầu khóa truy cập bạn đã lưu trong Bitwarden, Coincide sẽ đề nghị đăng nhập bằng khóa đó, và bạn xác nhận mỗi lần đăng nhập bằng Touch ID hoặc mật khẩu máy Mac. Coincide đọc khóa truy cập bằng công cụ của Bitwarden trên máy Mac này, chỉ để trả lời trang web, và không bao giờ gửi nó đi nơi khác."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "当网站请求你存储在 Bitwarden 中的通行密钥时，Coincide 会提供使用它登录，每次登录都需通过触控 ID 或 Mac 密码确认。Coincide 在这台 Mac 上通过 Bitwarden 的工具读取通行密钥，仅用于回应该网站，绝不会将其发送到其他任何地方。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "當網站要求你儲存在 Bitwarden 中的通行密鑰時，Coincide 會提供用它登入，每次登入都需以 Touch ID 或 Mac 密碼確認。Coincide 在這台 Mac 上透過 Bitwarden 的工具讀取通行密鑰，僅用於回應該網站，絕不會傳送到其他任何地方。"
+          }
+        }
+      }
+    },
     "When an agent asks to sign in and you choose Always for This Site, the site is listed here." : {
       "localizations" : {
         "de" : {
@@ -357836,6 +358962,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "輪到你在瀏覽器中操作"
+          }
+        }
+      }
+    },
+    "You’ll confirm with Touch ID or your Mac password next." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Danach bestätigst du mit Touch ID oder deinem Mac-Passwort."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A continuación, confirmarás con Touch ID o la contraseña de tu Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vous confirmerez ensuite avec Touch ID ou le mot de passe de votre Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इसके बाद आप Touch ID या अपने Mac पासवर्ड से पुष्टि करेंगे।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Selanjutnya Anda akan mengonfirmasi dengan Touch ID atau kata sandi Mac."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Poi confermerai con Touch ID o la password del Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "次に Touch ID または Mac のパスワードで確認します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "다음으로 Touch ID 또는 Mac 암호로 확인합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Daarna bevestig je met Touch ID of je Mac-wachtwoord."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Następnie potwierdzisz to za pomocą Touch ID lub hasła do Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Em seguida, você vai confirmar com o Touch ID ou a senha do Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Затем вы подтвердите вход с помощью Touch ID или пароля Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ardından Touch ID veya Mac parolanızla onaylayacaksınız."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Потім ви підтвердите вхід за допомогою Touch ID або пароля Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tiếp theo, bạn sẽ xác nhận bằng Touch ID hoặc mật khẩu máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "接下来，你将使用触控 ID 或 Mac 密码确认。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "接下來，你將使用 Touch ID 或 Mac 密碼確認。"
           }
         }
       }
@@ -365360,6 +366598,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "語音"
+          }
+        }
+      }
+    },
+    "sign in to %@ with your Bitwarden passkey" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "dich mit deinem Bitwarden-Passkey bei %@ anzumelden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iniciar sesión en %@ con tu llave de acceso de Bitwarden"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iniciar sesión en %@ con tu llave de acceso de Bitwarden"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "vous connecter à %@ avec votre clé d’identification Bitwarden"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "अपनी Bitwarden पासकी से %@ में साइन इन करने"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "masuk ke %@ dengan kunci sandi Bitwarden Anda"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "accedere a %@ con la tua passkey di Bitwarden"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden のパスキーで %@ にサインイン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitwarden 패스키로 %@에 로그인"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "in te loggen bij %@ met je Bitwarden-toegangssleutel"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "zalogować się do %@ kluczem dostępu z Bitwarden"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "entrar em %@ com sua chave de acesso do Bitwarden"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "войти на %@ с помощью ключа доступа из Bitwarden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ sitesinde Bitwarden geçiş anahtarınızla oturum açmaya"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "увійти на %@ за допомогою ключа доступу з Bitwarden"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "đăng nhập vào %@ bằng khóa truy cập Bitwarden của bạn"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 Bitwarden 通行密钥登录 %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用 Bitwarden 通行密鑰登入 %@"
           }
         }
       }

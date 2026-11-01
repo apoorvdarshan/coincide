@@ -16,6 +16,9 @@ final class PasswordsSettingsModel {
     var agentsUseManagers = true {
         didSet { if agentsUseManagers != oldValue { settings.update { $0.agentsUsePasswordManagers = agentsUseManagers } } }
     }
+    var usesBitwardenPasskeys = true {
+        didSet { if usesBitwardenPasskeys != oldValue { settings.update { $0.usesBitwardenPasskeys = usesBitwardenPasskeys } } }
+    }
     var unlocking = false
     var unlockError: String?
     @ObservationIgnored let sessions: PreviewSessions
@@ -39,6 +42,7 @@ final class PasswordsSettingsModel {
         grants = settings.settings.loginGrants.sorted { $0.site < $1.site }
         offersToSave = settings.settings.offersToSaveLogins
         agentsUseManagers = settings.settings.agentsUsePasswordManagers
+        usesBitwardenPasskeys = settings.settings.usesBitwardenPasskeys
         saved = sessions.profile.logins.saved.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
@@ -117,6 +121,12 @@ struct PasswordsSettingsSection: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 ForEach(PasswordManagerKind.allCases) { kind in managerRow(kind) }
+                if model.enabled.contains(.bitwarden) {
+                    Toggle(isOn: $model.usesBitwardenPasskeys) {
+                        Text("Use passkeys from Bitwarden")
+                        Text("When a site asks for a passkey you saved in Bitwarden, Coincide offers to sign in with it, and you confirm each sign-in with Touch ID or your Mac password. Coincide reads the passkey with Bitwarden’s tool on this Mac, only to answer the site, and never sends it anywhere else.")
+                    }
+                }
                 Toggle(isOn: $model.agentsUseManagers) {
                     Text("Let agents use your unlocked password managers")
                     Text("Agents Coincide starts get Bitwarden’s unlocked session, so they can read any item with the bw command, such as API keys and tokens, without asking. Agents that are already running get it when they start again.")
