@@ -3,12 +3,33 @@
 [![CI](https://github.com/apoorvdarshan/coincide/actions/workflows/ci.yml/badge.svg)](https://github.com/apoorvdarshan/coincide/actions/workflows/ci.yml)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15854/badge)](https://www.bestpractices.dev/projects/15854)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/apoorvdarshan/coincide/badge)](https://scorecard.dev/viewer/?uri=github.com/apoorvdarshan/coincide)
+[![Latest release](https://img.shields.io/github/v/release/apoorvdarshan/coincide)](https://github.com/apoorvdarshan/coincide/releases/latest)
+[![Downloads](https://img.shields.io/endpoint?url=https://coincide.dev/api/stats/badge)](https://github.com/apoorvdarshan/coincide/releases)
 
 A native macOS app for the coding agents you already pay for — **Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity** — in one window, with one model picker, and the ability to **switch agents in the middle of a thread**.
 
 Coincide is a native AppKit port of [T3 Code](https://github.com/pingdotgg/t3code). It drives each agent's own command-line tool with the login you already have, so your existing subscriptions keep working. Coincide never sells, proxies or meters tokens.
 
 > Status: early development. Expect rough edges.
+
+## Install
+
+Coincide runs on macOS 26 or later, on Apple silicon and Intel Macs. Pick one:
+
+- **Download** [Coincide.dmg](https://github.com/apoorvdarshan/coincide/releases/latest/download/Coincide.dmg), open it and drag Coincide to Applications.
+- **Homebrew**
+
+  ```sh
+  brew install --cask apoorvdarshan/tap/coincide
+  ```
+
+- **npm** (Node.js 18 or later): downloads the latest release, checks its checksum, signature and notarization, and installs it in Applications.
+
+  ```sh
+  npx coincide-dev
+  ```
+
+Every release is signed with Developer ID and notarized by Apple. Coincide → Check for Updates installs newer ones. Release notes are in [CHANGELOG.md](CHANGELOG.md) and on the [releases page](https://github.com/apoorvdarshan/coincide/releases).
 
 ## Why native
 
