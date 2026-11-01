@@ -237,7 +237,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         generatesThreadTitles = true
         updatesThreadTitles = false
         lastAppUpdateCheck = nil
-        checksForAppUpdates = false
+        checksForAppUpdates = true
         resumesAfterUsageLimit = false
         newThreadStartsChat = false
         idleSessionTimeoutMinutes = 30
