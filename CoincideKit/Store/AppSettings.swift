@@ -696,6 +696,9 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
     case archiveThread = "thread.archive"
     case copyThreadPath = "thread.copyPath"
     case deleteThread = "thread.delete"
+    // Help: the GitHub issue forms (`CommunityLink`), with no shortcut until the user gives them one.
+    case reportIssue = "help.reportIssue"
+    case requestFeature = "help.requestFeature"
 
     /// The menu bar menu a command is in.
     public enum Menu: Sendable, CaseIterable {
@@ -703,6 +706,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
         case edit
         case view
         case thread
+        case help
 
         public nonisolated var title: String {
             switch self {
@@ -710,6 +714,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
             case .edit: String(localized: "Edit")
             case .view: String(localized: "View")
             case .thread: String(localized: "Thread")
+            case .help: String(localized: "Help")
             }
         }
     }
@@ -734,6 +739,7 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
         case .toggleSidebar, .toggleTerminal, .toggleDiff, .showSchedules, .commandPalette, .increaseFontSize,
             .decreaseFontSize, .resetFontSize, .showArchive:
             .view
+        case .reportIssue, .requestFeature: .help
         default: .thread
         }
     }
@@ -771,6 +777,8 @@ public enum KeyCommand: String, CaseIterable, Sendable, Identifiable {
         case .copyThreadPath: return String(localized: "Copy Path")
         case .deleteThread: return String(localized: "Delete Thread…")
         case .showArchive: return String(localized: "Archived Threads…")
+        case .reportIssue: return String(localized: "Report an Issue…")
+        case .requestFeature: return String(localized: "Request a Feature…")
         default: return rawValue
         }
     }

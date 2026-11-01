@@ -1,5 +1,6 @@
 import AppKit
 import CoincideKit
+import CoincideRemoteKit
 
 /// Builds the menu bar in code and fills its project and "Open In" submenus when they open.
 /// Coincide commands target the main window controller; standard ones travel the responder chain.
@@ -26,7 +27,7 @@ final class MainMenu: NSObject, NSMenuDelegate {
         let window = windowMenu()
         main.addItem(submenu(window))
         NSApp.windowsMenu = window
-        let help = NSMenu(title: String(localized: "Help"))
+        let help = helpMenu(appDelegate)
         main.addItem(submenu(help))
         NSApp.helpMenu = help
         KeyBindingsController.shared.attach(to: main)
@@ -245,6 +246,19 @@ final class MainMenu: NSObject, NSMenuDelegate {
         menu.addItem(standard(String(localized: "Zoom"), #selector(NSWindow.performZoom(_:))))
         menu.addItem(.separator())
         menu.addItem(standard(String(localized: "Bring All to Front"), #selector(NSApplication.arrangeInFront(_:))))
+        return menu
+    }
+
+    /// Report an Issue… and Request a Feature…, which open the GitHub issue forms (`CommunityLink`). macOS puts its
+    /// help search above them.
+    private func helpMenu(_ appDelegate: AppDelegate) -> NSMenu {
+        let menu = NSMenu(title: String(localized: "Help"))
+        for link in CommunityLink.allCases {
+            let entry = item(link.command.title, #selector(AppDelegate.openCommunityLink(_:)), link.command)
+            entry.target = appDelegate
+            entry.representedObject = link.rawValue
+            menu.addItem(entry)
+        }
         return menu
     }
 

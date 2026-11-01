@@ -1,5 +1,6 @@
 import AppKit
 import CoincideKit
+import CoincideRemoteKit
 
 /// One palette row: an action, a thread, a project or a setting.
 struct PaletteItem {
@@ -247,6 +248,14 @@ struct PaletteCatalog {
             PaletteItem(
                 id: "action:settings", title: String(localized: "Open Settings"), icon: symbol("gearshape"), trailing: "⌘,",
                 keywords: ["settings", "preferences", "configuration"], behavior: .run { SettingsWindowController.shared.show() }))
+        // Help & Community, as in the Help menu.
+        for link in CommunityLink.allCases {
+            items.append(
+                PaletteItem(
+                    id: "help:\(link.rawValue)", title: link.command.title, subtitle: String(localized: "Help"),
+                    icon: symbol(link.symbol), trailing: keys(link.command), keywords: link.keywords,
+                    behavior: .run { link.open() }))
+        }
         return (core, items)
     }
 

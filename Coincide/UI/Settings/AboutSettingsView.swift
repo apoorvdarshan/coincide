@@ -1,4 +1,5 @@
 import AppKit
+import CoincideRemoteKit
 import SwiftUI
 
 struct AboutSettingsView: View {
@@ -29,14 +30,12 @@ struct AboutSettingsView: View {
 
             AppUpdateSettingsView()
 
+            HelpCommunitySection()
+
             Section {
                 AboutLink(
                     symbol: "chevron.left.forwardslash.chevron.right", color: .gray, title: String(localized: "Source Code"),
                     detail: "github.com/apoorvdarshan/coincide", url: "https://github.com/apoorvdarshan/coincide")
-                AboutLink(
-                    symbol: "ladybug.fill", color: .red, title: String(localized: "Report an Issue"),
-                    detail: String(localized: "Bugs and feature requests on GitHub"),
-                    url: "https://github.com/apoorvdarshan/coincide/issues")
             }
 
             Section("Follow") {
@@ -169,6 +168,26 @@ struct AboutSettingsView: View {
         """
 }
 
+/// Settings › About's Help & Community: a row for each `CommunityLink`, which opens its GitHub form with this Mac's
+/// versions of Coincide and macOS filled in, as Help › Report an Issue… does.
+struct HelpCommunitySection: View {
+    var body: some View {
+        Section {
+            ForEach(CommunityLink.allCases) { link in
+                AboutLink(
+                    symbol: link.symbol, color: link.tint, title: link.title, detail: link.detail,
+                    url: link.url().absoluteString, opens: link.macURL)
+            }
+        } header: {
+            Text("Help & Community")
+        } footer: {
+            Text("Issues on GitHub are public. A bug report starts with only your versions of Coincide and macOS filled in; leave keys, tokens and private code out of what you add.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 /// A row that opens a web page.
 private struct AboutLink: View {
     let symbol: String
@@ -176,11 +195,13 @@ private struct AboutLink: View {
     let title: String
     let detail: String
     let url: String
+    /// What a click opens when it isn't `url`, such as a form with fields filled in.
+    var opens: URL?
     @Environment(\.openURL) private var openURL
 
     var body: some View {
         Button {
-            if let destination = URL(string: url) { openURL(destination) }
+            if let destination = opens ?? URL(string: url) { openURL(destination) }
         } label: {
             HStack(spacing: 10) {
                 SettingsIconTile(symbol: symbol, color: color, size: 24)
