@@ -5,7 +5,7 @@ import Testing
 
 @MainActor
 struct AppUpdatesTests {
-    @Test func updatesAreOptInAndMissingReleaseDoesNotClaimCurrentVersion() async throws {
+    @Test func dailyChecksAreOnByDefaultCanBeTurnedOffAndMissingReleaseDoesNotClaimCurrentVersion() async throws {
         let folder = TemporaryDirectory("app-updates-state")
         let store = AppStore(directory: folder.url)
         let root = folder.url
@@ -14,6 +14,8 @@ struct AppUpdatesTests {
             try Data("{}".utf8).write(to: file)
             return (file, 404)
         }
+        #expect(store.settings.checksForAppUpdates)
+        store.updateSettings { $0.checksForAppUpdates = false }
         updates.automaticCheck()
         #expect(updates.state == .idle && store.settings.lastAppUpdateCheck == nil)
         store.updateSettings { $0.checksForAppUpdates = true }
