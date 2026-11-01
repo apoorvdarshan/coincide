@@ -14,6 +14,7 @@ extension CommunityLink {
         case .requestFeature: String(localized: "Request a Feature")
         case .joinDiscord: String(localized: "Join the Discord")
         case .starOnGitHub: String(localized: "Star on GitHub")
+        case .upvoteOnProductHunt: String(localized: "Upvote on Product Hunt")
         // Mac only (`isOffered(on:)`), so never listed here.
         case .supportOnKoFi: "Ko-fi"
         case .x: "X"
@@ -42,6 +43,7 @@ extension CommunityLink {
         case .requestFeature: "lightbulb.fill"
         case .joinDiscord: "bubble.left.and.bubble.right.fill"
         case .starOnGitHub: "star.fill"
+        case .upvoteOnProductHunt: "arrowtriangle.up.fill"
         case .supportOnKoFi: "heart.fill"
         case .x: "at"
         case .instagram: "camera.fill"
@@ -60,6 +62,7 @@ extension CommunityLink {
         case .requestFeature: "orange"
         case .joinDiscord: "indigo"
         case .starOnGitHub: "gray"
+        case .upvoteOnProductHunt: "orange"
         case .supportOnKoFi: "pink"
         case .x: "black"
         case .instagram: "pink"
@@ -78,6 +81,7 @@ extension CommunityLink {
         case .requestFeature: [String(localized: "Idea"), String(localized: "Feedback"), "GitHub", "Discord", "feature"]
         case .joinDiscord: ["Discord", "community", "server"]
         case .starOnGitHub: ["GitHub", "source", "open source", "MIT"]
+        case .upvoteOnProductHunt: ["Product Hunt", "upvote", "vote", "launch"]
         case .supportOnKoFi: []
         case .x: ["twitter", "follow", CoincideLinks.xHandle]
         case .instagram: ["follow", CoincideLinks.instagramHandle]

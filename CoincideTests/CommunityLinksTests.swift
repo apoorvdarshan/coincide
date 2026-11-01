@@ -5,8 +5,8 @@ import Testing
 
 @testable import Coincide
 
-/// Help & Community: help and reports, Discord and the source code, the developer's accounts, and contact and legal
-/// pages, in Settings › About, the Help menu, the command palette and Coincide Remote's Settings (which share
+/// Help & Community: help and reports, Discord, the source code and Product Hunt, the developer's accounts, and contact
+/// and legal pages, in Settings › About, the Help menu, the command palette and Coincide Remote's Settings (which share
 /// `CommunityLink`). Report an Issue and Request a Feature open the GitHub issue forms, with only the version fields of
 /// a bug report filled in, or the Discord channel. Nothing here opens a browser or shows a window.
 @Suite(.serialized)
@@ -45,6 +45,7 @@ struct CommunityLinksTests {
             .getHelp: "https://discord.com/channels/1566352780862427258/1566353949336797275",
             .joinDiscord: "https://discord.gg/DETrbhDVqw",
             .starOnGitHub: "https://github.com/apoorvdarshan/coincide",
+            .upvoteOnProductHunt: "https://www.producthunt.com/products/coincide",
             .supportOnKoFi: "https://ko-fi.com/apoorvdarshan",
             .x: "https://x.com/apoorvdarshan",
             .instagram: "https://instagram.com/apoorvcodes",
@@ -65,7 +66,7 @@ struct CommunityLinksTests {
 
     @Test func linksAreGroupedInOrder() {
         #expect(CommunityLink.links(in: .community, on: .mac)
-            == [.getHelp, .reportIssue, .requestFeature, .joinDiscord, .starOnGitHub, .supportOnKoFi])
+            == [.getHelp, .reportIssue, .requestFeature, .joinDiscord, .starOnGitHub, .upvoteOnProductHunt, .supportOnKoFi])
         #expect(CommunityLink.links(in: .follow, on: .mac) == [.x, .instagram, .linkedIn])
         #expect(CommunityLink.links(in: .contact, on: .mac) == [.contact, .privacyPolicy, .termsOfService])
         #expect(CommunityLink.Group.allCases.flatMap { CommunityLink.links(in: $0, on: .mac) } == CommunityLink.allCases)
@@ -76,10 +77,27 @@ struct CommunityLinksTests {
         #expect(CommunityLink.offered(on: .mac) == CommunityLink.allCases)
         #expect(CommunityLink.offered(on: .remote) == CommunityLink.allCases.filter { $0 != .supportOnKoFi })
         #expect(CommunityLink.links(in: .community, on: .remote)
-            == [.getHelp, .reportIssue, .requestFeature, .joinDiscord, .starOnGitHub])
+            == [.getHelp, .reportIssue, .requestFeature, .joinDiscord, .starOnGitHub, .upvoteOnProductHunt])
         #expect(CommunityLink.links(in: .follow, on: .remote) == CommunityLink.links(in: .follow, on: .mac))
         #expect(CommunityLink.links(in: .contact, on: .remote) == CommunityLink.links(in: .contact, on: .mac))
         #expect(!CommunityLink.supportOnKoFi.isOffered(on: .remote))
+    }
+
+    /// Upvote on Product Hunt opens Coincide's product page, in Help & Community on the Mac and on the phone.
+    @Test func productHuntIsOnBothApps() {
+        #expect(CoincideLinks.productHunt.absoluteString == "https://www.producthunt.com/products/coincide")
+        #expect(CommunityLink.upvoteOnProductHunt.url() == CoincideLinks.productHunt)
+        #expect(CommunityLink.upvoteOnProductHunt.macURL == CoincideLinks.productHunt)
+        #expect(CommunityLink.upvoteOnProductHunt.group == .community)
+        #expect(CommunityLink.upvoteOnProductHunt.isOffered(on: .mac))
+        #expect(CommunityLink.upvoteOnProductHunt.isOffered(on: .remote))
+        #expect(CommunityLink.upvoteOnProductHunt.title == "Upvote on Product Hunt")
+        #expect(CommunityLink.upvoteOnProductHunt.menuTitle == "Upvote Coincide on Product Hunt")
+        #expect(CommunityLink.upvoteOnProductHunt.detail == "producthunt.com/products/coincide")
+        // A page, not a report: no GitHub-or-Discord question.
+        #expect(CommunityLink.upvoteOnProductHunt.discordChannel == nil)
+        #expect(CommunityLink.upvoteOnProductHunt.command == nil)
+        #expect(NSImage(systemSymbolName: CommunityLink.upvoteOnProductHunt.symbol, accessibilityDescription: nil) != nil)
     }
 
     /// Coincide Remote builds only for iOS, so its views can't run here; its sources must list the links offered on
@@ -200,7 +218,7 @@ struct CommunityLinksTests {
         #expect(help.title == "Help")
         #expect(help.items.map { $0.isSeparatorItem ? "-" : $0.title } == [
             "Get Help on Discord", "Report an Issue…", "Request a Feature…", "Join the Discord", "Star on GitHub",
-            "Support Coincide on Ko-fi", "-",
+            "Upvote Coincide on Product Hunt", "Support Coincide on Ko-fi", "-",
             "X: @apoorvdarshan", "Instagram: @apoorvcodes", "LinkedIn", "-",
             "Contact: apoorv@fud-ai.app", "Privacy Policy", "Terms of Service",
         ])
@@ -242,6 +260,7 @@ struct CommunityLinksTests {
             ("Join the Discord", ["discord", "community"]), ("Star on GitHub", ["star", "open source"]),
             ("Privacy Policy", ["privacy"]), ("Terms of Service", ["terms"]), ("Contact", ["email"]),
             ("Support on Ko-fi", ["ko-fi", "donate", "coffee"]),
+            ("Upvote on Product Hunt", ["product hunt", "upvote", "launch"]),
             ("X", ["twitter"]), ("LinkedIn", ["linkedin"]),
         ]
         for (title, queries) in cases {

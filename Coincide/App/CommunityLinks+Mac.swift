@@ -15,6 +15,7 @@ extension CommunityLink {
         case .requestFeature: String(localized: "Request a Feature")
         case .joinDiscord: String(localized: "Join the Discord")
         case .starOnGitHub: String(localized: "Star on GitHub")
+        case .upvoteOnProductHunt: String(localized: "Upvote on Product Hunt")
         case .supportOnKoFi: String(localized: "Support on Ko-fi")
         case .x: "X"
         case .instagram: "Instagram"
@@ -32,6 +33,7 @@ extension CommunityLink {
         case .reportIssue, .requestFeature: String(localized: "On GitHub or Discord")
         case .joinDiscord: "discord.gg/DETrbhDVqw"
         case .starOnGitHub: String(localized: "Coincide is open source under the MIT License")
+        case .upvoteOnProductHunt: "producthunt.com/products/coincide"
         case .supportOnKoFi: String(localized: "Buy Apoorv a coffee")
         case .x: CoincideLinks.xHandle
         case .instagram: CoincideLinks.instagramHandle
@@ -47,6 +49,7 @@ extension CommunityLink {
     var menuTitle: String {
         switch self {
         case .getHelp: String(localized: "Get Help on Discord")
+        case .upvoteOnProductHunt: String(localized: "Upvote Coincide on Product Hunt")
         case .supportOnKoFi: String(localized: "Support Coincide on Ko-fi")
         case .reportIssue, .requestFeature: command?.title ?? title
         case .x: "X: \(CoincideLinks.xHandle)"
@@ -72,6 +75,7 @@ extension CommunityLink {
         case .requestFeature: "lightbulb.fill"
         case .joinDiscord: "bubble.left.and.bubble.right.fill"
         case .starOnGitHub: "star.fill"
+        case .upvoteOnProductHunt: "arrowtriangle.up.fill"
         case .supportOnKoFi: "heart.fill"
         case .x: "at"
         case .instagram: "camera.fill"
@@ -89,6 +93,7 @@ extension CommunityLink {
         case .requestFeature: .orange
         case .joinDiscord: .indigo
         case .starOnGitHub: .gray
+        case .upvoteOnProductHunt: .orange
         case .supportOnKoFi: .pink
         case .x: .black
         case .instagram: .pink
@@ -112,6 +117,8 @@ extension CommunityLink {
                      "enhancement", "feedback", "github", "discord", "help"]
         case .joinDiscord: words = ["discord", "community", "chat", "server", "join", "invite"]
         case .starOnGitHub: words = ["github", "star", "source", "code", "open source", "license", "mit", "repository"]
+        case .upvoteOnProductHunt:
+            words = ["product hunt", "producthunt", "upvote", "vote", "launch", "support", "review", "community"]
         case .supportOnKoFi: words = ["support", "donate", "donation", "tip", "coffee", "ko-fi", "kofi", "sponsor", "fund"]
         case .x: words = ["x", "twitter", "follow", "social", CoincideLinks.xHandle]
         case .instagram: words = ["instagram", "follow", "social", CoincideLinks.instagramHandle]
