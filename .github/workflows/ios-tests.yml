@@ -144,6 +144,12 @@ jobs:
             !/npm/
             !/Fuzz/
 
+      # DIAGNOSTIC (temporary): what keeps the runner busy while the simulator boots.
+      - name: Sample the runner's load
+        run: |
+          # shellcheck disable=SC2016
+          nohup bash -c 'while true; do { echo "== $(date -u +%T) $(sysctl -n vm.loadavg) swap: $(sysctl -n vm.swapusage)"; memory_pressure 2>/dev/null | tail -1; ps -Ao pcpu=,rss=,comm= -r | head -8 | sed -E "s#/[^ ]*/##"; } >>"$RUNNER_TEMP/load.log"; sleep 15; done' >/dev/null 2>&1 &
+
       - name: Install XcodeGen
         run: |
           curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/xcodegen.zip" \
@@ -289,3 +295,7 @@ jobs:
           name: ios-test-results
           path: build/iOSTests.xcresult
           retention-days: 7
+
+      - name: Show the runner's load (DIAGNOSTIC, temporary)
+        if: always()
+        run: cat "$RUNNER_TEMP/load.log"
