@@ -1,0 +1,67 @@
+{
+  "$schema_comment": "Coincide Remote's in-app products, as App Store Connect and CoincideRemote/Pro/ProStore.swift name them. With IOS_SUBMIT_REVIEW on, a release submits the version with these products when they're Ready to Submit, and never any other.",
+  "package": {
+    "ios": "com.apoorvdarshan.coincide.remote"
+  },
+  "platforms": {
+    "ios": {
+      "billing": "app_store",
+      "status": "active",
+      "notes": "Coincide Pro (RevenueCat entitlement `pro`, offering `default`) and tips (offering `tips`) through RevenueCat and StoreKit 2."
+    }
+  },
+  "subscriptions": [
+    {
+      "id": "com.apoorvdarshan.coincide.remote.pro.monthly",
+      "name": "Coincide Pro Monthly",
+      "group": "Coincide Pro",
+      "period": "P1M",
+      "entitlement": "pro",
+      "platforms": ["ios"]
+    },
+    {
+      "id": "com.apoorvdarshan.coincide.remote.pro.yearly",
+      "name": "Coincide Pro Yearly",
+      "group": "Coincide Pro",
+      "period": "P1Y",
+      "free_trial": "P1W",
+      "entitlement": "pro",
+      "platforms": ["ios"]
+    }
+  ],
+  "lifetime": [
+    {
+      "id": "com.apoorvdarshan.coincide.remote.pro.lifetime",
+      "name": "Coincide Pro Lifetime",
+      "type": "non_consumable",
+      "entitlement": "pro",
+      "platforms": ["ios"]
+    }
+  ],
+  "tips": [
+    {
+      "id": "com.apoorvdarshan.coincide.remote.tip.commit",
+      "name": "Small Commit",
+      "type": "consumable",
+      "platforms": ["ios"]
+    },
+    {
+      "id": "com.apoorvdarshan.coincide.remote.tip.diff",
+      "name": "Clean Diff",
+      "type": "consumable",
+      "platforms": ["ios"]
+    },
+    {
+      "id": "com.apoorvdarshan.coincide.remote.tip.greenci",
+      "name": "Green CI",
+      "type": "consumable",
+      "platforms": ["ios"]
+    },
+    {
+      "id": "com.apoorvdarshan.coincide.remote.tip.shipit",
+      "name": "Ship It",
+      "type": "consumable",
+      "platforms": ["ios"]
+    }
+  ]
+}
