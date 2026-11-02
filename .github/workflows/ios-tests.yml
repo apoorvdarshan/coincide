@@ -222,15 +222,15 @@ jobs:
           echo "id=$id" >>"$GITHUB_OUTPUT"
           xcrun simctl boot "$id"
 
-      # No compilation cache (as ci.yml has): with every compile a cache hit, the warm runs measured in #217 were no
-      # faster than the cold one, and the cache would take room from the Mac app's.
+      # For any simulator rather than the booting one, which kept xcodebuild waiting for minutes before it started, and for
+      # Apple silicon only, like the runner. No compilation cache (ci.yml has one): with every compile a cache hit, the
+      # warm runs measured in #217 were no faster than the cold one, and it would take cache room from the Mac app's.
       - name: Build
-        env:
-          SIMULATOR: ${{ steps.simulator.outputs.id }}
         run: |
           xcodebuild -project CoincideRemoteTests.xcodeproj -scheme CoincideRemote \
-            -destination "platform=iOS Simulator,id=$SIMULATOR" -skipPackagePluginValidation \
-            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages build-for-testing
+            -destination 'generic/platform=iOS Simulator' -skipPackagePluginValidation \
+            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages build-for-testing \
+            ARCHS=arm64
 
       # One simulator, no parallel clones. -collect-test-diagnostics never: otherwise xcodebuild can spend ten minutes
       # after the tests collecting the simulator's diagnostics. Failures keep their screenshots in the result bundle.
@@ -239,11 +239,15 @@ jobs:
         env:
           SIMULATOR: ${{ steps.simulator.outputs.id }}
         run: |
+          # The test run the build wrote, so the project and its packages aren't loaded again.
+          shopt -s nullglob
+          runs=(build/DerivedData/Build/Products/*.xctestrun)
+          if [ "${#runs[@]}" -ne 1 ]; then
+            echo "::error::Expected one .xctestrun from the build, found ${#runs[@]}."
+            exit 1
+          fi
           xcrun simctl bootstatus "$SIMULATOR" -b
-          # The build just resolved and checked out the packages.
-          xcodebuild -project CoincideRemoteTests.xcodeproj -scheme CoincideRemote \
-            -destination "platform=iOS Simulator,id=$SIMULATOR" -skipPackagePluginValidation -skipPackageUpdates \
-            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages test-without-building \
+          xcodebuild test-without-building -xctestrun "${runs[0]}" -destination "platform=iOS Simulator,id=$SIMULATOR" \
             -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
             -collect-test-diagnostics never -resultBundlePath build/iOSTests.xcresult
 
