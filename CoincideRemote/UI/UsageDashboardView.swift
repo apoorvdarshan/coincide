@@ -212,12 +212,10 @@ struct UsageDashboardView: View {
     private func load(refresh: Bool) async {
         if refresh { isRefreshing = true }
         defer { if refresh { isRefreshing = false } }
-        #if DEBUG
         if DemoData.isEnabled {
             dashboard = DemoData.usageDashboard
             return
         }
-        #endif
         guard client.isConnected else { return }
         let query = RemoteUsageQuery(days: days, provider: provider, accountID: accountID, refresh: refresh)
         do {

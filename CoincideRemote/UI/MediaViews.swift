@@ -31,9 +31,7 @@ final class MediaCache {
     func load(_ key: Key, client: RemoteClient) async -> Outcome {
         if let image = cached(key) { return .image(image) }
         if let reason = failures[key.id] { return .unavailable(reason) }
-        #if DEBUG
         if DemoData.isEnabled { return .image(DemoData.picture(key.index, full: key.full)) }
-        #endif
         if let task = loading[key.id] { return await task.value }
         let task = Task<Outcome, Never> {
             do {

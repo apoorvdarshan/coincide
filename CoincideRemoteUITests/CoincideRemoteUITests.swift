@@ -71,6 +71,26 @@ final class CoincideRemoteUITests: XCTestCase {
         waitForPaywall(app)
     }
 
+    /// Explore the Demo opens the sample Mac without pairing, under a banner that says so, and Exit Demo goes back to the
+    /// Connect screen. App Review uses it, having no Mac to pair.
+    @MainActor
+    func testTheDemoOpensWithoutAMacAndExitsToPairing() {
+        let app = launch("-CoincideRemoteDemoUnpaired", "-CoincideRemoteTab", "projects")
+        let explore = app.buttons["Explore the Demo"]
+        XCTAssertTrue(explore.waitForExistence(timeout: timeout))
+        explore.tap()
+
+        XCTAssertTrue(element(app, containing: "iPhone image previews in threads").waitForExistence(timeout: timeout))
+        XCTAssertTrue(element(app, containing: "Sample data. Nothing runs on a Mac.").exists, "No demo banner")
+        let exit = app.buttons["Exit Demo"].firstMatch
+        XCTAssertTrue(exit.exists)
+        exit.tap()
+
+        XCTAssertTrue(app.staticTexts["Connect to Coincide"].waitForExistence(timeout: timeout))
+        XCTAssertTrue(app.buttons["Explore the Demo"].exists)
+        XCTAssertFalse(app.buttons["Projects"].exists, "The tabs stayed after leaving the demo")
+    }
+
     // MARK: Coincide Pro
 
     /// Browsing is free; an action (here, a new bot) shows the paywall instead of running, and closing it runs nothing.

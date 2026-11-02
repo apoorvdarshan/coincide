@@ -246,7 +246,10 @@ struct RootView: View {
             if client.mac == nil {
                 NavigationStack { ConnectView(isOnboarding: true) }
             } else {
-                MainTabView()
+                VStack(spacing: 0) {
+                    if client.isExploringDemo { DemoBanner() }
+                    MainTabView()
+                }
             }
         }
         .sheet(isPresented: $navigator.showsConnect) {
@@ -280,5 +283,50 @@ struct NoticeBanner: View {
                 .onTapGesture { withAnimation { client.notice = nil } }
                 .accessibilityAddTraits(.isStaticText)
         }
+    }
+}
+
+/// Over the demo's tabs (`RemoteClient.startDemo()`): that it's a demo, and the way back to pairing a Mac.
+struct DemoBanner: View {
+    @Environment(RemoteClient.self) private var client
+    @Environment(Navigator.self) private var navigator
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "play.rectangle.on.rectangle.fill")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Demo")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.ink)
+                Text("Sample data. Nothing runs on a Mac.")
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryInk)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            Button("Exit Demo") {
+                navigator.reset()
+                client.endDemo()
+            }
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(theme.ink)
+            .buttonStyle(.glass)
+            .accessibilityHint(Text("Goes back to pairing a Mac"))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.45), lineWidth: max(theme.borderWidth, 1)))
+        .frame(maxWidth: 640)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(theme.sidebar.ignoresSafeArea(edges: .top))
     }
 }

@@ -25,6 +25,8 @@ final class RemoteClient {
     }
 
     private(set) var phase = Phase.idle
+    /// The demo from the Connect screen is on screen (`startDemo()`): its banner shows, and nothing reaches a Mac.
+    private(set) var isExploringDemo = false
     /// Within a quiet reconnect's grace period, or in the background (`RemoteReconnect.isQuiet`).
     private var isQuiet = false
     /// The phase when the quiet began, if the Mac was connected; what the screen goes on showing meanwhile.
@@ -103,9 +105,7 @@ final class RemoteClient {
     }
 
     var savedMacs: [SavedMac] {
-        #if DEBUG
-        if DemoData.isEnabled { return DemoData.isUnpaired ? [] : [DemoData.mac] }
-        #endif
+        if DemoData.isEnabled { return DemoData.isUnpaired && !DemoData.isExploring ? [] : [DemoData.mac] }
         return saved.all.sorted { ($0.lastConnectedAt ?? $0.pairedAt) > ($1.lastConnectedAt ?? $1.pairedAt) }
     }
 
@@ -147,6 +147,8 @@ final class RemoteClient {
     /// Connects to a Mac. As when the user picks it, "Connecting" shows at once; `quietly`, as at launch, nothing shows
     /// unless it takes longer than the grace period.
     func connect(to mac: SavedMac, quietly: Bool = false) {
+        // The demo's Mac isn't there to connect to.
+        if DemoData.isEnabled { return }
         if self.mac?.serverID != mac.serverID {
             threads = [:]
             workspace = RemoteWorkspace()
@@ -162,9 +164,7 @@ final class RemoteClient {
 
     /// Tries again now at the user's request (Try Again, Reconnect): "Connecting" shows at once.
     func reconnectIfNeeded() {
-        #if DEBUG
         if DemoData.isEnabled { return }
-        #endif
         guard mac != nil else { return }
         switch phase {
         case .offline, .idle:
@@ -180,9 +180,7 @@ final class RemoteClient {
     /// socket through a suspension, and an attempt from before it may be waiting on a dead one. After a moment inactive
     /// (Control Center, a system alert) the socket is as it was: a Mac that's offline is tried again, and that shows.
     func becameActive() {
-        #if DEBUG
         if DemoData.isEnabled { return }
-        #endif
         let wasAway = reconnect.isInBackground
         reconnect.becameActive(at: Date())
         updateQuiet()
@@ -196,9 +194,7 @@ final class RemoteClient {
 
     /// The app went to the background: whatever the connection does meanwhile stays off screen until it's back.
     func enteredBackground() {
-        #if DEBUG
         if DemoData.isEnabled { return }
-        #endif
         reconnect.enteredBackground()
         updateQuiet()
     }
@@ -236,6 +232,51 @@ final class RemoteClient {
         mac.hosts.append(RemoteHostCandidate(host: trimmed, kind: .manual))
         saved.save(mac)
         if self.mac?.serverID == serverID { self.mac = mac }
+    }
+
+    // MARK: The demo
+
+    /// Opens the demo (`DemoData`): a sample Mac with projects, threads and bots, for App Review and anyone without their
+    /// Mac at hand. Nothing in it reaches a Mac or the network (`request`); Coincide Pro and tips are the App Store's own.
+    func startDemo() {
+        disconnect()
+        bonjour.stop()
+        DemoData.isExploring = true
+        isExploringDemo = true
+        threads = [:]
+        drafts = [:]
+        media.clear()
+        notice = nil
+        mac = DemoData.mac
+        server = DemoData.server
+        workspace = DemoData.workspace
+        macSettings = DemoData.macSettings
+        macSettingsUnsupported = false
+        phase = DemoData.phase
+    }
+
+    /// Leaves the demo for the Connect screen, or for the Mac used last when one is paired.
+    func endDemo() {
+        guard isExploringDemo else { return }
+        DemoData.isExploring = false
+        isExploringDemo = false
+        threads = [:]
+        drafts = [:]
+        media.clear()
+        notice = nil
+        mac = nil
+        server = nil
+        workspace = RemoteWorkspace()
+        macSettings = nil
+        phase = .idle
+        // A screenshot launch (`-CoincideRemoteDemo`) has no Macs to look for.
+        if DemoData.isEnabled { return }
+        bonjour.start()
+        if let id = saved.lastUsedID, let mac = saved.all.first(where: { $0.serverID == id }) ?? saved.all.first {
+            connect(to: mac)
+        } else if let mac = saved.all.first {
+            connect(to: mac)
+        }
     }
 
     private func start() {
@@ -459,6 +500,7 @@ final class RemoteClient {
         guard payload.expiresAt > Date() else {
             throw RemoteError(.pairingFailed, String(localized: "This pairing code has expired. Show a new one on the Mac."))
         }
+        endDemo()
         disconnect()
         let generation = generation
         var lastError = String(localized: "Couldn’t reach \(payload.name). Make sure this device is on the same network or on Tailscale.")
@@ -521,6 +563,8 @@ final class RemoteClient {
         if request.needsPro, !ProGate.allows() {
             throw RemoteError(.failed, String(localized: "Coincide Pro unlocks this."))
         }
+        // The demo answers for its Mac, so nothing leaves the phone.
+        if DemoData.isEnabled { return try DemoData.result(for: request) }
         guard let socket else { throw RemoteError(.failed, String(localized: "Not connected to the Mac.")) }
         let message = RemoteClientMessage(request: request)
         let data = try RemoteProtocol.makeEncoder().encode(message)
@@ -618,7 +662,7 @@ final class RemoteClient {
     /// alerts where the user is. Returns the request, for a caller that must wait for it (going to the background).
     @discardableResult
     func sendPresence() -> Task<Void, Never>? {
-        guard isConnected, !macIgnoresPresence, let presence = presenceSource?() else { return nil }
+        guard isConnected, !DemoData.isEnabled, !macIgnoresPresence, let presence = presenceSource?() else { return nil }
         lastPresenceSentAt = Date()
         return Task {
             do {
@@ -659,12 +703,10 @@ final class RemoteClient {
         localExpansion[project.id] = expanded
         UserDefaults.standard.set(
             Dictionary(uniqueKeysWithValues: localExpansion.map { ($0.key.uuidString, $0.value) }), forKey: Self.expansionKey)
-        #if DEBUG
         if DemoData.isEnabled {
             updateProject(project.id) { $0.isExpanded = $0.isExpanded.map { _ in expanded } }
             return
         }
-        #endif
         // An older Mac doesn't keep the choice; the phone does.
         guard project.isExpanded != nil, isConnected else { return }
         expansionInFlight.insert(project.id)
@@ -705,7 +747,6 @@ final class RemoteClient {
     }
 
     func load(_ id: UUID) async {
-        #if DEBUG
         if DemoData.isEnabled, let model = threads[id], let summary = summary(id) {
             // `-CoincideRemoteDemoLoading`: the transcript never arrives, to show the thread loading.
             if DemoData.has("Loading") {
@@ -715,7 +756,6 @@ final class RemoteClient {
             }
             return
         }
-        #endif
         guard let model = threads[id], isConnected else { return }
         model.isLoading = true
         defer { model.isLoading = false }
@@ -777,9 +817,7 @@ final class RemoteClient {
 
     /// Asks for the Mac's Settings, which then stay current.
     func loadMacSettings() async {
-        #if DEBUG
         if DemoData.isEnabled { return }
-        #endif
         guard isConnected else { return }
         do {
             if case .settings(let snapshot) = try await request(.settings) {
@@ -797,9 +835,7 @@ final class RemoteClient {
 
     /// Where a thread works and its branches, or nil from a Mac too old to say (the row then stays read only).
     func checkout(_ threadID: UUID) async -> RemoteCheckout? {
-        #if DEBUG
         if DemoData.isEnabled { return DemoData.checkout }
-        #endif
         guard isConnected, case .checkout(let checkout)? = try? await request(.checkout(threadID: threadID), timeout: .seconds(15))
         else { return nil }
         return checkout
@@ -814,9 +850,7 @@ final class RemoteClient {
 
     /// A settings document's text, such as an instruction file. Throws what the Mac said, for the editor to show.
     func settingsDocument(_ key: String) async throws -> RemoteSettingsDocument {
-        #if DEBUG
         if DemoData.isEnabled { return DemoData.document(key) }
-        #endif
         guard case .settingsDocument(let document) = try await request(.settingsDocument(key: key)) else {
             throw RemoteError(.failed, String(localized: "The Mac didn’t send the file."))
         }

@@ -168,12 +168,10 @@ struct ComposerView: View {
         }
         try? await Task.sleep(for: .milliseconds(150))
         guard !Task.isCancelled else { return }
-        #if DEBUG
         if DemoData.isEnabled {
             suggestions = DemoData.completions(word)
             return
         }
-        #endif
         let request = RemoteRequest.completions(threadID: model.id, trigger: String(word.prefix(1)), query: String(word.dropFirst()))
         if case .completions(let found)? = try? await client.request(request, timeout: .seconds(10)), !Task.isCancelled {
             suggestions = Array(found.prefix(RemoteCompletion.maxResults))

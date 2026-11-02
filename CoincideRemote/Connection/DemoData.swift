@@ -1,12 +1,29 @@
-#if DEBUG
 import CoincideRemoteKit
 import Foundation
 import UIKit
 
-/// Sample threads for screenshots and layout checks in the simulator, with no Mac: launch with `-CoincideRemoteDemo`.
-/// Debug builds only.
+/// A sample Mac with projects, threads and bots, and no Mac or network behind it.
+///
+/// - **The demo**: Explore the Demo on the Connect screen (`RemoteClient.startDemo()`), for App Review and anyone without
+///   their Mac at hand. A banner says it's a demo. Browsing is free, actions show the paywall as with a Mac, and
+///   purchases are the App Store's own; with Coincide Pro an action says the demo doesn't run it (`result(for:)`).
+/// - **Screenshots**: a Debug build launched with `-CoincideRemoteDemo` opens on it, with sample prices, and the
+///   `-CoincideRemoteDemo…` flags below set the scene. Release builds ignore launch arguments.
 enum DemoData {
-    static var isEnabled: Bool { ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemo") }
+    /// Whether the app shows the sample Mac, in either way.
+    static var isEnabled: Bool { isExploring || isLaunchArgument }
+
+    /// The demo is on screen. Set only by `RemoteClient.startDemo()` and `endDemo()`.
+    static var isExploring = false
+
+    /// A Debug build launched with `-CoincideRemoteDemo`, for screenshots and UI tests.
+    static var isLaunchArgument: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemo")
+        #else
+        false
+        #endif
+    }
 
     static let projectID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
     static let otherProjectID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
@@ -17,11 +34,13 @@ enum DemoData {
 
     /// `-CoincideRemoteDemoTheme <dark id> <light id>` follows other Mac themes than Carbon.
     static var server: RemoteServerInfo {
-        let arguments = ProcessInfo.processInfo.arguments
         var theme = RemoteThemeInfo()
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
         if let index = arguments.firstIndex(of: "-CoincideRemoteDemoTheme"), index + 2 < arguments.count {
             theme = RemoteThemeInfo(darkThemeID: arguments[index + 1], lightThemeID: arguments[index + 2])
         }
+        #endif
         return RemoteServerInfo(serverID: "demo", name: "Apoorv’s MacBook Pro", appVersion: "0.1.0", theme: theme)
     }
 
@@ -33,18 +52,29 @@ enum DemoData {
 
     /// `-CoincideRemoteDemoOldMac` sends what a Mac from before bot characters, synced project expansion and turn
     /// timers sends.
-    static var isOldMac: Bool { ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoOldMac") }
+    static var isOldMac: Bool { has("OldMac") }
 
-    static func has(_ flag: String) -> Bool { ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemo" + flag) }
+    /// A screenshot flag, `-CoincideRemoteDemo<flag>`; always false in Release builds.
+    static func has(_ flag: String) -> Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemo" + flag)
+        #else
+        false
+        #endif
+    }
 
     /// `-CoincideRemoteDemoUnpaired`: no Mac paired yet, so the app opens on the Connect screen, as at first launch.
     static var isUnpaired: Bool { has("Unpaired") }
 
-    /// The argument after `name`, such as `-CoincideRemoteSettingsPane general`.
+    /// The argument after `name`, such as `-CoincideRemoteSettingsPane general`; always nil in Release builds.
     static func value(after name: String) -> String? {
+        #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else { return nil }
         return arguments[index + 1]
+        #else
+        nil
+        #endif
     }
 
     /// The connection's state: `-CoincideRemoteDemoOffline`, `…Connecting` or `…NeedsPairing` show those banners.
@@ -76,7 +106,7 @@ enum DemoData {
         let grok = RemoteSelection(provider: "grok", modelID: "grok", modelName: "Grok 4.7")
         let antigravity = RemoteSelection(provider: "antigravity", modelID: "gemini", modelName: "Gemini 3.5 Pro")
         let old = isOldMac
-        let pins = ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoPinned")
+        let pins = has("Pinned")
         // `-CoincideRemoteDemoCollapsed`: every project folded up, as on a Mac whose sidebar shows only folders.
         let collapsed = has("Collapsed")
         let now = Date()
@@ -519,6 +549,76 @@ enum DemoData {
             mergeMethods: ["merge", "squash"])
     }
 
+    // MARK: The demo's answers
+
+    /// What an action says in the demo, with Coincide Pro: nothing runs.
+    static var actionNote: String { String(localized: "This is a demo, so nothing runs. Pair your Mac to do this for real.") }
+
+    /// What the demo answers in place of a Mac (`RemoteClient.request`), so nothing it does leaves the phone: diffs and
+    /// project defaults to browse, the sidebar's options (the phone's own), and for anything else `actionNote`. Coincide
+    /// Pro's paywall comes first, as with a Mac.
+    static func result(for request: RemoteRequest) throws -> RemoteResult {
+        switch request {
+        case .diff(_, let turnID):
+            return .diff(diff(isTurn: turnID != nil))
+        case .projectDefaults(let projectID):
+            return .projectDefaults(
+                RemoteProjectDefaults(projectID: projectID, usesGlobalDefaults: true, provider: "claude", modelID: "opus", effort: "high"))
+        case .setSidebarOptions:
+            return .ok
+        default:
+            throw RemoteError(.failed, actionNote)
+        }
+    }
+
+    /// The demo thread's changes: what its first turn added, which is also what's uncommitted.
+    static func diff(isTurn: Bool) -> RemoteDiff {
+        RemoteDiff(
+            title: isTurn ? "Turn changes" : "Uncommitted changes",
+            files: [
+                RemoteDiff.File(
+                    path: "Coincide/Remote/RemoteSettingsView.swift", status: "added", additions: 19,
+                    patch: """
+                        @@ -0,0 +1,19 @@
+                        +import SwiftUI
+                        +
+                        +/// Settings › General › Remote: the server switch, pairing and the paired devices.
+                        +struct RemoteSettingsRows: View {
+                        +    @Environment(RemoteServer.self) private var server
+                        +    @State private var pairing = false
+                        +
+                        +    var body: some View {
+                        +        Toggle("Allow Coincide Remote", isOn: Bindable(server).isEnabled)
+                        +        Button("Pair iPhone or iPad…") { pairing = true }
+                        +            .disabled(!server.isEnabled)
+                        +            .sheet(isPresented: $pairing) { PairingCodeView() }
+                        +        ForEach(server.devices) { device in
+                        +            LabeledContent(device.name) {
+                        +                Button("Revoke", role: .destructive) { server.revoke(device) }
+                        +            }
+                        +        }
+                        +    }
+                        +}
+                        """),
+                RemoteDiff.File(
+                    path: "Coincide/UI/Settings/GeneralSettingsView.swift", status: "modified", additions: 5,
+                    patch: """
+                        @@ -41,6 +41,11 @@ struct GeneralSettingsView: View {
+                                     Section("Chat") {
+                                         ChatSettingsRows()
+                                     }
+                        +
+                        +            Section("Remote") {
+                        +                RemoteSettingsRows()
+                        +            }
+                        +            .environment(remoteServer)
+                                 }
+                                 .formStyle(.grouped)
+                             }
+                        """),
+            ])
+    }
+
     /// An instruction file's text, for the document editor.
     static func document(_ key: String) -> RemoteSettingsDocument {
         RemoteSettingsDocument(
@@ -621,7 +721,7 @@ enum DemoData {
                 .init(id: "deny", label: "Deny", kind: "deny"),
             ]))
         // `-CoincideRemoteDemoMedia`: pictures the user attached and an agent's generated image, video and page.
-        if ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoMedia") {
+        if has("Media") {
             // A wide Mac screenshot alone, which must stay within the bubble.
             add(.user, "Why is this terminal not taking my typing?", media: [
                 RemoteMedia(index: 4, kind: .image, label: "Screenshot 2026-10-31 at 9.31.12 PM.png")
@@ -638,7 +738,7 @@ enum DemoData {
             ])
         }
         // `-CoincideRemoteDemoBackground`: the turn ended, and a subagent and a command still run.
-        let background = ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoBackground")
+        let background = has("Background")
         let turn =
             background
             ? RemoteTurnState(provider: "claude", backgroundTasks: [
@@ -656,13 +756,12 @@ enum DemoData {
             thread: summary, items: background ? items.filter { $0.kind != .approval } : items, turn: turn,
             turnChanges: [
                 earlier.uuidString: [
-                    RemoteChangedFile(path: "Coincide/Remote/RemoteSettingsView.swift", status: "added", additions: 212),
+                    RemoteChangedFile(path: "Coincide/Remote/RemoteSettingsView.swift", status: "added", additions: 19),
                     RemoteChangedFile(path: "Coincide/UI/Settings/GeneralSettingsView.swift", status: "modified", additions: 5, deletions: 0),
                 ]
             ])
     }
 }
-#endif
 
 #if DEBUG
 import SwiftUI
