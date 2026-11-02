@@ -222,9 +222,9 @@ jobs:
           echo "id=$id" >>"$GITHUB_OUTPUT"
           xcrun simctl boot "$id"
 
-      # For the booting simulator, so xcodebuild compiles once it has booted: compiling alongside the boot (for the generic
-      # simulator destination) took minutes longer. No compilation cache, unlike ci.yml: with every compile a cache hit,
-      # the warm runs were no faster than the cold one, and the cache would take room from the Mac app's (measured in #217).
+      # For the booting simulator; building for the generic simulator destination instead, to compile during the boot, was
+      # no faster. No compilation cache, unlike ci.yml: with every compile a cache hit, the warm runs were no faster than
+      # the cold one, and the cache would take room from the Mac app's. (Both measured in #217.)
       - name: Build
         env:
           SIMULATOR: ${{ steps.simulator.outputs.id }}
