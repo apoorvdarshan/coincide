@@ -26,6 +26,11 @@ packages:
   # The remote protocol, pairing and theme palettes, shared by the Mac app and Coincide Remote on iOS.
   CoincideRemoteKit:
     path: CoincideRemoteKit
+  # Coincide Pro and tips on iOS (CoincideRemote/Pro): RevenueCat's purchases-ios, MIT, from its SwiftPM mirror. Only its
+  # RevenueCat product is linked, into CoincideRemote alone; the Mac app, its tools and tests never link it.
+  RevenueCat:
+    url: https://github.com/RevenueCat/purchases-ios-spm
+    exactVersion: 5.100.0
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -329,6 +334,10 @@ targets:
       - path: CoincideRemote
         excludes:
           - Info.plist
+          - StoreKit
+      # For Xcode's Run (the scheme's storeKitConfiguration), not the app bundle.
+      - path: CoincideRemote/StoreKit
+        buildPhase: none
       # Dictation: the Mac's microphone capture and Apple speech recognition, and where the transcript goes in the text.
       - path: Coincide/Voice/Shared
       - path: CoincideKit/Voice/DictationInsertion.swift
@@ -337,6 +346,7 @@ targets:
       - path: CoincideKit/Models/BotPersonalityPreset.swift
     dependencies:
       - package: CoincideRemoteKit
+      - package: RevenueCat
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.remote
@@ -429,5 +439,7 @@ schemes:
         CoincideRemote: all
     run:
       config: Debug
+      # Local purchases when run from Xcode, without App Store Connect or a sandbox account.
+      storeKitConfiguration: CoincideRemote/StoreKit/Coincide.storekit
     archive:
       config: Release

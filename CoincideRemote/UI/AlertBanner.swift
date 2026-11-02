@@ -4,10 +4,12 @@ import UIKit
 
 /// Connects the app's state to alerts: reports presence to the Mac (in front or not, the open thread, the last
 /// touch), shows alerts the Mac sends as a banner, clears them when a thread is seen anywhere, and opens the thread
-/// when one is tapped.
+/// when one is tapped. While the app is locked behind Coincide Pro it reports itself as not in use and shows no alerts,
+/// so the Mac goes on notifying where the user can act on them.
 struct AlertsCoordinator: ViewModifier {
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
+    @Environment(ProStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
     @State private var alerts = PhoneAlerts.shared
 
@@ -28,8 +30,14 @@ struct AlertsCoordinator: ViewModifier {
             .onChange(of: client.isConnected) { _, connected in
                 guard connected else { return }
                 client.sendPresence()
-                guard client.server?.notifies == true else { return }
+                guard client.server?.notifies == true, store.isPro else { return }
                 // Already paired before alerts existed: ask the first time the Mac is reached.
+                Task { await alerts.requestAuthorizationIfNeeded() }
+            }
+            // Unlocked or locked: the Mac hears it at once, and an unlocked app asks for notifications as pairing would.
+            .onChange(of: store.isPro) { _, unlocked in
+                client.sendPresence()
+                guard unlocked, client.isConnected, client.server?.notifies == true else { return }
                 Task { await alerts.requestAuthorizationIfNeeded() }
             }
             // While in front, a heartbeat, so a phone that disappears without a word stops counting as active.
@@ -57,20 +65,22 @@ struct AlertsCoordinator: ViewModifier {
         alerts.visibleThread = { [navigator, alerts] in alerts.isForeground ? navigator.selection : nil }
         alerts.openThread = { [navigator] id in navigator.selection = id }
         alerts.onChange = { [client] in client.sendPresence() }
-        client.onNotify = { [alerts] in alerts.deliver($0) }
+        client.onNotify = { [alerts, store] in if store.isPro { alerts.deliver($0) } }
         alerts.macKeepsQuiet = { [client] in
             RemoteMacPresence.keepsPhoneQuiet(client.macPresence, receivedAt: client.macPresenceReceivedAt, now: Date())
         }
         client.onClearNotifications = { [alerts] in alerts.clear($0) }
-        client.onPaired = { [alerts] server in
-            guard server.notifies != false else { return }
+        client.onPaired = { [alerts, store] server in
+            guard server.notifies != false, store.isPro else { return }
             Task { await alerts.requestAuthorizationIfNeeded() }
         }
-        client.presenceSource = { [client, navigator, alerts] in
-            let state = alerts.phase
+        client.presenceSource = { [client, navigator, alerts, store] in
+            // Locked: as if the app weren't in use, with no lock-screen zone, so alerts stay on the Mac.
+            let unlocked = store.isPro
+            let state = unlocked ? alerts.phase : .background
             return RemotePresence(
                 state: state, openThreadID: state == .active ? navigator.selection : nil,
-                idleSeconds: max(0, Date().timeIntervalSince(client.lastInteraction)), alertZone: alerts.alertZone)
+                idleSeconds: max(0, Date().timeIntervalSince(client.lastInteraction)), alertZone: unlocked ? alerts.alertZone : nil)
         }
         // Connected before this view appeared: report now.
         client.sendPresence()

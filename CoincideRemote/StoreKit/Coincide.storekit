@@ -1,0 +1,156 @@
+{
+  "identifier" : "6F0E6C5B-2B7E-4C7A-9C1D-C011C1DE0001",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "39.99",
+      "familyShareable" : false,
+      "internalID" : "21800004",
+      "localizations" : [
+        {
+          "description" : "All Pro features forever, one payment.",
+          "displayName" : "Coincide Pro Lifetime",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.apoorvdarshan.coincide.remote.pro.lifetime",
+      "referenceName" : "Coincide Pro Lifetime",
+      "type" : "NonConsumable"
+    },
+    {
+      "displayPrice" : "1.99",
+      "familyShareable" : false,
+      "internalID" : "21800005",
+      "localizations" : [
+        {
+          "description" : "A small thank-you that keeps Coincide going.",
+          "displayName" : "Small Commit",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.apoorvdarshan.coincide.remote.tip.commit",
+      "referenceName" : "Small Commit",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "21800006",
+      "localizations" : [
+        {
+          "description" : "Buy the developer a coffee. Thank you!",
+          "displayName" : "Clean Diff",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.apoorvdarshan.coincide.remote.tip.diff",
+      "referenceName" : "Clean Diff",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : false,
+      "internalID" : "21800007",
+      "localizations" : [
+        {
+          "description" : "A generous tip that funds new features.",
+          "displayName" : "Green CI",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.apoorvdarshan.coincide.remote.tip.greenci",
+      "referenceName" : "Green CI",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "19.99",
+      "familyShareable" : false,
+      "internalID" : "21800008",
+      "localizations" : [
+        {
+          "description" : "The biggest thank-you. You're amazing!",
+          "displayName" : "Ship It",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.apoorvdarshan.coincide.remote.tip.shipit",
+      "referenceName" : "Ship It",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "6829516823",
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : []
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21800001",
+      "localizations" : [
+        {
+          "description" : "",
+          "displayName" : "Coincide Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "name" : "Coincide Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "2.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "21800002",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "All Pro features, billed every month.",
+              "displayName" : "Coincide Pro Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.apoorvdarshan.coincide.remote.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Coincide Pro Monthly",
+          "subscriptionGroupID" : "21800001",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : []
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "19.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "21800003",
+          "introductoryOffer" : {
+            "internalID" : "21800009",
+            "numberOfPeriods" : 1,
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1W"
+          },
+          "localizations" : [
+            {
+              "description" : "All Pro features, billed once a year.",
+              "displayName" : "Coincide Pro Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.apoorvdarshan.coincide.remote.pro.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Coincide Pro Yearly",
+          "subscriptionGroupID" : "21800001",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : []
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}
