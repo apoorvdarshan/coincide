@@ -117,6 +117,24 @@ struct ConnectView: View {
                 .foregroundStyle(theme.tertiaryInk)
                 .multilineTextAlignment(.center)
                 .padding(.top, 4)
+            // Sample projects and threads, with no Mac: for App Review, and anyone without their Mac at hand.
+            if isOnboarding {
+                Button {
+                    navigator.reset()
+                    client.startDemo()
+                } label: {
+                    Label("Explore the Demo", systemImage: "play.circle")
+                        .foregroundStyle(theme.ink)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.glass)
+                .disabled(pairing)
+                .padding(.top, 10)
+                Text("No Mac at hand? Look around with sample projects and threads. Nothing connects to a Mac.")
+                    .font(.footnote)
+                    .foregroundStyle(theme.tertiaryInk)
+                    .multilineTextAlignment(.center)
+            }
             // Coincide Pro's plans, and Restore Purchases, before any Mac is paired.
             if isOnboarding, !store.isPro {
                 Button { PaywallPresenter.shared.present() } label: {

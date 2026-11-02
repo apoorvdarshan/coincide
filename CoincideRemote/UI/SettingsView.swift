@@ -254,7 +254,8 @@ struct SettingsMacCard: View {
     }
 
     private var status: String {
-        switch client.shownPhase {
+        if client.isExploringDemo { return String(localized: "Demo") }
+        return switch client.shownPhase {
         case .connected: String(localized: "Connected")
         // Nil: reconnecting quietly with nothing to go on showing, as at launch.
         case .connecting, nil: String(localized: "Connecting…")
@@ -265,7 +266,8 @@ struct SettingsMacCard: View {
     }
 
     private var statusColor: Color {
-        switch client.shownPhase {
+        if client.isExploringDemo { return .orange }
+        return switch client.shownPhase {
         case .connected: .green
         case .offline, .needsPairing: .orange
         case .connecting, .idle, nil: theme.tertiaryInk
@@ -330,40 +332,17 @@ struct MacsSettingsPane: View {
 
     var body: some View {
         SettingsForm(title: String(localized: "Macs")) {
-            Section {
-                ForEach(client.savedMacs) { mac in
-                    Button { client.connect(to: mac) } label: {
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(mac.name).foregroundStyle(theme.ink)
-                                Text(status(mac)).font(.caption).foregroundStyle(theme.secondaryInk)
-                                Text(mac.hosts.map(\.host).joined(separator: ", "))
-                                    .font(.caption2.monospaced()).foregroundStyle(theme.secondaryInk).lineLimit(2)
-                            }
-                            Spacer()
-                            if client.mac?.serverID == mac.serverID, client.showsConnected {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                                    .accessibilityLabel(Text("Connected"))
-                            }
-                        }
+            if client.isExploringDemo {
+                Section {
+                    Button("Exit Demo") {
+                        navigator.reset()
+                        client.endDemo()
                     }
-                    .contextMenu {
-                        Button("Connect") { client.connect(to: mac) }
-                        Button("Add Address…") { addingHostTo = mac }
-                        Button("Forget", role: .destructive) { forgetting = mac }
-                    }
-                    .swipeActions {
-                        Button("Forget", role: .destructive) { forgetting = mac }
-                        Button("Address") { addingHostTo = mac }.tint(.indigo)
-                    }
-                    .accessibilityAction(named: Text("Add Address")) { addingHostTo = mac }
-                    .accessibilityAction(named: Text("Forget")) { forgetting = mac }
+                } footer: {
+                    Text("You’re exploring a demo with sample data. Exit it to pair your Mac and drive its agents from here.")
                 }
-                Button {
-                    navigator.showsConnect = true
-                } label: {
-                    Label("Pair Another Mac", systemImage: "plus")
-                }
+            } else {
+                macsSection
             }
         }
         .alert("Add an Address", isPresented: Binding(get: { addingHostTo != nil }, set: { if !$0 { addingHostTo = nil } })) {
@@ -389,6 +368,45 @@ struct MacsSettingsPane: View {
             }
         } message: {
             Text("To connect again, pair with the code the Mac shows. Revoke this device in the Mac’s Settings too.")
+        }
+    }
+
+    /// The paired Macs, and pairing another.
+    private var macsSection: some View {
+        Section {
+            ForEach(client.savedMacs) { mac in
+                Button { client.connect(to: mac) } label: {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(mac.name).foregroundStyle(theme.ink)
+                            Text(status(mac)).font(.caption).foregroundStyle(theme.secondaryInk)
+                            Text(mac.hosts.map(\.host).joined(separator: ", "))
+                                .font(.caption2.monospaced()).foregroundStyle(theme.secondaryInk).lineLimit(2)
+                        }
+                        Spacer()
+                        if client.mac?.serverID == mac.serverID, client.showsConnected {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                                .accessibilityLabel(Text("Connected"))
+                        }
+                    }
+                }
+                .contextMenu {
+                    Button("Connect") { client.connect(to: mac) }
+                    Button("Add Address…") { addingHostTo = mac }
+                    Button("Forget", role: .destructive) { forgetting = mac }
+                }
+                .swipeActions {
+                    Button("Forget", role: .destructive) { forgetting = mac }
+                    Button("Address") { addingHostTo = mac }.tint(.indigo)
+                }
+                .accessibilityAction(named: Text("Add Address")) { addingHostTo = mac }
+                .accessibilityAction(named: Text("Forget")) { forgetting = mac }
+            }
+            Button {
+                navigator.showsConnect = true
+            } label: {
+                Label("Pair Another Mac", systemImage: "plus")
+            }
         }
     }
 

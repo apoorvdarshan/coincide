@@ -23940,6 +23940,118 @@
         }
       }
     },
+    "Demo" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demo"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Démo"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "डेमो"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demo"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "デモ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "데모"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demo"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demo"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Демо"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demo"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Демо"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bản demo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "演示"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "示範"
+          }
+        }
+      }
+    },
     "Describe a personality in your own words." : {
       "localizations" : {
         "de" : {
@@ -27972,6 +28084,118 @@
         }
       }
     },
+    "Exit Demo" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demo beenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Salir de la demo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Salir de la demo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quitter la démo"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "डेमो से बाहर निकलें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keluar dari Demo"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esci dalla demo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "デモを終了"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "데모 종료"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stop demo"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zakończ demo"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sair da Demo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Выйти из демо"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demodan Çık"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вийти з демо"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Thoát bản demo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "退出演示"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "結束示範"
+          }
+        }
+      }
+    },
     "Expand %@" : {
       "localizations" : {
         "de" : {
@@ -28304,6 +28528,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "已展開"
+          }
+        }
+      }
+    },
+    "Explore the Demo" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demo ansehen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Explorar la demo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Explorar la demo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Découvrir la démo"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "डेमो देखें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jelajahi Demo"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esplora la demo"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "デモを見る"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "데모 둘러보기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bekijk de demo"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wypróbuj demo"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Explorar a Demo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Открыть демо"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Demoyu Keşfet"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Відкрити демо"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khám phá bản demo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "浏览演示"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "瀏覽示範"
           }
         }
       }
@@ -31447,6 +31783,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "給一筆小費。不會解鎖任何功能。"
+          }
+        }
+      }
+    },
+    "Goes back to pairing a Mac" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zurück zum Koppeln eines Macs"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vuelve a enlazar un Mac"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vuelve a enlazar una Mac"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revient au jumelage d’un Mac"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac पेयर करने पर वापस ले जाता है"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kembali ke memasangkan Mac"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Torna all’abbinamento di un Mac"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Macのペアリングに戻ります"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac 페어링으로 돌아갑니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gaat terug naar het koppelen van een Mac"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wraca do parowania Maca"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Volta para emparelhar um Mac"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Возвращает к привязке Mac"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac eşleştirmeye geri döner"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Повертає до прив’язування Mac"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quay lại ghép đôi máy Mac"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "返回以配对 Mac"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "返回以配對 Mac"
           }
         }
       }
@@ -42368,6 +42816,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "沒有 Mac"
+          }
+        }
+      }
+    },
+    "No Mac at hand? Look around with sample projects and threads. Nothing connects to a Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kein Mac zur Hand? Sieh dich mit Beispielprojekten und -threads um. Dabei wird keine Verbindung zu einem Mac hergestellt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿No tienes tu Mac a mano? Echa un vistazo con proyectos y conversaciones de ejemplo. No se conecta a ningún Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿No tienes tu Mac a la mano? Echa un vistazo con proyectos y conversaciones de ejemplo. No se conecta a ninguna Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pas de Mac sous la main ? Découvrez l’app avec des projets et des discussions d’exemple. Aucune connexion à un Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac पास में नहीं है? सैंपल प्रोजेक्ट और थ्रेड के साथ ऐप देखें। कोई Mac कनेक्ट नहीं होता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac tidak ada di dekat Anda? Lihat-lihat dengan proyek dan utas contoh. Tidak ada yang terhubung ke Mac."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Non hai il Mac a portata di mano? Dai un’occhiata con progetti e thread di esempio. Nessuna connessione a un Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Macが手元にありませんか？サンプルのプロジェクトとスレッドで操作を試せます。Macには接続しません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac이 곁에 없나요? 샘플 프로젝트와 스레드로 둘러보세요. Mac에는 연결되지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Geen Mac bij de hand? Kijk rond met voorbeeldprojecten en -threads. Er wordt geen verbinding met een Mac gemaakt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie masz Maca pod ręką? Rozejrzyj się na przykładowych projektach i wątkach. Nic nie łączy się z Makiem."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Está sem o seu Mac? Explore com projetos e conversas de exemplo. Nada se conecta a um Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac нет под рукой? Осмотритесь на примерах проектов и чатов. Подключения к Mac не будет."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac'iniz yanınızda değil mi? Örnek projeler ve sohbetlerle göz atın. Hiçbir Mac'e bağlanılmaz."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac немає під рукою? Огляньте застосунок на прикладах проєктів і чатів. Підключення до Mac не буде."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Không có máy Mac bên cạnh? Xem thử với các dự án và luồng mẫu. Không kết nối với máy Mac nào."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "身边没有 Mac？用示例项目和对话四处看看。不会连接任何 Mac。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "身邊沒有 Mac？用範例專案和對話四處看看。不會連線任何 Mac。"
           }
         }
       }
@@ -58390,6 +58950,118 @@
         }
       }
     },
+    "Sample data. Nothing runs on a Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beispieldaten. Auf keinem Mac läuft etwas."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Datos de ejemplo. No se ejecuta nada en un Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Datos de ejemplo. No se ejecuta nada en una Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Données d’exemple. Rien ne s’exécute sur un Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सैंपल डेटा। किसी Mac पर कुछ नहीं चलता।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Data contoh. Tidak ada yang berjalan di Mac."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dati di esempio. Su nessun Mac viene eseguito nulla."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サンプルデータです。Macでは何も実行されません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "샘플 데이터입니다. Mac에서는 아무것도 실행되지 않습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voorbeeldgegevens. Er draait niets op een Mac."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przykładowe dane. Na Macu nic się nie uruchamia."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dados de exemplo. Nada é executado em um Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Демонстрационные данные. На Mac ничего не запускается."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Örnek veriler. Mac'te hiçbir şey çalışmaz."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Демонстраційні дані. На Mac нічого не запускається."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dữ liệu mẫu. Không có gì chạy trên máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "示例数据。不会在 Mac 上运行任何内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "範例資料。不會在 Mac 上執行任何內容。"
+          }
+        }
+      }
+    },
     "Save" : {
       "localizations" : {
         "de" : {
@@ -72629,6 +73301,118 @@
         }
       }
     },
+    "This is a demo, so nothing runs. Pair your Mac to do this for real." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das ist eine Demo, daher läuft nichts. Kopple deinen Mac, um das wirklich zu tun."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esto es una demo, así que no se ejecuta nada. Enlaza tu Mac para hacerlo de verdad."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esto es una demo, así que no se ejecuta nada. Enlaza tu Mac para hacerlo de verdad."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ceci est une démo, rien ne s’exécute. Jumelez votre Mac pour le faire pour de vrai."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह डेमो है, इसलिए कुछ नहीं चलता। इसे सच में करने के लिए अपना Mac पेयर करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ini demo, jadi tidak ada yang berjalan. Pasangkan Mac Anda untuk melakukannya sungguhan."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questa è una demo, quindi non viene eseguito nulla. Abbina il tuo Mac per farlo davvero."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "これはデモのため、何も実行されません。実際に行うにはMacをペアリングしてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "데모이므로 아무것도 실행되지 않습니다. 실제로 하려면 Mac을 페어링하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dit is een demo, dus er draait niets. Koppel je Mac om dit echt te doen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "To jest demo, więc nic się nie uruchamia. Sparuj swojego Maca, aby zrobić to naprawdę."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Isto é uma demo, então nada é executado. Emparelhe o seu Mac para fazer isso de verdade."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Это демо, поэтому ничего не запускается. Привяжите свой Mac, чтобы сделать это по-настоящему."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu bir demo, bu yüzden hiçbir şey çalışmaz. Bunu gerçekten yapmak için Mac'inizi eşleştirin."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Це демо, тому нічого не запускається. Прив’яжіть свій Mac, щоб зробити це по-справжньому."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Đây là bản demo nên không có gì chạy. Hãy ghép đôi máy Mac của bạn để làm việc này thật."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "这是演示，因此不会运行任何内容。配对你的 Mac 即可真正执行此操作。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "這是示範，因此不會執行任何內容。配對你的 Mac 即可真正執行此操作。"
+          }
+        }
+      }
+    },
     "This pairing code has expired. Show a new one on the Mac." : {
       "localizations" : {
         "de" : {
@@ -80585,6 +81369,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "你的小提交已合併。感謝你支持 Coincide！"
+          }
+        }
+      }
+    },
+    "You’re exploring a demo with sample data. Exit it to pair your Mac and drive its agents from here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Du siehst dir eine Demo mit Beispieldaten an. Beende sie, um deinen Mac zu koppeln und seine Agenten von hier aus zu steuern."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Estás explorando una demo con datos de ejemplo. Sal de ella para enlazar tu Mac y controlar sus agentes desde aquí."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Estás explorando una demo con datos de ejemplo. Sal de ella para enlazar tu Mac y controlar sus agentes desde aquí."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vous explorez une démo avec des données d’exemple. Quittez-la pour jumeler votre Mac et piloter ses agents d’ici."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "आप सैंपल डेटा वाला डेमो देख रहे हैं। अपना Mac पेयर करने और यहाँ से उसके एजेंट चलाने के लिए डेमो से बाहर निकलें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anda sedang menjelajahi demo dengan data contoh. Keluar dari demo untuk memasangkan Mac Anda dan mengendalikan agennya dari sini."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stai esplorando una demo con dati di esempio. Esci per abbinare il tuo Mac e guidarne gli agenti da qui."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "サンプルデータのデモを表示しています。デモを終了してMacをペアリングすると、ここからMacのエージェントを操作できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "샘플 데이터로 데모를 둘러보는 중입니다. 데모를 종료하고 Mac을 페어링하면 여기에서 Mac의 에이전트를 조작할 수 있습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Je bekijkt een demo met voorbeeldgegevens. Stop de demo om je Mac te koppelen en de agents ervan hier te bedienen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Przeglądasz demo z przykładowymi danymi. Zakończ je, aby sparować swojego Maca i sterować jego agentami stąd."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Você está explorando uma demo com dados de exemplo. Saia dela para emparelhar o seu Mac e controlar os agentes dele daqui."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вы смотрите демо с демонстрационными данными. Выйдите из него, чтобы привязать свой Mac и управлять его агентами отсюда."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Örnek verilerle bir demoyu keşfediyorsunuz. Mac'inizi eşleştirip ajanlarını buradan yönetmek için demodan çıkın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ви переглядаєте демо з демонстраційними даними. Вийдіть із нього, щоб прив’язати свій Mac і керувати його агентами звідси."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bạn đang khám phá bản demo với dữ liệu mẫu. Thoát để ghép đôi máy Mac của bạn và điều khiển các agent của máy từ đây."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "你正在浏览含示例数据的演示。退出演示即可配对你的 Mac，并在这里操控它的智能体。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "你正在瀏覽含範例資料的示範。結束示範即可配對你的 Mac，並在這裡操控它的代理程式。"
           }
         }
       }

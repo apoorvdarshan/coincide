@@ -221,7 +221,8 @@ final class ProStore {
         guard !started else { return }
         started = true
         #if DEBUG
-        if DemoData.isEnabled {
+        // Screenshots and UI tests: sample prices, no RevenueCat. The demo from the Connect screen uses the App Store's.
+        if DemoData.isLaunchArgument {
             loadDemo()
             return
         }
@@ -270,7 +271,7 @@ final class ProStore {
     /// The plans (offering `default`) and tips (offering `tips`) with their store prices.
     func loadOfferings() async {
         #if DEBUG
-        if DemoData.isEnabled { return }
+        if DemoData.isLaunchArgument { return }
         #endif
         guard isAvailable, Purchases.isConfigured else {
             loading = .failed(String(localized: "Purchases aren’t available in this build of Coincide."))

@@ -16,9 +16,7 @@ extension RemoteClient {
     }
 
     func rewindOptions(_ threadID: UUID, itemID: UUID) async -> RemoteRewindOptions? {
-        #if DEBUG
         if DemoData.isEnabled { return RemoteRewindOptions(canRevertFiles: true) }
-        #endif
         guard case .rewindOptions(let options)? = await performNewer(.rewindOptions(RemoteItemReference(threadID: threadID, itemID: itemID)))
         else { return nil }
         return options
@@ -39,9 +37,7 @@ extension RemoteClient {
 
     /// The banner over the thread's composer; nil from a Mac too old to say, which shows none.
     func composerNotice(_ threadID: UUID) async -> RemoteComposerNotice? {
-        #if DEBUG
         if DemoData.isEnabled { return DemoData.composerNotice }
-        #endif
         guard isConnected, case .composerNotice(let notice)? = try? await request(.composerNotice(threadID: threadID), timeout: .seconds(15))
         else { return nil }
         return notice
@@ -81,9 +77,7 @@ extension RemoteClient {
 
     /// The Mac's scheduled tasks; nil from a Mac too old to have them (`unsupported` is true then).
     func scheduledTasks() async throws -> RemoteScheduledTasks {
-        #if DEBUG
         if DemoData.isEnabled { return DemoData.scheduledTasks }
-        #endif
         guard case .scheduledTasks(let tasks) = try await request(.scheduledTasks) else {
             throw RemoteError(.failed, String(localized: "The Mac didn’t send its scheduled tasks."))
         }
@@ -106,9 +100,7 @@ extension RemoteClient {
 
     /// The thread's folder as git sees it; nil from a Mac too old to say, which hides the git actions.
     func gitState(_ threadID: UUID) async -> RemoteGitState? {
-        #if DEBUG
         if DemoData.isEnabled { return DemoData.gitState }
-        #endif
         guard isConnected, case .gitState(let state)? = try? await request(.gitState(threadID: threadID), timeout: .seconds(30))
         else { return nil }
         return state
@@ -130,9 +122,7 @@ extension RemoteClient {
     }
 
     func pullRequests(_ query: RemotePullRequestQuery) async throws -> RemotePullRequestList {
-        #if DEBUG
         if DemoData.isEnabled { return DemoData.pullRequests }
-        #endif
         guard case .pullRequests(let list) = try await request(.pullRequests(query), timeout: .seconds(60)) else {
             throw RemoteError(.failed, String(localized: "The Mac didn’t send the pull requests."))
         }
@@ -140,9 +130,7 @@ extension RemoteClient {
     }
 
     func pullRequest(_ reference: RemotePullRequestReference) async throws -> RemotePullRequestDetail {
-        #if DEBUG
         if DemoData.isEnabled { return DemoData.pullRequestDetail }
-        #endif
         guard case .pullRequest(let detail) = try await request(.pullRequest(reference), timeout: .seconds(60)) else {
             throw RemoteError(.failed, String(localized: "The Mac didn’t send the pull request."))
         }
