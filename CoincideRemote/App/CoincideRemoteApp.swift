@@ -60,9 +60,15 @@ struct CoincideRemoteApp: App {
 
 /// Becomes the notification delegate before launch finishes, so a tapped alert that launched the app opens its thread.
 final class RemoteAppDelegate: NSObject, UIApplicationDelegate {
+    /// Whether the app hosts the unit tests (CoincideRemoteTests). It then starts neither notifications nor RevenueCat,
+    /// so a test run never asks RevenueCat for an account.
+    static let isHostingTests =
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || NSClassFromString("XCTestCase") != nil
+
     func application(
         _ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        if Self.isHostingTests { return true }
         PhoneAlerts.shared.start()
         ProStore.shared.start()
         return true

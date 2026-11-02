@@ -69,6 +69,13 @@ xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=m
 
 Some suites have their own switches or scratch-folder settings (`COINCIDE_LIVE_DIR`, `TEST_RUNNER_COINCIDE_LIVE_CURSOR_ACP=1`, …), described at the top of each `*LiveTests.swift` file. Run the live tests for any agent whose provider code you change.
 
+Coincide Remote, the iPhone and iPad app, has its own unit tests (`CoincideRemoteTests/`, Swift Testing) and UI tests (`CoincideRemoteUITests/`, XCTest on the app's sample data, so they need no Mac). They're in `CoincideRemoteTests.xcodeproj`, generated from `project-remote-tests.yml`, which adds them to everything in `project.yml` and leaves `Coincide.xcodeproj` as it is. Run them on an iPhone simulator:
+
+```sh
+xcodegen generate --spec project-remote-tests.yml
+xcodebuild -project CoincideRemoteTests.xcodeproj -scheme CoincideRemote -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+```
+
 ## User-facing text
 
 Write user-facing text with `String(localized:)` (or a localized SwiftUI/AppKit API), in CoincideKit too: Kit strings resolve through the app's string catalog. After adding or changing text, update the catalog and commit the result:
@@ -115,7 +122,7 @@ The Fuzz workflow runs them on Linux (in the official `swift` Docker image, with
 
 ## Pull requests
 
-`main` is protected: every change, the maintainer's included, lands through a pull request, and the checks marked **Required** must pass before it merges. Pull requests run CI (build and unit tests), CodeQL for the workflows, dependency review and, when a fuzzed parser changes, the fuzzers. CI skips the build and tests, and passes, when a pull request changes only `website/`, `discord/`, `npm/`, `docs/`, Markdown files in the repository root, or workflows other than CI's own (`.github/workflows/ci.yml` has the exact list).
+`main` is protected: every change, the maintainer's included, lands through a pull request, and the checks marked **Required** must pass before it merges. Pull requests run CI (build and unit tests), CodeQL for the workflows, dependency review and, when a fuzzed parser changes, the fuzzers. CI skips the build and tests, and passes, when a pull request changes only `website/`, `discord/`, `npm/`, `docs/`, Markdown files in the repository root, or workflows other than CI's own (`.github/workflows/ci.yml` has the exact list). The iOS tests run when a pull request changes what Coincide Remote is built or tested from, and are skipped otherwise (`IOS_PATHS` in `.github/workflows/ios-tests.yml`).
 
 1. Fork the repository and create a branch from `main`.
 2. Keep each pull request to one fix or feature.

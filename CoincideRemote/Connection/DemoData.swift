@@ -37,6 +37,9 @@ enum DemoData {
 
     static func has(_ flag: String) -> Bool { ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemo" + flag) }
 
+    /// `-CoincideRemoteDemoUnpaired`: no Mac paired yet, so the app opens on the Connect screen, as at first launch.
+    static var isUnpaired: Bool { has("Unpaired") }
+
     /// The argument after `name`, such as `-CoincideRemoteSettingsPane general`.
     static func value(after name: String) -> String? {
         let arguments = ProcessInfo.processInfo.arguments
