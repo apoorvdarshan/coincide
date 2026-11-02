@@ -199,9 +199,20 @@ jobs:
           key: ci-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml', 'project-shared.yml') }}
           restore-keys: ci-packages-${{ runner.os }}-${{ runner.arch }}-
 
+      # Xcode's compilation cache, as in ci.yml: compiler outputs keyed by the exact inputs of each compile, so an unchanged
+      # file reuses its earlier output. It holds no build products or test results: the build starts from an empty
+      # DerivedData and every test runs.
+      - name: Restore compilation cache
+        id: compilation
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/CompilationCache
+          key: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          restore-keys: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-
+
       # A new simulator for this run: the newest iOS runtime with an iPhone 17 Pro, which the UI tests' layouts assume; a
       # newer runtime made for one device (iOS 27.1 ships only the iPhone Duo) is passed over. Otherwise the newest
-      # runtime's first iPhone. Its first boot keeps this runner busy for minutes: it starts after the package download,
+      # runtime's first iPhone. Its first boot keeps this runner busy for minutes: it starts after the cache downloads,
       # which it slowed from seconds to minutes, and boots while xcodebuild starts. The runner's machine is discarded after
       # the job, and the simulator with it.
       - name: Create and boot a simulator
@@ -229,17 +240,6 @@ jobs:
           )"
           echo "id=$id" >>"$GITHUB_OUTPUT"
           xcrun simctl boot "$id"
-
-      # Xcode's compilation cache, as in ci.yml: compiler outputs keyed by the exact inputs of each compile, so an unchanged
-      # file reuses its earlier output. It holds no build products or test results: the build starts from an empty
-      # DerivedData and every test runs.
-      - name: Restore compilation cache
-        id: compilation
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/CompilationCache
-          key: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-${{ github.sha }}
-          restore-keys: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-
 
       # For the booting simulator; building for the generic simulator destination instead, to compile during the boot, was
       # no faster (measured in #217).
