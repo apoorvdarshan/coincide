@@ -43,11 +43,11 @@ Switches are repository variables (Settings › Secrets and variables › Action
 | `IOS_RELEASE_AUTOMATION` | `false` | Master switch. While it is off, a tag run builds nothing and touches nothing in App Store Connect; it only creates the tag's GitHub Release (never marked Latest) |
 | `IOS_CREATE_VERSION` | `true` | Create the tag's App Store version when App Store Connect doesn't have it yet |
 | `IOS_UPLOAD_BUILD` | `false` | Build, sign and upload the binary, then wait until App Store Connect has processed it |
-| `IOS_UPLOAD_LISTING` | `false` | Description, keywords, promotional text and URLs; needs an `[ios.listing]` table and `APPSTORE.md`, which don't exist yet |
+| `IOS_UPLOAD_LISTING` | `false` | The promotional text, description, keywords and support and marketing URLs in [`APPSTORE.md`](APPSTORE.md) |
 | `IOS_UPLOAD_WHATS_NEW` | `false` | What's New text; needs an `[ios.whats_new]` table |
 | `IOS_UPLOAD_SCREENSHOTS` | `false` | The iPhone, iPad and iPhone Duo screenshots in `screenshots/` ([Store files](#store-files)) |
 | `IOS_UPLOAD_CREATIVE_ASSETS` | `false` | The product page header and search results images in `creative/ios/` ([Header and search results images](#header-and-search-results-images)) |
-| `IOS_SUBMIT_REVIEW` | `false` | Select this run's build and submit the version for review |
+| `IOS_SUBMIT_REVIEW` | `false` | Select this run's build and submit the version for review, with the Ready to Submit products in [`catalog/products.json`](catalog/products.json) |
 | `IOS_PUBLIC_RELEASE` | `true` | Release automatically once Apple approves the version |
 
 `IOS_CREATE_VERSION` and `IOS_PUBLIC_RELEASE` are on, but nothing reads them while the master switch is off.
@@ -56,6 +56,25 @@ Switches are repository variables (Settings › Secrets and variables › Action
 build its own run uploaded, so set `IOS_UPLOAD_BUILD` and `IOS_SUBMIT_REVIEW` to `true` together with
 `IOS_RELEASE_AUTOMATION`. Otherwise the tag run fails before it builds anything. With `IOS_UPLOAD_BUILD` alone the
 build reaches TestFlight and App Store Connect, and nothing is submitted.
+
+**The first release, 0.1.0.** Version 0.1.0 is in App Store Connect with its listing, screenshots, App Review
+information, age rating, App Privacy and price already set, so its tag run needs these switches on, with the others as
+they are (`IOS_CREATE_VERSION` and `IOS_PUBLIC_RELEASE` already on; `IOS_UPLOAD_WHATS_NEW` and
+`IOS_UPLOAD_SCREENSHOTS` off, since 0.1.0's screenshots were uploaded from these files):
+
+```bash
+gh variable set IOS_RELEASE_AUTOMATION --body true
+gh variable set IOS_UPLOAD_BUILD --body true
+gh variable set IOS_UPLOAD_LISTING --body true
+gh variable set IOS_UPLOAD_CREATIVE_ASSETS --body true
+gh variable set IOS_SUBMIT_REVIEW --body true
+```
+
+Then run **iOS Release › Run workflow** on `main` and read its `store-plan` summary, and push `ios-v0.1.0` on that
+commit. The run uploads the build, makes the listing match `APPSTORE.md`, uploads the header and search results
+images and sends them to App Review on their own, and submits 0.1.0 with the seven in-app purchases in
+[`catalog/products.json`](catalog/products.json). Apple approves the images separately, and a release places them only
+while its version can be edited, so they reach the product page with the version after 0.1.0, not with 0.1.0 itself.
 
 **What's New stays off for 0.1.0.** App Store Connect shows What's New only from an app's second version on, so the
 first version has none to upload. Add `[ios.whats_new]` and its text before turning the switch on for a later version.
@@ -125,6 +144,18 @@ With `IOS_UPLOAD_CREATIVE_ASSETS` on, a release uploads each image to the Asset 
 in a submission of its own, never the version's. Once Apple approves an image, the next release places it on the
 version's product page while the version can be edited. To change an image, commit it under a new file name and
 update the pin in the same change.
+
+## Listing and in-app purchases
+
+[`APPSTORE.md`](APPSTORE.md) is the en-US listing: name, subtitle, promotional text, keywords, description and URLs, and
+for the record the category, age rating, content rights, App Privacy answers, price and the notes for App Review, as
+App Store Connect has them. `IOS_UPLOAD_LISTING` uploads the promotional text, description, keywords and the support
+and marketing URLs; the name, subtitle, privacy policy URL and the rest are the app's, set in App Store Connect.
+
+[`catalog/products.json`](catalog/products.json) lists Coincide Pro (monthly, yearly with a 7-day free trial, and
+lifetime) and the four tips under the IDs `CoincideRemote/Pro/ProStore.swift` uses. `IOS_SUBMIT_REVIEW` adds the
+subscriptions to the version's review submission and sends the Ready to Submit in-app purchases after the final build
+check, and never a product the catalog doesn't list. Store checks run `catalog check` on it.
 
 ## Release notes
 
