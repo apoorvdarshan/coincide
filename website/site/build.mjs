@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Builds coincide.dev's content pages into website/public/ from the page modules in website/site/pages/, along with
-// sitemap.xml, robots.txt and the shared header and footer of the hand-written pages (home, privacy, terms).
+// sitemap.xml, robots.txt, the blog's RSS feed and the shared header and footer of the hand-written pages (home, privacy, terms).
 //
 //   node website/site/build.mjs           write the files
 //   node website/site/build.mjs --check   fail if any file is out of date (CI runs this through site.test.mjs)
@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ORIGIN, ORGANIZATION, PERSON, SOFTWARE, WEBSITE, breadcrumbSchema, escape, footer, header, jsonLD, render, url,
 } from "./layout.mjs";
+import { blogPosts } from "./pages/blog/_blog.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const PUBLIC = join(here, "..", "public");
@@ -71,6 +72,10 @@ function normalize(raw, source) {
     ...raw,
     source,
   };
+  // Blog posts carry a publication date (an ISO date, or date and time with its offset) and a byline.
+  page.post = page.path.startsWith("/blog/");
+  page.feed ??= page.post || page.path === "/blog";
+  if (page.post && !/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?[+-]\d{2}:\d{2})?$/.test(raw.published ?? "")) fail("blog posts need a published date");
   page.showUpdated ??= ["TechArticle", "Article"].includes(page.type);
   page.ogType = ["TechArticle", "Article"].includes(page.type) ? "article" : "website";
   page.renderBody = (site) => typeof page.body === "function" ? page.body(site) : (page.body ?? "");
@@ -99,7 +104,7 @@ function schemaFor(page, site, trail) {
       dateModified: page.updated,
       author: { "@id": PERSON["@id"] },
       publisher: { "@id": ORGANIZATION["@id"] },
-      image: `${ORIGIN}/img/og.jpg`,
+      image: page.image?.url ?? `${ORIGIN}/img/og.jpg`,
       mainEntityOfPage: pageURL,
       about: { "@id": SOFTWARE["@id"] },
     });
@@ -207,6 +212,30 @@ ${rows.join("\n")}
 `;
 }
 
+/** The blog's RSS 2.0 feed, newest post first. */
+function feed(pages) {
+  const posts = blogPosts(pages);
+  const items = posts.map((post) => `  <item>
+    <title>${escape(stripTags(post.h1))}</title>
+    <link>${url(post.path)}</link>
+    <guid isPermaLink="true">${url(post.path)}</guid>
+    <pubDate>${new Date(post.published.length === 10 ? post.published + "T00:00:00Z" : post.published).toUTCString()}</pubDate>
+    <description>${escape(post.description)}</description>
+  </item>`);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+  <title>Coincide blog</title>
+  <link>${url("/blog")}</link>
+  <atom:link href="${url("/blog/feed.xml")}" rel="self" type="application/rss+xml"/>
+  <description>Feature videos, launch notes and deep dives on Coincide, the native Mac app for coding agents.</description>
+  <language>en</language>
+${items.join("\n")}
+</channel>
+</rss>
+`;
+}
+
 const ROBOTS = `# coincide.dev: everything is open to crawlers except the Worker's small JSON API.
 User-agent: *
 Allow: /
@@ -247,6 +276,7 @@ export async function buildSite() {
   }
   out.set("sitemap.xml", sitemap(pages));
   out.set("robots.txt", ROBOTS);
+  out.set("blog/feed.xml", feed(pages));
   const problems = validate(pages);
   for (const path of site.missing) problems.push(`link to a page that doesn't exist: ${path}`);
   return { files: out, pages, site, problems };

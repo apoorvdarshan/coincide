@@ -107,7 +107,7 @@ export function footer(languages = [], ui = {}) {
   return `<footer class="site-foot">
   <div class="cols">
     <div class="about"><a class="site-brand" href="/"><img src="/img/icon-tight-96.png" alt="" width="30" height="30" loading="lazy">Coincide</a><p>${ui.about ?? "A native Mac app for the coding agents you already use. Free and open source under the MIT license."}</p></div>
-    ${list("Product", [["Features", "/features"], ["Download", "/download"], ["Changelog", "/changelog"], ["Compare", "/compare"], ["Coincide Remote", "/features/coincide-remote"], ["FAQ", "/faq"]])}
+    ${list("Product", [["Features", "/features"], ["Download", "/download"], ["Changelog", "/changelog"], ["Blog", "/blog"], ["Compare", "/compare"], ["Coincide Remote", "/features/coincide-remote"], ["FAQ", "/faq"]])}
     ${list("Agents", [["Claude Code", "/agents/claude-code"], ["Codex", "/agents/codex"], ["Cursor", "/agents/cursor"], ["Grok Build", "/agents/grok-build"], ["OpenCode", "/agents/opencode"], ["Antigravity", "/agents/antigravity"]])}
     ${list("Docs", [["All docs", "/docs"], ["Getting started", "/docs/getting-started"], ["Keyboard shortcuts", "/docs/keyboard-shortcuts"], ["Command line", "/docs/cli"], ["Troubleshooting", "/docs/troubleshooting"], ["Uninstall", "/docs/uninstall"]])}
     ${list("Community", [["GitHub", REPO], ["Discord", LINKS.discord], ["Product Hunt", LINKS.productHunt], ["X @apoorvdarshan", LINKS.x], ["Instagram @apoorvcodes", LINKS.instagram], ["LinkedIn", LINKS.linkedin]])}
@@ -133,7 +133,7 @@ export function breadcrumbSchema(trail) {
 export const jsonLD = (graph) => `<script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@graph": graph }).replace(/</g, "\\u003c")}</script>`;
 
 /** <head> contents shared by every page. */
-export function head({ title, description, path, lang = "en", ogLocale, ogType = "website", image, imageAlt, alternates = [], noindex = false, schema = [] }) {
+export function head({ title, description, path, lang = "en", ogLocale, ogType = "website", image, imageAlt, alternates = [], noindex = false, feed = false, schema = [] }) {
   const canonical = url(path);
   const img = image ?? { url: `${ORIGIN}/img/og.jpg`, width: 1200, height: 630, alt: "Coincide: Every agent. One moment. The two-faced Janus logo with the Coincide bots climbing it." };
   const hreflang = alternates.map(({ lang: l, path: p }) => `<link rel="alternate" hreflang="${l}" href="${url(p)}">`).join("\n");
@@ -143,7 +143,7 @@ export function head({ title, description, path, lang = "en", ogLocale, ogType =
 <title>${escape(title)}</title>
 <meta name="description" content="${escape(description)}">
 ${noindex ? '<meta name="robots" content="noindex">\n' : ""}<meta name="theme-color" content="#0A0D24">
-${noindex ? "" : `<link rel="canonical" href="${canonical}">\n`}${hreflang ? hreflang + "\n" : ""}<meta property="og:type" content="${ogType}">
+${noindex ? "" : `<link rel="canonical" href="${canonical}">\n`}${hreflang ? hreflang + "\n" : ""}${feed ? '<link rel="alternate" type="application/rss+xml" title="Coincide blog" href="/blog/feed.xml">\n' : ""}<meta property="og:type" content="${ogType}">
 <meta property="og:site_name" content="Coincide">
 <meta property="og:locale" content="${locale}">
 <meta property="og:url" content="${canonical}">
@@ -188,7 +188,9 @@ export function render(page, site) {
   const titleRow = page.logo
     ? `<div class="title-row"><span class="mark${page.logo.app ? " app" : ""}"><img src="${page.logo.src}" alt="${escape(page.logo.alt ?? "")}" width="${page.logo.size ?? 38}" height="${page.logo.size ?? 38}"></span><h1>${page.h1}</h1></div>`
     : `<h1>${page.h1}</h1>`;
-  const updated = page.showUpdated
+  const updated = page.post
+    ? `<p class="updated"><time datetime="${page.published}">${formatDate(page.published)}</time> · Apoorv Darshan${page.updated > page.published.slice(0, 10) ? ` · Updated <time datetime="${page.updated}">${formatDate(page.updated)}</time>` : ""}</p>`
+    : page.showUpdated
     ? `<p class="updated">Updated <time datetime="${page.updated}">${formatDate(page.updated)}</time></p>`
     : "";
   const related = page.related.length
@@ -225,8 +227,9 @@ ${body.includes('class="copy"') ? COPY_SCRIPT : ""}
 `;
 }
 
+/** "November 2, 2026" from an ISO date, or from the date part of an ISO date and time. */
 export function formatDate(iso) {
-  return new Date(iso + "T00:00:00Z").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
+  return new Date(iso.slice(0, 10) + "T00:00:00Z").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
 }
 
 // ---------- helpers for page bodies ----------

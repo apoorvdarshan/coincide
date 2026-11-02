@@ -155,6 +155,20 @@ test("localized home pages link to each other with matching hreflang alternates"
   }
 });
 
+test("the blog's RSS feed lists every post, and blog pages link to it", () => {
+  const feed = read("blog/feed.xml");
+  assert.match(feed, /^<\?xml version="1.0" encoding="UTF-8"\?>\n<rss version="2.0"/);
+  const items = attr(feed, /<item>([\s\S]*?)<\/item>/g);
+  const links = items.map((item) => item.match(/<link>([^<]+)<\/link>/)[1]);
+  const posts = htmlFiles.filter((f) => /^blog\/[^/]+\/index\.html$/.test(f)).map((f) => ORIGIN + pathOf(f));
+  assert.ok(posts.length > 0, "at least one post");
+  assert.deepEqual([...links].sort(), posts.sort());
+  for (const item of items) assert.ok(!Number.isNaN(Date.parse(item.match(/<pubDate>([^<]+)<\/pubDate>/)[1])), item);
+  for (const file of htmlFiles.filter((f) => f.startsWith("blog/"))) {
+    assert.match(read(file), /<link rel="alternate" type="application\/rss\+xml" title="Coincide blog" href="\/blog\/feed.xml">/, file);
+  }
+});
+
 test("robots.txt, the 404 page, the IndexNow key and Workers settings", () => {
   const robots = read("robots.txt");
   assert.match(robots, /^User-agent: \*$/m);

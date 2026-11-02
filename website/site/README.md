@@ -47,3 +47,14 @@ export default {
 
 Only describe what Coincide actually does: check the code, README.md and CHANGELOG.md, and link official sources for
 anything about other products.
+
+## A blog post
+
+The blog (`/blog`) collects each day's media: the feature video, the articles and the posts that went out. A post is a
+page in `pages/blog/` with `type: "Article"` and a `published` date (an ISO date, or date and time with its offset, such
+as `2026-11-02T21:34:00+05:30`). The blog index and the RSS feed (`/blog/feed.xml`) pick it up by themselves, newest
+first. `pages/blog/_blog.mjs` has helpers for the video at the top (`video`: a local poster linking to YouTube, so the
+page loads nothing from YouTube), its structured data (`videoSchema`) and the list of places the media went
+(`shared`). Put the poster in `public/img/blog/<slug>.jpg`, at most 1280 pixels wide (540×960 for Shorts). Set `media`
+to the kind of media ("YouTube Short", "Launch video") for the card on the index, and `image` for a custom social
+preview. After deploying, ping IndexNow with the new post and `/blog`.

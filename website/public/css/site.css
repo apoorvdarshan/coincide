@@ -57,6 +57,8 @@ img { display: block; max-width: 100%; height: auto; }
 .eyebrow { margin: 0 0 14px; color: var(--signal-hi); font: 500 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
 .page h1 { margin: 0; color: var(--silver); font: 700 clamp(38px, 7vw, 64px)/1 var(--display); letter-spacing: -.045em; font-variation-settings: "opsz" 96; text-wrap: balance; }
 .page .lede { margin: 22px 0 0; color: var(--ash); font-size: clamp(18px, 1.6vw, 20px); line-height: 1.55; text-wrap: pretty; }
+.page .lede a { color: var(--signal-hi); text-decoration: underline; text-decoration-color: rgba(147,166,255,.4); text-underline-offset: 3px; }
+.page .lede a:hover { text-decoration-color: currentColor; }
 .page .updated { margin: 16px 0 0; color: var(--faint); font: 12.5px/1.5 var(--mono); }
 .title-row { display: flex; align-items: center; gap: 20px; }
 .title-row .mark { flex: none; width: 64px; height: 64px; border-radius: 17px; background: var(--bright); display: grid; place-items: center; }
@@ -127,6 +129,22 @@ img { display: block; max-width: 100%; height: auto; }
 .card small { margin-top: auto; padding-top: 6px; color: var(--faint); font: 12px var(--mono); }
 .group-title { margin: 52px 0 0; color: var(--silver); font: 650 clamp(22px, 2.8vw, 28px)/1.15 var(--display); letter-spacing: -.02em; }
 .group-title + p { margin: 8px 0 0; color: var(--ash); }
+
+/* ---------- blog ---------- */
+.cards.posts { grid-template-columns: 1fr; }
+.prose .video { margin: 26px 0 0; }
+.prose .video > a { position: relative; display: block; width: fit-content; max-width: 100%; margin: 0 auto; border-radius: 18px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--rule); }
+.prose .video.short > a { max-width: min(100%, 340px); }
+.prose .video img { border-radius: 18px; }
+.prose .video .play { position: absolute; left: 50%; top: 50%; width: 68px; height: 68px; margin: -34px 0 0 -34px; border-radius: 50%; background: rgba(10,13,36,.72); box-shadow: inset 0 0 0 1.5px rgba(242,239,232,.7); transition: background .2s, transform .2s var(--ease); }
+.prose .video .play::after { content: ""; position: absolute; left: 27px; top: 21px; border-style: solid; border-width: 13px 0 13px 21px; border-color: transparent transparent transparent var(--bright); }
+.prose .video > a:hover .play { background: var(--signal); transform: scale(1.06); }
+.prose .video figcaption { margin: 12px 0 0; color: var(--ash); font-size: 14.5px; text-align: center; }
+.prose .shared { padding: 0; list-style: none; border-radius: 14px; border: 1px solid var(--rule); }
+.prose .shared li { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; margin: 0; padding: 11px 16px; border-bottom: 1px solid var(--rule); }
+.prose .shared li:last-child { border-bottom: 0; }
+.prose .shared a { min-width: 92px; font-weight: 600; }
+.prose .shared span { color: var(--ash); font-size: 15px; }
 
 /* ---------- FAQ ---------- */
 .faq h2 { font-size: clamp(21px, 2.6vw, 25px); }

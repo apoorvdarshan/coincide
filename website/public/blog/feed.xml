@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+  <title>Coincide blog</title>
+  <link>https://coincide.dev/blog</link>
+  <atom:link href="https://coincide.dev/blog/feed.xml" rel="self" type="application/rss+xml"/>
+  <description>Feature videos, launch notes and deep dives on Coincide, the native Mac app for coding agents.</description>
+  <language>en</language>
+  <item>
+    <title>Coding agents with a face: meet the Coincide bots</title>
+    <link>https://coincide.dev/blog/coding-agents-with-a-face</link>
+    <guid isPermaLink="true">https://coincide.dev/blog/coding-agents-with-a-face</guid>
+    <pubDate>Mon, 02 Nov 2026 16:04:00 GMT</pubDate>
+    <description>Bots in Coincide are coding agents with a face: a character, a personality and standing instructions, on the agent, model and folder you pick.</description>
+  </item>
+  <item>
+    <title>How I hand one conversation between Claude Code, Codex and four other coding agents</title>
+    <link>https://coincide.dev/blog/one-conversation-six-agents</link>
+    <guid isPermaLink="true">https://coincide.dev/blog/one-conversation-six-agents</guid>
+    <pubDate>Sun, 01 Nov 2026 19:05:00 GMT</pubDate>
+    <description>How Coincide hands one thread between Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity: per-agent sessions, recaps and their budget.</description>
+  </item>
+  <item>
+    <title>Introducing Coincide</title>
+    <link>https://coincide.dev/blog/introducing-coincide</link>
+    <guid isPermaLink="true">https://coincide.dev/blog/introducing-coincide</guid>
+    <pubDate>Sun, 01 Nov 2026 15:52:00 GMT</pubDate>
+    <description>Coincide launched November 1, 2026: a free, open-source Mac app that runs Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity in one window.</description>
+  </item>
+</channel>
+</rss>
