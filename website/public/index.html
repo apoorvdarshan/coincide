@@ -680,7 +680,7 @@
     }).catch(() => {});
   }));
 
-  // Downloads of the release DMG and ZIP across all releases, from the site's Worker (worker/stats.mjs). Hidden until
+  // Downloads: the release DMG and ZIP across all releases plus npm installs, from the site's Worker (worker/stats.mjs). Hidden until
   // a release exists and has been downloaded, and whenever the numbers can't be had.
   fetch('/api/stats').then(r => r.ok ? r.json() : null).then(stats => {
     if (!stats || !stats.latest || !(stats.downloads > 0)) return;

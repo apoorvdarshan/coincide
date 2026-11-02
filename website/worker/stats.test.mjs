@@ -13,9 +13,10 @@ const releases = [
   release("v0.3.0-beta", { "Coincide.dmg": 5 }, { prerelease: true }),
   release("v0.1.0", { "Coincide-0.1.0.dmg": 3, "Coincide.dmg": 20, "Coincide-macos-universal.zip": 2, "SHA256SUMS.txt": 50 }),
   release("v9.9.9", { "Coincide.dmg": 1000 }, { draft: true }),
+  release("ios-v0.1.0", { "Coincide.zip": 500 }),
 ];
 
-test("adds DMG and ZIP downloads of published releases only", () => {
+test("adds DMG and ZIP downloads of published Mac releases only", () => {
   assert.deepEqual(summarizeReleases(releases), { downloads: 87, releases: 3, latest: "v0.2.0" });
   assert.deepEqual(summarizeReleases([]), { downloads: 0, releases: 0, latest: null });
 });
@@ -45,11 +46,12 @@ function fakeFetch({ github = releases, githubStatus = 200, npm = { downloads: [
   return { impl, calls };
 }
 
-test("collects GitHub and npm numbers separately", async () => {
+test("adds npm downloads to the GitHub ones for the total", async () => {
   const { impl, calls } = fakeFetch();
   const stats = await collectStats({}, { fetchImpl: impl, now: new Date("2026-12-01T10:00:00Z") });
-  assert.equal(stats.downloads, 87);
+  assert.equal(stats.github, 87);
   assert.equal(stats.npm, 10);
+  assert.equal(stats.downloads, 97);
   assert.equal(stats.latest, "v0.2.0");
   assert.ok(calls.some(({ url }) => url === "https://api.npmjs.org/downloads/range/2026-11-01:2026-12-01/coincide-dev"));
   assert.equal(calls.find(({ url }) => url.includes("github")).init.headers.Authorization, undefined);
@@ -57,7 +59,9 @@ test("collects GitHub and npm numbers separately", async () => {
 
 test("counts an unpublished npm package as 0 and an npm outage as unknown", async () => {
   assert.equal((await collectStats({}, { fetchImpl: fakeFetch({ npmStatus: 404 }).impl })).npm, 0);
-  assert.equal((await collectStats({}, { fetchImpl: fakeFetch({ npmStatus: 500 }).impl })).npm, null);
+  const outage = await collectStats({}, { fetchImpl: fakeFetch({ npmStatus: 500 }).impl });
+  assert.equal(outage.npm, null);
+  assert.equal(outage.downloads, 87, "an npm outage leaves the GitHub count");
 });
 
 test("sends the optional GitHub token in a header", async () => {
@@ -83,11 +87,11 @@ test("serves the stats and badge from the cache", async () => {
   const { impl, calls } = fakeFetch();
   const first = await handleStats(new Request("https://coincide.dev/api/stats"), {}, ctx, { fetchImpl: impl, cache });
   assert.equal(first.status, 200);
-  assert.equal((await first.json()).downloads, 87);
+  assert.equal((await first.json()).downloads, 97);
   const count = calls.length;
   const badgeResponse = await handleStats(new Request("https://coincide.dev/api/stats/badge"), {}, ctx, { fetchImpl: impl, cache });
   assert.deepEqual(await badgeResponse.json(),
-    { schemaVersion: 1, label: "downloads", message: "87", color: "blue", cacheSeconds: 3600 });
+    { schemaVersion: 1, label: "downloads", message: "97", color: "blue", cacheSeconds: 3600 });
   assert.equal(calls.length, count, "the badge reused the cached numbers");
 });
 
