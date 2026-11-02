@@ -10,6 +10,9 @@ on:
     paths-ignore:
       - "**.md"
   workflow_dispatch:
+  # Coincide Remote's iOS Release (.github/workflows/ios-release.yml) runs this on the tagged commit and builds only
+  # after it passes (gate_jobs in store/store-release.toml).
+  workflow_call:
 
 # A newer push to a pull request replaces its older run; main and manual runs are never cancelled.
 concurrency:
@@ -51,7 +54,7 @@ jobs:
           affects_app() {
             case "$1" in
               .github/workflows/ci.yml) return 0 ;;
-              website/* | discord/* | npm/* | docs/* | .github/workflows/* | .github/dependabot.yml | \
+              website/* | discord/* | npm/* | docs/* | store/* | .github/workflows/* | .github/dependabot.yml | \
                 .github/actionlint.yaml | .github/PULL_REQUEST_TEMPLATE.md) return 1 ;;
               */*) return 0 ;;
               *.md) return 1 ;;
@@ -120,9 +123,27 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/SourcePackages
-          # project.yml pins the remote packages.
-          key: ci-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml') }}
+          # project.yml and project-shared.yml pin the remote packages.
+          key: ci-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml', 'project-shared.yml') }}
           restore-keys: ci-packages-${{ runner.os }}-${{ runner.arch }}-
+
+      # CoincideRemote.xcodeproj is committed, because store-release reads its versions (store/README.md). It must be
+      # exactly what this XcodeGen writes from project-remote.yml and project-shared.yml (generated again on its own
+      # here, since project.yml's postGenCommand only warns when it fails), and its Package.resolved must pin what
+      # project-shared.yml names, because the App Store build resolves packages only from that file.
+      - name: Check CoincideRemote.xcodeproj is current
+        if: steps.scope.outputs.app != 'false'
+        run: |
+          xcodegen generate --spec project-remote.yml --quiet
+          xcodebuild -resolvePackageDependencies -project CoincideRemote.xcodeproj -scheme CoincideRemote \
+            -clonedSourcePackagesDirPath build/SourcePackages -quiet
+          changes="$(git status --porcelain --untracked-files=all -- CoincideRemote.xcodeproj)"
+          if [ -n "$changes" ]; then
+            echo "$changes"
+            git --no-pager diff -- CoincideRemote.xcodeproj | head -n 200
+            echo "::error::CoincideRemote.xcodeproj isn't what XcodeGen $XCODEGEN_VERSION and Xcode write. Run xcodegen generate, then xcodebuild -resolvePackageDependencies -project CoincideRemote.xcodeproj -scheme CoincideRemote, and commit CoincideRemote.xcodeproj."
+            exit 1
+          fi
 
       # Xcode's compilation cache: compiler outputs keyed by the exact inputs of each compile, so an unchanged file
       # reuses its earlier output and a changed one compiles again. It holds no build products or test results; the

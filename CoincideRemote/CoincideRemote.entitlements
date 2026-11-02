@@ -2,7 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Lock-screen alerts: CloudKit pushes the alerts the Mac writes to the user's private database. -->
+	<!-- Lock-screen alerts: CloudKit pushes the alerts the Mac writes to the user's private database. Xcode's export
+	     switches aps-environment to production for App Store builds. -->
 	<key>aps-environment</key>
 	<string>development</string>
 	<key>com.apple.developer.icloud-container-identifiers</key>
@@ -13,8 +14,8 @@
 	<array>
 		<string>CloudKit</string>
 	</array>
-	<!-- The Mac uses the same environment, so both see the same records. -->
-	<key>com.apple.developer.icloud-container-environment</key>
-	<string>Development</string>
+	<!-- No com.apple.developer.icloud-container-environment: development-signed builds (Xcode, device installs) then
+	     use the Development environment, the one the Mac's opt-in CloudKit build writes to, and the App Store export
+	     sets Production, the only value App Store Connect accepts. -->
 </dict>
 </plist>

@@ -1,14 +1,21 @@
 name: Coincide
+# The options, project settings, the packages Coincide Remote uses, and its target template and scheme, which
+# CoincideRemote.xcodeproj (project-remote.yml) is generated from too.
+include:
+  - project-shared.yml
 options:
-  bundleIdPrefix: com.apoorvdarshan
+  # The Mac app's minimum macOS (the npm installer checks it too). The other options are in project-shared.yml.
   deploymentTarget:
     macOS: "26.0"
-    iOS: "26.0"
-  createIntermediateGroups: true
-  developmentLanguage: en
   # The Cua Driver release Computer Use bundles, checked against pinned checksums (cached after the first download),
   # and the build number (CFBundleVersion), the count of commits in HEAD's history (see Signing.xcconfig).
   preGenCommand: scripts/fetch-cua-driver.sh && scripts/build-number.sh
+  # Then CoincideRemote.xcodeproj (project-remote.yml): Coincide Remote alone, which store-release archives for the
+  # App Store. It is committed, and CI fails when it differs from what this writes. A failure here only warns, so it
+  # never stops the Mac app's project or release; CI's check generates it on its own and fails.
+  postGenCommand: >-
+    xcodegen generate --spec project-remote.yml --quiet ||
+    echo "warning: CoincideRemote.xcodeproj wasn't generated (project-remote.yml); CI will fail until it is" >&2
 packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
@@ -23,27 +30,11 @@ packages:
   WhisperKit:
     url: https://github.com/argmaxinc/WhisperKit
     exactVersion: 1.1.1
-  # The remote protocol, pairing and theme palettes, shared by the Mac app and Coincide Remote on iOS.
-  CoincideRemoteKit:
-    path: CoincideRemoteKit
-  # Coincide Pro and tips on iOS (CoincideRemote/Pro): RevenueCat's purchases-ios, MIT, from its SwiftPM mirror. Only its
-  # RevenueCat product is linked, into CoincideRemote alone; the Mac app, its tools and tests never link it.
-  RevenueCat:
-    url: https://github.com/RevenueCat/purchases-ios-spm
-    exactVersion: 5.100.0
 settings:
   base:
-    SWIFT_VERSION: "6.0"
-    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
-    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    # The Mac app's version; the rest of the project settings are in project-shared.yml.
     MARKETING_VERSION: "0.1.0"
     # CURRENT_PROJECT_VERSION (CFBundleVersion) comes from Signing.xcconfig: the count of commits in HEAD's history.
-    CODE_SIGN_IDENTITY: "-"
-    CODE_SIGN_STYLE: Manual
-    DEVELOPMENT_TEAM: ""
-    ENABLE_USER_SCRIPT_SANDBOXING: YES
-    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
-    SWIFT_EMIT_LOC_STRINGS: YES
     # The Mac app's bundle ID; the agent host's and the launchd jobs' build on it. Debug builds (tests, agents' and
     # Xcode's builds) get their own, so macOS never takes one for the installed Coincide: Launch Services would
     # otherwise pick among every copy for a notification's icon or click. CoincideIdentity in CoincideKit has the same
@@ -323,60 +314,9 @@ targets:
           # A profile for com.apoorvdarshan.coincide doesn't cover the Debug build's bundle ID (Signing.xcconfig).
           CODE_SIGN_ENTITLEMENTS: ""
           PROVISIONING_PROFILE_SPECIFIER: ""
-  # Coincide Remote: the iPhone and iPad app that drives Coincide on a Mac over the local network or Tailscale.
+  # Coincide Remote, the iPhone and iPad app (its template is in project-shared.yml).
   CoincideRemote:
-    type: application
-    platform: iOS
-    configFiles:
-      Debug: Signing.xcconfig
-      Release: Signing.xcconfig
-    sources:
-      - path: CoincideRemote
-        excludes:
-          - Info.plist
-          - StoreKit
-      # For Xcode's Run (the scheme's storeKitConfiguration), not the app bundle.
-      - path: CoincideRemote/StoreKit
-        buildPhase: none
-      # Dictation: the Mac's microphone capture and Apple speech recognition, and where the transcript goes in the text.
-      - path: Coincide/Voice/Shared
-      - path: CoincideKit/Voice/DictationInsertion.swift
-      # The bot personality presets, the same file CoincideKit builds, so the phone offers the Mac's presets with
-      # their text and localizes their names in its own catalog.
-      - path: CoincideKit/Models/BotPersonalityPreset.swift
-    dependencies:
-      - package: CoincideRemoteKit
-      - package: RevenueCat
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.remote
-        PRODUCT_NAME: CoincideRemote
-        TARGETED_DEVICE_FAMILY: "1,2"
-        # Signed for devices with the team from Local.xcconfig (see Signing.xcconfig).
-        CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: Apple Development
-        INFOPLIST_FILE: CoincideRemote/Info.plist
-        # iCloud (CloudKit) and push notifications, for lock-screen alerts from the Mac.
-        CODE_SIGN_ENTITLEMENTS: CoincideRemote/CoincideRemote.entitlements
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Coincide
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
-        INFOPLIST_KEY_NSCameraUsageDescription: Coincide uses the camera to scan the pairing code your Mac shows and to take photos you attach.
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Coincide finds and connects to your Macs over the local network.
-        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Coincide attaches the photos you pick to your messages.
-        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Coincide saves the pictures you choose to your photo library.
-        # Dictation in the composer, asked for the first time the user taps the microphone.
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: Coincide listens to the microphone while you dictate a message.
-        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Coincide turns your dictation into text with Apple’s speech recognition on this device.
-        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
-        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+    templates: [CoincideRemote]
   CoincideTests:
     type: bundle.unit-test
     platform: macOS
@@ -431,15 +371,5 @@ schemes:
       targets:
         - CoincideKitTests
         - CoincideTests
-    archive:
-      config: Release
-  CoincideRemote:
-    build:
-      targets:
-        CoincideRemote: all
-    run:
-      config: Debug
-      # Local purchases when run from Xcode, without App Store Connect or a sandbox account.
-      storeKitConfiguration: CoincideRemote/StoreKit/Coincide.storekit
     archive:
       config: Release

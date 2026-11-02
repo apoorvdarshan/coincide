@@ -1,0 +1,96 @@
+# Coincide Remote's store-release configuration: the iPhone and iPad app, released to the App Store from ios-v<version>
+# tags by .github/workflows/ios-release.yml. The Mac app releases separately from v<version> tags (docs/releasing.md).
+# Every key: https://github.com/apoorvdarshan/store-release/blob/v0.5.1/docs/config.md
+# Switches stay in repository variables and secrets in repository secrets (store/README.md); nothing here is secret.
+schema = 1
+
+[app]
+name = "Coincide Remote"
+slug = "coincide-remote"
+
+[release_notes]
+# "## ios-v<version>" sections become the GitHub Release notes; a tag without one gets GitHub's generated notes.
+path = "store/RELEASE_NOTES.md"
+
+[checks]
+paths = [
+  "store/**",
+  ".github/workflows/store-checks.yml",
+  ".github/workflows/ios-release.yml",
+  "CoincideRemote.xcodeproj/project.pbxproj",
+  "CoincideRemote/Info.plist",
+  "project-remote.yml",
+  "project-shared.yml",
+]
+
+[ios]
+tag_prefix = "ios-v"
+bundle_id = "com.apoorvdarshan.coincide.remote"
+asc_app_id = "6829516823"
+team_id = "23RV7FYH36"
+# Coincide Remote alone, generated from project-remote.yml and committed (Coincide.xcodeproj holds the Mac app too).
+project = "CoincideRemote.xcodeproj"
+scheme = "CoincideRemote"
+app_target = "CoincideRemote"
+info_plist = "CoincideRemote/Info.plist"
+# Only TLS through Apple's Network framework, SHA-256 and other system APIs: no non-exempt encryption.
+# Store checks and every prepare fail when the project declares another answer.
+export_compliance = "NO"
+locale = "en-US"
+# A tag run builds only after CI's build and unit tests pass on the tagged commit.
+gate_jobs = [
+  { id = "ci", uses = "./.github/workflows/ci.yml" },
+]
+
+[ios.build]
+developer_dir = "/Applications/Xcode_27.app/Contents/Developer"
+# Everything CoincideRemote.xcodeproj builds from.
+checkout = [
+  "/CoincideRemote.xcodeproj/",
+  "/CoincideRemote/",
+  "/CoincideRemoteKit/",
+  "/Coincide/Voice/Shared/",
+  "/CoincideKit/Voice/DictationInsertion.swift",
+  "/CoincideKit/Models/BotPersonalityPreset.swift",
+]
+
+# IOS_UPLOAD_SCREENSHOTS: each set, in NN order, replaces App Store Connect's when its files differ.
+[[ios.screenshots.sets]]
+display_type = "APP_IPHONE_67"
+dir = "store/screenshots/ios"
+required = true
+
+[[ios.screenshots.sets]]
+display_type = "APP_IPAD_PRO_3GEN_129"
+dir = "store/screenshots/ipad"
+required = true
+
+[[ios.screenshots.sets]]
+display_type = "APP_IPHONE_DUO"
+dir = "store/screenshots/iphone-duo"
+required = true
+
+# IOS_UPLOAD_CREATIVE_ASSETS: the product page header and search results images.
+[ios.creative]
+dir = "store/creative/ios"
+
+# App Store Connect matches Asset Library images by file name and byte size, so Store checks and every prepare fail
+# when either image changes, until this list is updated with it.
+[ios.creative.sizes]
+"header/coincide-header-janus-bust.png" = 9655377
+"search-results/coincide-search-charioteer.png" = 10162061
+
+# IOS_SUBMIT_REVIEW: submit the version with this run's build.
+[ios.products]
+iap_route = "submission"
+
+[ios.github_release]
+# The Mac app's in-app updater, coincide.dev's download link, Homebrew and the npm installer read releases/latest, so
+# an iOS release never takes Latest from the Mac release.
+latest = "never"
+
+# The repository's APP_STORE_CONNECT_* secrets are the Mac app's notarization key; Coincide Remote has its own.
+[ios.secrets]
+APP_STORE_CONNECT_API_KEY_ID = "IOS_ASC_API_KEY_ID"
+APP_STORE_CONNECT_ISSUER_ID = "IOS_ASC_ISSUER_ID"
+APP_STORE_CONNECT_API_KEY_P8 = "IOS_ASC_API_KEY_P8"

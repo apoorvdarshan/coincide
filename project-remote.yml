@@ -1,0 +1,21 @@
+# CoincideRemote.xcodeproj: Coincide Remote alone, the project store-release archives for the App Store
+# (store/store-release.toml). The target and scheme come from project-shared.yml, the same ones Coincide.xcodeproj
+# builds. The project is committed, because store-release reads the version and build number from its project file.
+# `xcodegen generate` writes it again (project.yml's postGenCommand), and CI fails when the committed copy differs.
+name: CoincideRemote
+include:
+  - project-shared.yml
+settings:
+  base:
+    # Coincide Remote's App Store version, released from an ios-v<version> tag. The Mac app's is in project.yml.
+    MARKETING_VERSION: "0.1.0"
+    # store-release reads this and uploads the larger of it and App Store Connect's highest build plus one. The
+    # target's Signing.xcconfig still wins in other builds of this project, as in Coincide.xcodeproj.
+    CURRENT_PROJECT_VERSION: 1
+    # The team store-release signs for (ios.team_id in store/store-release.toml). A team set in Local.xcconfig, which
+    # the target's Signing.xcconfig includes, takes precedence.
+    DEVELOPMENT_TEAM: 23RV7FYH36
+targets:
+  CoincideRemote:
+    templates: [CoincideRemote]
+    configFiles:REPLACE: {}

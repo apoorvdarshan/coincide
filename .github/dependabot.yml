@@ -4,3 +4,14 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      # Coincide Remote's store-release callers (.github/workflows/ios-release.yml and store-checks.yml) pin one
+      # commit with its "# vX.Y.Z" comment, so they move together in a pull request of their own. Other actions keep
+      # their own pull requests.
+      store-release:
+        patterns: ["apoorvdarshan/store-release*"]
+    # Those pins run with the App Store Connect key and the signing identity: a new store-release release waits seven
+    # days before it is proposed. Security updates never wait.
+    cooldown:
+      default-days: 7
+      include: ["apoorvdarshan/store-release*"]
