@@ -100,6 +100,24 @@ final class CoincideRemoteUITests: XCTestCase {
         app.buttons["Cancel"].tap()
     }
 
+    // MARK: Uncommitted changes
+
+    /// A thread's Uncommitted Changes carries the Mac diff panel's Git actions bar, whose git state loads when it appears.
+    /// Inside an empty Group it never appeared, so the state never loaded and the bar never showed (#216).
+    @MainActor
+    func testUncommittedChangesShowTheGitActionsBar() {
+        let app = launch("-CoincideRemoteTab", "projects", "-CoincideRemoteDemoThread")
+        let threadActions = app.buttons["Thread Actions"].firstMatch
+        XCTAssertTrue(threadActions.waitForExistence(timeout: timeout))
+        threadActions.tap()
+        let uncommittedChanges = app.buttons["Uncommitted Changes"].firstMatch
+        XCTAssertTrue(uncommittedChanges.waitForExistence(timeout: timeout))
+        uncommittedChanges.tap()
+        XCTAssertTrue(app.buttons["Git Actions"].firstMatch.waitForExistence(timeout: timeout), "The Git actions bar didn't show")
+        // The demo's branch, beside its actions.
+        XCTAssertTrue(element(app, containing: "remote-image-previews").exists)
+    }
+
     // MARK: Tips
 
     /// Settings lists the four tips with their prices, which need no Coincide Pro.
