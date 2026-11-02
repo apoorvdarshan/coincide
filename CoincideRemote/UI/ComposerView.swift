@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct ComposerView: View {
     let model: ThreadModel
     @Environment(RemoteClient.self) private var client
+    @Environment(ProStore.self) private var store
     @Environment(\.theme) private var theme
     @State private var photos: [PhotosPickerItem] = []
     @State private var isSending = false
@@ -93,6 +94,7 @@ struct ComposerView: View {
                 .strokeBorder(isDropTargeted ? theme.accent : theme.border, lineWidth: isDropTargeted ? 2 : theme.borderWidth)
         }
         .onDrop(of: [.image], isTargeted: $isDropTargeted) { providers in
+            guard ProGate.allows() else { return false }
             for provider in providers { load(provider) }
             return true
         }
@@ -111,6 +113,20 @@ struct ComposerView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(dictation.error ?? "")
+        }
+        // Typing, sending, stopping, attaching, dictating and the model's menus are actions (`ProGate`): without Coincide
+        // Pro a tap anywhere on the composer shows the paywall, and the field never takes focus.
+        .overlay {
+            if !store.isPro {
+                Color.clear
+                    .contentShape(.rect)
+                    .onTapGesture { ProGate.allows() }
+                    .accessibilityElement()
+                    .accessibilityLabel(Text("Message"))
+                    .accessibilityHint(Text("Sending messages needs Coincide Pro"))
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { ProGate.allows() }
+            }
         }
         .disabled(!client.isConnected)
     }

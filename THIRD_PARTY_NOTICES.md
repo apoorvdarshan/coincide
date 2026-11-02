@@ -3,6 +3,7 @@
 Coincide ports the design and behavior of T3 Code, and some prompts and wording are adapted from it. The terminal uses SwiftTerm.
 Computer Use runs Cua Driver, bundled unmodified in `Coincide.app/Contents/Helpers`.
 Dictation with Whisper on the Mac uses WhisperKit. Passkey sign-in checks sites against the Public Suffix List.
+Coincide Remote on iPhone and iPad uses RevenueCat's purchases-ios for Coincide Pro and tips.
 
 ## T3 Code
 
@@ -76,6 +77,35 @@ OpenAI's tokenizers (Apache 2.0) only when the user asks in Settings › Voice.
 MIT License
 
 Copyright (c) 2024 argmax, inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## RevenueCat purchases-ios
+
+https://github.com/RevenueCat/purchases-ios (from its SwiftPM mirror, https://github.com/RevenueCat/purchases-ios-spm),
+version 5.100.0 (its RevenueCat library), used under the MIT License. Only Coincide Remote links it; the Mac app doesn't.
+
+```
+MIT License
+
+Copyright (c) 2024 RevenueCat, Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

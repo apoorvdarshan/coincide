@@ -3,6 +3,10 @@
 <plist version="1.0">
 <dict>
 	<!-- Keys Xcode can't generate from build settings; the rest come from INFOPLIST_KEY_* in project.yml. -->
+	<!-- RevenueCat's public App Store SDK key for Coincide Pro and tips (ProStore). It's meant to ship in the app; secret
+	     keys never go here, and ProStore ignores anything but an App Store key (appl_), so a Test Store key can't ship. -->
+	<key>RevenueCatAPIKey</key>
+	<string>appl_eraGIATMWehqxuSKRjrqzdusewf</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_coincide._tcp</string>

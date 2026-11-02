@@ -111,7 +111,7 @@ struct GitActionsBar: View {
 
     private func actionsMenu(_ state: RemoteGitState) -> some View {
         Menu {
-            Button { committing = true } label: { Label("Commit…", systemImage: "checkmark.circle") }
+            Button { if ProGate.allows() { committing = true } } label: { Label("Commit…", systemImage: "checkmark.circle") }
                 .disabled(!state.canCommit)
             if state.hasRemote {
                 Button { run(.push) } label: { Label("Push", systemImage: "arrow.up.circle") }

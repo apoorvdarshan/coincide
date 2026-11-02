@@ -9,6 +9,7 @@ struct ConnectView: View {
     @Environment(Navigator.self) private var navigator
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
+    @Environment(ProStore.self) private var store
     @State private var scanning = false
     @State private var pairing = false
     @State private var error: String?
@@ -42,6 +43,14 @@ struct ConnectView: View {
                 handle(code)
             }
         }
+        #if DEBUG
+        // The plans with the App Store's own prices, without a tap: `-CoincideRemoteShowPlans`.
+        .task {
+            guard isOnboarding, ProcessInfo.processInfo.arguments.contains("-CoincideRemoteShowPlans") else { return }
+            try? await Task.sleep(for: .seconds(1))
+            PaywallPresenter.shared.present()
+        }
+        #endif
     }
 
     /// Coincide's mark and what to do on the Mac.
@@ -108,6 +117,17 @@ struct ConnectView: View {
                 .foregroundStyle(theme.tertiaryInk)
                 .multilineTextAlignment(.center)
                 .padding(.top, 4)
+            // Coincide Pro's plans, and Restore Purchases, before any Mac is paired.
+            if isOnboarding, !store.isPro {
+                Button { PaywallPresenter.shared.present() } label: {
+                    Label("Coincide Pro Plans", systemImage: "sparkles")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(theme.secondaryInk)
+                        .frame(minHeight: 44)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
@@ -157,7 +177,7 @@ struct ConnectView: View {
                 }
             } else if client.bonjour.isDenied {
                 SidebarHeader(Text("On This Network"))
-                Text("Allow Local Network access for Coincide Remote in Settings › Privacy & Security › Local Network to find Macs nearby.")
+                Text("Allow Local Network access for Coincide in Settings › Privacy & Security › Local Network to find Macs nearby.")
                     .font(.footnote)
                     .foregroundStyle(theme.secondaryInk)
                     .padding(.horizontal, 10)
@@ -223,6 +243,7 @@ struct ConnectView: View {
                 pairing = false
                 navigator.reset()
                 close()
+                PaywallPresenter.shared.offerAfterFirstPairing()
             } catch {
                 pairing = false
                 self.error = (error as? RemoteError)?.message ?? error.localizedDescription

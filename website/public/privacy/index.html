@@ -26,7 +26,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/site.css">
 <!-- site-schema -->
-<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/privacy#page","url":"https://coincide.dev/privacy","name":"Privacy Policy · Coincide","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"about":{"@id":"https://coincide.dev/#app"},"dateModified":"2026-11-01","breadcrumb":{"@id":"https://coincide.dev/privacy#breadcrumb"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Privacy Policy","item":"https://coincide.dev/privacy"}],"@id":"https://coincide.dev/privacy#breadcrumb"}]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://coincide.dev/privacy#page","url":"https://coincide.dev/privacy","name":"Privacy Policy · Coincide","inLanguage":"en","isPartOf":{"@id":"https://coincide.dev/#website"},"about":{"@id":"https://coincide.dev/#app"},"dateModified":"2026-11-02","breadcrumb":{"@id":"https://coincide.dev/privacy#breadcrumb"}},{"@type":"WebSite","@id":"https://coincide.dev/#website","url":"https://coincide.dev/","name":"Coincide","inLanguage":"en","publisher":{"@id":"https://coincide.dev/#organization"}},{"@type":"Organization","@id":"https://coincide.dev/#organization","name":"Coincide","url":"https://coincide.dev/","logo":{"@type":"ImageObject","url":"https://coincide.dev/img/icon-512.png","width":512,"height":512},"email":"apoorv@fud-ai.app","founder":{"@id":"https://coincide.dev/#apoorv"},"sameAs":["https://github.com/apoorvdarshan/coincide","https://x.com/apoorvdarshan","https://www.linkedin.com/showcase/coincide-dev","https://www.producthunt.com/products/coincide"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://coincide.dev/"},{"@type":"ListItem","position":2,"name":"Privacy Policy","item":"https://coincide.dev/privacy"}],"@id":"https://coincide.dev/privacy#breadcrumb"}]}</script>
 <!-- /site-schema -->
 <style>
   :root {
@@ -110,7 +110,7 @@
   <nav aria-label="Breadcrumb"><ol class="crumbs"><li><a href="/">Home</a></li><li><span aria-current="page">Privacy Policy</span></li></ol></nav>
   <p class="eyebrow">Legal</p>
   <h1>Privacy Policy</h1>
-  <p class="updated">Last updated: <time datetime="2026-11-01">November 1, 2026</time></p>
+  <p class="updated">Last updated: <time datetime="2026-11-02">November 2, 2026</time></p>
 
   <p class="intro">Coincide is a free, open-source Mac app that runs the coding agents you already use in one window. This policy explains what happens to your information when you use the Coincide Mac app, Coincide Remote (its iPhone and iPad companion, coming soon), the coincide.dev website, and the Coincide Discord community and its bot, Brulee. Coincide is made by Apoorv Darshan (“we”, “us”). Its <a href="https://github.com/apoorvdarshan/coincide">source code is public</a>, so you can check every network request described here.</p>
 
@@ -122,6 +122,7 @@
       <li>Coincide keeps its data on your Mac. Some features contact other services directly; each one is listed below.</li>
       <li>Computer Use, which is off by default, runs a bundled helper from Cua AI. Coincide turns off the helper’s own telemetry and update checks, so it doesn’t contact Cua AI.</li>
       <li>Coincide Remote connects straight to your Mac over your own network or Tailscale. There’s no relay in between.</li>
+      <li>Coincide Remote checks its purchases (Coincide Pro, which unlocks acting on your Mac from it, and tips) with RevenueCat, using a random ID that isn’t tied to your name, email or Apple Account. Apple handles the payment.</li>
       <li>In Discord, <code>/bug</code> and <code>/feature</code> reports become public GitHub issues, and Brulee sends questions and reports to Google Gemini.</li>
       <li>We don’t sell or rent personal information, and we don’t use it for advertising.</li>
     </ul>
@@ -241,6 +242,7 @@
       <li><strong>Permissions.</strong> Camera (to scan the pairing code and take photos you attach), photo library (photos you pick or save), microphone and speech recognition (dictation, using Apple’s recognition on the device), and local network.</li>
       <li><strong>Lock-screen alerts (off by default).</strong> If you turn on “Notify this iPhone when it’s locked”, the Mac writes a short alert (the thread’s title, what happened and a detail line of up to 120 characters) to your own private iCloud database, and Apple delivers it as a push notification. We can’t read your private iCloud database. Coincide deletes each alert once you’ve seen its thread, and tries to remove any older than six hours.</li>
       <li><strong>Apple.</strong> If you install Coincide Remote through TestFlight or the App Store, Apple may share crash reports and usage statistics with us, and for TestFlight your tester details and any feedback you send, as described in Apple’s terms and your device settings.</li>
+      <li><strong>Purchases (Coincide Pro and tips).</strong> You buy them through the App Store, so Apple processes the payment; we never see your payment details, name or email. To know what you’ve bought, Coincide Remote uses <a href="https://www.revenuecat.com/privacy/">RevenueCat</a>, which manages our in-app purchases. Each time the app starts, and when you buy or restore, it sends RevenueCat a random ID it creates on your device, along with your App Store purchase records for Coincide Remote (the product, price and currency, purchase, renewal and expiry dates, and Apple’s transaction IDs). It also sends technical details needed to answer, such as the app and system versions, your device’s language and App Store country, whether apps may ask to track you (a system setting; Coincide Remote never asks), and, as with any web request, your IP address. Apple also tells RevenueCat directly about renewals, cancellations and refunds. This happens even if you never buy anything, since the app asks which purchases its ID has to know whether Coincide Pro is on. RevenueCat doesn’t receive your conversations, code or anything from your Mac, Coincide Remote doesn’t give it an advertising identifier, and none of this is used to track you or for advertising. We use it only to turn on what you bought, help with purchase problems and see totals such as revenue. The Mac app has no purchases and doesn’t contact RevenueCat.</li>
     </ul>
   </section>
 
@@ -276,7 +278,8 @@
     <p>We don’t sell, rent or trade personal information, and we don’t use it for advertising. Information reaches other parties only as described above:</p>
     <ul>
       <li>your agents’ providers;</li>
-      <li>Apple (iCloud, push notifications, speech files, TestFlight and the App Store);</li>
+      <li>Apple (iCloud, push notifications, speech files, TestFlight, the App Store and in-app purchases);</li>
+      <li>RevenueCat (Coincide Remote’s in-app purchases);</li>
       <li>GitHub (updates, issues and the git hosting you use);</li>
       <li>Google (Fonts, Gemini for Brulee, and Antigravity);</li>
       <li>Cloudflare (the website and Brulee) and Discord;</li>
@@ -301,8 +304,8 @@
     <ul>
       <li>Turn off what you don’t want: Coincide Remote, Agent Control, Computer Use, automatic thread titles, usage from provider websites, update checks and command-line control are all settings.</li>
       <li>Delete Coincide’s data from your Mac using the locations above, and reset Coincide Remote’s pairing in its settings.</li>
-      <li>Ask us to remove what we hold about you, such as a report’s notification record, moderation records, or an issue Brulee created for you. Depending on where you live, you may have rights to access, correct or delete personal information; email us and we’ll help.</li>
-      <li>For data held by your agents’ providers, Apple, Discord, GitHub or Google, use their own tools.</li>
+      <li>Ask us to remove what we hold about you, such as a report’s notification record, moderation records, an issue Brulee created for you, or the purchase record RevenueCat keeps for your device’s random ID (the order ID on your App Store receipt helps us find it). Depending on where you live, you may have rights to access, correct or delete personal information; email us and we’ll help.</li>
+      <li>For data held by your agents’ providers, Apple, Discord, GitHub or Google, use their own tools. Subscriptions are managed and cancelled in your Apple Account’s settings.</li>
     </ul>
   </section>
 

@@ -26,6 +26,11 @@ packages:
   # The remote protocol, pairing and theme palettes, shared by the Mac app and Coincide Remote on iOS.
   CoincideRemoteKit:
     path: CoincideRemoteKit
+  # Coincide Pro and tips on iOS (CoincideRemote/Pro): RevenueCat's purchases-ios, MIT, from its SwiftPM mirror. Only its
+  # RevenueCat product is linked, into CoincideRemote alone; the Mac app, its tools and tests never link it.
+  RevenueCat:
+    url: https://github.com/RevenueCat/purchases-ios-spm
+    exactVersion: 5.100.0
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -329,6 +334,10 @@ targets:
       - path: CoincideRemote
         excludes:
           - Info.plist
+          - StoreKit
+      # For Xcode's Run (the scheme's storeKitConfiguration), not the app bundle.
+      - path: CoincideRemote/StoreKit
+        buildPhase: none
       # Dictation: the Mac's microphone capture and Apple speech recognition, and where the transcript goes in the text.
       - path: Coincide/Voice/Shared
       - path: CoincideKit/Voice/DictationInsertion.swift
@@ -337,6 +346,7 @@ targets:
       - path: CoincideKit/Models/BotPersonalityPreset.swift
     dependencies:
       - package: CoincideRemoteKit
+      - package: RevenueCat
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.remote
@@ -349,15 +359,15 @@ targets:
         # iCloud (CloudKit) and push notifications, for lock-screen alerts from the Mac.
         CODE_SIGN_ENTITLEMENTS: CoincideRemote/CoincideRemote.entitlements
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Coincide Remote
+        INFOPLIST_KEY_CFBundleDisplayName: Coincide
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
-        INFOPLIST_KEY_NSCameraUsageDescription: Coincide Remote uses the camera to scan the pairing code your Mac shows and to take photos you attach.
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Coincide Remote finds and connects to Coincide on your Macs over the local network.
-        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Coincide Remote attaches the photos you pick to your messages.
-        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Coincide Remote saves the pictures you choose to your photo library.
+        INFOPLIST_KEY_NSCameraUsageDescription: Coincide uses the camera to scan the pairing code your Mac shows and to take photos you attach.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Coincide finds and connects to your Macs over the local network.
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Coincide attaches the photos you pick to your messages.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Coincide saves the pictures you choose to your photo library.
         # Dictation in the composer, asked for the first time the user taps the microphone.
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: Coincide Remote listens to the microphone while you dictate a message.
-        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Coincide Remote turns your dictation into text with Apple’s speech recognition on this device.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: Coincide listens to the microphone while you dictate a message.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Coincide turns your dictation into text with Apple’s speech recognition on this device.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
@@ -429,5 +439,7 @@ schemes:
         CoincideRemote: all
     run:
       config: Debug
+      # Local purchases when run from Xcode, without App Store Connect or a sandbox account.
+      storeKitConfiguration: CoincideRemote/StoreKit/Coincide.storekit
     archive:
       config: Release

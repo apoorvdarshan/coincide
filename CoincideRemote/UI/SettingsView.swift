@@ -2,15 +2,18 @@ import CoincideRemoteKit
 import SwiftUI
 
 /// A screen of Settings: this phone's own (its Macs, appearance, notifications, keyboard), one of the Mac's panes
-/// (General through Computer Use, Providers), or About.
+/// (General through Computer Use, Providers), Coincide Pro, or About.
 enum SettingsPane: Hashable {
     case macs, appearance, notifications, keyboard, about
+    /// Coincide Pro: what's active, and managing it.
+    case pro
     /// The Mac's scheduled tasks, which its Scheduled Tasks window lists.
     case scheduledTasks
     /// A pane of the Mac's Settings, by its page id.
     case mac(String)
 
-    /// A pane by name, for launch arguments: `macs`, `appearance`, `notifications`, `keyboard`, `about`, or a Mac page id.
+    /// A pane by name, for launch arguments: `macs`, `appearance`, `notifications`, `keyboard`, `about`, `pro`, or a Mac
+    /// page id.
     static func named(_ name: String) -> SettingsPane {
         switch name {
         case "macs": .macs
@@ -18,6 +21,7 @@ enum SettingsPane: Hashable {
         case "notifications": .notifications
         case "keyboard": .keyboard
         case "about": .about
+        case "pro": .pro
         case "scheduledTasks": .scheduledTasks
         default: .mac(name)
         }
@@ -65,13 +69,30 @@ struct SettingsSidebar: View {
     let isSplit: Bool
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
+    @Environment(ProStore.self) private var store
     @Environment(\.theme) private var theme
 
     var body: some View {
+        ScrollViewReader { proxy in
+            list
+            #if DEBUG
+            // Screenshots of the tips: `-CoincideRemoteDemoScrollTips`.
+            .task {
+                guard DemoData.has("ScrollTips") else { return }
+                try? await Task.sleep(for: .seconds(1))
+                proxy.scrollTo(TipJarRows.id, anchor: .top)
+            }
+            #endif
+        }
+    }
+
+    private var list: some View {
         List {
             SettingsMacCard(isSelected: isSelected(.macs)) { navigator.settingsPane = .macs }
                 .sidebarRow()
-            SidebarHeader(Text("Coincide Remote")).sidebarRow()
+            row(.pro, title: "Coincide Pro", symbol: "sparkles", color: "purple", detail: store.isPro ? String(localized: "Active") : nil)
+            // This phone's own settings, then the Mac's.
+            SidebarHeader(UIDevice.current.userInterfaceIdiom == .pad ? Text("This iPad") : Text("This iPhone")).sidebarRow()
             row(.appearance, title: String(localized: "Appearance"), symbol: "paintpalette.fill", color: "indigo")
             row(.notifications, title: String(localized: "Notifications"), symbol: "bell.badge.fill", color: "red")
             row(.keyboard, title: String(localized: "Hardware Keyboard"), symbol: "keyboard.fill", color: "gray")
@@ -98,6 +119,7 @@ struct SettingsSidebar: View {
             } else if client.isConnected {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 44).sidebarRow()
             }
+            TipJarRows()
             HelpCommunityRows()
             Spacer(minLength: 12).sidebarRow().accessibilityHidden(true)
             row(.about, title: String(localized: "About"), symbol: "info.circle.fill", color: "gray")
@@ -106,6 +128,7 @@ struct SettingsSidebar: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(isSplit ? .inline : .large)
         .refreshable { await client.loadMacSettings() }
+        .tipJarPresentations(store)
         #if DEBUG
         .onAppear {
             // Screenshots of a pane without taps: `-CoincideRemoteSettingsPane general` (or macs, appearance, …).
@@ -120,10 +143,11 @@ struct SettingsSidebar: View {
     private func isSelected(_ pane: SettingsPane) -> Bool { isSplit && (navigator.settingsPane ?? .macs) == pane }
 
     private func row(
-        _ pane: SettingsPane, title: String, logo: String? = nil, symbol: String, color: String, status: String? = nil
+        _ pane: SettingsPane, title: String, logo: String? = nil, symbol: String, color: String, status: String? = nil,
+        detail: String? = nil
     ) -> some View {
         Button { navigator.settingsPane = pane } label: {
-            SettingsTileLabel(title: title, logo: logo, symbol: symbol, color: color, status: status)
+            SettingsTileLabel(title: title, logo: logo, symbol: symbol, color: color, status: status, detail: detail)
         }
         .buttonStyle(SidebarRowButtonStyle(isSelected: isSelected(pane)))
         .accessibilityAddTraits(isSelected(pane) ? .isSelected : [])
@@ -260,6 +284,7 @@ struct SettingsPaneView: View {
         case .notifications: SettingsForm(title: String(localized: "Notifications")) { NotificationsSection() }
         case .keyboard: KeyboardSettingsPane()
         case .about: AboutSettingsPane()
+        case .pro: PaywallView(mode: .pane)
         case .scheduledTasks: ScheduledTasksView()
         case .mac(let id):
             #if DEBUG
@@ -352,7 +377,7 @@ struct MacsSettingsPane: View {
             }
             Button("Cancel", role: .cancel) { addingHostTo = nil }
         } message: {
-            Text("Coincide Remote tries it after the Mac’s own addresses.")
+            Text("Coincide tries it after the Mac’s own addresses.")
         }
         .confirmationDialog(
             "Forget “\(forgetting?.name ?? "")”?", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
@@ -458,7 +483,11 @@ struct AboutSettingsPane: View {
     var body: some View {
         SettingsForm(title: String(localized: "About")) {
             Section {
-                LabeledContent("Coincide Remote", value: RemoteClient.appVersion)
+                LabeledContent {
+                    Text(verbatim: RemoteClient.appVersion)
+                } label: {
+                    UIDevice.current.userInterfaceIdiom == .pad ? Text("Coincide on this iPad") : Text("Coincide on this iPhone")
+                }
                 if let server = client.server {
                     LabeledContent("Coincide on \(server.name)", value: server.appVersion)
                 }
@@ -484,7 +513,7 @@ struct NotificationsSection: View {
             if alerts.authorization == .denied {
                 Label {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Notifications are off for Coincide Remote")
+                        Text("Notifications are off for Coincide")
                         Text("Alerts stay on your Mac. Turn notifications on in Settings to get them here.")
                             .font(.caption).foregroundStyle(theme.secondaryInk)
                     }
@@ -495,7 +524,9 @@ struct NotificationsSection: View {
                     if let url = URL(string: UIApplication.openNotificationSettingsURLString) { openURL(url) }
                 }
             }
+            // Lock-screen alerts are part of Coincide Pro (`ProGate`); turning them off never needs it.
             Toggle(isOn: Binding(get: { alerts.isLockScreenEnabled }, set: { enabled in
+                if enabled, !ProGate.allows() { return }
                 isUpdating = true
                 Task {
                     await alerts.setLockScreenAlerts(enabled)
@@ -538,7 +569,7 @@ struct NotificationsSection: View {
         case .settingUp: (String(localized: "Setting up…"), "hourglass", theme.secondaryInk)
         case .on: (String(localized: "On. Alerts arrive through your iCloud account."), "checkmark.circle.fill", .green)
         case .notificationsDenied:
-            (String(localized: "Allow notifications for Coincide Remote in Settings first."), "exclamationmark.triangle.fill", .orange)
+            (String(localized: "Allow notifications for Coincide in Settings first."), "exclamationmark.triangle.fill", .orange)
         case .unavailable(let message): (message, "icloud.slash", .orange)
         }
     }
@@ -637,6 +668,7 @@ struct SettingsSearchResults: View {
     private var allPanes: [Pane] {
         var panes = [
             Pane(pane: .macs, title: String(localized: "Macs"), symbol: "laptopcomputer", color: "gray"),
+            Pane(pane: .pro, title: "Coincide Pro", symbol: "sparkles", color: "purple"),
             Pane(pane: .appearance, title: String(localized: "Appearance"), symbol: "paintpalette.fill", color: "indigo"),
             Pane(pane: .notifications, title: String(localized: "Notifications"), symbol: "bell.badge.fill", color: "red"),
             Pane(pane: .keyboard, title: String(localized: "Hardware Keyboard"), symbol: "keyboard.fill", color: "gray"),

@@ -23,9 +23,9 @@ const PAGES = join(here, "pages");
 export const HANDWRITTEN = [
   { file: "index.html", path: "/", updated: "2026-11-01", lang: "en", group: "home", name: "Home",
     title: "Coincide: every coding agent in one native Mac app" },
-  { file: "privacy/index.html", path: "/privacy", updated: "2026-11-01", lang: "en", name: "Privacy Policy",
+  { file: "privacy/index.html", path: "/privacy", updated: "2026-11-02", lang: "en", name: "Privacy Policy",
     title: "Privacy Policy · Coincide", summary: "What stays on your Mac, what your agents send to their providers, and every other connection." },
-  { file: "terms/index.html", path: "/terms", updated: "2026-11-01", lang: "en", name: "Terms of Service",
+  { file: "terms/index.html", path: "/terms", updated: "2026-11-02", lang: "en", name: "Terms of Service",
     title: "Terms of Service · Coincide", summary: "The MIT-licensed software, your agent accounts, community rules and the limits of responsibility." },
 ];
 

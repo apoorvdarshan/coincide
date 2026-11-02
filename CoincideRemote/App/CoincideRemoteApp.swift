@@ -7,6 +7,7 @@ struct CoincideRemoteApp: App {
     @State private var client = RemoteClient()
     @State private var appearance = AppearanceSettings()
     @State private var navigator = Navigator()
+    @State private var store = ProStore.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -18,6 +19,19 @@ struct CoincideRemoteApp: App {
             .environment(client)
             .environment(appearance)
             .environment(navigator)
+            .environment(store)
+            .onAppear {
+                PaywallPresenter.shared.configure(client: client, appearance: appearance, navigator: navigator)
+                #if DEBUG
+                // Screenshots of the paywall over the app: `-CoincideRemoteDemo -CoincideRemoteDemoPaywall`.
+                if DemoData.isEnabled, ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoPaywall") {
+                    Task {
+                        try? await Task.sleep(for: .seconds(1))
+                        PaywallPresenter.shared.present()
+                    }
+                }
+                #endif
+            }
             #if DEBUG
             .modifier(DebugWindowSizing())
             #endif
@@ -50,6 +64,7 @@ final class RemoteAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         PhoneAlerts.shared.start()
+        ProStore.shared.start()
         return true
     }
 

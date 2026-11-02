@@ -42,7 +42,7 @@ struct ScheduledTasksView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button { editing = .new } label: { Label("New Task", systemImage: "plus") }
+                Button { if ProGate.allows() { editing = .new } } label: { Label("New Task", systemImage: "plus") }
                     .disabled(tasks == nil || !client.isConnected || (threadID == nil && folderProjects.isEmpty))
             }
         }
@@ -100,7 +100,7 @@ struct ScheduledTasksView: View {
             } description: {
                 Text("Add a schedule, or ask the agent to do something later or on a schedule.")
             } actions: {
-                Button("New Task") { editing = .new }.prominentButton()
+                Button("New Task") { if ProGate.allows() { editing = .new } }.prominentButton()
             }
             .foregroundStyle(theme.secondaryInk)
         } else if let tasks, tasks.tasks.isEmpty, tasks.error == nil {
@@ -109,7 +109,7 @@ struct ScheduledTasksView: View {
             } description: {
                 Text("No scheduled tasks yet. Create one to start a new thread at a chosen time.")
             } actions: {
-                Button("New Task") { editing = .new }
+                Button("New Task") { if ProGate.allows() { editing = .new } }
                     .prominentButton()
                     .disabled(folderProjects.isEmpty)
             }
