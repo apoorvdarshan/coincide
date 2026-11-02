@@ -188,10 +188,11 @@ jobs:
           sys.exit(1 if uncovered or not files else 0)
           EOF
 
-      # A new simulator for this run, booting while the app builds. The newest iOS runtime with an iPhone 17 Pro, which
-      # the UI tests' layouts assume; a newer runtime made for one device (iOS 27.1 ships only the iPhone Duo) is passed
-      # over. Otherwise the newest runtime's first iPhone.
-      - name: Create and boot a simulator
+      # A new simulator for this run: the newest iOS runtime with an iPhone 17 Pro, which the UI tests' layouts assume; a
+      # newer runtime made for one device (iOS 27.1 ships only the iPhone Duo) is passed over. Otherwise the newest
+      # runtime's first iPhone. It boots only for the tests: a first boot running beside the cache downloads and the build
+      # slowed them by minutes on this runner. The runner's machine is discarded after the job, and the simulator with it.
+      - name: Create a simulator
         id: simulator
         run: |
           id="$(python3 - <<'EOF'
@@ -215,7 +216,6 @@ jobs:
           EOF
           )"
           echo "id=$id" >>"$GITHUB_OUTPUT"
-          xcrun simctl boot "$id"
 
       # The packages "Build and test" (ci.yml) resolves and caches for the same project.yml, which this project includes.
       # Saved by that job on main; this one only restores it.
@@ -264,8 +264,9 @@ jobs:
           SIMULATOR: ${{ steps.simulator.outputs.id }}
         run: |
           xcrun simctl bootstatus "$SIMULATOR" -b
+          # The build just resolved and checked out the packages.
           xcodebuild -project CoincideRemoteTests.xcodeproj -scheme CoincideRemote \
-            -destination "platform=iOS Simulator,id=$SIMULATOR" -skipPackagePluginValidation \
+            -destination "platform=iOS Simulator,id=$SIMULATOR" -skipPackagePluginValidation -skipPackageUpdates \
             -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages test-without-building \
             -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
             -collect-test-diagnostics never -resultBundlePath build/iOSTests.xcresult
@@ -311,11 +312,3 @@ jobs:
           name: ios-test-results
           path: build/iOSTests.xcresult
           retention-days: 7
-
-      - name: Delete the simulator
-        if: ${{ always() && steps.simulator.outputs.id != '' }}
-        env:
-          SIMULATOR: ${{ steps.simulator.outputs.id }}
-        run: |
-          xcrun simctl shutdown "$SIMULATOR" || true
-          xcrun simctl delete "$SIMULATOR" || true
