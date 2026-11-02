@@ -1,0 +1,321 @@
+name: iOS tests
+
+# Coincide Remote, the iPhone and iPad app: builds it and runs its unit tests (CoincideRemoteTests) and UI tests
+# (CoincideRemoteUITests) on an iPhone simulator, from CoincideRemoteTests.xcodeproj (project-remote-tests.yml). Nothing
+# here signs, archives or uploads anything. The Mac app's build and tests are "Build and test" in ci.yml.
+on:
+  # Every pull request and push to main starts this, and "iOS changes" decides whether anything the iOS app is built or
+  # tested from changed. When nothing did, "iOS build and test" is skipped, which GitHub counts as passing, so the job can
+  # be a required check without blocking pull requests that don't touch the iOS app.
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to a pull request replaces its older run; main and manual runs are never cancelled.
+concurrency:
+  group: ios-tests-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Everything the iOS tests are built and run from, as shell patterns (`*` matches across folders): the app, its kit and
+  # tests, the files the app compiles from the Mac app's folders, the specs and settings the project is generated from,
+  # and this workflow. "iOS build and test" fails when a file its targets build from matches none of them, so a file the
+  # iOS app starts sharing can't go untested.
+  IOS_PATHS: |
+    CoincideRemote/*
+    CoincideRemoteKit/*
+    CoincideRemoteTests/*
+    CoincideRemoteUITests/*
+    Coincide/Voice/Shared/*
+    CoincideKit/Voice/DictationInsertion.swift
+    CoincideKit/Models/BotPersonalityPreset.swift
+    project.yml
+    project-shared.yml
+    project-remote-tests.yml
+    Signing.xcconfig
+    .github/workflows/ios-tests.yml
+  # XcodeGen's release archive, checked against its published SHA-256, as in ci.yml.
+  XCODEGEN_VERSION: 2.46.0
+  XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+
+jobs:
+  changes:
+    name: iOS changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ios: ${{ steps.scope.outputs.ios }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The commit and its parent, without their files: only the names of the changed files are needed.
+          fetch-depth: 2
+          filter: blob:none
+          sparse-checkout: .github
+
+      # The iOS job is skipped only when this positively finds that no changed file is one the iOS app is built or tested
+      # from. If it fails or can't tell, `ios` is left unset and the iOS job runs. Manual runs always run it.
+      - name: Check what changed
+        id: scope
+        continue-on-error: true
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          affects_ios() {
+            local pattern
+            while IFS= read -r pattern; do
+              # Unquoted, so the pattern matches as a pattern.
+              # shellcheck disable=SC2053
+              if [ -n "$pattern" ] && [[ "$1" == $pattern ]]; then return 0; fi
+            done <<<"$IOS_PATHS"
+            return 1
+          }
+          case "$EVENT" in
+            pull_request)
+              # GitHub tests a pull request on a merge commit of it into its base: the first parent is the base, the
+              # second the pull request's head.
+              if [ "$(git rev-parse HEAD^2 2>/dev/null)" != "$PR_HEAD" ]; then
+                echo "::notice::Not a merge of the pull request into its base, so the iOS tests run."
+                exit 0
+              fi
+              base=HEAD^1
+              ;;
+            push)
+              if ! git fetch --quiet --no-tags --depth=1 origin "$BEFORE"; then
+                echo "::notice::Couldn't fetch the commit before the push, so the iOS tests run."
+                exit 0
+              fi
+              base="$BEFORE"
+              ;;
+            *)
+              echo "ios=true" >>"$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          # --no-renames lists both sides of a rename, so moving a file out of an iOS folder counts.
+          git diff --no-renames --name-only -z "$base" HEAD >"$RUNNER_TEMP/changed-files"
+          ios=false
+          count=0
+          while IFS= read -r -d '' path; do
+            count=$((count + 1))
+            if affects_ios "$path"; then
+              ios=true
+              echo "The iOS app is built or tested from: $path"
+            fi
+          done <"$RUNNER_TEMP/changed-files"
+          if [ "$count" -eq 0 ]; then
+            echo "::notice::Found no changed files, so the iOS tests run."
+            exit 0
+          fi
+          if [ "$ios" = false ]; then
+            echo "Skipping the iOS build and tests: nothing changed that the iOS app is built or tested from." >>"$GITHUB_STEP_SUMMARY"
+          fi
+          echo "ios=$ios" >>"$GITHUB_OUTPUT"
+
+  ios-tests:
+    name: iOS build and test
+    needs: changes
+    # Runs unless "iOS changes" found nothing to test, including when it failed.
+    if: ${{ !cancelled() && needs.changes.outputs.ios != 'false' }}
+    # The image with Xcode 27 and its iOS simulators that ci.yml builds the Mac app on.
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      # The generated project includes project.yml, so XcodeGen needs the Mac app's folders too; the website, docs,
+      # Discord bot, npm installer and fuzzing aren't needed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/website/
+            !/docs/
+            !/discord/
+            !/npm/
+            !/Fuzz/
+
+      - name: Install XcodeGen
+        run: |
+          curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+          echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >>"$GITHUB_PATH"
+
+      - name: Generate Xcode project
+        id: generate
+        run: |
+          xcodegen generate --spec project-remote-tests.yml --quiet
+          # Compiler outputs are reused only with the Xcode that wrote them.
+          xcode="$(xcodebuild -version | awk '/^Build version/ { print $3 }')"
+          test -n "$xcode"
+          echo "xcode=$xcode" >>"$GITHUB_OUTPUT"
+
+      # Every tracked file the app and test targets build from (their sources, settings files and local packages) must
+      # match IOS_PATHS, or a change to it would skip these tests.
+      - name: Check the iOS paths cover what the targets build from
+        run: |
+          xcodegen dump --spec project-remote-tests.yml --type parsed-json >"$RUNNER_TEMP/spec.json"
+          python3 - "$RUNNER_TEMP/spec.json" <<'EOF'
+          import fnmatch, json, os, subprocess, sys
+          project = json.load(open(sys.argv[1]))
+          patterns = [line for line in os.environ["IOS_PATHS"].splitlines() if line]
+          roots = set()
+          for name in ("CoincideRemote", "CoincideRemoteTests", "CoincideRemoteUITests"):
+              target = project["targets"][name]
+              roots.update(source["path"] for source in target["sources"])
+              roots.update(target.get("configFiles", {}).values())
+              for dependency in target["dependencies"]:
+                  package = project["packages"].get(dependency.get("package") or "", {})
+                  if "path" in package:
+                      roots.add(package["path"])
+          files = subprocess.run(["git", "ls-files", "-z", "--", *sorted(roots)], check=True, capture_output=True, text=True)
+          files = [path for path in files.stdout.split("\0") if path]
+          uncovered = [path for path in files if not any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)]
+          print(f"{len(files)} files under {len(roots)} paths: {', '.join(sorted(roots))}")
+          for path in uncovered:
+              print(f"::error file=.github/workflows/ios-tests.yml::{path} is built into the iOS app or its tests, but no IOS_PATHS pattern matches it")
+          sys.exit(1 if uncovered or not files else 0)
+          EOF
+
+      # A new simulator for this run, booting while the app builds. The newest iOS runtime with an iPhone 17 Pro, which
+      # the UI tests' layouts assume; a newer runtime made for one device (iOS 27.1 ships only the iPhone Duo) is passed
+      # over. Otherwise the newest runtime's first iPhone.
+      - name: Create and boot a simulator
+        id: simulator
+        run: |
+          id="$(python3 - <<'EOF'
+          import json, subprocess, sys
+          data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "--json", "runtimes"]))
+          def version(runtime):
+              return tuple(int(part) for part in runtime["version"].split("."))
+          runtimes = sorted(
+              (r for r in data["runtimes"] if r.get("isAvailable") and r["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-")),
+              key=version, reverse=True)
+          def iphones(runtime):
+              return [d for d in runtime.get("supportedDeviceTypes", []) if d.get("productFamily") == "iPhone"]
+          choice = next(((r, d) for r in runtimes for d in iphones(r) if d["name"] == "iPhone 17 Pro"), None)
+          choice = choice or next(((r, iphones(r)[0]) for r in runtimes if iphones(r)), None)
+          if choice is None:
+              sys.exit("No iOS simulator runtime with an iPhone is installed.")
+          runtime, device = choice
+          print(f"Simulator: {device['name']} on iOS {runtime['version']}", file=sys.stderr)
+          print(subprocess.check_output(
+              ["xcrun", "simctl", "create", "Coincide Remote CI", device["identifier"], runtime["identifier"]], text=True).strip())
+          EOF
+          )"
+          echo "id=$id" >>"$GITHUB_OUTPUT"
+          xcrun simctl boot "$id"
+
+      # The packages "Build and test" (ci.yml) resolves and caches for the same project.yml, which this project includes.
+      # Saved by that job on main; this one only restores it.
+      - name: Restore Swift packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/SourcePackages
+          key: ci-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml', 'project-shared.yml') }}
+          restore-keys: ci-packages-${{ runner.os }}-${{ runner.arch }}-
+
+      # Xcode's compilation cache, as in ci.yml: compiler outputs keyed by the exact inputs of each compile, so an unchanged
+      # file (RevenueCat's, mostly) reuses its earlier output. It holds no build products or test results: the build
+      # starts from an empty DerivedData and every test runs.
+      - name: Restore compilation cache
+        id: compilation
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/CompilationCache
+          key: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.generate.outputs.xcode }}-${{ github.sha }}
+          restore-keys: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.generate.outputs.xcode }}-
+
+      - name: Build
+        id: build
+        env:
+          SIMULATOR: ${{ steps.simulator.outputs.id }}
+        run: |
+          xcodebuild -project CoincideRemoteTests.xcodeproj -scheme CoincideRemote \
+            -destination "platform=iOS Simulator,id=$SIMULATOR" -skipPackagePluginValidation \
+            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages build-for-testing \
+            COMPILATION_CACHE_ENABLE_CACHING=YES "COMPILATION_CACHE_CAS_PATH=$PWD/build/CompilationCache" \
+            COMPILATION_CACHE_LIMIT_SIZE=1G
+
+      # MEASURING: saved by pull requests too for now, to time a warm run; before merging, only main and manual runs save.
+      - name: Save compilation cache
+        if: steps.build.outcome == 'success' && steps.compilation.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/CompilationCache
+          key: ${{ steps.compilation.outputs.cache-primary-key }}
+
+      # One simulator, no parallel clones. -collect-test-diagnostics never: otherwise xcodebuild can spend ten minutes
+      # after the tests collecting the simulator's diagnostics. Failures keep their screenshots in the result bundle.
+      - name: Run unit and UI tests
+        id: test
+        env:
+          SIMULATOR: ${{ steps.simulator.outputs.id }}
+        run: |
+          xcrun simctl bootstatus "$SIMULATOR" -b
+          xcodebuild -project CoincideRemoteTests.xcodeproj -scheme CoincideRemote \
+            -destination "platform=iOS Simulator,id=$SIMULATOR" -skipPackagePluginValidation \
+            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages test-without-building \
+            -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
+            -collect-test-diagnostics never -resultBundlePath build/iOSTests.xcresult
+
+      # xcodebuild can pass with a bundle that ran nothing (after a scheme or target change, or with every test skipped),
+      # so each bundle must have run at least one test.
+      - name: Check both test bundles ran tests
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        run: |
+          if [ ! -d build/iOSTests.xcresult ]; then
+            echo "::error::The tests left no result bundle."
+            exit 1
+          fi
+          xcrun xcresulttool get test-results tests --path build/iOSTests.xcresult >"$RUNNER_TEMP/tests.json"
+          python3 - "$RUNNER_TEMP/tests.json" CoincideRemoteTests CoincideRemoteUITests <<'EOF'
+          import json, sys
+          from collections import Counter
+          ran, skipped = Counter(), Counter()
+          def walk(node, bundle=None):
+              # "Unit test bundle" and "UI test bundle".
+              if node.get("nodeType", "").endswith("test bundle"):
+                  bundle = node.get("name")
+              if node.get("nodeType") == "Test Case" and bundle:
+                  (skipped if node.get("result") == "Skipped" else ran)[bundle] += 1
+                  return
+              for child in node.get("children") or []:
+                  walk(child, bundle)
+          for node in json.load(open(sys.argv[1])).get("testNodes") or []:
+              walk(node)
+          failed = False
+          for bundle in sys.argv[2:]:
+              print(f"{bundle}: {ran[bundle]} ran, {skipped[bundle]} skipped")
+              if ran[bundle] == 0:
+                  print(f"::error::{bundle} ran no tests")
+                  failed = True
+          sys.exit(1 if failed else 0)
+          EOF
+
+      - name: Keep the test results
+        if: ${{ failure() && hashFiles('build/iOSTests.xcresult/Info.plist') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-test-results
+          path: build/iOSTests.xcresult
+          retention-days: 7
+
+      - name: Delete the simulator
+        if: ${{ always() && steps.simulator.outputs.id != '' }}
+        env:
+          SIMULATOR: ${{ steps.simulator.outputs.id }}
+        run: |
+          xcrun simctl shutdown "$SIMULATOR" || true
+          xcrun simctl delete "$SIMULATOR" || true

@@ -104,7 +104,7 @@ final class RemoteClient {
 
     var savedMacs: [SavedMac] {
         #if DEBUG
-        if DemoData.isEnabled { return [DemoData.mac] }
+        if DemoData.isEnabled { return DemoData.isUnpaired ? [] : [DemoData.mac] }
         #endif
         return saved.all.sorted { ($0.lastConnectedAt ?? $0.pairedAt) > ($1.lastConnectedAt ?? $1.pairedAt) }
     }
@@ -112,6 +112,7 @@ final class RemoteClient {
     init() {
         #if DEBUG
         if DemoData.isEnabled {
+            if DemoData.isUnpaired { return }
             mac = DemoData.mac
             server = DemoData.server
             workspace = DemoData.workspace

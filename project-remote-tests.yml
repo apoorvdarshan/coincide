@@ -1,0 +1,56 @@
+# Coincide Remote with its unit and UI tests: CoincideRemoteTests.xcodeproj (gitignored), which the iOS tests in CI build
+# and run (.github/workflows/ios-tests.yml). To run them in Xcode: `xcodegen generate --spec project-remote-tests.yml`,
+# then open CoincideRemoteTests.xcodeproj and test the CoincideRemote scheme on an iPhone simulator.
+#
+# It is everything project.yml describes (so the same CoincideRemote target, from the same spec) plus the two test
+# targets and the scheme's test action. They live here rather than in project.yml so that Coincide.xcodeproj, the Mac
+# app's project, stays exactly as project.yml makes it.
+name: CoincideRemoteTests
+include:
+  - project.yml
+options:
+  # project.yml fetches the Cua Driver and writes the build number before generating; the iOS tests need neither. Any
+  # command project.yml runs after generating is for its own project, not this one.
+  preGenCommand: ""
+  postGenCommand: ""
+targets:
+  # Unit tests (Swift Testing), hosted by the app so they reach its internals with `@testable import CoincideRemote`.
+  # The app starts no purchases or notifications while it hosts them (RemoteAppDelegate.isHostingTests).
+  CoincideRemoteTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: CoincideRemoteTests
+      # Read by StoreProductTests, which checks the products it lists are the ones the app sells.
+      - path: CoincideRemote/StoreKit/Coincide.storekit
+        buildPhase: resources
+    dependencies:
+      - target: CoincideRemote
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.remote.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_EMIT_LOC_STRINGS: NO
+  # UI tests (XCTest), on the app's sample data (`-CoincideRemoteDemo`, DemoData.swift), so they need no Mac and never
+  # reach the App Store or RevenueCat.
+  CoincideRemoteUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: CoincideRemoteUITests
+    dependencies:
+      - target: CoincideRemote
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.apoorvdarshan.coincide.remote.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_EMIT_LOC_STRINGS: NO
+        # XCUIApplication is main-actor isolated; each test says so (`@MainActor`), as Xcode's template does.
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+schemes:
+  CoincideRemote:
+    test:
+      config: Debug
+      targets:
+        - CoincideRemoteTests
+        - CoincideRemoteUITests
