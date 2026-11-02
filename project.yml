@@ -4,6 +4,9 @@ name: Coincide
 include:
   - project-shared.yml
 options:
+  # The Mac app's minimum macOS (the npm installer checks it too). The other options are in project-shared.yml.
+  deploymentTarget:
+    macOS: "26.0"
   # The Cua Driver release Computer Use bundles, checked against pinned checksums (cached after the first download),
   # and the build number (CFBundleVersion), the count of commits in HEAD's history (see Signing.xcconfig).
   preGenCommand: scripts/fetch-cua-driver.sh && scripts/build-number.sh

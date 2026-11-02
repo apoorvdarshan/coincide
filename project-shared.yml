@@ -4,7 +4,6 @@
 options:
   bundleIdPrefix: com.apoorvdarshan
   deploymentTarget:
-    macOS: "26.0"
     iOS: "26.0"
   createIntermediateGroups: true
   developmentLanguage: en
