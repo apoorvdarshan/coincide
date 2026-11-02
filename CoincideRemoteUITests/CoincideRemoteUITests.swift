@@ -106,7 +106,9 @@ final class CoincideRemoteUITests: XCTestCase {
     /// Inside an empty Group it never appeared, so the state never loaded and the bar never showed (#216).
     @MainActor
     func testUncommittedChangesShowTheGitActionsBar() {
-        let app = launch("-CoincideRemoteTab", "projects", "-CoincideRemoteDemoThread")
+        // With the thread's turn over: a running turn keeps the app animating, and each tap then waited a minute for it to
+        // go idle.
+        let app = launch("-CoincideRemoteTab", "projects", "-CoincideRemoteDemoThread", "-CoincideRemoteDemoIdle")
         let threadActions = app.buttons["Thread Actions"].firstMatch
         XCTAssertTrue(threadActions.waitForExistence(timeout: timeout))
         threadActions.tap()

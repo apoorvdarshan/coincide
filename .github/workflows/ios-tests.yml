@@ -144,12 +144,6 @@ jobs:
             !/npm/
             !/Fuzz/
 
-      # DIAGNOSTIC (temporary): what keeps the runner busy while the simulator boots.
-      - name: Sample the runner's load
-        run: |
-          # shellcheck disable=SC2016
-          nohup bash -c 'while true; do { echo "== $(date -u +%T) $(sysctl -n vm.loadavg) swap: $(sysctl -n vm.swapusage)"; memory_pressure 2>/dev/null | tail -1; ps -Ao pcpu=,rss=,comm= -r | head -8 | sed -E "s#/[^ ]*/##"; } >>"$RUNNER_TEMP/load.log"; sleep 15; done' >/dev/null 2>&1 &
-
       - name: Install XcodeGen
         run: |
           curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/xcodegen.zip" \
@@ -160,6 +154,14 @@ jobs:
 
       - name: Generate Xcode project
         run: xcodegen generate --spec project-remote-tests.yml --quiet
+
+      # Compiler outputs are reused only with the Xcode that wrote them.
+      - name: Read the Xcode version
+        id: xcode
+        run: |
+          build="$(xcodebuild -version | awk '/^Build version/ { print $3 }')"
+          test -n "$build"
+          echo "build=$build" >>"$GITHUB_OUTPUT"
 
       # Every tracked file the app and test targets build from (their sources, settings files and local packages) must
       # match IOS_PATHS, or a change to it would skip these tests.
@@ -228,16 +230,37 @@ jobs:
           echo "id=$id" >>"$GITHUB_OUTPUT"
           xcrun simctl boot "$id"
 
+      # Xcode's compilation cache, as in ci.yml: compiler outputs keyed by the exact inputs of each compile, so an unchanged
+      # file reuses its earlier output. It holds no build products or test results: the build starts from an empty
+      # DerivedData and every test runs.
+      - name: Restore compilation cache
+        id: compilation
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/CompilationCache
+          key: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          restore-keys: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-
+
       # For the booting simulator; building for the generic simulator destination instead, to compile during the boot, was
-      # no faster. No compilation cache, unlike ci.yml: with every compile a cache hit, the warm runs were no faster than
-      # the cold one, and the cache would take room from the Mac app's. (Both measured in #217.)
+      # no faster (measured in #217).
       - name: Build
+        id: build
         env:
           SIMULATOR: ${{ steps.simulator.outputs.id }}
         run: |
           xcodebuild -project CoincideRemoteTests.xcodeproj -scheme CoincideRemote \
             -destination "platform=iOS Simulator,id=$SIMULATOR" -skipPackagePluginValidation \
-            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages build-for-testing
+            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages build-for-testing \
+            COMPILATION_CACHE_ENABLE_CACHING=YES "COMPILATION_CACHE_CAS_PATH=$PWD/build/CompilationCache" \
+            COMPILATION_CACHE_LIMIT_SIZE=1G
+
+      # MEASURING: pull requests save it too for now, to time warm runs; before merging, only main and manual runs save.
+      - name: Save compilation cache
+        if: steps.build.outcome == 'success' && steps.compilation.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/CompilationCache
+          key: ${{ steps.compilation.outputs.cache-primary-key }}
 
       # One simulator, no parallel clones. -collect-test-diagnostics never: otherwise xcodebuild can spend ten minutes
       # after the tests collecting the simulator's diagnostics. Failures keep their screenshots in the result bundle.
@@ -295,7 +318,3 @@ jobs:
           name: ios-test-results
           path: build/iOSTests.xcresult
           retention-days: 7
-
-      - name: Show the runner's load (DIAGNOSTIC, temporary)
-        if: always()
-        run: cat "$RUNNER_TEMP/load.log"
