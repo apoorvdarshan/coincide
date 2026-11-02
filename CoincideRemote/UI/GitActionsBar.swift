@@ -25,7 +25,9 @@ struct GitActionsBar: View {
     }
 
     var body: some View {
-        Group {
+        // A stack, not a Group: the bar starts empty until the git state loads, and a Group with nothing in it puts no
+        // view on screen, so its `.task` would never run and the state would never load. An empty stack takes no room.
+        VStack(spacing: 0) {
             if let state, state.isRepository {
                 VStack(alignment: .leading, spacing: 8) {
                     if let result { resultCard(result) }
