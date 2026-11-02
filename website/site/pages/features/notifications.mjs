@@ -39,7 +39,7 @@ ${table(["Notification", "When"], [
   <li>If neither is in use, a phone that turned on lock-screen alerts and was used in the last four hours gets one on its lock screen, through your own iCloud account; otherwise the Mac does.</li>
   <li>The device that would show an alert stays quiet when the thread is already open on its screen.</li>
 </ul>
-<p class="note">Coincide Remote is coming soon and isn’t available yet. Until it is, notifications go to your Mac. Lock-screen alerts also need a Mac build signed for iCloud; see the ${s.link("/privacy", "privacy policy")} for what such an alert contains.</p>
+<p class="note">Coincide Remote is coming soon to the App Store. Until it’s out, notifications go to your Mac. Lock-screen alerts also need a Mac build signed for iCloud; see the ${s.link("/privacy", "privacy policy")} for what such an alert contains.</p>
 
 <h2>Cleared once seen</h2>
 <p>Opening a thread clears what was posted about it everywhere: notifications on the Mac, including ones the agent host posted while Coincide was closed, alerts in Coincide Remote and lock-screen alerts. You won’t come back to a stack of alerts for things you’ve already read.</p>

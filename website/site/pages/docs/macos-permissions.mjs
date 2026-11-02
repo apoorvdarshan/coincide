@@ -22,7 +22,7 @@ ${table(["Permission", "Asked for when", "Where to change it"], [
   ["Full Disk Access", "You import from a browser whose data macOS protects, such as Safari, in Settings › Browser › Import", "Privacy &amp; Security › Full Disk Access"],
   ["Keychain access", "You import cookies from a Chromium browser (macOS asks to allow that browser’s Safe Storage key), or allow Coincide to read Cursor’s sign-in for usage limits", "Answered per prompt; Keychain Access app"],
   ["Notifications", "Coincide first notifies you that a turn finished or needs you", "System Settings › Notifications › Coincide"],
-  ["Local Network", "You turn on Coincide Remote (coming soon) so a phone or iPad can connect", "Privacy &amp; Security › Local Network"],
+  ["Local Network", "You turn on Coincide Remote (coming soon to the App Store) so a phone or iPad can connect", "Privacy &amp; Security › Local Network"],
   ["Allow in the Background (Login Items)", "The background agent host starts, or you turn on Keep Awake", "System Settings › General › Login Items &amp; Extensions"],
   ["Administrator password", "You turn Keep Awake on or off (it runs <code>pmset</code>)", "Asked each time"],
 ])}

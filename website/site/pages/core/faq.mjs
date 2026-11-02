@@ -1,7 +1,7 @@
 // The FAQ: each entry is rendered on the page and in its FAQPage structured data, so the two always match.
 const FAQ = [
   ["Is Coincide free?",
-    `<p>Yes. Coincide is free, with no paid tier, account or sign-up. You do need at least one coding agent, and those are billed by their providers under your own plans or API keys; Coincide never resells, proxies or meters their tokens.</p>`],
+    `<p>Yes. Coincide for Mac is free, with no paid tier, account or sign-up. You do need at least one coding agent, and those are billed by their providers under your own plans or API keys; Coincide never resells, proxies or meters their tokens.</p><p>Coincide Remote, the iPhone and iPad app coming soon to the App Store, is free to download and browse: your projects, threads, diffs and settings. Acting on your Mac from it, such as sending prompts, approving requests, git, schedules, bots and changing settings, needs Coincide Pro: $2.99 a month, $19.99 a year with a 7-day free trial, or $39.99 once for Lifetime. Those are US prices; the App Store shows local prices in other countries. Optional tips unlock nothing. See <a href="/features/coincide-remote#pro">Coincide Remote</a> and the <a href="/terms#purchases">terms</a>.</p>`],
   ["Is Coincide open source?",
     `<p>Yes, under the MIT license. The source code, issues and releases are on <a href="https://github.com/apoorvdarshan/coincide">GitHub</a>. Coincide is a native AppKit port of <a href="https://github.com/pingdotgg/t3code">T3 Code</a>, which is also MIT-licensed.</p>`],
   ["Which coding agents does Coincide support?",
@@ -29,7 +29,7 @@ const FAQ = [
   ["Is there a Windows, Linux or Android version?",
     `<p>Not yet. Coincide is a native Mac app. Versions for Windows, Linux and Android are planned, each built natively; the “Not on a Mac?” buttons on the <a href="/">home page</a> count how many people want each one.</p>`],
   ["Is there an iPhone or iPad app?",
-    `<p>Coincide Remote, a companion for iPhone and iPad that connects directly to Coincide on your Mac, is coming soon. It hasn’t been released yet. See <a href="/features/coincide-remote">Coincide Remote</a>.</p>`],
+    `<p>Coincide Remote, a companion for iPhone and iPad that connects directly to Coincide on your Mac, is coming soon to the App Store. On your iPhone and iPad it’s called Coincide. It’s free to download and browse, and Coincide Pro unlocks acting on your Mac from it. Without a Mac, Explore the Demo on its first screen opens sample projects and threads. See <a href="/features/coincide-remote">Coincide Remote</a>.</p>`],
   ["What languages is Coincide available in?",
     `<p>19: English, Chinese (Simplified and Traditional), Dutch, French, German, Hindi, Indonesian, Italian, Japanese, Korean, Polish, Portuguese (Brazil), Russian, Spanish (Spain and Latin America), Turkish, Ukrainian and Vietnamese. The translations are machine-made and marked for review; <a href="/docs/translations">corrections are welcome</a>.</p>`],
   ["Can I use Antigravity safely with Coincide?",

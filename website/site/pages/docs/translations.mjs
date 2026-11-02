@@ -9,7 +9,7 @@ export default {
   type: "TechArticle",
   eyebrow: "Guide",
   h1: "Languages and translations",
-  lede: "Coincide ships in English and 18 other languages, and Coincide Remote, its iPhone and iPad companion (coming soon), uses the same ones. The translations are machine-made and marked for review in the string catalogs, so corrections from people who speak them are welcome.",
+  lede: "Coincide ships in English and 18 other languages, and Coincide Remote, its iPhone and iPad companion (coming soon to the App Store), uses the same ones. The translations are machine-made and marked for review in the string catalogs, so corrections from people who speak them are welcome.",
   related: ["/features/languages", "/docs/build-from-source", "/docs/settings"],
   body: (s) => `
 <h2 id="languages">The languages</h2>

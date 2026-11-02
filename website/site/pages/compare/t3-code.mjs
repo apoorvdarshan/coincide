@@ -26,7 +26,7 @@ export default {
 ${table(["", "T3 Code", "Coincide"], [
   ["Made by", "T3 Tools", "Apoorv Darshan, porting T3 Code"],
   ["How it’s built", "An “Electron-based desktop app,” a web app and a <code>t3</code> server", "A native AppKit app, with SwiftUI where it fits, such as Settings"],
-  ["Platforms", "macOS, Windows and Linux desktop apps, a web client, and iOS and Android apps", "macOS 26 or later, Apple silicon and Intel; an iPhone and iPad companion, Coincide Remote, is coming soon"],
+  ["Platforms", "macOS, Windows and Linux desktop apps, a web client, and iOS and Android apps", "macOS 26 or later, Apple silicon and Intel; an iPhone and iPad companion, Coincide Remote, is coming soon to the App Store"],
   ["Agents", "Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity and fx, per its README", "Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity"],
   ["License and price", "“Free and open source (MIT)”", "Free and open source (MIT)"],
   ["Where agents run", "Wherever T3 Code runs: “your desktop, a server, a VPS”", "On the Mac where Coincide is installed"],
@@ -37,7 +37,7 @@ ${table(["", "T3 Code", "Coincide"], [
 <p>Being native also makes room for Mac-specific features: ${s.link("/features/computer-use", "Computer Use")} for operating other Mac apps, ${s.link("/features/appshots", "Appshots")} to attach another app’s window, ${s.link("/features/keep-awake", "Keep Awake")} for MacBooks, ${s.link("/features/dictation", "dictation")} with Apple’s on-device speech or a local Whisper model, and a ${s.link("/features/browser", "browser")} that signs in with your Keychain, 1Password or Bitwarden, including ${s.link("/features/passkeys", "Bitwarden passkeys")}.</p>
 
 <h2 id="remote">Remote access</h2>
-<p>Remote use is central to T3 Code. Its FAQ says: “Run <code>npx t3 up</code> on that machine and you get really good remote support,” through T3 Connect (a Cloudflare tunnel set up by T3’s relay), LAN pairing or Tailscale, with the web client and phone apps as remotes. Coincide runs on your Mac only. Its iPhone and iPad companion, ${s.link("/features/coincide-remote", "Coincide Remote")}, isn’t released yet; it’s designed to connect straight to your Mac over your local network or Tailscale, with no relay server.</p>
+<p>Remote use is central to T3 Code. Its FAQ says: “Run <code>npx t3 up</code> on that machine and you get really good remote support,” through T3 Connect (a Cloudflare tunnel set up by T3’s relay), LAN pairing or Tailscale, with the web client and phone apps as remotes. Coincide runs on your Mac only. Its iPhone and iPad companion, ${s.link("/features/coincide-remote", "Coincide Remote")}, is coming soon to the App Store; it connects straight to your Mac over your local network or Tailscale, with no relay server.</p>
 
 <h2 id="agents">Agents</h2>
 <p>Both apps drive the agents’ own tools with your existing subscriptions. T3 Code’s README also lists fx, which Coincide doesn’t support. In Coincide, each agent has a page describing exactly what works: ${s.link("/agents/claude-code", "Claude Code")}, ${s.link("/agents/codex", "Codex")}, ${s.link("/agents/cursor", "Cursor")}, ${s.link("/agents/grok-build", "Grok Build")}, ${s.link("/agents/opencode", "OpenCode")} and ${s.link("/agents/antigravity", "Antigravity")}. ${s.link("/features/switch-agents", "Switching agents mid-thread")} gives the next agent a recap of the turns it missed.</p>

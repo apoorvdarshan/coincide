@@ -35,7 +35,7 @@ ${table(["Section", "What’s in it"], [
   ["Git", "Create checkpoints before each turn, and the branch prefix for worktrees (<code>coincide/</code> by default)"],
   ["Agents", "Close idle agents after a while, keep agents running when Coincide quits (the background agent host), and whether schedules agents create need your approval"],
   ["Keep Awake", "Keep this Mac awake 24/7, sleep normally on battery, and the lid options"],
-  ["Remote", "Allow Coincide Remote, the iPhone and iPad companion (coming soon), with its port, Bonjour name and paired devices"],
+  ["Remote", "Allow Coincide Remote, the iPhone and iPad companion (coming soon to the App Store), with its port, Bonjour name and paired devices"],
   ["Command Line", "Command-line control, and where the <code>coincide</code> command is installed for Terminal"],
 ])}
 <p>More on ${s.link("/features/keep-awake")}, ${s.link("/features/background-agents")} and ${s.link("/features/notifications")}.</p>

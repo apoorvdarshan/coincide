@@ -54,7 +54,7 @@ ${table(["Language", "Native name", "Code"], languages.map(([en, native, lang]) 
 
 <h2 id="quality">About the translations</h2>
 <p>The translations are machine-made and marked for review in the app’s string catalog. They aim to be clear and correct, but a native speaker will spot phrasing to improve. Text that’s new or changed in a release falls back to English until it’s translated.</p>
-<p>The iPhone and iPad companion, ${s.link("/features/coincide-remote", "Coincide Remote")}, is being built with the same 18 languages.</p>
+<p>The iPhone and iPad companion, ${s.link("/features/coincide-remote", "Coincide Remote")}, coming soon to the App Store, uses the same languages.</p>
 
 <h2 id="help">Help improve them</h2>
 <p>Corrections are welcome. Open an issue or a pull request on <a href="https://github.com/apoorvdarshan/coincide">GitHub</a> with the text and your suggested wording, or follow ${s.link("/docs/translations", "the translation guide")} to fix strings in the catalog directly.</p>
