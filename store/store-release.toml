@@ -1,6 +1,6 @@
 # Coincide Remote's store-release configuration: the iPhone and iPad app, released to the App Store from ios-v<version>
 # tags by .github/workflows/ios-release.yml. The Mac app releases separately from v<version> tags (docs/releasing.md).
-# Every key: https://github.com/apoorvdarshan/store-release/blob/v0.5.0/docs/config.md
+# Every key: https://github.com/apoorvdarshan/store-release/blob/v0.5.1/docs/config.md
 # Switches stay in repository variables and secrets in repository secrets (store/README.md); nothing here is secret.
 schema = 1
 

@@ -36,7 +36,7 @@ store-release reads `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` from its `
 ## Switches
 
 Switches are repository variables (Settings › Secrets and variables › Actions › Variables). store-release's
-[switches.md](https://github.com/apoorvdarshan/store-release/blob/v0.5.0/docs/switches.md) describes each one.
+[switches.md](https://github.com/apoorvdarshan/store-release/blob/v0.5.1/docs/switches.md) describes each one.
 
 | Variable | Set to | What it controls |
 |---|---|---|
