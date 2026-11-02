@@ -127,7 +127,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.ios != 'false' }}
     # The image with Xcode 27 and its iOS simulators that ci.yml builds the Mac app on.
     runs-on: xcode-27
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       # The generated project includes project.yml, so XcodeGen needs the Mac app's folders too; the website, docs,
       # Discord bot, npm installer and fuzzing aren't needed.
@@ -193,8 +193,8 @@ jobs:
 
       # A new simulator for this run: the newest iOS runtime with an iPhone 17 Pro, which the UI tests' layouts assume; a
       # newer runtime made for one device (iOS 27.1 ships only the iPhone Duo) is passed over. Otherwise the newest
-      # runtime's first iPhone. Its first boot keeps this runner busy for minutes, so it starts after the package download
-      # (which it slowed from seconds to minutes) and goes on while the app builds. The runner's machine is discarded after
+      # runtime's first iPhone. Its first boot keeps this runner busy for minutes: it starts after the package download,
+      # which it slowed from seconds to minutes, and boots while xcodebuild starts. The runner's machine is discarded after
       # the job, and the simulator with it.
       - name: Create and boot a simulator
         id: simulator
@@ -222,8 +222,9 @@ jobs:
           echo "id=$id" >>"$GITHUB_OUTPUT"
           xcrun simctl boot "$id"
 
-      # No compilation cache (as ci.yml has): with every compile a cache hit, the warm runs measured in #217 were no
-      # faster than the cold one, and the cache would take room from the Mac app's.
+      # For the booting simulator, so xcodebuild compiles once it has booted: compiling alongside the boot (for the generic
+      # simulator destination) took minutes longer. No compilation cache, unlike ci.yml: with every compile a cache hit,
+      # the warm runs were no faster than the cold one, and the cache would take room from the Mac app's (measured in #217).
       - name: Build
         env:
           SIMULATOR: ${{ steps.simulator.outputs.id }}
