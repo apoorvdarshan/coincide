@@ -8,7 +8,7 @@ Brulee runs the Coincide community server: <https://discord.gg/DETrbhDVqw> (also
 | `/bug report:…` | Opens a **public** `bug` issue in `apoorvdarshan/coincide`. Up to 4,000 characters. |
 | `/feature report:…` | Opens a **public** `enhancement` issue there. Up to 4,000 characters. |
 | Issue-closure replies | When an issue opened with `/bug` or `/feature` closes, Brulee replies to its original response and mentions only the person who reported it. |
-| Release announcements | Every hour, newly published GitHub releases are posted in #announcements. |
+| Release announcements | Every hour, newly published Mac releases on GitHub are posted in #announcements. |
 | Spam moderation | Every minute, new messages are checked against fixed spam rules ([MODERATION.md](MODERATION.md)). |
 
 ## Server and IDs
@@ -86,7 +86,7 @@ Brulee's role holds View Channels, Send Messages, Send Messages in Threads, Embe
 
 ## Release announcements
 
-The hourly run (`23 * * * *`) reads the newest 30 releases of `apoorvdarshan/coincide`. Drafts are ignored; pre-releases are public, so they are announced and marked "(pre-release)". The first successful run records every release that is already published without posting anything. After that, each new release is posted once with its name, the start of its notes and a link, at most three per run, oldest first. A release is marked as announced only after Discord accepts the post, so a failed post is retried an hour later with the same message nonce. A release published before the first run that only shows up later is not treated as new.
+The hourly run (`23 * * * *`) reads the newest 30 releases of `apoorvdarshan/coincide`. Drafts are ignored; pre-releases are public, so they are announced and marked "(pre-release)". iOS build releases (`ios-v…` tags) are skipped, because a tag only means a build went to App Store Connect, not that it is on the App Store. The first successful run records every release that is already published without posting anything. After that, each new release is posted once with its name, the start of its notes and a link, at most three per run, oldest first. A release is marked as announced only after Discord accepts the post, so a failed post is retried an hour later with the same message nonce. A release published before the first run that only shows up later is not treated as new.
 
 KV keys: `releases:v1:seeded` (time of the first run) and `releases:v1:seen:<release ID>`. To announce a release again, delete its `seen` key; to start over, delete them all, and the next run seeds again without posting.
 
