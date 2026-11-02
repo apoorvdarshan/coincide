@@ -45,8 +45,8 @@ Switches are repository variables (Settings › Secrets and variables › Action
 | `IOS_UPLOAD_BUILD` | `false` | Build, sign and upload the binary, then wait until App Store Connect has processed it |
 | `IOS_UPLOAD_LISTING` | `false` | Description, keywords, promotional text and URLs; needs an `[ios.listing]` table and `APPSTORE.md`, which don't exist yet |
 | `IOS_UPLOAD_WHATS_NEW` | `false` | What's New text; needs an `[ios.whats_new]` table |
-| `IOS_UPLOAD_SCREENSHOTS` | `false` | Screenshots; needs `[[ios.screenshots.sets]]` |
-| `IOS_UPLOAD_CREATIVE_ASSETS` | `false` | Product page header and search results images; needs `[ios.creative]` |
+| `IOS_UPLOAD_SCREENSHOTS` | `false` | The iPhone, iPad and iPhone Duo screenshots in `screenshots/` ([Store files](#store-files)) |
+| `IOS_UPLOAD_CREATIVE_ASSETS` | `false` | The product page header and search results images in `creative/ios/` ([Header and search results images](#header-and-search-results-images)) |
 | `IOS_SUBMIT_REVIEW` | `false` | Select this run's build and submit the version for review |
 | `IOS_PUBLIC_RELEASE` | `true` | Release automatically once Apple approves the version |
 
@@ -90,6 +90,41 @@ a build goes public: in the [CloudKit Console](https://icloud.developer.apple.co
 `iCloud.com.apoorvdarshan.coincide`, check the Development schema, then **Deploy Schema Changes…** to Production. The
 record type is `CoincideAlert`, with the String fields `eventID`, `threadID`, `title`, `subtitle`, `body` and
 `collapseID` and the Date/Time field `createdAt`. A Mac writes alerts to the environment its own signature names.
+
+## Store files
+
+```
+store/screenshots/         # App Store screenshots, NN-name.png, uploaded in NN order
+  ios/                     # 9 iPhone screenshots, 1290×2796 (APP_IPHONE_67)
+  ipad/                    # 8 13" iPad screenshots, 2064×2752 (APP_IPAD_PRO_3GEN_129)
+  iphone-duo/              # 7 iPhone Duo screenshots, 1398×2034 (APP_IPHONE_DUO)
+store/creative/ios/        # App Store product page images (Asset Library)
+  header/                  # coincide-header-janus-bust.png, exactly 3840×1646
+  search-results/          # coincide-search-charioteer.png, 3840×2560 (3:2)
+```
+
+Every image is an RGB PNG without an alpha channel, as App Store Connect requires. These are the screenshots on
+version 0.1.0 in App Store Connect, uploaded 2026-11-02, so keep the files here as the source of truth: to change the
+listing, replace the files first, so a switch can never upload an older set. With `IOS_UPLOAD_SCREENSHOTS` on, a
+release stages RGB copies of each set and replaces a set in App Store Connect only when its files differ. The 0.1.0
+sets were uploaded from these files as they are, and store-release compares its re-encoded copies, so the first
+release with the switch on replaces each set once with the same pixels. The app supports iPad, so App Store Connect
+won't submit a version without the 13" iPad set.
+
+Only images the listing uses live here. The art, contact sheets and scripts that made them, and promo or social
+graphics, stay out of the repository.
+
+## Header and search results images
+
+The header (`coincide-header-janus-bust.png`) and search results image (`coincide-search-charioteer.png`) aren't in
+App Store Connect yet. App Store Connect matches Asset Library images by file name and byte size, so
+`[ios.creative.sizes]` in [`store-release.toml`](store-release.toml) pins both: Store checks and every iOS release
+run fail when either file changes, until the pin is updated.
+
+With `IOS_UPLOAD_CREATIVE_ASSETS` on, a release uploads each image to the Asset Library once and sends it to App Review
+in a submission of its own, never the version's. Once Apple approves an image, the next release places it on the
+version's product page while the version can be edited. To change an image, commit it under a new file name and
+update the pin in the same change.
 
 ## Release notes
 

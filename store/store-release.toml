@@ -54,6 +54,32 @@ checkout = [
   "/CoincideKit/Models/BotPersonalityPreset.swift",
 ]
 
+# IOS_UPLOAD_SCREENSHOTS: each set, in NN order, replaces App Store Connect's when its files differ.
+[[ios.screenshots.sets]]
+display_type = "APP_IPHONE_67"
+dir = "store/screenshots/ios"
+required = true
+
+[[ios.screenshots.sets]]
+display_type = "APP_IPAD_PRO_3GEN_129"
+dir = "store/screenshots/ipad"
+required = true
+
+[[ios.screenshots.sets]]
+display_type = "APP_IPHONE_DUO"
+dir = "store/screenshots/iphone-duo"
+required = true
+
+# IOS_UPLOAD_CREATIVE_ASSETS: the product page header and search results images.
+[ios.creative]
+dir = "store/creative/ios"
+
+# App Store Connect matches Asset Library images by file name and byte size, so Store checks and every prepare fail
+# when either image changes, until this list is updated with it.
+[ios.creative.sizes]
+"header/coincide-header-janus-bust.png" = 9655377
+"search-results/coincide-search-charioteer.png" = 10162061
+
 # IOS_SUBMIT_REVIEW: submit the version with this run's build.
 [ios.products]
 iap_route = "submission"
