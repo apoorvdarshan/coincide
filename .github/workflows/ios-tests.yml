@@ -155,14 +155,6 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate --spec project-remote-tests.yml --quiet
 
-      # Compiler outputs are reused only with the Xcode that wrote them.
-      - name: Read the Xcode version
-        id: xcode
-        run: |
-          build="$(xcodebuild -version | awk '/^Build version/ { print $3 }')"
-          test -n "$build"
-          echo "build=$build" >>"$GITHUB_OUTPUT"
-
       # Every tracked file the app and test targets build from (their sources, settings files and local packages) must
       # match IOS_PATHS, or a change to it would skip these tests.
       - name: Check the iOS paths cover what the targets build from
@@ -199,20 +191,9 @@ jobs:
           key: ci-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml', 'project-shared.yml') }}
           restore-keys: ci-packages-${{ runner.os }}-${{ runner.arch }}-
 
-      # Xcode's compilation cache, as in ci.yml: compiler outputs keyed by the exact inputs of each compile, so an unchanged
-      # file reuses its earlier output. It holds no build products or test results: the build starts from an empty
-      # DerivedData and every test runs.
-      - name: Restore compilation cache
-        id: compilation
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/CompilationCache
-          key: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-${{ github.sha }}
-          restore-keys: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode.outputs.build }}-
-
       # A new simulator for this run: the newest iOS runtime with an iPhone 17 Pro, which the UI tests' layouts assume; a
       # newer runtime made for one device (iOS 27.1 ships only the iPhone Duo) is passed over. Otherwise the newest
-      # runtime's first iPhone. Its first boot keeps this runner busy for minutes: it starts after the cache downloads,
+      # runtime's first iPhone. Its first boot keeps this runner busy for minutes: it starts after the package download,
       # which it slowed from seconds to minutes, and boots while xcodebuild starts. The runner's machine is discarded after
       # the job, and the simulator with it.
       - name: Create and boot a simulator
@@ -242,25 +223,15 @@ jobs:
           xcrun simctl boot "$id"
 
       # For the booting simulator; building for the generic simulator destination instead, to compile during the boot, was
-      # no faster (measured in #217).
+      # no faster. No compilation cache, unlike ci.yml: it cut compiling from about 2.5 minutes to 40 seconds, but the build
+      # waits minutes for the simulator's first boot anyway, so warm runs were no faster. (Both measured in #217.)
       - name: Build
-        id: build
         env:
           SIMULATOR: ${{ steps.simulator.outputs.id }}
         run: |
           xcodebuild -project CoincideRemoteTests.xcodeproj -scheme CoincideRemote \
             -destination "platform=iOS Simulator,id=$SIMULATOR" -skipPackagePluginValidation \
-            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages build-for-testing \
-            COMPILATION_CACHE_ENABLE_CACHING=YES "COMPILATION_CACHE_CAS_PATH=$PWD/build/CompilationCache" \
-            COMPILATION_CACHE_LIMIT_SIZE=1G
-
-      # MEASURING: pull requests save it too for now, to time warm runs; before merging, only main and manual runs save.
-      - name: Save compilation cache
-        if: steps.build.outcome == 'success' && steps.compilation.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/CompilationCache
-          key: ${{ steps.compilation.outputs.cache-primary-key }}
+            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages build-for-testing
 
       # One simulator, no parallel clones. -collect-test-diagnostics never: otherwise xcodebuild can spend ten minutes
       # after the tests collecting the simulator's diagnostics. Failures keep their screenshots in the result bundle.
