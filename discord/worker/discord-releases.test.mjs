@@ -163,6 +163,23 @@ test("release text is cleaned and capped, and names cannot inject markup or ment
   assert.throws(() => publishedReleases({ message: "Not Found" }), /github_releases_unexpected/);
 });
 
+test("iOS store build releases are never announced", async () => {
+  Date.now = () => NOW;
+  const env = environment();
+  const state = { releases: [] };
+  const { posts, fetchImpl } = upstream(state);
+  assert.equal((await announceReleases(env, fetchImpl)).status, "seeded");
+  const later = new Date(NOW + 60_000).toISOString();
+  const ios = release({ name: "Coincide for iOS 0.1.0", tag_name: "ios-v0.1.0", prerelease: true, published_at: later });
+  const mac = release({ published_at: later });
+  assert.deepEqual(publishedReleases([ios, mac]).map((r) => r.id), [mac.id]);
+  state.releases = [ios, mac];
+  Date.now = () => NOW + 3_600_000;
+  assert.deepEqual(await announceReleases(env, fetchImpl), { status: "checked", posted: 1 });
+  assert.equal(posts.length, 1);
+  assert.doesNotMatch(posts[0].content, /iOS/);
+});
+
 test("the scheduled entry point logs a safe code instead of throwing", async () => {
   const errors = [];
   const nativeError = console.error;

@@ -4,7 +4,8 @@
  * Coincide ships through GitHub Releases only. Drafts are never announced. The first
  * successful check records every release that is already public without posting, so
  * enabling this never announces a backlog. Pre-releases are public and are announced,
- * marked as such.
+ * marked as such. iOS build releases (`ios-v…` tags) are skipped: a tag means a build
+ * went to App Store Connect, not that the app is on the App Store.
  */
 const REPOSITORY = "apoorvdarshan/coincide";
 const RELEASES_API = `https://api.github.com/repos/${REPOSITORY}/releases?per_page=30`;
@@ -58,11 +59,16 @@ export function announcementText(release) {
   ].filter(Boolean).join("\n\n");
 }
 
-/** Only fully published releases of this repository with a verifiable identity. */
+/** iOS store builds, tagged `ios-v…` by the store-release pipeline. */
+function isStoreBuildTag(tag) {
+  return typeof tag === "string" && /^ios-v/i.test(tag.trim());
+}
+
+/** Only fully published Mac releases of this repository with a verifiable identity. */
 export function publishedReleases(payload) {
   if (!Array.isArray(payload)) throw new ReleaseCheckError("github_releases_unexpected");
   return payload
-    .filter((release) => release && release.draft === false
+    .filter((release) => release && release.draft === false && !isStoreBuildTag(release.tag_name)
       && Number.isSafeInteger(release.id) && release.id > 0
       && typeof release.published_at === "string" && Number.isFinite(Date.parse(release.published_at))
       && typeof release.html_url === "string" && release.html_url.startsWith(RELEASE_URL_PREFIX)
