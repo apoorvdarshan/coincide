@@ -2,13 +2,14 @@
 // https://img.shields.io/endpoint?url=https://coincide.dev/api/stats/badge). Both come from public APIs, are cached at
 // each Cloudflare location for an hour, and record nothing about the visitor.
 //
-// What is counted, without counting anything twice:
-//   downloads  Downloads of a release's DMG or ZIP from GitHub Releases, over every published release. Every way to
-//              install fetches one of these: the website's Download button and Homebrew the DMG (Coincide.dmg and
-//              Coincide-<version>.dmg), `npx coincide-dev` and the in-app updater the ZIP. SHA256SUMS.txt isn't
-//              counted. These are downloads, not people: one Mac can download several times, and updates count too.
-//   npm        Downloads of the coincide-dev package since its first publish. Each install through it also fetches the
-//              ZIP above, so this number is reported on its own and never added to downloads.
+// What is counted:
+//   github     Downloads of a Mac release's DMG or ZIP from GitHub Releases, over every published release. The website's
+//              Download button and Homebrew fetch the DMG (Coincide.dmg and Coincide-<version>.dmg), `npx coincide-dev`
+//              and the in-app updater the ZIP. SHA256SUMS.txt and iOS App Store builds (ios-v… tags) aren't counted.
+//   npm        Downloads of the coincide-dev package since its first publish, as npm reports them (they include
+//              mirrors, CI and repeat installs).
+//   downloads  github + npm, the number the badge and the website show. Like the other projects' counts, it counts
+//              download events, not people, and an npx install shows up in both npm and the ZIP.
 
 export const REPOSITORY = "apoorvdarshan/coincide";
 export const NPM_PACKAGE = "coincide-dev";
@@ -17,14 +18,16 @@ export const NPM_SINCE = "2026-11-01";
 const CACHE_SECONDS = 3600;
 const ERROR_CACHE_SECONDS = 300;
 const COUNTED = /\.(dmg|zip)$/i;
+// iOS releases are App Store builds made by store-release; they have no Mac download.
+const IOS_TAG = /^ios-v/i;
 
-/** Adds up the DMG and ZIP downloads of published releases, and finds the newest stable release. */
+/** Adds up the DMG and ZIP downloads of published Mac releases, and finds the newest stable one. */
 export function summarizeReleases(releases) {
   let downloads = 0;
   let published = 0;
   let latest = null;
   for (const release of releases) {
-    if (release.draft) continue;
+    if (release.draft || IOS_TAG.test(release.tag_name ?? "")) continue;
     published++;
     if (!release.prerelease && !latest) latest = release.tag_name;
     for (const asset of release.assets ?? []) {
@@ -93,14 +96,15 @@ async function fetchNpmDownloads(today, fetchImpl) {
   return total;
 }
 
-/** Fresh numbers. GitHub must answer; npm failing only leaves npm null. */
+/** Fresh numbers. GitHub must answer; npm failing only leaves npm null and the total at the GitHub count. */
 export async function collectStats(env, { fetchImpl = fetch, now = new Date() } = {}) {
   const today = now.toISOString().slice(0, 10);
   const [releases, npm] = await Promise.all([
     fetchReleases(env, fetchImpl),
     fetchNpmDownloads(today, fetchImpl).catch(() => null),
   ]);
-  return { ...summarizeReleases(releases), npm, updated: now.toISOString() };
+  const { downloads: github, ...rest } = summarizeReleases(releases);
+  return { downloads: github + (npm ?? 0), github, npm, ...rest, updated: now.toISOString() };
 }
 
 function json(body, seconds, status = 200) {
@@ -118,7 +122,7 @@ function json(body, seconds, status = 200) {
 export async function handleStats(request, env, ctx, { fetchImpl = fetch, cache = caches.default } = {}) {
   const url = new URL(request.url);
   if (request.method !== "GET" && request.method !== "HEAD") return new Response("method not allowed", { status: 405 });
-  const key = new Request(`${url.origin}/api/stats?cache=v1`);
+  const key = new Request(`${url.origin}/api/stats?cache=v2`);
   let stats = null;
   const cached = await cache.match(key);
   if (cached) stats = await cached.json();
