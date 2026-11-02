@@ -153,13 +153,7 @@ jobs:
           echo "$RUNNER_TEMP/xcodegen/bin" >>"$GITHUB_PATH"
 
       - name: Generate Xcode project
-        id: generate
-        run: |
-          xcodegen generate --spec project-remote-tests.yml --quiet
-          # Compiler outputs are reused only with the Xcode that wrote them.
-          xcode="$(xcodebuild -version | awk '/^Build version/ { print $3 }')"
-          test -n "$xcode"
-          echo "xcode=$xcode" >>"$GITHUB_OUTPUT"
+        run: xcodegen generate --spec project-remote-tests.yml --quiet
 
       # Every tracked file the app and test targets build from (their sources, settings files and local packages) must
       # match IOS_PATHS, or a change to it would skip these tests.
@@ -188,11 +182,21 @@ jobs:
           sys.exit(1 if uncovered or not files else 0)
           EOF
 
+      # The packages "Build and test" (ci.yml) resolves and caches for the same project.yml, which this project includes.
+      # Saved by that job on main; this one only restores it.
+      - name: Restore Swift packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/SourcePackages
+          key: ci-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml', 'project-shared.yml') }}
+          restore-keys: ci-packages-${{ runner.os }}-${{ runner.arch }}-
+
       # A new simulator for this run: the newest iOS runtime with an iPhone 17 Pro, which the UI tests' layouts assume; a
       # newer runtime made for one device (iOS 27.1 ships only the iPhone Duo) is passed over. Otherwise the newest
-      # runtime's first iPhone. It boots only for the tests: a first boot running beside the cache downloads and the build
-      # slowed them by minutes on this runner. The runner's machine is discarded after the job, and the simulator with it.
-      - name: Create a simulator
+      # runtime's first iPhone. Its first boot keeps this runner busy for minutes, so it starts after the package download
+      # (which it slowed from seconds to minutes) and goes on while the app builds. The runner's machine is discarded after
+      # the job, and the simulator with it.
+      - name: Create and boot a simulator
         id: simulator
         run: |
           id="$(python3 - <<'EOF'
@@ -216,45 +220,17 @@ jobs:
           EOF
           )"
           echo "id=$id" >>"$GITHUB_OUTPUT"
+          xcrun simctl boot "$id"
 
-      # The packages "Build and test" (ci.yml) resolves and caches for the same project.yml, which this project includes.
-      # Saved by that job on main; this one only restores it.
-      - name: Restore Swift packages
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/SourcePackages
-          key: ci-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml', 'project-shared.yml') }}
-          restore-keys: ci-packages-${{ runner.os }}-${{ runner.arch }}-
-
-      # Xcode's compilation cache, as in ci.yml: compiler outputs keyed by the exact inputs of each compile, so an unchanged
-      # file (RevenueCat's, mostly) reuses its earlier output. It holds no build products or test results: the build
-      # starts from an empty DerivedData and every test runs.
-      - name: Restore compilation cache
-        id: compilation
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/CompilationCache
-          key: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.generate.outputs.xcode }}-${{ github.sha }}
-          restore-keys: ios-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.generate.outputs.xcode }}-
-
+      # No compilation cache (as ci.yml has): with every compile a cache hit, the warm runs measured in #217 were no
+      # faster than the cold one, and the cache would take room from the Mac app's.
       - name: Build
-        id: build
         env:
           SIMULATOR: ${{ steps.simulator.outputs.id }}
         run: |
           xcodebuild -project CoincideRemoteTests.xcodeproj -scheme CoincideRemote \
             -destination "platform=iOS Simulator,id=$SIMULATOR" -skipPackagePluginValidation \
-            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages build-for-testing \
-            COMPILATION_CACHE_ENABLE_CACHING=YES "COMPILATION_CACHE_CAS_PATH=$PWD/build/CompilationCache" \
-            COMPILATION_CACHE_LIMIT_SIZE=1G
-
-      # MEASURING: saved by pull requests too for now, to time a warm run; before merging, only main and manual runs save.
-      - name: Save compilation cache
-        if: steps.build.outcome == 'success' && steps.compilation.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/CompilationCache
-          key: ${{ steps.compilation.outputs.cache-primary-key }}
+            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages build-for-testing
 
       # One simulator, no parallel clones. -collect-test-diagnostics never: otherwise xcodebuild can spend ten minutes
       # after the tests collecting the simulator's diagnostics. Failures keep their screenshots in the result bundle.
