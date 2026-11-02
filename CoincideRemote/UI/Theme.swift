@@ -64,6 +64,15 @@ struct Theme: Equatable {
     var control: Color { palette.ink.map { Color(hex: $0) } ?? (isDark ? .white : .black) }
     /// Text and symbols on a control-colored fill.
     var onControl: Color { isDark ? .black : .white }
+    /// Text on an accent-colored fill: black or white, whichever contrasts more with the accent (WCAG luminance).
+    var onAccent: Color {
+        func channel(_ shift: UInt32) -> Double {
+            let value = Double((palette.accent >> shift) & 0xFF) / 255
+            return value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+        return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? .black : .white
+    }
     var ink: Color { palette.ink.map { Color(hex: $0) } ?? .primary }
     var secondaryInk: Color { ink.opacity(0.62) }
     /// The quietest text: a project's name after a pinned thread, disclosure triangles, archived marks.

@@ -20,6 +20,18 @@ struct CoincideRemoteApp: App {
             .environment(appearance)
             .environment(navigator)
             .environment(store)
+            .onAppear {
+                PaywallPresenter.shared.configure(client: client, appearance: appearance, navigator: navigator)
+                #if DEBUG
+                // Screenshots of the paywall over the app: `-CoincideRemoteDemo -CoincideRemoteDemoPaywall`.
+                if DemoData.isEnabled, ProcessInfo.processInfo.arguments.contains("-CoincideRemoteDemoPaywall") {
+                    Task {
+                        try? await Task.sleep(for: .seconds(1))
+                        PaywallPresenter.shared.present()
+                    }
+                }
+                #endif
+            }
             #if DEBUG
             .modifier(DebugWindowSizing())
             #endif
@@ -35,10 +47,9 @@ struct CoincideRemoteApp: App {
             CommandMenu("Thread") {
                 Button("New Thread") { navigator.requestNewThread() }
                     .keyboardShortcut("n")
-                    .disabled(!client.isConnected || !store.isPro)
+                    .disabled(!client.isConnected)
                 Button("Search Threads") { navigator.focusSearch() }
                     .keyboardShortcut("f")
-                    .disabled(!store.isPro)
                 Divider()
                 Button("Reconnect") { client.reconnectIfNeeded() }
                     .keyboardShortcut("r")
@@ -219,20 +230,15 @@ final class Navigator {
     func focusSearch() { tab = .search }
 }
 
-/// Pairing first, free; then the app, which needs Coincide Pro: without it the paywall stands in for everything
-/// (`PaywallView.Mode.locked`), with support and tips under it.
 struct RootView: View {
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
-    @Environment(ProStore.self) private var store
 
     var body: some View {
         @Bindable var navigator = navigator
         Group {
             if client.mac == nil {
                 NavigationStack { ConnectView(isOnboarding: true) }
-            } else if !store.isPro {
-                NavigationStack { PaywallView(mode: .locked) }
             } else {
                 MainTabView()
             }

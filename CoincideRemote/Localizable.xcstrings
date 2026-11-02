@@ -6888,114 +6888,114 @@
         }
       }
     },
-    "Allow Local Network access for Coincide Remote in Settings › Privacy & Security › Local Network to find Macs nearby." : {
+    "Allow Local Network access for Coincide in Settings › Privacy & Security › Local Network to find Macs nearby." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Erlaube Coincide Remote unter „Einstellungen“ › „Datenschutz & Sicherheit“ › „Lokales Netzwerk“ den Zugriff, um Macs in der Nähe zu finden."
+            "value" : "Erlaube Coincide unter „Einstellungen“ › „Datenschutz & Sicherheit“ › „Lokales Netzwerk“ den Zugriff, um Macs in der Nähe zu finden."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Permite el acceso a la red local para Coincide Remote en Ajustes › Privacidad y seguridad › Red local para encontrar Macs cercanos."
+            "value" : "Permite el acceso a la red local para Coincide en Ajustes › Privacidad y seguridad › Red local para encontrar Macs cercanos."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Permite el acceso a la red local para Coincide Remote en Configuración › Privacidad y seguridad › Red local para encontrar Macs cercanas."
+            "value" : "Permite el acceso a la red local para Coincide en Configuración › Privacidad y seguridad › Red local para encontrar Macs cercanas."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Autorisez l'accès au réseau local pour Coincide Remote dans Réglages › Confidentialité et sécurité › Réseau local pour trouver les Mac à proximité."
+            "value" : "Autorisez l'accès au réseau local pour Coincide dans Réglages › Confidentialité et sécurité › Réseau local pour trouver les Mac à proximité."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "आस-पास के Mac ढूँढने के लिए सेटिंग्ज़ › गोपनीयता और सुरक्षा › स्थानीय नेटवर्क में Coincide Remote को स्थानीय नेटवर्क ऐक्सेस की अनुमति दें।"
+            "value" : "आस-पास के Mac ढूँढने के लिए सेटिंग्ज़ › गोपनीयता और सुरक्षा › स्थानीय नेटवर्क में Coincide को स्थानीय नेटवर्क ऐक्सेस की अनुमति दें।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Izinkan akses Jaringan Lokal untuk Coincide Remote di Pengaturan › Privasi & Keamanan › Jaringan Lokal untuk menemukan Mac di sekitar."
+            "value" : "Izinkan akses Jaringan Lokal untuk Coincide di Pengaturan › Privasi & Keamanan › Jaringan Lokal untuk menemukan Mac di sekitar."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Consenti l'accesso alla rete locale per Coincide Remote in Impostazioni › Privacy e sicurezza › Rete locale per trovare i Mac nelle vicinanze."
+            "value" : "Consenti l'accesso alla rete locale per Coincide in Impostazioni › Privacy e sicurezza › Rete locale per trovare i Mac nelle vicinanze."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "近くのMacを見つけるには、設定 › プライバシーとセキュリティ › ローカルネットワークでCoincide Remoteのアクセスを許可してください。"
+            "value" : "近くのMacを見つけるには、設定 › プライバシーとセキュリティ › ローカルネットワークでCoincideのアクセスを許可してください。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "주변의 Mac을 찾으려면 설정 › 개인정보 보호 및 보안 › 로컬 네트워크에서 Coincide Remote의 로컬 네트워크 접근을 허용하십시오."
+            "value" : "주변의 Mac을 찾으려면 설정 › 개인정보 보호 및 보안 › 로컬 네트워크에서 Coincide의 로컬 네트워크 접근을 허용하십시오."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Sta toegang tot het lokale netwerk toe voor Coincide Remote in Instellingen › Privacy en beveiliging › Lokaal netwerk om Macs in de buurt te vinden."
+            "value" : "Sta toegang tot het lokale netwerk toe voor Coincide in Instellingen › Privacy en beveiliging › Lokaal netwerk om Macs in de buurt te vinden."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Zezwól Coincide Remote na dostęp do sieci lokalnej w Ustawienia › Prywatność i ochrona › Sieć lokalna, aby znajdować Maki w pobliżu."
+            "value" : "Zezwól Coincide na dostęp do sieci lokalnej w Ustawienia › Prywatność i ochrona › Sieć lokalna, aby znajdować Maki w pobliżu."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Permita o acesso à Rede Local para o Coincide Remote em Ajustes › Privacidade e Segurança › Rede Local para encontrar Macs por perto."
+            "value" : "Permita o acesso à Rede Local para o Coincide em Ajustes › Privacidade e Segurança › Rede Local para encontrar Macs por perto."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Чтобы находить компьютеры Mac поблизости, разрешите Coincide Remote доступ к локальной сети в разделе «Настройки» › «Конфиденциальность и безопасность» › «Локальная сеть»."
+            "value" : "Чтобы находить компьютеры Mac поблизости, разрешите Coincide доступ к локальной сети в разделе «Настройки» › «Конфиденциальность и безопасность» › «Локальная сеть»."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Yakındaki Mac'leri bulmak için Ayarlar › Gizlilik ve Güvenlik › Yerel Ağ bölümünde Coincide Remote'un yerel ağ erişimine izin verin."
+            "value" : "Yakındaki Mac'leri bulmak için Ayarlar › Gizlilik ve Güvenlik › Yerel Ağ bölümünde Coincide'ın yerel ağ erişimine izin verin."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Щоб знаходити комп’ютери Mac поблизу, дозвольте Coincide Remote доступ до локальної мережі в розділі «Параметри» › «Приватність і безпека» › «Локальна мережа»."
+            "value" : "Щоб знаходити комп’ютери Mac поблизу, дозвольте Coincide доступ до локальної мережі в розділі «Параметри» › «Приватність і безпека» › «Локальна мережа»."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Hãy cho phép Coincide Remote truy cập Mạng cục bộ trong Cài đặt › Quyền riêng tư & Bảo mật › Mạng cục bộ để tìm các máy Mac ở gần."
+            "value" : "Hãy cho phép Coincide truy cập Mạng cục bộ trong Cài đặt › Quyền riêng tư & Bảo mật › Mạng cục bộ để tìm các máy Mac ở gần."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "请在“设置” › “隐私与安全性” › “本地网络”中允许 Coincide Remote 访问本地网络，以查找附近的 Mac。"
+            "value" : "请在“设置” › “隐私与安全性” › “本地网络”中允许 Coincide 访问本地网络，以查找附近的 Mac。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "請在「設定」›「隱私權與安全性」›「區域網路」中允許 Coincide Remote 取用區域網路，以尋找附近的 Mac。"
+            "value" : "請在「設定」›「隱私權與安全性」›「區域網路」中允許 Coincide 取用區域網路，以尋找附近的 Mac。"
           }
         }
       }
@@ -7112,114 +7112,114 @@
         }
       }
     },
-    "Allow notifications for Coincide Remote in Settings first." : {
+    "Allow notifications for Coincide in Settings first." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Erlaube zuerst Mitteilungen für Coincide Remote in den Einstellungen."
+            "value" : "Erlaube zuerst Mitteilungen für Coincide in den Einstellungen."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Primero permite las notificaciones de Coincide Remote en Ajustes."
+            "value" : "Primero permite las notificaciones de Coincide en Ajustes."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Primero permite las notificaciones de Coincide Remote en Configuración."
+            "value" : "Primero permite las notificaciones de Coincide en Configuración."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Autorisez d'abord les notifications pour Coincide Remote dans Réglages."
+            "value" : "Autorisez d'abord les notifications pour Coincide dans Réglages."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "पहले सेटिंग्ज़ में Coincide Remote के लिए सूचनाओं की अनुमति दें।"
+            "value" : "पहले सेटिंग्ज़ में Coincide के लिए सूचनाओं की अनुमति दें।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Izinkan pemberitahuan untuk Coincide Remote di Pengaturan terlebih dahulu."
+            "value" : "Izinkan pemberitahuan untuk Coincide di Pengaturan terlebih dahulu."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Prima consenti le notifiche per Coincide Remote in Impostazioni."
+            "value" : "Prima consenti le notifiche per Coincide in Impostazioni."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "先に設定でCoincide Remoteの通知を許可してください。"
+            "value" : "先に設定でCoincideの通知を許可してください。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "먼저 설정에서 Coincide Remote의 알림을 허용하십시오."
+            "value" : "먼저 설정에서 Coincide의 알림을 허용하십시오."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Sta eerst meldingen voor Coincide Remote toe in Instellingen."
+            "value" : "Sta eerst meldingen voor Coincide toe in Instellingen."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Najpierw zezwól na powiadomienia dla Coincide Remote w Ustawieniach."
+            "value" : "Najpierw zezwól na powiadomienia dla Coincide w Ustawieniach."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Primeiro, permita as notificações do Coincide Remote nos Ajustes."
+            "value" : "Primeiro, permita as notificações do Coincide nos Ajustes."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Сначала разрешите уведомления для Coincide Remote в Настройках."
+            "value" : "Сначала разрешите уведомления для Coincide в Настройках."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Önce Ayarlar'da Coincide Remote için bildirimlere izin verin."
+            "value" : "Önce Ayarlar'da Coincide için bildirimlere izin verin."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Спершу дозвольте сповіщення для Coincide Remote у Параметрах."
+            "value" : "Спершу дозвольте сповіщення для Coincide у Параметрах."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Trước tiên, hãy cho phép thông báo cho Coincide Remote trong Cài đặt."
+            "value" : "Trước tiên, hãy cho phép thông báo cho Coincide trong Cài đặt."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "请先在“设置”中允许 Coincide Remote 发送通知。"
+            "value" : "请先在“设置”中允许 Coincide 发送通知。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "請先在「設定」中允許 Coincide Remote 傳送通知。"
+            "value" : "請先在「設定」中允許 Coincide 傳送通知。"
           }
         }
       }
@@ -15115,338 +15115,226 @@
         }
       }
     },
-    "Coincide Remote" : {
+    "Coincide Pro unlocks this." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Dafür brauchst du Coincide Pro."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Para esto necesitas Coincide Pro."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Para esto necesitas Coincide Pro."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Cette action nécessite Coincide Pro."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "इसके लिए Coincide Pro चाहिए।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Ini memerlukan Coincide Pro."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Per questo serve Coincide Pro."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "この操作には Coincide Pro が必要です。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "이 작업에는 Coincide Pro가 필요합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Hiervoor heb je Coincide Pro nodig."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "To wymaga Coincide Pro."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Isso requer o Coincide Pro."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Для этого нужен Coincide Pro."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Bunun için Coincide Pro gerekir."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Для цього потрібен Coincide Pro."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "Thao tác này cần Coincide Pro."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "此操作需要 Coincide Pro。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote"
+            "value" : "此操作需要 Coincide Pro。"
           }
         }
       }
     },
-    "Coincide Remote doesn’t have access to the microphone. Turn it on in Settings." : {
+    "Coincide doesn’t have access to the microphone. Turn it on in Settings." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote hat keinen Zugriff auf das Mikrofon. Aktiviere ihn in den Einstellungen."
+            "value" : "Coincide hat keinen Zugriff auf das Mikrofon. Aktiviere ihn in den Einstellungen."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote no tiene acceso al micrófono. Actívalo en Ajustes."
+            "value" : "Coincide no tiene acceso al micrófono. Actívalo en Ajustes."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote no tiene acceso al micrófono. Actívalo en Configuración."
+            "value" : "Coincide no tiene acceso al micrófono. Actívalo en Configuración."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote n’a pas accès au micro. Activez-le dans Réglages."
+            "value" : "Coincide n’a pas accès au micro. Activez-le dans Réglages."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote को माइक्रोफ़ोन का ऐक्सेस नहीं है। इसे सेटिंग्ज़ में चालू करें।"
+            "value" : "Coincide को माइक्रोफ़ोन का ऐक्सेस नहीं है। इसे सेटिंग्ज़ में चालू करें।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote tidak memiliki akses ke mikrofon. Nyalakan di Pengaturan."
+            "value" : "Coincide tidak memiliki akses ke mikrofon. Nyalakan di Pengaturan."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote non ha accesso al microfono. Attivalo in Impostazioni."
+            "value" : "Coincide non ha accesso al microfono. Attivalo in Impostazioni."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remoteにマイクへのアクセス権がありません。設定でオンにしてください。"
+            "value" : "Coincideにマイクへのアクセス権がありません。設定でオンにしてください。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote에 마이크 접근 권한이 없습니다. 설정에서 켜십시오."
+            "value" : "Coincide에 마이크 접근 권한이 없습니다. 설정에서 켜십시오."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote heeft geen toegang tot de microfoon. Schakel dit in via Instellingen."
+            "value" : "Coincide heeft geen toegang tot de microfoon. Schakel dit in via Instellingen."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote nie ma dostępu do mikrofonu. Włącz go w Ustawieniach."
+            "value" : "Coincide nie ma dostępu do mikrofonu. Włącz go w Ustawieniach."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O Coincide Remote não tem acesso ao microfone. Ative-o nos Ajustes."
+            "value" : "O Coincide não tem acesso ao microfone. Ative-o nos Ajustes."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "У Coincide Remote нет доступа к микрофону. Включите его в Настройках."
+            "value" : "У Coincide нет доступа к микрофону. Включите его в Настройках."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote'un mikrofona erişimi yok. Ayarlar'dan açın."
+            "value" : "Coincide'ın mikrofona erişimi yok. Ayarlar'dan açın."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote не має доступу до мікрофона. Увімкніть його в Параметрах."
+            "value" : "Coincide не має доступу до мікрофона. Увімкніть його в Параметрах."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote không có quyền truy cập micrô. Hãy bật quyền này trong Cài đặt."
+            "value" : "Coincide không có quyền truy cập micrô. Hãy bật quyền này trong Cài đặt."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 没有麦克风访问权限。请在“设置”中打开。"
+            "value" : "Coincide 没有麦克风访问权限。请在“设置”中打开。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 沒有麥克風取用權限。請在「設定」中開啟。"
-          }
-        }
-      }
-    },
-    "Coincide Remote tries it after the Mac’s own addresses." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote versucht sie nach den eigenen Adressen des Mac."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote la prueba después de las direcciones propias del Mac."
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote la prueba después de las direcciones propias de la Mac."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote l'essaie après les adresses propres au Mac."
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote इसे Mac के अपने पतों के बाद आज़माता है।"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote mencobanya setelah alamat Mac itu sendiri."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote lo prova dopo gli indirizzi del Mac."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remoteは、Mac自体のアドレスの次にこのアドレスを試します。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote는 Mac 자체 주소를 먼저 시도한 후 이 주소를 시도합니다."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote probeert dit adres na de eigen adressen van de Mac."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote spróbuje go po własnych adresach Maca."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "O Coincide Remote tenta este endereço depois dos endereços do próprio Mac."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote пробует его после собственных адресов Mac."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote bunu Mac'in kendi adreslerinden sonra dener."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote пробує її після власних адрес Mac."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote sẽ thử địa chỉ này sau các địa chỉ của chính máy Mac."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote 会先尝试 Mac 自身的地址，然后再尝试此地址。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Coincide Remote 會先嘗試 Mac 本身的位址，再嘗試此位址。"
+            "value" : "Coincide 沒有麥克風取用權限。請在「設定」中開啟。"
           }
         }
       }
@@ -15895,6 +15783,342 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%@ 上的 Coincide"
+          }
+        }
+      }
+    },
+    "Coincide on this iPad" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide auf diesem iPad"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide en este iPad"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide en este iPad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide sur cet iPad"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस iPad पर Coincide"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide di iPad ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide su questo iPad"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このiPadのCoincide"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 iPad의 Coincide"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide op deze iPad"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide na tym iPadzie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide neste iPad"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide на этом iPad"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu iPad'deki Coincide"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide на цьому iPad"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide trên iPad này"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 iPad 上的 Coincide"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 iPad 上的 Coincide"
+          }
+        }
+      }
+    },
+    "Coincide on this iPhone" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide auf diesem iPhone"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide en este iPhone"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide en este iPhone"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide sur cet iPhone"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "इस iPhone पर Coincide"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide di iPhone ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide su questo iPhone"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このiPhoneのCoincide"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 iPhone의 Coincide"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide op deze iPhone"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide na tym iPhonie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide neste iPhone"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide на этом iPhone"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu iPhone'daki Coincide"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide на цьому iPhone"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide trên iPhone này"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 iPhone 上的 Coincide"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 iPhone 上的 Coincide"
+          }
+        }
+      }
+    },
+    "Coincide tries it after the Mac’s own addresses." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide versucht sie nach den eigenen Adressen des Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide la prueba después de las direcciones propias del Mac."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide la prueba después de las direcciones propias de la Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide l'essaie après les adresses propres au Mac."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide इसे Mac के अपने पतों के बाद आज़माता है।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide mencobanya setelah alamat Mac itu sendiri."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide lo prova dopo gli indirizzi del Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincideは、Mac自体のアドレスの次にこのアドレスを試します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide는 Mac 자체 주소를 먼저 시도한 후 이 주소를 시도합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide probeert dit adres na de eigen adressen van de Mac."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide spróbuje go po własnych adresach Maca."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Coincide tenta este endereço depois dos endereços do próprio Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide пробует его после собственных адресов Mac."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide bunu Mac'in kendi adreslerinden sonra dener."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide пробує її після власних адрес Mac."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide sẽ thử địa chỉ này sau các địa chỉ của chính máy Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 会先尝试 Mac 自身的地址，然后再尝试此地址。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Coincide 會先嘗試 Mac 本身的位址，再嘗試此位址。"
           }
         }
       }
@@ -44389,114 +44613,114 @@
         }
       }
     },
-    "Notifications are off for Coincide Remote" : {
+    "Notifications are off for Coincide" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Mitteilungen für Coincide Remote sind deaktiviert"
+            "value" : "Mitteilungen für Coincide sind deaktiviert"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Las notificaciones de Coincide Remote están desactivadas"
+            "value" : "Las notificaciones de Coincide están desactivadas"
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Las notificaciones de Coincide Remote están desactivadas"
+            "value" : "Las notificaciones de Coincide están desactivadas"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Les notifications sont désactivées pour Coincide Remote"
+            "value" : "Les notifications sont désactivées pour Coincide"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote के लिए सूचनाएँ बंद हैं"
+            "value" : "Coincide के लिए सूचनाएँ बंद हैं"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Pemberitahuan dimatikan untuk Coincide Remote"
+            "value" : "Pemberitahuan dimatikan untuk Coincide"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Le notifiche sono disattivate per Coincide Remote"
+            "value" : "Le notifiche sono disattivate per Coincide"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remoteの通知はオフです"
+            "value" : "Coincideの通知はオフです"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote의 알림이 꺼져 있음"
+            "value" : "Coincide의 알림이 꺼져 있음"
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Meldingen staan uit voor Coincide Remote"
+            "value" : "Meldingen staan uit voor Coincide"
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Powiadomienia dla Coincide Remote są wyłączone"
+            "value" : "Powiadomienia dla Coincide są wyłączone"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "As notificações do Coincide Remote estão desativadas"
+            "value" : "As notificações do Coincide estão desativadas"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Уведомления для Coincide Remote выключены"
+            "value" : "Уведомления для Coincide выключены"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote için bildirimler kapalı"
+            "value" : "Coincide için bildirimler kapalı"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Сповіщення для Coincide Remote вимкнено"
+            "value" : "Сповіщення для Coincide вимкнено"
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Thông báo cho Coincide Remote đang tắt"
+            "value" : "Thông báo cho Coincide đang tắt"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 的通知已关闭"
+            "value" : "Coincide 的通知已关闭"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 的通知已關閉"
+            "value" : "Coincide 的通知已關閉"
           }
         }
       }
@@ -48081,118 +48305,6 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "已配對"
-          }
-        }
-      }
-    },
-    "Paired Mac" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Gekoppelter Mac"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mac enlazado"
-          }
-        },
-        "es-419" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mac enlazada"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mac jumelé"
-          }
-        },
-        "hi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "पेयर किया गया Mac"
-          }
-        },
-        "id" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mac yang Dipasangkan"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mac abbinato"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "ペアリング済みのMac"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "페어링된 Mac"
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Gekoppelde Mac"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sparowany Mac"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Mac Emparelhado"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Привязанный Mac"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Eşleştirilmiş Mac"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Прив’язаний Mac"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Máy Mac đã ghép đôi"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已配对的 Mac"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "已配對的 Mac"
           }
         }
       }
@@ -54134,114 +54246,114 @@
         }
       }
     },
-    "Rate Coincide Remote" : {
+    "Rate Coincide" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote bewerten"
+            "value" : "Coincide bewerten"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Valorar Coincide Remote"
+            "value" : "Valorar Coincide"
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Calificar Coincide Remote"
+            "value" : "Calificar Coincide"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Noter Coincide Remote"
+            "value" : "Noter Coincide"
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote को रेट करें"
+            "value" : "Coincide को रेट करें"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Beri Nilai Coincide Remote"
+            "value" : "Beri Nilai Coincide"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Valuta Coincide Remote"
+            "value" : "Valuta Coincide"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote を評価"
+            "value" : "Coincide を評価"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 평가하기"
+            "value" : "Coincide 평가하기"
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Beoordeel Coincide Remote"
+            "value" : "Beoordeel Coincide"
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Oceń Coincide Remote"
+            "value" : "Oceń Coincide"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Avaliar o Coincide Remote"
+            "value" : "Avaliar o Coincide"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Оценить Coincide Remote"
+            "value" : "Оценить Coincide"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote'u Değerlendir"
+            "value" : "Coincide'ı Değerlendir"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Оцінити Coincide Remote"
+            "value" : "Оцінити Coincide"
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Đánh giá Coincide Remote"
+            "value" : "Đánh giá Coincide"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "为 Coincide Remote 评分"
+            "value" : "为 Coincide 评分"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "為 Coincide Remote 評分"
+            "value" : "為 Coincide 評分"
           }
         }
       }
@@ -60626,6 +60738,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "按 Return 傳送"
+          }
+        }
+      }
+    },
+    "Sending messages needs Coincide Pro" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zum Senden von Nachrichten brauchst du Coincide Pro"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Para enviar mensajes necesitas Coincide Pro"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Para enviar mensajes necesitas Coincide Pro"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’envoi de messages nécessite Coincide Pro"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "संदेश भेजने के लिए Coincide Pro चाहिए"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mengirim pesan memerlukan Coincide Pro"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Per inviare messaggi serve Coincide Pro"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "メッセージの送信には Coincide Pro が必要です"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "메시지를 보내려면 Coincide Pro가 필요합니다"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voor het versturen van berichten heb je Coincide Pro nodig"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wysyłanie wiadomości wymaga Coincide Pro"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enviar mensagens requer o Coincide Pro"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Для отправки сообщений нужен Coincide Pro"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mesaj göndermek için Coincide Pro gerekir"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Для надсилання повідомлень потрібен Coincide Pro"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gửi tin nhắn cần Coincide Pro"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "发送消息需要 Coincide Pro"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "傳送訊息需要 Coincide Pro"
           }
         }
       }
@@ -72177,6 +72401,230 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "此動作無法還原。"
+          }
+        }
+      }
+    },
+    "This iPad" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieses iPad"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este iPad"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este iPad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cet iPad"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह iPad"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iPad Ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questo iPad"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このiPad"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 iPad"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze iPad"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten iPad"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este iPad"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот iPad"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu iPad"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей iPad"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iPad này"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 iPad"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 iPad"
+          }
+        }
+      }
+    },
+    "This iPhone" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieses iPhone"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este iPhone"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este iPhone"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cet iPhone"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "यह iPhone"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iPhone Ini"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questo iPhone"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "このiPhone"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "이 iPhone"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze iPhone"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ten iPhone"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este iPhone"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Этот iPhone"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu iPhone"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Цей iPhone"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "iPhone này"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 iPhone"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "此 iPhone"
           }
         }
       }

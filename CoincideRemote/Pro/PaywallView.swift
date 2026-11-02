@@ -5,25 +5,22 @@ import SwiftUI
 /// Unlock Coincide: what the app does, the Coincide Pro plans at the App Store's prices for this account, and the terms
 /// Apple asks for, in the theme's colors. Yearly, with its free trial, is picked first.
 ///
-/// Without Coincide Pro it stands in for the whole app once a Mac is paired (`Mode.locked`), with Help & Community and
-/// the tips under it; the Connect screen shows it as a sheet before pairing; and Settings' Coincide Pro pane shows
-/// what's active.
+/// A sheet that closes (`ProGate` shows it for an action that needs Coincide Pro, once after the first pairing, and from
+/// the Connect screen), and Settings' Coincide Pro pane, which says what's active once it's on.
 struct PaywallView: View {
     enum Mode {
-        /// In place of the app, after pairing, until it's unlocked.
-        case locked
-        /// Over the Connect screen, before pairing.
+        /// Over the app, with a close button.
         case sheet
         /// Settings › Coincide Pro.
         case pane
     }
 
     var mode = Mode.pane
+    /// Closes the sheet (`PaywallPresenter`).
+    var close: () -> Void = {}
     @Environment(ProStore.self) private var store
     @Environment(RemoteClient.self) private var client
-    @Environment(Navigator.self) private var navigator
     @Environment(\.theme) private var theme
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var selected = ProPlan.Kind.annual
@@ -34,20 +31,6 @@ struct PaywallView: View {
     private var isSheet: Bool { mode == .sheet }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            content
-            #if DEBUG
-            // Screenshots of a locked app's support section: `-CoincideRemoteDemoScrollSupport`.
-            .task {
-                guard DemoData.has("ScrollSupport") else { return }
-                try? await Task.sleep(for: .seconds(1))
-                proxy.scrollTo("support", anchor: .top)
-            }
-            #endif
-        }
-    }
-
-    private var content: some View {
         ScrollView {
             VStack(spacing: 16) {
                 header
@@ -61,11 +44,10 @@ struct PaywallView: View {
                     .multilineTextAlignment(.center)
                 terms
                 links
-                if mode == .locked { support.id("support") }
             }
             .frame(maxWidth: 600)
             .padding(.horizontal, 20)
-            .padding(.top, mode == .sheet ? 28 : mode == .locked ? 4 : 16)
+            .padding(.top, isSheet ? 28 : 16)
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity)
         }
@@ -76,11 +58,11 @@ struct PaywallView: View {
         }
         .navigationTitle(Text(verbatim: mode == .pane ? "Coincide Pro" : ""))
         .navigationBarTitleDisplayMode(.inline)
-        // Full screen, without a bar, so the plans fit on the first screen; a sheet has a close button over it.
-        .toolbarVisibility(mode == .pane ? .automatic : .hidden, for: .navigationBar)
+        // As a sheet, a close button over the content instead of a bar, so the plans fit on the first screen.
+        .toolbarVisibility(isSheet ? .hidden : .automatic, for: .navigationBar)
         .overlay(alignment: .topTrailing) {
             if isSheet {
-                Button { dismiss() } label: {
+                Button(action: close) {
                     Image(systemName: "xmark")
                         .font(.body.weight(.semibold))
                         .foregroundStyle(theme.ink)
@@ -107,8 +89,6 @@ struct PaywallView: View {
         } message: {
             Text(alert?.text ?? "")
         }
-        // Only where the tips are listed; Settings' list presents its own.
-        .tipJarPresentations(store, isEnabled: mode == .locked)
     }
 
     // MARK: Header and highlights
@@ -185,26 +165,6 @@ struct PaywallView: View {
         .accessibilityHint(Text(item.detail))
     }
 
-    /// Under a locked app's paywall: the paired Mac, Help & Community and the tips, as Settings lists them, so support and
-    /// thanks stay a tap away.
-    private var support: some View {
-        VStack(spacing: 0) {
-            if let mac = client.mac {
-                SidebarHeader(Text("Paired Mac"))
-                SidebarNote(text: client.server?.name ?? mac.name, symbol: "laptopcomputer")
-                    .frame(minHeight: 44)
-                    .padding(.horizontal, 10)
-                Button { navigator.showsConnect = true } label: {
-                    SettingsTileLabel(title: String(localized: "Pair Another Mac"), symbol: "plus", color: "gray")
-                }
-                .buttonStyle(SidebarRowButtonStyle())
-            }
-            TipJarRows()
-            HelpCommunityRows()
-        }
-        .padding(.top, 8)
-    }
-
     // MARK: Plans
 
     @ViewBuilder private var plans: some View {
@@ -272,15 +232,15 @@ struct PaywallView: View {
                 } label: {
                     Group {
                         if store.busy == plan.id {
-                            ProgressView().tint(theme.onControl)
+                            ProgressView().tint(theme.onAccent)
                         } else {
                             Text(PaywallText.action(plan)).font(.headline)
                         }
                     }
-                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .frame(maxWidth: .infinity, minHeight: 52)
                 }
-                .prominentButton()
-                .disabled(store.busy != nil || plan.package == nil && !DemoMode.isOn)
+                .buttonStyle(PurchaseButtonStyle())
+                .disabled(store.busy != nil)
             }
         }
         .frame(maxWidth: 600)
@@ -298,7 +258,7 @@ struct PaywallView: View {
             alert = store.takeMessage()
             guard bought, store.isPro else { return }
             client.notice = String(localized: "Coincide is unlocked. Thank you for supporting Coincide!")
-            if isSheet { dismiss() }
+            if isSheet { close() }
         }
     }
 
@@ -516,16 +476,6 @@ enum PaywallText {
     }
 }
 
-/// Whether the screenshot demo runs (`-CoincideRemoteDemo`), where plans have no App Store package.
-enum DemoMode {
-    static var isOn: Bool {
-        #if DEBUG
-        DemoData.isEnabled
-        #else
-        false
-        #endif
-    }
-}
 
 /// The main things Coincide does from a phone, as the paywall lists them.
 enum CoincideHighlight: String, CaseIterable, Identifiable {
@@ -604,13 +554,19 @@ enum CoincideHighlight: String, CaseIterable, Identifiable {
     }
 }
 
-extension View {
-    /// The paywall as a sheet, as the Connect screen shows it before pairing.
-    func paywallSheet(isPresented: Binding<Bool>) -> some View {
-        sheet(isPresented: isPresented) {
-            // A page on iPad, so the plans fit; a full sheet on iPhone.
-            NavigationStack { PaywallView(mode: .sheet) }
-                .presentationSizing(.page)
-        }
+/// The buy button: solid in the theme's accent, with the text color that reads best on it, so it never looks disabled
+/// on a dark theme the way a translucent glass button can.
+private struct PurchaseButtonStyle: ButtonStyle {
+    @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(theme.onAccent)
+            .background(theme.accent, in: .capsule)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.6)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+            .contentShape(.capsule)
     }
 }

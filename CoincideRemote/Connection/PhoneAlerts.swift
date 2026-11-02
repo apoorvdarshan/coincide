@@ -212,8 +212,8 @@ final class PhoneAlerts: NSObject, UNUserNotificationCenterDelegate {
         if enabled { await setUpLockScreen() } else { await tearDownLockScreen() }
     }
 
-    /// RevenueCat confirmed there's no Coincide Pro (`ProStore`), which the app needs: lock-screen alerts stop, so a
-    /// locked app gets none, until it's unlocked and they're turned on again.
+    /// RevenueCat confirmed there's no Coincide Pro (`ProStore`), which lock-screen alerts are part of: they stop until
+    /// it's on and they're turned on again.
     func proAccessEnded() {
         guard isLockScreenEnabled else { return }
         Task { await setLockScreenAlerts(false) }

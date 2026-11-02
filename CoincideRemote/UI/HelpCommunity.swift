@@ -196,7 +196,7 @@ struct RateRemoteRow: View {
                 requestReview()
             }
         } label: {
-            SettingsTileLabel(title: String(localized: "Rate Coincide Remote"), symbol: "star.bubble.fill", color: "yellow")
+            SettingsTileLabel(title: String(localized: "Rate Coincide"), symbol: "star.bubble.fill", color: "yellow")
         }
         .buttonStyle(SidebarRowButtonStyle())
         .accessibilityHint(Text("Asks iOS to show its review prompt"))

@@ -276,16 +276,16 @@ struct PullRequestDetailView: View {
             if let detail, detail.canMerge, !detail.mergeMethods.isEmpty {
                 Menu {
                     ForEach(detail.mergeMethods, id: \.self) { method in
-                        Button(Self.mergeTitle(method)) { merging = method }
+                        Button(Self.mergeTitle(method)) { if ProGate.allows() { merging = method } }
                     }
                 } label: {
                     Label("Merge", systemImage: "arrow.triangle.merge")
                 }
             }
             if current.state == .open {
-                Button { reviewing = "APPROVE" } label: { Label("Approve…", systemImage: "checkmark.circle") }
-                Button { reviewing = "COMMENT" } label: { Label("Comment…", systemImage: "text.bubble") }
-                Button { reviewing = "REQUEST_CHANGES" } label: { Label("Request Changes…", systemImage: "exclamationmark.bubble") }
+                Button { if ProGate.allows() { reviewing = "APPROVE" } } label: { Label("Approve…", systemImage: "checkmark.circle") }
+                Button { if ProGate.allows() { reviewing = "COMMENT" } } label: { Label("Comment…", systemImage: "text.bubble") }
+                Button { if ProGate.allows() { reviewing = "REQUEST_CHANGES" } } label: { Label("Request Changes…", systemImage: "exclamationmark.bubble") }
                 if current.isDraft {
                     Button { perform(.markReady) } label: { Label("Mark as Ready for Review", systemImage: "eye") }
                 }

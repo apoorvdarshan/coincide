@@ -11,7 +11,6 @@ struct ConnectView: View {
     @Environment(\.theme) private var theme
     @Environment(ProStore.self) private var store
     @State private var scanning = false
-    @State private var showsPlans = false
     @State private var pairing = false
     @State private var error: String?
     @State private var payload: RemotePairingPayload?
@@ -44,11 +43,12 @@ struct ConnectView: View {
                 handle(code)
             }
         }
-        .paywallSheet(isPresented: $showsPlans)
         #if DEBUG
         // The plans with the App Store's own prices, without a tap: `-CoincideRemoteShowPlans`.
         .task {
-            if isOnboarding, ProcessInfo.processInfo.arguments.contains("-CoincideRemoteShowPlans") { showsPlans = true }
+            guard isOnboarding, ProcessInfo.processInfo.arguments.contains("-CoincideRemoteShowPlans") else { return }
+            try? await Task.sleep(for: .seconds(1))
+            PaywallPresenter.shared.present()
         }
         #endif
     }
@@ -117,9 +117,9 @@ struct ConnectView: View {
                 .foregroundStyle(theme.tertiaryInk)
                 .multilineTextAlignment(.center)
                 .padding(.top, 4)
-            // The app needs Coincide Pro once a Mac is paired; its plans (and Restore Purchases) are a tap away before.
+            // Coincide Pro's plans, and Restore Purchases, before any Mac is paired.
             if isOnboarding, !store.isPro {
-                Button { showsPlans = true } label: {
+                Button { PaywallPresenter.shared.present() } label: {
                     Label("Coincide Pro Plans", systemImage: "sparkles")
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(theme.secondaryInk)
@@ -177,7 +177,7 @@ struct ConnectView: View {
                 }
             } else if client.bonjour.isDenied {
                 SidebarHeader(Text("On This Network"))
-                Text("Allow Local Network access for Coincide Remote in Settings › Privacy & Security › Local Network to find Macs nearby.")
+                Text("Allow Local Network access for Coincide in Settings › Privacy & Security › Local Network to find Macs nearby.")
                     .font(.footnote)
                     .foregroundStyle(theme.secondaryInk)
                     .padding(.horizontal, 10)
@@ -243,6 +243,7 @@ struct ConnectView: View {
                 pairing = false
                 navigator.reset()
                 close()
+                PaywallPresenter.shared.offerAfterFirstPairing()
             } catch {
                 pairing = false
                 self.error = (error as? RemoteError)?.message ?? error.localizedDescription

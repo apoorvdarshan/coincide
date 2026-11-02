@@ -1,8 +1,8 @@
 import CoincideRemoteKit
 import SwiftUI
 
-/// Support Coincide: the four tips at the App Store's prices, above Help & Community in Settings and under a locked
-/// app's paywall. A tip says thank you and unlocks nothing. The view they're in shows the thank-you and any failure
+/// Support Coincide: the four tips at the App Store's prices, above Help & Community in Settings, which needs no
+/// Coincide Pro. A tip says thank you and unlocks nothing. The list they're in shows the thank-you and any failure
 /// (`tipJarPresentations`), since a row's own sheet goes when the row scrolls away.
 struct TipJarRows: View {
     @Environment(ProStore.self) private var store

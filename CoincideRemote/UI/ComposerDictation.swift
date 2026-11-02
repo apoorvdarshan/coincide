@@ -45,7 +45,7 @@ final class RemoteDictation {
             do {
                 guard await AVAudioApplication.requestRecordPermission() else {
                     needsSettings = true
-                    throw DictationFailure(String(localized: "Coincide Remote doesn’t have access to the microphone. Turn it on in Settings."))
+                    throw DictationFailure(String(localized: "Coincide doesn’t have access to the microphone. Turn it on in Settings."))
                 }
                 let recognizer = AppleSpeechRecognizer(locale: .autoupdatingCurrent)
                 self.recognizer = recognizer

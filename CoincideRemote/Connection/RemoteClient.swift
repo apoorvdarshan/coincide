@@ -516,6 +516,10 @@ final class RemoteClient {
 
     @discardableResult
     func request(_ request: RemoteRequest, timeout: Duration = .seconds(30)) async throws -> RemoteResult {
+        // Whatever the Mac would act on needs Coincide Pro; without it the paywall shows instead (`ProGate`).
+        if request.needsPro, !ProGate.allows() {
+            throw RemoteError(.failed, String(localized: "Coincide Pro unlocks this."))
+        }
         guard let socket else { throw RemoteError(.failed, String(localized: "Not connected to the Mac.")) }
         let message = RemoteClientMessage(request: request)
         let data = try RemoteProtocol.makeEncoder().encode(message)

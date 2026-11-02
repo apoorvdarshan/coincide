@@ -4,8 +4,8 @@ import UIKit
 
 /// Connects the app's state to alerts: reports presence to the Mac (in front or not, the open thread, the last
 /// touch), shows alerts the Mac sends as a banner, clears them when a thread is seen anywhere, and opens the thread
-/// when one is tapped. While the app is locked behind Coincide Pro it reports itself as not in use and shows no alerts,
-/// so the Mac goes on notifying where the user can act on them.
+/// when one is tapped. Without Coincide Pro, which acting on an alert needs (`ProGate`), it reports itself as not in use
+/// and shows no alerts, so the Mac goes on notifying where the user can act on them.
 struct AlertsCoordinator: ViewModifier {
     @Environment(RemoteClient.self) private var client
     @Environment(Navigator.self) private var navigator
@@ -34,7 +34,8 @@ struct AlertsCoordinator: ViewModifier {
                 // Already paired before alerts existed: ask the first time the Mac is reached.
                 Task { await alerts.requestAuthorizationIfNeeded() }
             }
-            // Unlocked or locked: the Mac hears it at once, and an unlocked app asks for notifications as pairing would.
+            // Coincide Pro turned on or off: the Mac hears it at once, and with it on the app asks for notifications as
+            // pairing would.
             .onChange(of: store.isPro) { _, unlocked in
                 client.sendPresence()
                 guard unlocked, client.isConnected, client.server?.notifies == true else { return }
@@ -75,7 +76,7 @@ struct AlertsCoordinator: ViewModifier {
             Task { await alerts.requestAuthorizationIfNeeded() }
         }
         client.presenceSource = { [client, navigator, alerts, store] in
-            // Locked: as if the app weren't in use, with no lock-screen zone, so alerts stay on the Mac.
+            // Without Coincide Pro: as if the app weren't in use, with no lock-screen zone, so alerts stay on the Mac.
             let unlocked = store.isPro
             let state = unlocked ? alerts.phase : .background
             return RemotePresence(

@@ -566,7 +566,7 @@ struct WaitingBanner: View {
                         .foregroundStyle(.orange)
                         .lineLimit(3)
                     HStack {
-                        Button("Answer…") { answering = item }.prominentButton()
+                        Button("Answer…") { if ProGate.allows() { answering = item } }.prominentButton()
                         Button("Dismiss") {
                             Task { await client.perform(.dismissQuestion(threadID: model.id, itemID: item.id)) }
                         }

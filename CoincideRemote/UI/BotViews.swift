@@ -137,7 +137,7 @@ struct BotsView: View {
                         : "A bot is an assistant you set up once and talk to anytime.")
                 } actions: {
                     if client.workspace.bots != nil {
-                        Button("New Bot") { editing = .new }
+                        Button("New Bot") { if ProGate.allows() { editing = .new } }
                             .prominentButton()
                     }
                 }
@@ -154,7 +154,7 @@ struct BotsView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button { editing = .new } label: { Label("New Bot", systemImage: "plus") }
+                Button { if ProGate.allows() { editing = .new } } label: { Label("New Bot", systemImage: "plus") }
                     .disabled(!client.isConnected || client.workspace.bots == nil)
             }
         }

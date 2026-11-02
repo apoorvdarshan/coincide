@@ -7,115 +7,115 @@
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote verwendet die Kamera, um den Kopplungscode deines Mac zu scannen und Fotos zum Anhängen aufzunehmen."
+            "value" : "Coincide verwendet die Kamera, um den Kopplungscode deines Mac zu scannen und Fotos zum Anhängen aufzunehmen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Coincide Remote uses the camera to scan the pairing code your Mac shows and to take photos you attach."
+            "value" : "Coincide uses the camera to scan the pairing code your Mac shows and to take photos you attach."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote usa la cámara para escanear el código de vinculación que muestra tu Mac y para hacer las fotos que adjuntas."
+            "value" : "Coincide usa la cámara para escanear el código de vinculación que muestra tu Mac y para hacer las fotos que adjuntas."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote usa la cámara para escanear el código de vinculación que muestra tu Mac y para tomar las fotos que adjuntas."
+            "value" : "Coincide usa la cámara para escanear el código de vinculación que muestra tu Mac y para tomar las fotos que adjuntas."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote utilise l’appareil photo pour scanner le code de jumelage affiché par votre Mac et prendre les photos que vous joignez."
+            "value" : "Coincide utilise l’appareil photo pour scanner le code de jumelage affiché par votre Mac et prendre les photos que vous joignez."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote आपके Mac पर दिखने वाला पेयरिंग कोड स्कैन करने और अटैच की जाने वाली फ़ोटो लेने के लिए कैमरा इस्तेमाल करता है।"
+            "value" : "Coincide आपके Mac पर दिखने वाला पेयरिंग कोड स्कैन करने और अटैच की जाने वाली फ़ोटो लेने के लिए कैमरा इस्तेमाल करता है।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote menggunakan kamera untuk memindai kode pemasangan yang ditampilkan Mac Anda dan mengambil foto yang Anda lampirkan."
+            "value" : "Coincide menggunakan kamera untuk memindai kode pemasangan yang ditampilkan Mac Anda dan mengambil foto yang Anda lampirkan."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote usa la fotocamera per scansionare il codice di abbinamento mostrato dal Mac e scattare le foto che alleghi."
+            "value" : "Coincide usa la fotocamera per scansionare il codice di abbinamento mostrato dal Mac e scattare le foto che alleghi."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote は、Mac に表示されるペアリングコードの読み取りと、添付する写真の撮影にカメラを使用します。"
+            "value" : "Coincide は、Mac に表示されるペアリングコードの読み取りと、添付する写真の撮影にカメラを使用します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote는 Mac에 표시된 페어링 코드를 스캔하고 첨부할 사진을 찍는 데 카메라를 사용합니다."
+            "value" : "Coincide는 Mac에 표시된 페어링 코드를 스캔하고 첨부할 사진을 찍는 데 카메라를 사용합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote gebruikt de camera om de koppelcode van je Mac te scannen en foto’s te maken die je bijvoegt."
+            "value" : "Coincide gebruikt de camera om de koppelcode van je Mac te scannen en foto’s te maken die je bijvoegt."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote używa aparatu do skanowania kodu parowania wyświetlanego przez Maca i robienia zdjęć, które załączasz."
+            "value" : "Coincide używa aparatu do skanowania kodu parowania wyświetlanego przez Maca i robienia zdjęć, które załączasz."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O Coincide Remote usa a câmera para ler o código de pareamento que o seu Mac mostra e tirar as fotos que você anexa."
+            "value" : "O Coincide usa a câmera para ler o código de pareamento que o seu Mac mostra e tirar as fotos que você anexa."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote использует камеру, чтобы сканировать код привязки на экране Mac и снимать фото для вложений."
+            "value" : "Coincide использует камеру, чтобы сканировать код привязки на экране Mac и снимать фото для вложений."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote, kamerayı Mac’inizin gösterdiği eşleştirme kodunu taramak ve eklediğiniz fotoğrafları çekmek için kullanır."
+            "value" : "Coincide, kamerayı Mac’inizin gösterdiği eşleştirme kodunu taramak ve eklediğiniz fotoğrafları çekmek için kullanır."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote використовує камеру, щоб сканувати код пари на екрані Mac і знімати фото для вкладень."
+            "value" : "Coincide використовує камеру, щоб сканувати код пари на екрані Mac і знімати фото для вкладень."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote dùng camera để quét mã ghép nối mà máy Mac hiển thị và chụp ảnh bạn đính kèm."
+            "value" : "Coincide dùng camera để quét mã ghép nối mà máy Mac hiển thị và chụp ảnh bạn đính kèm."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 使用相机扫描 Mac 显示的配对码，并拍摄你要附加的照片。"
+            "value" : "Coincide 使用相机扫描 Mac 显示的配对码，并拍摄你要附加的照片。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 使用相機掃描 Mac 顯示的配對碼，並拍攝你要附加的照片。"
+            "value" : "Coincide 使用相機掃描 Mac 顯示的配對碼，並拍攝你要附加的照片。"
           }
         }
       }
@@ -126,115 +126,115 @@
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote findet Coincide auf deinen Macs im lokalen Netzwerk und verbindet sich damit."
+            "value" : "Coincide findet deine Macs im lokalen Netzwerk und verbindet sich mit ihnen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Coincide Remote finds and connects to Coincide on your Macs over the local network."
+            "value" : "Coincide finds and connects to your Macs over the local network."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote encuentra Coincide en tus Macs y se conecta a él a través de la red local."
+            "value" : "Coincide encuentra tus Macs y se conecta a ellos a través de la red local."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote encuentra Coincide en tus Macs y se conecta a él a través de la red local."
+            "value" : "Coincide encuentra tus Macs y se conecta a ellas a través de la red local."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote trouve Coincide sur vos Mac et s'y connecte via le réseau local."
+            "value" : "Coincide trouve vos Mac et s'y connecte via le réseau local."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote स्थानीय नेटवर्क पर आपके Mac में Coincide को ढूँढता है और उससे कनेक्ट करता है।"
+            "value" : "Coincide स्थानीय नेटवर्क पर आपके Mac ढूँढता है और उनसे कनेक्ट करता है।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote menemukan dan terhubung ke Coincide di Mac Anda melalui jaringan lokal."
+            "value" : "Coincide menemukan dan terhubung ke Mac Anda melalui jaringan lokal."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote trova Coincide sui tuoi Mac e si connette tramite la rete locale."
+            "value" : "Coincide trova i tuoi Mac e si connette a loro tramite la rete locale."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remoteは、ローカルネットワーク経由でMac上のCoincideを見つけて接続します。"
+            "value" : "Coincideは、ローカルネットワーク経由でMacを見つけて接続します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote는 로컬 네트워크에서 Mac의 Coincide를 찾아 연결합니다."
+            "value" : "Coincide는 로컬 네트워크에서 Mac을 찾아 연결합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote vindt Coincide op je Macs via het lokale netwerk en maakt er verbinding mee."
+            "value" : "Coincide vindt je Macs via het lokale netwerk en maakt er verbinding mee."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote wyszukuje Coincide na Twoich Makach i łączy się z nim przez sieć lokalną."
+            "value" : "Coincide wyszukuje Twoje Maki i łączy się z nimi przez sieć lokalną."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O Coincide Remote encontra o Coincide nos seus Macs e se conecta a ele pela rede local."
+            "value" : "O Coincide encontra os seus Macs e se conecta a eles pela rede local."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote находит Coincide на ваших компьютерах Mac и подключается к нему через локальную сеть."
+            "value" : "Coincide находит ваши компьютеры Mac и подключается к ним через локальную сеть."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote, Mac'lerinizdeki Coincide'ı yerel ağ üzerinden bulur ve ona bağlanır."
+            "value" : "Coincide, Mac'lerinizi yerel ağ üzerinden bulur ve onlara bağlanır."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote знаходить Coincide на ваших комп’ютерах Mac і підключається до нього через локальну мережу."
+            "value" : "Coincide знаходить ваші комп’ютери Mac і підключається до них через локальну мережу."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote tìm và kết nối với Coincide trên các máy Mac của bạn qua mạng cục bộ."
+            "value" : "Coincide tìm và kết nối với các máy Mac của bạn qua mạng cục bộ."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 通过本地网络查找并连接你 Mac 上的 Coincide。"
+            "value" : "Coincide 通过本地网络查找并连接你的 Mac。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 會透過區域網路尋找並連線至你 Mac 上的 Coincide。"
+            "value" : "Coincide 會透過區域網路尋找並連線至你的 Mac。"
           }
         }
       }
@@ -245,115 +245,115 @@
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote verwendet das Mikrofon, während du eine Nachricht diktierst."
+            "value" : "Coincide verwendet das Mikrofon, während du eine Nachricht diktierst."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Coincide Remote listens to the microphone while you dictate a message."
+            "value" : "Coincide listens to the microphone while you dictate a message."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote escucha el micrófono mientras dictas un mensaje."
+            "value" : "Coincide escucha el micrófono mientras dictas un mensaje."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote escucha el micrófono mientras dictas un mensaje."
+            "value" : "Coincide escucha el micrófono mientras dictas un mensaje."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote écoute le micro pendant que vous dictez un message."
+            "value" : "Coincide écoute le micro pendant que vous dictez un message."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "जब आप कोई संदेश डिक्टेट करते हैं, तब Coincide Remote माइक्रोफ़ोन सुनता है।"
+            "value" : "जब आप कोई संदेश डिक्टेट करते हैं, तब Coincide माइक्रोफ़ोन सुनता है।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote mendengarkan mikrofon saat Anda mendiktekan pesan."
+            "value" : "Coincide mendengarkan mikrofon saat Anda mendiktekan pesan."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote ascolta il microfono mentre detti un messaggio."
+            "value" : "Coincide ascolta il microfono mentre detti un messaggio."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remoteは、メッセージを音声入力している間マイクの音声を聞き取ります。"
+            "value" : "Coincideは、メッセージを音声入力している間マイクの音声を聞き取ります。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote는 메시지를 받아쓰는 동안 마이크를 듣습니다."
+            "value" : "Coincide는 메시지를 받아쓰는 동안 마이크를 듣습니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote luistert naar de microfoon terwijl je een bericht dicteert."
+            "value" : "Coincide luistert naar de microfoon terwijl je een bericht dicteert."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote słucha mikrofonu, gdy dyktujesz wiadomość."
+            "value" : "Coincide słucha mikrofonu, gdy dyktujesz wiadomość."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O Coincide Remote escuta o microfone enquanto você dita uma mensagem."
+            "value" : "O Coincide escuta o microfone enquanto você dita uma mensagem."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote слушает микрофон, пока вы диктуете сообщение."
+            "value" : "Coincide слушает микрофон, пока вы диктуете сообщение."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote, siz bir mesajı dikte ederken mikrofonu dinler."
+            "value" : "Coincide, siz bir mesajı dikte ederken mikrofonu dinler."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote слухає мікрофон, поки ви диктуєте повідомлення."
+            "value" : "Coincide слухає мікрофон, поки ви диктуєте повідомлення."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote nghe micrô trong lúc bạn đọc một tin nhắn."
+            "value" : "Coincide nghe micrô trong lúc bạn đọc một tin nhắn."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 会在你听写消息时使用麦克风收听。"
+            "value" : "Coincide 会在你听写消息时使用麦克风收听。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 會在你聽寫訊息時使用麥克風收音。"
+            "value" : "Coincide 會在你聽寫訊息時使用麥克風收音。"
           }
         }
       }
@@ -364,115 +364,115 @@
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote speichert die Bilder, die du auswählst, in deiner Fotomediathek."
+            "value" : "Coincide speichert die Bilder, die du auswählst, in deiner Fotomediathek."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Coincide Remote saves the pictures you choose to your photo library."
+            "value" : "Coincide saves the pictures you choose to your photo library."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote guarda en tu fototeca las imágenes que elijas."
+            "value" : "Coincide guarda en tu fototeca las imágenes que elijas."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote guarda en tu fototeca las imágenes que elijas."
+            "value" : "Coincide guarda en tu fototeca las imágenes que elijas."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote enregistre dans votre photothèque les images que vous choisissez."
+            "value" : "Coincide enregistre dans votre photothèque les images que vous choisissez."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote आपकी चुनी हुई तस्वीरें आपकी फ़ोटो लाइब्रेरी में सहेजता है।"
+            "value" : "Coincide आपकी चुनी हुई तस्वीरें आपकी फ़ोटो लाइब्रेरी में सहेजता है।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote menyimpan gambar yang Anda pilih ke perpustakaan foto Anda."
+            "value" : "Coincide menyimpan gambar yang Anda pilih ke perpustakaan foto Anda."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote salva nella tua libreria foto le immagini che scegli."
+            "value" : "Coincide salva nella tua libreria foto le immagini che scegli."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote は、選んだ画像を写真ライブラリに保存します。"
+            "value" : "Coincide は、選んだ画像を写真ライブラリに保存します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote는 선택한 사진을 사진 보관함에 저장합니다."
+            "value" : "Coincide는 선택한 사진을 사진 보관함에 저장합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote bewaart de afbeeldingen die je kiest in je fotobibliotheek."
+            "value" : "Coincide bewaart de afbeeldingen die je kiest in je fotobibliotheek."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote zapisuje wybrane obrazy w Twojej bibliotece zdjęć."
+            "value" : "Coincide zapisuje wybrane obrazy w Twojej bibliotece zdjęć."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O Coincide Remote salva na sua fototeca as imagens que você escolher."
+            "value" : "O Coincide salva na sua fototeca as imagens que você escolher."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote сохраняет выбранные изображения в вашу медиатеку."
+            "value" : "Coincide сохраняет выбранные изображения в вашу медиатеку."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote, seçtiğiniz görselleri fotoğraf arşivinize kaydeder."
+            "value" : "Coincide, seçtiğiniz görselleri fotoğraf arşivinize kaydeder."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote зберігає вибрані зображення у вашу медіатеку."
+            "value" : "Coincide зберігає вибрані зображення у вашу медіатеку."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote lưu những ảnh bạn chọn vào thư viện ảnh của bạn."
+            "value" : "Coincide lưu những ảnh bạn chọn vào thư viện ảnh của bạn."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 会将你选择的图片存储到你的照片图库。"
+            "value" : "Coincide 会将你选择的图片存储到你的照片图库。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 會將你選擇的圖片儲存到你的照片圖庫。"
+            "value" : "Coincide 會將你選擇的圖片儲存到你的照片圖庫。"
           }
         }
       }
@@ -483,115 +483,115 @@
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote hängt die Fotos, die du auswählst, an deine Nachrichten an."
+            "value" : "Coincide hängt die Fotos, die du auswählst, an deine Nachrichten an."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Coincide Remote attaches the photos you pick to your messages."
+            "value" : "Coincide attaches the photos you pick to your messages."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote adjunta a tus mensajes las fotos que elijas."
+            "value" : "Coincide adjunta a tus mensajes las fotos que elijas."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote adjunta a tus mensajes las fotos que elijas."
+            "value" : "Coincide adjunta a tus mensajes las fotos que elijas."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote joint à vos messages les photos que vous choisissez."
+            "value" : "Coincide joint à vos messages les photos que vous choisissez."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote आपके चुने हुए फ़ोटो आपके संदेशों में अटैच करता है।"
+            "value" : "Coincide आपके चुने हुए फ़ोटो आपके संदेशों में अटैच करता है।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote melampirkan foto yang Anda pilih ke pesan Anda."
+            "value" : "Coincide melampirkan foto yang Anda pilih ke pesan Anda."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote allega ai tuoi messaggi le foto che scegli."
+            "value" : "Coincide allega ai tuoi messaggi le foto che scegli."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remoteは、選択した写真をメッセージに添付します。"
+            "value" : "Coincideは、選択した写真をメッセージに添付します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote는 선택한 사진을 메시지에 첨부합니다."
+            "value" : "Coincide는 선택한 사진을 메시지에 첨부합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote voegt de foto's die je kiest toe aan je berichten."
+            "value" : "Coincide voegt de foto's die je kiest toe aan je berichten."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote dołącza wybrane przez Ciebie zdjęcia do Twoich wiadomości."
+            "value" : "Coincide dołącza wybrane przez Ciebie zdjęcia do Twoich wiadomości."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O Coincide Remote anexa às suas mensagens as fotos que você escolher."
+            "value" : "O Coincide anexa às suas mensagens as fotos que você escolher."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote прикрепляет выбранные вами фото к сообщениям."
+            "value" : "Coincide прикрепляет выбранные вами фото к сообщениям."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote, seçtiğiniz fotoğrafları mesajlarınıza ekler."
+            "value" : "Coincide, seçtiğiniz fotoğrafları mesajlarınıza ekler."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote прикріплює вибрані вами фото до повідомлень."
+            "value" : "Coincide прикріплює вибрані вами фото до повідомлень."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote đính kèm những ảnh bạn chọn vào tin nhắn."
+            "value" : "Coincide đính kèm những ảnh bạn chọn vào tin nhắn."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 会将你选择的照片附加到消息中。"
+            "value" : "Coincide 会将你选择的照片附加到消息中。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 會將你選擇的照片附加到訊息中。"
+            "value" : "Coincide 會將你選擇的照片附加到訊息中。"
           }
         }
       }
@@ -602,115 +602,115 @@
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote wandelt dein Diktat mit der Spracherkennung von Apple auf diesem Gerät in Text um."
+            "value" : "Coincide wandelt dein Diktat mit der Spracherkennung von Apple auf diesem Gerät in Text um."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Coincide Remote turns your dictation into text with Apple’s speech recognition on this device."
+            "value" : "Coincide turns your dictation into text with Apple’s speech recognition on this device."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote convierte tu dictado en texto con el reconocimiento de voz de Apple en este dispositivo."
+            "value" : "Coincide convierte tu dictado en texto con el reconocimiento de voz de Apple en este dispositivo."
           }
         },
         "es-419" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote convierte tu dictado en texto con el reconocimiento de voz de Apple en este dispositivo."
+            "value" : "Coincide convierte tu dictado en texto con el reconocimiento de voz de Apple en este dispositivo."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote convertit votre dictée en texte grâce à la reconnaissance vocale d’Apple sur cet appareil."
+            "value" : "Coincide convertit votre dictée en texte grâce à la reconnaissance vocale d’Apple sur cet appareil."
           }
         },
         "hi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote इस डिवाइस पर Apple के स्पीच रिकग्निशन से आपके डिक्टेशन को टेक्स्ट में बदलता है।"
+            "value" : "Coincide इस डिवाइस पर Apple के स्पीच रिकग्निशन से आपके डिक्टेशन को टेक्स्ट में बदलता है।"
           }
         },
         "id" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote mengubah dikte Anda menjadi teks dengan pengenalan ucapan Apple di perangkat ini."
+            "value" : "Coincide mengubah dikte Anda menjadi teks dengan pengenalan ucapan Apple di perangkat ini."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote trasforma la tua dettatura in testo con il riconoscimento vocale di Apple su questo dispositivo."
+            "value" : "Coincide trasforma la tua dettatura in testo con il riconoscimento vocale di Apple su questo dispositivo."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remoteは、このデバイス上のAppleの音声認識を使って音声入力をテキストに変換します。"
+            "value" : "Coincideは、このデバイス上のAppleの音声認識を使って音声入力をテキストに変換します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote는 이 기기에서 Apple의 음성 인식을 사용하여 받아쓰기를 텍스트로 변환합니다."
+            "value" : "Coincide는 이 기기에서 Apple의 음성 인식을 사용하여 받아쓰기를 텍스트로 변환합니다."
           }
         },
         "nl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote zet je dictaat om in tekst met de spraakherkenning van Apple op dit apparaat."
+            "value" : "Coincide zet je dictaat om in tekst met de spraakherkenning van Apple op dit apparaat."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote zamienia Twoje dyktowanie na tekst za pomocą rozpoznawania mowy Apple na tym urządzeniu."
+            "value" : "Coincide zamienia Twoje dyktowanie na tekst za pomocą rozpoznawania mowy Apple na tym urządzeniu."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O Coincide Remote transforma seu ditado em texto com o reconhecimento de fala da Apple neste dispositivo."
+            "value" : "O Coincide transforma seu ditado em texto com o reconhecimento de fala da Apple neste dispositivo."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote преобразует диктовку в текст с помощью распознавания речи Apple на этом устройстве."
+            "value" : "Coincide преобразует диктовку в текст с помощью распознавания речи Apple на этом устройстве."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote, bu aygıttaki Apple konuşma tanıma özelliğiyle diktenizi metne dönüştürür."
+            "value" : "Coincide, bu aygıttaki Apple konuşma tanıma özelliğiyle diktenizi metne dönüştürür."
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote перетворює диктування на текст за допомогою розпізнавання мовлення Apple на цьому пристрої."
+            "value" : "Coincide перетворює диктування на текст за допомогою розпізнавання мовлення Apple на цьому пристрої."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote chuyển lời đọc chính tả của bạn thành văn bản bằng tính năng nhận dạng giọng nói của Apple trên thiết bị này."
+            "value" : "Coincide chuyển lời đọc chính tả của bạn thành văn bản bằng tính năng nhận dạng giọng nói của Apple trên thiết bị này."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 会使用这台设备上的 Apple 语音识别将你的听写内容转换为文字。"
+            "value" : "Coincide 会使用这台设备上的 Apple 语音识别将你的听写内容转换为文字。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Coincide Remote 會使用這台裝置上的 Apple 語音辨識，將你的聽寫內容轉換為文字。"
+            "value" : "Coincide 會使用這台裝置上的 Apple 語音辨識，將你的聽寫內容轉換為文字。"
           }
         }
       }

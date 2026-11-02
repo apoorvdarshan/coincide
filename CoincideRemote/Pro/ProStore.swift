@@ -120,8 +120,8 @@ struct Tip: Identifiable {
 
 /// Coincide Pro and tips through RevenueCat, with an anonymous app user ID (no account, no tracking).
 ///
-/// Coincide Pro unlocks the whole app: without it, after pairing a Mac, the paywall stands in for everything else
-/// (`RootView`). It unlocks only from the `pro` entitlement in a RevenueCat answer that passed its signature check
+/// Coincide Pro unlocks every action on the Mac; without it the app can be browsed and each action shows the paywall
+/// (`ProGate`). It unlocks only from the `pro` entitlement in a RevenueCat answer that passed its signature check
 /// (`EntitlementVerificationMode.informational`), and the last such answer is kept: a refresh that fails, or an answer
 /// that fails the check, changes nothing, so known access is never taken away by a bad connection. A real answer
 /// without the entitlement (a subscription that expired or was refunded) ends Pro.
@@ -205,7 +205,7 @@ final class ProStore {
         }
     }
 
-    /// Whether the app is unlocked.
+    /// Whether actions are unlocked (`ProGate`).
     var isPro: Bool { access?.grants(at: Date()) ?? false }
 
     /// The App Store public SDK key from Info.plist (`RevenueCatAPIKey`). Only an App Store key (`appl_`) is used, never a
@@ -403,8 +403,8 @@ final class ProStore {
     // MARK: Screenshots
 
     #if DEBUG
-    /// Sample prices for screenshots (`-CoincideRemoteDemo`). As in the App Store build, the paywall comes first;
-    /// `-CoincideRemoteDemoPro` unlocks the app, for screenshots of everything else.
+    /// Sample prices for screenshots (`-CoincideRemoteDemo`). As in the App Store build, browsing is free and actions show
+    /// the paywall; `-CoincideRemoteDemoPro` unlocks them.
     private func loadDemo() {
         isAvailable = true
         plans = [

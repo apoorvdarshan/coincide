@@ -91,7 +91,8 @@ struct SettingsSidebar: View {
             SettingsMacCard(isSelected: isSelected(.macs)) { navigator.settingsPane = .macs }
                 .sidebarRow()
             row(.pro, title: "Coincide Pro", symbol: "sparkles", color: "purple", detail: store.isPro ? String(localized: "Active") : nil)
-            SidebarHeader(Text("Coincide Remote")).sidebarRow()
+            // This phone's own settings, then the Mac's.
+            SidebarHeader(UIDevice.current.userInterfaceIdiom == .pad ? Text("This iPad") : Text("This iPhone")).sidebarRow()
             row(.appearance, title: String(localized: "Appearance"), symbol: "paintpalette.fill", color: "indigo")
             row(.notifications, title: String(localized: "Notifications"), symbol: "bell.badge.fill", color: "red")
             row(.keyboard, title: String(localized: "Hardware Keyboard"), symbol: "keyboard.fill", color: "gray")
@@ -376,7 +377,7 @@ struct MacsSettingsPane: View {
             }
             Button("Cancel", role: .cancel) { addingHostTo = nil }
         } message: {
-            Text("Coincide Remote tries it after the Mac’s own addresses.")
+            Text("Coincide tries it after the Mac’s own addresses.")
         }
         .confirmationDialog(
             "Forget “\(forgetting?.name ?? "")”?", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
@@ -482,7 +483,11 @@ struct AboutSettingsPane: View {
     var body: some View {
         SettingsForm(title: String(localized: "About")) {
             Section {
-                LabeledContent("Coincide Remote", value: RemoteClient.appVersion)
+                LabeledContent {
+                    Text(verbatim: RemoteClient.appVersion)
+                } label: {
+                    UIDevice.current.userInterfaceIdiom == .pad ? Text("Coincide on this iPad") : Text("Coincide on this iPhone")
+                }
                 if let server = client.server {
                     LabeledContent("Coincide on \(server.name)", value: server.appVersion)
                 }
@@ -508,7 +513,7 @@ struct NotificationsSection: View {
             if alerts.authorization == .denied {
                 Label {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Notifications are off for Coincide Remote")
+                        Text("Notifications are off for Coincide")
                         Text("Alerts stay on your Mac. Turn notifications on in Settings to get them here.")
                             .font(.caption).foregroundStyle(theme.secondaryInk)
                     }
@@ -519,7 +524,9 @@ struct NotificationsSection: View {
                     if let url = URL(string: UIApplication.openNotificationSettingsURLString) { openURL(url) }
                 }
             }
+            // Lock-screen alerts are part of Coincide Pro (`ProGate`); turning them off never needs it.
             Toggle(isOn: Binding(get: { alerts.isLockScreenEnabled }, set: { enabled in
+                if enabled, !ProGate.allows() { return }
                 isUpdating = true
                 Task {
                     await alerts.setLockScreenAlerts(enabled)
@@ -562,7 +569,7 @@ struct NotificationsSection: View {
         case .settingUp: (String(localized: "Setting up…"), "hourglass", theme.secondaryInk)
         case .on: (String(localized: "On. Alerts arrive through your iCloud account."), "checkmark.circle.fill", .green)
         case .notificationsDenied:
-            (String(localized: "Allow notifications for Coincide Remote in Settings first."), "exclamationmark.triangle.fill", .orange)
+            (String(localized: "Allow notifications for Coincide in Settings first."), "exclamationmark.triangle.fill", .orange)
         case .unavailable(let message): (message, "icloud.slash", .orange)
         }
     }
