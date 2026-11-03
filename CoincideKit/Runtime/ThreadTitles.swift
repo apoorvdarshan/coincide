@@ -5,10 +5,11 @@ import Foundation
 ///
 /// Naming ends with one look at the title once the first reply shows what a short first message was about
 /// (`TitleRefresh.firstReply`). Only when the user keeps titles up to date (`AppSettings.updatesThreadTitles`) does
-/// the agent look again, every few turns and minutes of a thread in use, much as Claude Code renames a session as its
-/// topic moves on. Every look follows a turn the user started that just completed: never a launch, a timer or an idle
-/// thread. Each sends only the title and a few hundred characters of the conversation, and keeps the title when it
-/// still fits. A thread the user named is never titled by the agent again.
+/// the agent look again, every few turns and minutes of a thread in use for as long as it is used, much as Claude Code
+/// renames a session as its topic moves on; forks and imports join in then too. Every look follows a turn the user
+/// started that just completed: never a launch, a timer or an idle thread. Each sends only the title and a few hundred
+/// characters of the conversation, and keeps the title while it fits what the thread is about now. A thread the user
+/// named is never titled by the agent again.
 @MainActor
 enum ThreadTitles {
     /// How long the agent may take before the thread keeps its title.
@@ -16,10 +17,10 @@ enum ThreadTitles {
 
     /// Naming's look comes only while a thread is within this many turns.
     static let namingTurns = 5
-    /// While titles are kept up to date: the turns and the time between looks, and the most looks a thread gets.
+    /// While titles are kept up to date: the turns and the time between looks. A long thread keeps getting them, so its
+    /// title follows it from topic to topic.
     static let updateTurns = 5
     static let updateInterval: TimeInterval = 10 * 60
-    static let maximumUpdates = 12
 
     /// How much of each part of the conversation a refresh sends.
     nonisolated static let refreshTitleLimit = 100
@@ -121,17 +122,21 @@ enum ThreadTitles {
     /// an archived one.
     ///
     /// Naming's look (`firstReply`) comes at the first completed turn, once, while the thread is within its first
-    /// `namingTurns`. With `updates` on, another (`update`) comes once `updateTurns` more turns and `updateInterval`
-    /// have passed since the last look, up to `maximumUpdates`, so a thread nobody writes in is never looked at.
+    /// `namingTurns`. With `updates` on, another (`update`) comes whenever `updateTurns` more turns and
+    /// `updateInterval` have passed since the last look, so a thread nobody writes in is never looked at.
     ///
     /// A thread from before looks were counted (`titleRefreshes` is nil) joins in at its next completed turn, never at
-    /// launch. Imports and forks (`isFork`) came with their messages and the titles that went with them, and keep those.
+    /// launch. Imports and forks (`isFork`) came with their messages and the titles that went with them, so they aren't
+    /// named again; with `updates` on they get the same looks as the thread moves on.
     static func dueRefresh(for thread: ChatThread, isFork: Bool, updates: Bool, now: Date) -> TitleRefresh? {
         guard !thread.isTitleCustom, !thread.isArchived else { return nil }
-        guard let done = thread.titleRefreshes ?? (thread.importedSession == nil && !isFork ? [] : nil) else { return nil }
+        let cameTitled = thread.titleRefreshes == nil && (thread.importedSession != nil || isFork)
+        let done = thread.titleRefreshes ?? []
         let turns = thread.items.count(where: \.opensUserTurn)
-        if !done.contains(.firstReply), !done.contains(.fifthTurn), turns < namingTurns { return .firstReply }
-        guard updates, done.count(where: { $0 == .update }) < maximumUpdates else { return nil }
+        if !cameTitled, !done.contains(.firstReply), !done.contains(.fifthTurn), !done.contains(.update), turns < namingTurns {
+            return .firstReply
+        }
+        guard updates else { return nil }
         // Without a recorded look: naming's came at the first turn, an older version's at the fifth.
         let last = thread.titleCheckTurns ?? (done.contains(.fifthTurn) ? namingTurns : done.contains(.firstReply) ? 1 : 0)
         guard turns - last >= updateTurns else { return nil }
@@ -220,9 +225,10 @@ enum ThreadTitles {
             Check the title of a coding thread, so the user can recognize the thread weeks later.
             Answer with only a JSON object with the key "title": no prose, no code fences. Do not run tools or edit files.
 
-            If the current title still fits the thread's subject, answer with it unchanged. Otherwise give a better one: \
-            silently reduce the thread to its subject (what system, feature or problem it is about) and outcome (what the \
-            user wants to understand or change), and title those, leaving out instructions about how the agent should work.
+            Threads move on. If the current title still fits what the thread is about now, answer with it unchanged. \
+            When the latest message and reply have moved to another subject, title that one instead: silently reduce it \
+            to its subject (what system, feature or problem it is about) and outcome (what the user wants to understand \
+            or change), and title those, leaving out instructions about how the agent should work.
 
             \(rules)
 

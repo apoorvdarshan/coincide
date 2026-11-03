@@ -124,14 +124,22 @@ struct ThreadTitleRefreshTests {
         #expect(ThreadTitles.dueRefresh(for: archived, updates: true, now: now) == nil)
     }
 
-    @Test func importsAndForksKeepTheTitlesTheyCameWith() {
+    @Test func importsAndForksAreNotNamedAgainButKeepUpWithTheThread() {
         var imported = makeThread(userTurns: 1, refreshes: nil)
         imported.importedSession = ImportedSession(provider: .claude, sessionID: "s", sourcePath: "/tmp/s.jsonl")
         #expect(ThreadTitles.dueRefresh(for: imported) == nil)
-        addTurns(10, to: &imported)
         #expect(ThreadTitles.dueRefresh(for: imported, updates: true, now: now) == nil)
+        addTurns(10, to: &imported)
+        #expect(ThreadTitles.dueRefresh(for: imported) == nil)
+        #expect(ThreadTitles.dueRefresh(for: imported, updates: true, now: now) == .update)
+        // A young fork isn't named again; one with turns enough gets the looks other threads do.
         #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 1, refreshes: nil), isFork: true, updates: true, now: now) == nil)
-        #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 12, refreshes: nil), isFork: true, updates: true, now: now) == nil)
+        #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 12, refreshes: nil), isFork: true, updates: false, now: now) == nil)
+        #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 12, refreshes: nil), isFork: true, updates: true, now: now) == .update)
+        // After its first look, a young fork still isn't named.
+        let looked = lookedAt(turns: 3, checked: 2, at: .distantPast, refreshes: [.update])
+        #expect(ThreadTitles.dueRefresh(for: looked, isFork: true, updates: true, now: now) == nil)
+        #expect(ThreadTitles.dueRefresh(for: looked, isFork: false, updates: true, now: now) == nil)
     }
 
     @Test func aThreadTheUserNamedOrArchivedIsLeftAlone() {
@@ -172,11 +180,12 @@ struct ThreadTitleRefreshTests {
         #expect(ThreadTitles.dueRefresh(for: makeThread(userTurns: 10, refreshes: [.firstReply, .fifthTurn]), updates: true, now: now) == .update)
     }
 
-    @Test func keptUpToDateAThreadGetsAtMostAFewLooks() {
-        let done = [TitleRefresh.firstReply] + Array(repeating: .update, count: ThreadTitles.maximumUpdates - 1)
-        #expect(ThreadTitles.dueRefresh(for: lookedAt(turns: 200, checked: 1, at: .distantPast, refreshes: done), updates: true, now: now) == .update)
-        let all = done + [.update]
-        #expect(ThreadTitles.dueRefresh(for: lookedAt(turns: 200, checked: 1, at: .distantPast, refreshes: all), updates: true, now: now) == nil)
+    @Test func keptUpToDateALongThreadKeepsGettingLooks() {
+        // However many looks it had, a thread in use is looked at again once enough turns and time have passed.
+        let done = [TitleRefresh.firstReply] + Array(repeating: .update, count: 60)
+        #expect(ThreadTitles.dueRefresh(for: lookedAt(turns: 600, checked: 590, at: .distantPast, refreshes: done), updates: true, now: now) == .update)
+        #expect(ThreadTitles.dueRefresh(for: lookedAt(turns: 600, checked: 598, at: .distantPast, refreshes: done), updates: true, now: now) == nil)
+        #expect(ThreadTitles.dueRefresh(for: lookedAt(turns: 600, checked: 590, at: now, refreshes: done), updates: true, now: now) == nil)
     }
 
     @Test func messagesSteeredIntoATurnDoNotCountAsTurns() {
@@ -328,7 +337,7 @@ struct ThreadTitleRefreshTests {
         let title = String(repeating: "t", count: 500)
         let prompt = ThreadTitles.refreshPrompt(title: title, parts: parts)
         #expect(prompt.contains("<title>\n\(String(repeating: "t", count: ThreadTitles.refreshTitleLimit - 1))…\n</title>"))
-        #expect(prompt.contains("answer with it unchanged"))
+        #expect(prompt.contains("answer with it unchanged") && prompt.contains("what the thread is about now"))
         #expect(prompt.contains("\"title\"") && prompt.contains("fewer than 40 characters"))
         #expect(prompt.contains("<message>\n\(parts.firstMessage)\n</message>"))
         #expect(prompt.contains("<message>\n\(latest)\n</message>"))
