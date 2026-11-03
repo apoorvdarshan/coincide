@@ -625,8 +625,7 @@ public enum TitleRefresh: String, Codable, Hashable, Sendable, CaseIterable {
     case firstReply
     /// After the fifth turn, once. Written by versions that looked again there; no longer asked for.
     case fifthTurn
-    /// While titles are kept up to date (`AppSettings.updatesThreadTitles`): every few turns of a thread in use, up to
-    /// `ThreadTitles.maximumUpdates` in all.
+    /// While titles are kept up to date (`AppSettings.updatesThreadTitles`): every few turns of a thread in use.
     case update
 }
 
