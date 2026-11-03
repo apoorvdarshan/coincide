@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import AppKit
 import CoincideKit
 import Testing
@@ -278,46 +279,13 @@ final class StubTranscriptHost: TranscriptHost {
 
     // MARK: A long thread with media
 
-    /// Writes a short H.264 movie, so video cards load a real asset as they do in the app.
-    private static func writeMovie(to url: URL) async throws {
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-        let input = AVAssetWriterInput(
-            mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 180])
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
-        writer.add(input)
-        writer.startWriting()
-        writer.startSession(atSourceTime: .zero)
-        for frame in 0..<10 {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
-            var buffer: CVPixelBuffer?
-            CVPixelBufferCreate(nil, 320, 180, kCVPixelFormatType_32BGRA, nil, &buffer)
-            guard let buffer else { continue }
-            CVPixelBufferLockBaseAddress(buffer, [])
-            if let base = CVPixelBufferGetBaseAddress(buffer) {
-                memset(base, Int32(20 * frame), CVPixelBufferGetDataSize(buffer))
-            }
-            CVPixelBufferUnlockBaseAddress(buffer, [])
-            adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 10))
-        }
-        input.markAsFinished()
-        await writer.finishWriting()
-    }
-
     /// A long thread like a real one: hundreds of turns whose work folds under "Worked for…", replies with headings,
     /// lists, tables and code, screenshots the user attached, and replies that show images, videos and audio inline.
     private func longMixedThread(turns: Int, media folder: URL) throws -> [TranscriptItem] {
         var paths: [String] = []
-        for (index, color) in [NSColor.systemTeal, .systemOrange, .systemPurple].enumerated() {
-            let size = [NSSize(width: 1600, height: 1000), NSSize(width: 400, height: 900), NSSize(width: 64, height: 64)][index]
-            let image = NSImage(size: size, flipped: false) { rect in
-                color.setFill()
-                rect.fill()
-                return true
-            }
+        for (index, size) in [CGSize(width: 1600, height: 1000), CGSize(width: 400, height: 900), CGSize(width: 64, height: 64)].enumerated() {
             let url = folder.appendingPathComponent("shot-\(index).png")
-            let rep = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
-            try #require(rep.representation(using: .png, properties: [:])).write(to: url)
+            try TestMedia.writePNG(to: url, width: Int(size.width), height: Int(size.height))
             paths.append(url.path)
         }
         let movie = folder.appendingPathComponent("demo.mp4").path
@@ -410,9 +378,14 @@ final class StubTranscriptHost: TranscriptHost {
                 let drawn = text.frame.minY + layoutManager.usedRect(for: container).height
                 #expect(drawn <= cell.bounds.height + 0.5, "\(comment): row \(entry.index)'s text runs into the next row")
             }
+            let column = cell.subviews.compactMap { $0 as? ChatTextView }.first?.frame
             for case let media as TranscriptMediaView in cell.subviews {
                 #expect(media.frame.maxY <= cell.bounds.height + 0.5, "\(comment): row \(entry.index)'s \(media.media.kind) runs into the next row")
-                #expect(media.frame.height == media.media.height(width: media.frame.width), "\(comment): row \(entry.index)'s media card")
+                if let column {
+                    #expect(media.frame.height == media.media.height(width: column.width), "\(comment): row \(entry.index)'s media card")
+                    #expect(media.frame.minX == column.minX, "\(comment): row \(entry.index)'s media card doesn't line up with its text")
+                    #expect(media.frame.width <= column.width, "\(comment): row \(entry.index)'s media card is wider than its text")
+                }
             }
         }
     }
@@ -426,12 +399,97 @@ final class StubTranscriptHost: TranscriptHost {
         list.scrollView.onReaderScroll?(delta < 0)
     }
 
+    /// `pixels` fitted into `width` by `maxHeight`, as a card should show it: its own shape, never enlarged past its
+    /// size unless it's a video.
+    private static func fitted(_ pixels: CGSize, width: CGFloat, maxHeight: CGFloat, enlarges: Bool) -> CGSize {
+        var scale = min(width / pixels.width, maxHeight / pixels.height)
+        if !enlarges { scale = min(scale, 1) }
+        return CGSize(width: (pixels.width * scale).rounded(), height: (pixels.height * scale).rounded())
+    }
+
+    /// Picture and video cards take the shape of what they show, under the reply's text and lined up with it: a tall
+    /// screenshot and a portrait video leave no black bars or empty space beside them. A card can only know its
+    /// shape once the file is read, so its row measures again then, while what the reader looks at stays put.
+    @Test func mediaCardsTakeTheShapeOfWhatTheyShowWhileTheReaderStaysPut() async throws {
+        let folder = TemporaryDirectory("media-shapes")
+        let tall = folder.url.appendingPathComponent("tall-\(UUID().uuidString).png")
+        let wide = folder.url.appendingPathComponent("wide-\(UUID().uuidString).png")
+        let portrait = folder.url.appendingPathComponent("portrait-\(UUID().uuidString).mp4")
+        try TestMedia.writePNG(to: tall, width: 600, height: 1200)
+        try TestMedia.writePNG(to: wide, width: 2400, height: 600)
+        try await TestMedia.writeMovie(to: portrait, width: 180, height: 320)
+        var rows = (0..<30).map { reply(30 + ($0 * 37) % 160, seed: $0) }
+        let item = TranscriptItem(
+            kind: .assistant, text: "Here is the screen, the banner and the recording:\n\n![Screen](\(tall.path))\n\n![Banner](\(wide.path))\n\n[Recording](\(portrait.path))",
+            status: .completed, provider: .claude)
+        host.items[item.id] = item
+        let index = 15
+        rows.insert(TranscriptRow(id: .item(item.id), kind: .assistant(meta: nil), revision: 0), at: index)
+        window.setContentSize(NSSize(width: 900, height: 700))
+        list.update(rows, reload: true)
+        list.restore(.anchor(rows[index].id, offset: 80))
+        window.layoutIfNeeded()
+        let clip = list.scrollView.contentView
+        func offset() -> CGFloat { list.tableView.rect(ofRow: index).minY - clip.bounds.minY }
+        let before = offset()
+        #expect(!list.isPinnedToBottom)
+
+        // The files are read in the background; their cards and the row lay out again once they are.
+        func cards() -> [TranscriptMediaView] {
+            (list.tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? TranscriptAssistantCell)?
+                .subviews.compactMap { $0 as? TranscriptMediaView } ?? []
+        }
+        for _ in 0..<100 {
+            await settle()
+            if let first = cards().first, first.frame.width < 400 { break }
+        }
+        await settle()
+        await settle()
+        let cell = try #require(list.tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? TranscriptAssistantCell)
+        let text = try #require(cell.subviews.compactMap { $0 as? ChatTextView }.first)
+        let shown = cards()
+        #expect(shown.map(\.media.label) == ["Screen", "Banner", "Recording"])
+        guard shown.count == 3 else { return }
+        let expected = [
+            Self.fitted(CGSize(width: 600, height: 1200), width: text.frame.width, maxHeight: 380, enlarges: false),
+            Self.fitted(CGSize(width: 2400, height: 600), width: text.frame.width, maxHeight: 380, enlarges: false),
+            Self.fitted(CGSize(width: 180, height: 320), width: text.frame.width, maxHeight: 360, enlarges: true),
+        ]
+        for (card, size) in zip(shown, expected) {
+            let content = NSRect(x: card.frame.minX, y: card.frame.minY + 24, width: card.frame.width, height: card.frame.height - 24)
+            #expect(abs(content.width - size.width) <= 1 && abs(content.height - size.height) <= 1, "\(card.media.label): \(content.size), not \(size)")
+            #expect(card.frame.minX == text.frame.minX, "\(card.media.label) doesn't line up with the text")
+        }
+        // The video fills its card: no bars beside it.
+        let player = try #require(shown[2].subviews.compactMap { $0 as? AVPlayerView }.first)
+        #expect(abs(player.frame.width / player.frame.height - 180.0 / 320.0) < 0.02, "the player is \(player.frame.size)")
+        // The row measures as it now lays out, the reader's place held.
+        #expect(list.tableView.rect(ofRow: index).height == exactHeight(of: list.rows[index]))
+        #expect(abs(offset() - before) <= 1, "the reply moved from \(before) to \(offset())")
+        expectScreenCovered("after the cards took their shapes")
+        expectRowsInPlace("after the cards took their shapes")
+
+        // Followed from the bottom, a card below that takes its shape keeps the view at the bottom.
+        list.scrollToBottom()
+        await settle()
+        let late = folder.url.appendingPathComponent("late-\(UUID().uuidString).png")
+        try TestMedia.writePNG(to: late, width: 300, height: 900)
+        let last = TranscriptItem(kind: .assistant, text: "And the last one:\n\n![Late](\(late.path))", status: .completed, provider: .claude)
+        host.items[last.id] = last
+        rows.append(TranscriptRow(id: .item(last.id), kind: .assistant(meta: nil), revision: 0))
+        list.update(rows)
+        for _ in 0..<40 { await settle() }
+        #expect(list.isPinnedToBottom)
+        #expect(list.distanceFromBottom <= 1, "\(list.distanceFromBottom) from the bottom")
+        expectScreenCovered("after a card at the bottom took its shape")
+    }
+
     /// A long thread with images, videos and audio opens at its latest messages, and every screen the reader scrolls
     /// through, up to the top and back, is drawn edge to edge, across width changes and a reload of every row, without
     /// another message coming in to lay the rows out again.
     @Test func aLongThreadWithMediaIsDrawnEdgeToEdgeWhereverTheReaderScrolls() async throws {
         let folder = TemporaryDirectory("long-thread-media")
-        try await Self.writeMovie(to: folder.url.appendingPathComponent("demo.mp4"))
+        try await TestMedia.writeMovie(to: folder.url.appendingPathComponent("demo.mp4"), width: 320, height: 180)
         let items = try longMixedThread(turns: 180, media: folder.url)
         for item in items { host.items[item.id] = item }
         let rows = TranscriptBuilder(items: items).build()
