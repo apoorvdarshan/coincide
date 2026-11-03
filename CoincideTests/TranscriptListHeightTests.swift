@@ -425,7 +425,10 @@ final class StubTranscriptHost: TranscriptHost {
         host.items[item.id] = item
         let index = 15
         rows.insert(TranscriptRow(id: .item(item.id), kind: .assistant(meta: nil), revision: 0), at: index)
+        // Sized first, so the rows measure at this width from the start.
         window.setContentSize(NSSize(width: 900, height: 700))
+        await settle()
+        await settle()
         list.update(rows, reload: true)
         list.restore(.anchor(rows[index].id, offset: 80))
         window.layoutIfNeeded()
