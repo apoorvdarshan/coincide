@@ -12,6 +12,8 @@ final class StubTranscriptHost: TranscriptHost {
     var rails: [TranscriptRowID: TranscriptRail] = [:]
     var expanded: Set<TranscriptRowID> = []
     var rewound: [UUID] = []
+    /// What Quick Look was asked to show, in order.
+    var previewed: [(paths: [String], selected: Int)] = []
     var isRunning = false
     let textCache = TranscriptTextCache()
     var threadID: UUID? { nil }
@@ -27,7 +29,7 @@ final class StubTranscriptHost: TranscriptHost {
     func openThread(_ threadID: UUID) {}
     func showDiff(turnID: UUID, path: String?) {}
     func openLink(_ link: Any) -> Bool { false }
-    func previewAttachments(_ paths: [String], selected: Int) {}
+    func previewAttachments(_ paths: [String], selected: Int) { previewed.append((paths, selected)) }
     func quote(_ text: String, from itemID: UUID) {}
     func openContext(_ context: MessageContext, from anchor: NSView) {}
     func changedFiles(for turnID: UUID) -> [ChangedFile] { files[turnID] ?? [] }
