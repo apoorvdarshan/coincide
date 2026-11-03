@@ -16,6 +16,11 @@ final class PasswordsSettingsModel {
     var agentsUseManagers = true {
         didSet { if agentsUseManagers != oldValue { settings.update { $0.agentsUsePasswordManagers = agentsUseManagers } } }
     }
+    var agentsSignInWithoutAsking = false {
+        didSet {
+            if agentsSignInWithoutAsking != oldValue { settings.update { $0.agentsSignInWithoutAsking = agentsSignInWithoutAsking } }
+        }
+    }
     var usesBitwardenPasskeys = true {
         didSet { if usesBitwardenPasskeys != oldValue { settings.update { $0.usesBitwardenPasskeys = usesBitwardenPasskeys } } }
     }
@@ -47,6 +52,7 @@ final class PasswordsSettingsModel {
         grants = settings.settings.loginGrants.sorted { $0.site < $1.site }
         offersToSave = settings.settings.offersToSaveLogins
         agentsUseManagers = settings.settings.agentsUsePasswordManagers
+        agentsSignInWithoutAsking = settings.settings.agentsSignInWithoutAsking
         usesBitwardenPasskeys = settings.settings.usesBitwardenPasskeys
         confirmsPasskeysWithTouchID = settings.settings.confirmsPasskeysWithTouchID
         saved = sessions.profile.logins.saved.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
@@ -89,6 +95,8 @@ final class PasswordsSettingsModel {
 
     func revoke(_ grant: LoginGrant) { sessions.vault.revoke(grant) }
 
+    func revokeAll() { for grant in grants { sessions.vault.revoke(grant) } }
+
     // MARK: CSV
 
     private(set) var csvResult: String?
@@ -119,6 +127,8 @@ final class PasswordsSettingsModel {
 struct PasswordsSettingsSection: View {
     @State private var model = PasswordsSettingsModel()
     @State private var bitwardenPassword = ""
+    /// The allowed sites start folded away, so a long list doesn't push the rest of Settings down.
+    @State private var showsGrants = false
 
     var body: some View {
         Group {
@@ -189,20 +199,40 @@ struct PasswordsSettingsSection: View {
             }
 
             Section {
+                Toggle(isOn: $model.agentsSignInWithoutAsking) {
+                    Text("Let agents sign in on any site without asking")
+                    Text("When an agent asks to sign in, Coincide types the login from your password manager right away, on every site, instead of asking you first. Agents still never see passwords or codes.")
+                }
                 if model.grants.isEmpty {
                     Text("When an agent asks to sign in and you choose Always for This Site, the site is listed here.")
                         .foregroundStyle(.secondary)
-                }
-                ForEach(model.grants) { grant in
-                    HStack(spacing: 8) {
-                        Image(nsImage: PasswordManagerLogo.image(for: grant.source, size: 16))
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(grant.site)
-                            Text([grant.itemTitle, grant.username, grant.source.displayName].filter { !$0.isEmpty }.joined(separator: " · "))
-                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                } else {
+                    DisclosureGroup(isExpanded: $showsGrants) {
+                        ForEach(model.grants) { grant in
+                            HStack(spacing: 8) {
+                                Image(nsImage: PasswordManagerLogo.image(for: grant.source, size: 16))
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(grant.site)
+                                    Text([grant.itemTitle, grant.username, grant.source.displayName].filter { !$0.isEmpty }.joined(separator: " · "))
+                                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                Button("Revoke") { model.revoke(grant) }
+                            }
                         }
-                        Spacer()
-                        Button("Revoke") { model.revoke(grant) }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("\(model.grants.count) sites allowed")
+                                if model.agentsSignInWithoutAsking {
+                                    Text("These stay allowed if you turn the switch above off.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .pointerCursorRow()
+                            Spacer()
+                            Button("Revoke All") { model.revokeAll() }
+                        }
                     }
                 }
             } header: {

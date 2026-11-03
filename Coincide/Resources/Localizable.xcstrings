@@ -20099,6 +20099,382 @@
         }
       }
     },
+    "%lld sites allowed" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Website erlaubt"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld Websites erlaubt"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld site allowed"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld sites allowed"
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sitios permitidos"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sitio permitido"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sitios permitidos"
+                }
+              }
+            }
+          }
+        },
+        "es-419" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sitios permitidos"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sitio permitido"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sitios permitidos"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sites autorisés"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld site autorisé"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sites autorisés"
+                }
+              }
+            }
+          }
+        },
+        "hi" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld साइट को अनुमति है"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld साइटों को अनुमति है"
+                }
+              }
+            }
+          }
+        },
+        "id" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld situs diizinkan"
+                }
+              }
+            }
+          }
+        },
+        "it" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld siti consentiti"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sito consentito"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld siti consentiti"
+                }
+              }
+            }
+          }
+        },
+        "ja" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld 件のサイトを許可済み"
+                }
+              }
+            }
+          }
+        },
+        "ko" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld개 사이트 허용됨"
+                }
+              }
+            }
+          }
+        },
+        "nl" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld site toegestaan"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sites toegestaan"
+                }
+              }
+            }
+          }
+        },
+        "pl" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld witryny dozwolone"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld witryn dozwolonych"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld witryna dozwolona"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld witryny dozwolonej"
+                }
+              }
+            }
+          }
+        },
+        "pt-BR" : {
+          "variations" : {
+            "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sites permitidos"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld site permitido"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld sites permitidos"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Разрешено %lld сайта"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Разрешено %lld сайтов"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Разрешён %lld сайт"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Разрешено %lld сайта"
+                }
+              }
+            }
+          }
+        },
+        "tr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld siteye izin verildi"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "%lld siteye izin verildi"
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Дозволено %lld сайти"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Дозволено %lld сайтів"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Дозволено %lld сайт"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Дозволено %lld сайту"
+                }
+              }
+            }
+          }
+        },
+        "vi" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Đã cho phép %lld trang"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "已允许 %lld 个网站"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "已允許 %lld 個網站"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld starred" : {
       "localizations" : {
         "de" : {
@@ -171723,6 +172099,118 @@
         }
       }
     },
+    "Let agents sign in on any site without asking" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agenten auf jeder Website ohne Nachfrage anmelden lassen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitir que los agentes inicien sesión en cualquier sitio sin preguntar"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Permitir que los agentes inicien sesión en cualquier sitio sin preguntar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laisser les agents se connecter sur n’importe quel site sans demander"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "एजेंट को बिना पूछे किसी भी साइट पर साइन इन करने दें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Izinkan agen masuk di situs mana pun tanpa bertanya"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Consenti agli agenti di accedere a qualsiasi sito senza chiedere"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "確認なしで、どのサイトにもエージェントのサインインを許可"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "묻지 않고 모든 사이트에서 에이전트 로그인 허용"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laat agents op elke site inloggen zonder te vragen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozwól agentom logować się w każdej witrynie bez pytania"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deixar os agentes fazerem login em qualquer site sem perguntar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Разрешить агентам входить на любые сайты без запроса"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajanların sormadan her sitede oturum açmasına izin ver"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Дозволити агентам входити на будь-які сайти без запиту"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cho agent đăng nhập mọi trang mà không cần hỏi"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允许代理无需询问即可登录任何网站"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "允許代理無需詢問即可登入任何網站"
+          }
+        }
+      }
+    },
     "Let agents use your unlocked password managers" : {
       "localizations" : {
         "de" : {
@@ -256244,6 +256732,118 @@
         }
       }
     },
+    "Revoke All" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Allen Zugriff entziehen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revocar todo"
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revocar todo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tout révoquer"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "सभी निरस्त करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cabut Semua"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revoca tutto"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "すべて取り消す"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "모두 해지"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Trek alles in"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Odbierz cały dostęp"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Revogar tudo"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Отозвать все"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tüm Erişimleri İptal Et"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Відкликати всі"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Thu hồi tất cả"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "全部撤销"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "全部撤銷"
+          }
+        }
+      }
+    },
     "Revoke “%@”?" : {
       "localizations" : {
         "de" : {
@@ -324415,6 +325015,118 @@
         }
       }
     },
+    "These stay allowed if you turn the switch above off." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese bleiben erlaubt, wenn du den Schalter oben ausschaltest."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seguirán permitidos si desactivas el interruptor de arriba."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seguirán permitidos si desactivas el interruptor de arriba."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ils restent autorisés si vous désactivez l’option ci-dessus."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ऊपर का स्विच बंद करने पर भी इन्हें अनुमति बनी रहेगी।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Situs ini tetap diizinkan jika Anda mematikan sakelar di atas."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Restano consentiti se disattivi l’opzione qui sopra."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "上のスイッチをオフにしても、これらのサイトは許可されたままです。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "위의 스위치를 꺼도 이 사이트들은 계속 허용됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deze blijven toegestaan als je de schakelaar hierboven uitzet."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pozostaną dozwolone, jeśli wyłączysz przełącznik powyżej."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eles continuam permitidos se você desativar a opção acima."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Они останутся разрешёнными, если выключить переключатель выше."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yukarıdaki anahtarı kapatsanız da bu sitelere izin verilmeye devam eder."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Вони залишаться дозволеними, якщо вимкнути перемикач вище."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Các trang này vẫn được cho phép nếu bạn tắt công tắc ở trên."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "关闭上方开关后，这些网站仍保持允许。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "關閉上方開關後，這些網站仍保持允許。"
+          }
+        }
+      }
+    },
     "They keep working after Coincide quits. The agent host exits once nothing runs." : {
       "localizations" : {
         "de" : {
@@ -353581,6 +354293,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "當代理請求登入且你選擇「此網站一律允許」時，該網站會列在這裡。"
+          }
+        }
+      }
+    },
+    "When an agent asks to sign in, Coincide types the login from your password manager right away, on every site, instead of asking you first. Agents still never see passwords or codes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wenn ein Agent sich anmelden will, gibt Coincide die Anmeldedaten aus deinem Passwortmanager sofort ein, auf jeder Website, ohne dich vorher zu fragen. Agenten sehen Passwörter und Codes trotzdem nie."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando un agente quiere iniciar sesión, Coincide escribe al momento el inicio de sesión de tu gestor de contraseñas, en cualquier sitio, sin preguntarte antes. Los agentes nunca ven las contraseñas ni los códigos."
+          }
+        },
+        "es-419" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando un agente quiere iniciar sesión, Coincide escribe al momento el inicio de sesión de tu gestor de contraseñas, en cualquier sitio, sin preguntarte antes. Los agentes nunca ven las contraseñas ni los códigos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quand un agent veut se connecter, Coincide saisit aussitôt l’identifiant de votre gestionnaire de mots de passe, sur tous les sites, sans vous demander d’abord. Les agents ne voient jamais les mots de passe ni les codes."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "जब कोई एजेंट साइन इन करना चाहता है, तो Coincide आपसे पहले पूछे बिना, हर साइट पर, आपके पासवर्ड मैनेजर से लॉगिन तुरंत भर देता है। एजेंट पासवर्ड या कोड फिर भी कभी नहीं देखते।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saat agen ingin masuk, Coincide langsung mengetikkan login dari pengelola kata sandi Anda, di setiap situs, tanpa bertanya dulu. Agen tetap tidak pernah melihat kata sandi atau kode."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando un agente vuole accedere, Coincide inserisce subito le credenziali dal tuo gestore di password, su ogni sito, senza chiederti prima. Gli agenti non vedono mai password né codici."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "エージェントがサインインしようとすると、Coincide は確認せずに、どのサイトでもパスワードマネージャのログイン情報をすぐに入力します。エージェントがパスワードやコードを見ることはありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "에이전트가 로그인하려고 하면 Coincide가 먼저 묻지 않고 모든 사이트에서 암호 관리자의 로그인 정보를 바로 입력합니다. 에이전트는 여전히 암호나 코드를 볼 수 없습니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Als een agent wil inloggen, vult Coincide de inloggegevens uit je wachtwoordbeheerder meteen in, op elke site, zonder het je eerst te vragen. Agents zien wachtwoorden en codes nog steeds nooit."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gdy agent chce się zalogować, Coincide od razu wpisuje dane logowania z menedżera haseł, w każdej witrynie, bez pytania Cię wcześniej. Agenci nadal nigdy nie widzą haseł ani kodów."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando um agente quer fazer login, o Coincide digita na hora o login do seu gerenciador de senhas, em qualquer site, sem perguntar antes. Os agentes continuam sem ver senhas ou códigos."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Когда агент хочет войти, Coincide сразу вводит данные из менеджера паролей на любом сайте, не спрашивая вас. Агенты по-прежнему не видят пароли и коды."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir ajan oturum açmak istediğinde Coincide, önce size sormadan, her sitede parola yöneticinizdeki giriş bilgilerini hemen yazar. Ajanlar parolaları ve kodları yine de asla görmez."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Коли агент хоче увійти, Coincide одразу вводить дані з менеджера паролів на будь-якому сайті, не питаючи вас. Агенти й надалі не бачать паролів і кодів."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Khi agent muốn đăng nhập, Coincide nhập ngay thông tin đăng nhập từ trình quản lý mật khẩu của bạn, trên mọi trang, mà không hỏi bạn trước. Agent vẫn không bao giờ thấy mật khẩu hay mã."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理要登录时，Coincide 会在任何网站上立即填入密码管理器中的登录信息，不再先询问你。代理仍然看不到密码或验证码。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "代理要登入時，Coincide 會在任何網站上立即填入密碼管理工具中的登入資訊，不再先詢問你。代理仍然看不到密碼或驗證碼。"
           }
         }
       }

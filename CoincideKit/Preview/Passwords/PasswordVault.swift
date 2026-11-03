@@ -113,6 +113,7 @@ public final class PasswordVault {
 
     public func isApproved(_ item: LoginItem, page: URL, threadID: UUID, now: Date = Date()) -> Bool {
         guard let host = page.host else { return false }
+        if settings.settings.agentsSignInWithoutAsking { return true }
         let site = WebDomain.siteOrHost(host)
         if settings.settings.loginGrants.contains(where: { $0.site == site && $0.source == item.source && $0.itemID == item.itemID }) {
             return true

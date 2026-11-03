@@ -17,6 +17,9 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
     public var passwordManagers: [PasswordManagerKind]
     /// Sites where the user let agents sign in with a login ("Always for this site").
     public var loginGrants: [LoginGrant]
+    /// Agents' `fill-login` types the login on any site without asking, as if every site were granted. Off by
+    /// default; `loginGrants` are kept for when it's turned off.
+    public var agentsSignInWithoutAsking: Bool
     /// Offer to save a login in Coincide after the user signs in on a page (with Coincide's saved logins on).
     public var offersToSaveLogins: Bool
     /// Sites the user said never to offer saving for.
@@ -41,6 +44,7 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
         agentControl = [:]
         passwordManagers = []
         loginGrants = []
+        agentsSignInWithoutAsking = false
         offersToSaveLogins = true
         neverSaveSites = []
         agentsUsePasswordManagers = true
@@ -62,6 +66,7 @@ public nonisolated struct BrowserSettings: Codable, Hashable, Sendable {
         // A manager this version doesn't know is dropped rather than failing the whole list.
         passwordManagers = value(.passwordManagers, [String]()).compactMap(PasswordManagerKind.init(rawValue:))
         loginGrants = value(.loginGrants, [FailableGrant]()).compactMap(\.grant)
+        agentsSignInWithoutAsking = value(.agentsSignInWithoutAsking, defaults.agentsSignInWithoutAsking)
         offersToSaveLogins = value(.offersToSaveLogins, defaults.offersToSaveLogins)
         neverSaveSites = value(.neverSaveSites, defaults.neverSaveSites)
         agentsUsePasswordManagers = value(.agentsUsePasswordManagers, defaults.agentsUsePasswordManagers)
