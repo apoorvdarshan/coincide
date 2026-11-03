@@ -120,6 +120,12 @@ test("structured data parses and names its types", () => {
   }
   assert.deepEqual(issues, []);
   const types = (file) => JSON.parse(read(file).match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1])["@graph"].map((n) => n["@type"]);
+  const videos = htmlFiles.flatMap((file) => attr(read(file), /<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)
+    .flatMap((block) => JSON.parse(block)["@graph"] ?? []).filter((n) => n["@type"] === "VideoObject").map((n) => [file, n]));
+  for (const [file, video] of videos) {
+    assert.match(video.uploadDate, /T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})$/, `${file}: uploadDate needs a time and time zone`);
+    for (const key of ["name", "description", "thumbnailUrl", "duration", "embedUrl"]) assert.ok(video[key], `${file}: VideoObject ${key}`);
+  }
   for (const t of ["SoftwareApplication", "Organization", "WebSite"]) assert.ok(types("index.html").includes(t), `home has ${t}`);
   assert.ok(types("download/index.html").includes("SoftwareApplication"));
   assert.ok(types("download/index.html").includes("BreadcrumbList"));

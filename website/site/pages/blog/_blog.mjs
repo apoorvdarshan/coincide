@@ -19,9 +19,14 @@ export function video(v) {
 </figure>`;
 }
 
-/** Structured data for a video in a post. `video` also needs `description`, `uploaded` (ISO date) and `duration`
- *  (ISO 8601, like PT26S). */
-export const videoSchema = (v) => ({
+/** Structured data for a video in a post. `video` also needs `description`, `uploaded` (when YouTube published it, as
+ *  an ISO date and time with its time zone: the <published> value in the channel's RSS feed) and `duration` (ISO 8601,
+ *  like PT26S). Google rejects an uploadDate without a time zone. */
+export const videoSchema = (v) => {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})$/.test(v.uploaded ?? "")) {
+    throw new Error(`video ${v.id}: uploaded must be a date and time with a time zone, not ${v.uploaded}`);
+  }
+  return {
   "@type": "VideoObject",
   name: v.title,
   description: v.description,
@@ -30,7 +35,8 @@ export const videoSchema = (v) => ({
   duration: v.duration,
   embedUrl: `https://www.youtube.com/embed/${v.id}`,
   url: watchURL(v),
-});
+  };
+};
 
 /** Where the day's media went: rows of [site, url, what was posted]. */
 export const shared = (rows) => `<ul class="shared">

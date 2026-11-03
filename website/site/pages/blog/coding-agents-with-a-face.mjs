@@ -8,7 +8,7 @@ const short = {
   image: "/img/blog/coding-agents-with-a-face.jpg",
   width: 540,
   height: 960,
-  uploaded: "2026-11-02",
+  uploaded: "2026-11-02T15:45:39+00:00",
   duration: "PT26S",
 };
 

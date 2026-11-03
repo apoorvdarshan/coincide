@@ -11,7 +11,7 @@ const short = {
   image: "/img/blog/one-conversation-six-agents.jpg",
   width: 540,
   height: 960,
-  uploaded: "2026-11-02",
+  uploaded: "2026-11-02T07:17:12+00:00",
   duration: "PT18S",
 };
 

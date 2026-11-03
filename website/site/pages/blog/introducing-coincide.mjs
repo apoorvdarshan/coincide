@@ -8,7 +8,7 @@ const launch = {
   image: "/img/blog/introducing-coincide.jpg",
   width: 1280,
   height: 720,
-  uploaded: "2026-11-01",
+  uploaded: "2026-11-01T10:34:13+00:00",
   duration: "PT1M16S",
 };
 
