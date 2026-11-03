@@ -226,7 +226,7 @@ enum ThreadTitles {
             Answer with only a JSON object with the key "title": no prose, no code fences. Do not run tools or edit files.
 
             Threads move on. If the current title still fits what the thread is about now, answer with it unchanged. \
-            When the latest message and reply have moved to another subject, title that one instead: silently reduce it \
+            When the conversation has since moved to another subject, title that one instead: silently reduce it \
             to its subject (what system, feature or problem it is about) and outcome (what the user wants to understand \
             or change), and title those, leaving out instructions about how the agent should work.
 
