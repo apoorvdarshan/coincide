@@ -269,6 +269,20 @@ import WebKit
         #expect(other.notices.kinds == ["get"] && ui.prompts.isEmpty)
     }
 
+    /// An AbortSignal made in another frame is still a signal, so the request is answered rather than left to the browser.
+    @Test func aSignalFromAnotherFrameIsAnswered() async throws {
+        let vault = SigningVault()
+        let ui = ClickingUI()
+        let page = try await open("https://github.com/login", vault: vault, ui: ui)
+        defer { page.close() }
+        let script = "const frame = document.body.appendChild(document.createElement('iframe'));\n" + Self.signIn.replacingOccurrences(
+            of: "navigator.credentials.get({publicKey: {", with: "navigator.credentials.get({signal: new frame.contentWindow.AbortController().signal, publicKey: {")
+        let out = try await page.run(script)
+        #expect(out["isCredential"] as? Bool == true && out["error"] == nil)
+        #expect(ui.prompts.count == 1 && vault.lists == 1)
+        #expect(try await page.run("return {calls: window.__browserCalls};")["calls"] as? Int == 0)
+    }
+
     /// Frames other than the main one never reach the vault, even posting to the handler themselves.
     @Test func framesCantUseTheHandler() async throws {
         let vault = SigningVault()

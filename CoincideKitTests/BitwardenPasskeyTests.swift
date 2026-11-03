@@ -504,16 +504,20 @@ final class FakePasskeyVault: PasskeyVault, @unchecked Sendable {
                 #expect(await Self.answer(Self.request(mediation: mediation), vault: vault, ui: ui, touchID: touchID) == .fallback)
             }
         }
-        // No matching passkey; Bitwarden locked or failing; only security keys allowed.
+        // No matching passkey (a security key's ID among them); Bitwarden locked or failing.
         #expect(await Self.answer(Self.request(allow: [.init(id: Data([8]))]), vault: vault, ui: ui) == .fallback)
+        #expect(await Self.answer(Self.request(allow: [.init(id: Data([8]), transports: ["usb", "nfc"])]), vault: vault, ui: ui) == .fallback)
         #expect(await Self.answer(vault: FakePasskeyVault(nil), ui: ui) == .fallback)
-        #expect(await Self.answer(Self.request(allow: [.init(id: Data([1]), transports: ["usb", "nfc"])]), vault: vault, ui: ui) == .fallback)
         #expect(await PasskeySignIn.answer(Self.request(), from: Self.origin, vault: vault, ui: ui, alwaysVerifiesUser: false, suffixes: nil)
             == .fallback)
         #expect(ui.prompts.isEmpty && ui.reasons.isEmpty && vault.signed.isEmpty)
-        // A credential the site lists with "internal" among its transports is still offered.
-        let reply = await Self.answer(Self.request(allow: [.init(id: Data([1]), transports: ["internal", "hybrid"])]), vault: vault, ui: ui)
-        #expect(reply.message["status"] == "ok")
+        // A Bitwarden passkey's ID is offered whatever transports the site lists with it, a security key's included:
+        // sites describe password managers' passkeys in their own ways.
+        for transports in [["internal", "hybrid"], ["usb"], ["usb", "nfc", "ble"], []] {
+            let reply = await Self.answer(Self.request(allow: [.init(id: Data([8]), transports: ["usb"]), .init(id: Data([1]), transports: transports)]),
+                vault: vault, ui: ui)
+            #expect(reply.message["status"] == "ok")
+        }
         #expect(WebAuthnReply.fallback.message == ["status": "fallback"])
         #expect(WebAuthnReply.notAllowed.message["name"] == "NotAllowedError")
     }

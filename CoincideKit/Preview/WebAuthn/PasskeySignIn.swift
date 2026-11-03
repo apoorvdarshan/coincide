@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// What Coincide's page script does with a passkey request after asking: return a credential, reject with a
 /// `DOMException`, or hand the request to the browser's own `navigator.credentials.get` (which, without Apple's
@@ -121,23 +122,30 @@ public protocol PasskeySignInUI: AnyObject {
 /// verified only when that succeeded.
 @MainActor
 public enum PasskeySignIn {
+    /// Why requests go to the browser instead, in Console (subsystem com.apoorvdarshan.coincide, category Passkeys):
+    /// reasons and counts only, never sites' values or vault contents.
+    public static let log = Logger(subsystem: "com.apoorvdarshan.coincide", category: "Passkeys")
+
     /// `origin` is the requesting frame's, from WebKit. Requests Coincide can't serve (none of the user's passkeys
     /// match, Bitwarden is unavailable, conditional or silent mediation) fall back to the browser; requests it refuses
     /// fail like a browser's. `alwaysVerifiesUser` asks for Touch ID or the password even when the site doesn't need it.
     public static func answer(_ request: WebAuthnGetRequest, from origin: WebAuthnOrigin, vault: PasskeyVault, ui: PasskeySignInUI,
         alwaysVerifiesUser: Bool, suffixes: PublicSuffixList? = PublicSuffixList.bundled) async -> WebAuthnReply {
-        guard let suffixes else { return .fallback }
+        guard let suffixes else { return fallback("the public suffix list is missing") }
         // Never sign without an explicit click: requests the page makes on its own (autofill-style, silent) aren't offered.
-        guard request.mediation == .optional || request.mediation == .required else { return .fallback }
+        guard request.mediation == .optional || request.mediation == .required else {
+            return fallback("\(request.mediation.rawValue) mediation isn't offered")
+        }
         guard let rpID = WebAuthnRelyingParty.validate(request.rpID, origin: origin, suffixes: suffixes) else { return .invalidRPID }
-        // Bitwarden's rule: when every allowed credential says it's only on another kind of authenticator (a security
-        // key), Bitwarden can't have it.
+        // Matched by credential ID alone, whatever transports the site lists: sites describe passkeys from password
+        // managers in their own ways, so transports don't say whether Bitwarden has one, and an ID it holds does.
         let allowed = request.allowCredentials
-        if !allowed.isEmpty, allowed.allSatisfy({ !$0.transports.isEmpty && !$0.transports.contains("internal") }) { return .fallback }
-        guard let all = try? await vault.passkeys() else { return .fallback }
+        guard let all = try? await vault.passkeys() else { return fallback("Bitwarden didn't list its passkeys") }
         guard !Task.isCancelled else { return .notAllowed }
         let matches = BitwardenPasskey.matching(all, rpID: rpID, allowCredentials: allowed.map(\.id))
-        guard !matches.isEmpty else { return .fallback }
+        guard !matches.isEmpty else {
+            return fallback("none of \(all.count) Bitwarden passkeys matches \(allowed.isEmpty ? "the site" : "\(allowed.count) allowed credentials")")
+        }
         // Decided before asking, so the sheet can say whether Touch ID comes next: a re-prompt item among the choices
         // makes every choice verify.
         let verifies = alwaysVerifiesUser || request.userVerification == .required || matches.contains(where: \.requiresReprompt)
@@ -159,6 +167,11 @@ public enum PasskeySignIn {
             !Task.isCancelled
         else { return .notAllowed }
         return .credential(PasskeyCredential(assertion: assertion, clientDataJSON: clientData))
+    }
+
+    static func fallback(_ reason: String) -> WebAuthnReply {
+        log.notice("Passkey request left to the browser: \(reason, privacy: .public)")
+        return .fallback
     }
 }
 
@@ -257,6 +270,8 @@ public nonisolated enum BitwardenPasskeyScript {
                 try { reply = post(message); } catch (error) { resolve(undefined); return; }
                 apply(then, reply, [resolve, () => resolve(undefined)]);
             });
+            // Tells Coincide's log why a request went to the browser without being asked about.
+            const skipped = reason => { try { apply(then, post({kind: 'skipped', reason}), [undefined, () => {}]); } catch (error) {} };
             const isAvailable = () => new OwnPromise(resolve => {
                 apply(then, ask({kind: 'available'}), [value => resolve(value === true)]);
             });
@@ -308,10 +323,11 @@ public nonisolated enum BitwardenPasskeyScript {
                 if (publicKey.allowCredentials !== undefined) {
                     if (!isArray(publicKey.allowCredentials)) throw new TypeError('allowCredentials');
                     const list = [];
-                    for (let i = 0; i < publicKey.allowCredentials.length && i < 65; i++) {
+                    for (let i = 0; i < publicKey.allowCredentials.length && i < 257; i++) {
                         const entry = publicKey.allowCredentials[i];
-                        if (!entry || typeof entry.type !== 'string') throw new TypeError('allowCredentials');
-                        const item = {id: encode(entry.id), type: entry.type};
+                        // A string like WebIDL makes it; only a missing type is an error.
+                        if (!entry || entry.type === undefined) throw new TypeError('allowCredentials');
+                        const item = {id: encode(entry.id), type: String(entry.type)};
                         if (isArray(entry.transports)) {
                             item.transports = [];
                             for (let t = 0; t < entry.transports.length && t < 16; t++) item.transports[t] = String(entry.transports[t]);
@@ -334,11 +350,14 @@ public nonisolated enum BitwardenPasskeyScript {
                     const self = this, args = arguments;
                     const fallback = () => call(original, self, args);
                     if (!options || typeof options !== 'object' || !options.publicKey || !(self instanceof Container)) return fallback();
+                    // Any real AbortSignal, also one from another frame (the getter checks it is one).
                     const signal = options.signal;
-                    if (signal !== undefined && !(OwnAbortSignal && signal instanceof OwnAbortSignal)) return fallback();
+                    if (signal !== undefined) {
+                        try { apply(aborted, signal, []); } catch (error) { skipped('signal'); return fallback(); }
+                    }
                     const id = requestID();
                     let message;
-                    try { message = describeRequest(options, id); } catch (error) { return fallback(); }
+                    try { message = describeRequest(options, id); } catch (error) { skipped('options'); return fallback(); }
                     return new OwnPromise((resolve, reject) => {
                         if (signal && apply(aborted, signal, [])) { reject(reasonOf(signal)); return; }
                         let settled = false, timer;
