@@ -213,6 +213,14 @@ struct StaticProvider: PasswordProvider {
         #expect(settings.settings.loginGrants.map(\.site) == ["example.com"])
         vault.revoke(try #require(settings.settings.loginGrants.first))
         #expect(!vault.isApproved(home, page: page, threadID: other))
+        // Signing in anywhere without asking approves every site and thread, and saves to browser.json.
+        #expect(!BrowserSettings().agentsSignInWithoutAsking)
+        settings.update { $0.agentsSignInWithoutAsking = true }
+        #expect(vault.isApproved(home, page: page, threadID: other))
+        #expect(vault.isApproved(work, page: URL(string: "https://other.test/login")!, threadID: UUID()))
+        #expect(BrowserSettingsStore(directory: folder.url).settings.agentsSignInWithoutAsking)
+        settings.update { $0.agentsSignInWithoutAsking = false }
+        #expect(!vault.isApproved(home, page: page, threadID: other))
         // A manager that's turned off can't hand out secrets.
         settings.update { $0.passwordManagers = [.onePassword] }
         await #expect(throws: LoginFillError.noPasswordManager) { _ = try await vault.secret(for: home) }
