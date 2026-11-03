@@ -726,6 +726,10 @@ final class TranscriptThumbnailView: NSView {
         addPointerCursorRect()
     }
 
+    /// The thumbnail takes the click itself. Left to the table, the mouse-down selects the row and the table's
+    /// tracking of the click takes the mouse-up too, so the thumbnail never saw it and Quick Look never opened.
+    override func mouseDown(with event: NSEvent) {}
+
     override func mouseUp(with event: NSEvent) {
         guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
         onOpen?(index)
