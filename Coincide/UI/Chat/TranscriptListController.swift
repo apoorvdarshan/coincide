@@ -90,6 +90,8 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
             self, selector: #selector(liveScrolled), name: NSScrollView.didLiveScrollNotification, object: scrollView)
         NotificationCenter.default.addObserver(
             self, selector: #selector(liveScrolled), name: NSScrollView.didEndLiveScrollNotification, object: scrollView)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(mediaShapeLearned), name: TranscriptMediaShapes.didLearn, object: nil)
     }
 
     @objc private func liveScrolled(_ notification: Notification) {
@@ -246,6 +248,56 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
     func cell(at index: Int) -> TranscriptCell? {
         guard index < rows.count else { return nil }
         return tableView.view(atColumn: 0, row: index, makeIfNecessary: true) as? TranscriptCell
+    }
+
+    // MARK: Media
+
+    /// Files whose shape was learned since the rows showing them last measured.
+    private var learnedMedia: Set<URL> = []
+    private var mediaRemeasureScheduled = false
+
+    /// A picture or video card fits its media's shape, known only once the file has been read: the rows showing it
+    /// measure again. Several files are often read at once (every card of a thread that just opened), so they are
+    /// taken together on the next turn of the main queue.
+    @objc private func mediaShapeLearned(_ notification: Notification) {
+        guard let url = notification.userInfo?[TranscriptMediaShapes.urlKey] as? URL else { return }
+        learnedMedia.insert(url)
+        guard !mediaRemeasureScheduled else { return }
+        mediaRemeasureScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.mediaRemeasureScheduled = false
+            let urls = self.learnedMedia
+            self.learnedMedia.removeAll()
+            self.remeasureRows(showing: urls)
+        }
+    }
+
+    /// Measures again the rows that show any of `urls`: those near the reader at once, keeping what they read in
+    /// place, the rest once they come into view. Their cells lay their cards out again.
+    func remeasureRows(showing urls: Set<URL>) {
+        guard let host, !urls.isEmpty, !rows.isEmpty else { return }
+        var affected = IndexSet()
+        for (index, row) in rows.enumerated() {
+            guard case .assistant = row.kind, let id = row.itemID, let item = host.item(id),
+                TranscriptMediaCache.media(item, directory: host.mediaDirectory).contains(where: { $0.url.map(urls.contains) ?? false })
+            else { continue }
+            // Measured for the card's old shape: no longer exact, so it measures again when it comes into view.
+            heights[row.id]?.isExact = false
+            affected.insert(index)
+        }
+        guard !affected.isEmpty else { return }
+        let near = visibleRange(margin: 1)
+        var changed = IndexSet()
+        for index in affected where near.contains(index) {
+            let previous = heights[rows[index].id]?.value
+            if height(at: index, exact: true) != previous { changed.insert(index) }
+        }
+        if !changed.isEmpty { preservingAnchor { noteHeights(changed) } }
+        for index in affected {
+            tableView.view(atColumn: 0, row: index, makeIfNecessary: false)?.needsLayout = true
+        }
+        scheduleRefine()
     }
 
     // MARK: Heights
