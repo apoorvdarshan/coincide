@@ -119,10 +119,9 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
             } else {
                 exactRange = Self.tail(of: newRows.count)
             }
-            tableView.reloadData()
-            learnHeights(of: rows.indices)
+            let previousY = reloadAllRows()
             tableView.tile()
-            keep(place)
+            keep(place, otherwise: previousY)
             scheduleRefine()
             return
         }
@@ -204,16 +203,40 @@ final class TranscriptListController: NSObject, NSTableViewDataSource, NSTableVi
         let place = scrollState()
         heights.removeAll()
         exactRange = visibleRange(margin: 1)
-        tableView.reloadData()
-        learnHeights(of: rows.indices)
-        keep(place)
+        let previousY = reloadAllRows()
+        keep(place, otherwise: previousY)
         scheduleRefine()
     }
 
-    /// Puts the row the reader was scrolled to back where it was on screen, if it is still there.
-    private func keep(_ place: TranscriptScrollState) {
-        guard case .anchor(let id, let offset) = place, !isPinnedToBottom, let index = index(of: id) else { return }
-        scroll(toY: tableView.rect(ofRow: index).minY - offset)
+    /// Reloads every row from the top and has the table learn each one's height, returning where the reader was.
+    ///
+    /// The table places the rows on screen as soon as it reloads, while it still only guesses the heights of most rows
+    /// above them (it asks for them as it needs them, `learnHeights`), and it never moves those rows' views once it
+    /// knows. Scrolled down a long thread, that left the rows on screen far from their place: opening another long
+    /// thread from the bottom of one drew its last rows hundreds of points below where they belong, with nothing above
+    /// them, so the transcript stayed black until the reader scrolled. From the top, the rows it places first are
+    /// ones whose heights it has; `keep` then scrolls to the reader's place with every height known.
+    private func reloadAllRows() -> CGFloat {
+        let clip = scrollView.contentView
+        let previousY = clip.bounds.minY
+        isAdjustingScroll = true
+        clip.setBoundsOrigin(NSPoint(x: clip.bounds.origin.x, y: -clip.contentInsets.top))
+        isAdjustingScroll = false
+        tableView.reloadData()
+        learnHeights(of: rows.indices)
+        return previousY
+    }
+
+    /// Back to the reader's place after every row loaded again: the bottom when following, else the row they were
+    /// scrolled to where it was on screen if it is still there, else where they were.
+    private func keep(_ place: TranscriptScrollState, otherwise y: CGFloat) {
+        if isPinnedToBottom {
+            scrollToBottom()
+        } else if case .anchor(let id, let offset) = place, let index = index(of: id) {
+            scroll(toY: tableView.rect(ofRow: index).minY - offset)
+        } else {
+            scroll(toY: y)
+        }
     }
 
     func refreshLiveState() {

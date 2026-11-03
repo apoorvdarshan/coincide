@@ -275,6 +275,67 @@ final class StubTranscriptHost: TranscriptHost {
         await apply("new turn ended")
     }
 
+    /// Opening a long thread from the bottom of another, as the chat does (`ChatViewController.loadThread`): its latest
+    /// rows are on screen in the very first frame, where the table lays them out and edge to edge, with nothing
+    /// asynchronous run and no scroll from the reader. The table placed the rows on screen while it still guessed the
+    /// heights above them and never moved them once it knew: the transcript stayed black until the reader scrolled.
+    @Test func openingALongThreadFromTheBottomOfAnotherShowsItsLatestRowsAtOnce() async {
+        let first = (0..<780).map { reply(4 + ($0 * 37) % 300, seed: $0) }
+        let second = (0..<600).map { reply(10 + ($0 * 53) % 420, seed: $0 + 7) }
+        window.setContentSize(NSSize(width: 900, height: 700))
+        await settle()
+        list.update(first, reload: true)
+        list.restore(nil)
+        await settle()
+        func expectLatestOnScreen(_ comment: Comment) {
+            let table = list.tableView
+            let visible = list.scrollView.contentView.documentVisibleRect
+            var shown: [(index: Int, frame: NSRect)] = []
+            table.enumerateAvailableRowViews { rowView, index in
+                guard !rowView.isHidden else { return }
+                #expect(abs(rowView.frame.minY - table.rect(ofRow: index).minY) < 0.5, "\(comment): row \(index) is drawn away from its place")
+                if rowView.frame.intersects(visible) { shown.append((index, rowView.frame)) }
+            }
+            shown.sort { $0.index < $1.index }
+            #expect(list.isPinnedToBottom, "\(comment): not following")
+            #expect(list.distanceFromBottom <= 1, "\(comment): \(Int(list.distanceFromBottom)) from the bottom")
+            #expect(shown.last?.index == list.rows.count - 1, "\(comment): the last row isn't on screen")
+            guard let top = shown.first, let bottom = shown.last else {
+                Issue.record("\(comment): nothing on screen")
+                return
+            }
+            #expect(top.frame.minY <= visible.minY + 0.5, "\(comment): nothing drawn above row \(top.index)")
+            #expect(bottom.frame.maxY >= min(visible.maxY, table.frame.height) - 0.5, "\(comment): nothing drawn below row \(bottom.index)")
+            for (above, below) in zip(shown, shown.dropFirst()) {
+                #expect(below.index == above.index + 1 && abs(below.frame.minY - above.frame.maxY) < 0.5, "\(comment): a gap between rows \(above.index) and \(below.index)")
+            }
+        }
+        for (name, rows) in [("second", second), ("first again", first), ("second again", second)] {
+            list.forgetHeights()
+            list.update(rows, reload: true)
+            list.restore(nil)
+            window.layoutIfNeeded()
+            window.displayIfNeeded()
+            expectLatestOnScreen("\(name), first frame")
+            await settle()
+            await settle()
+            expectLatestOnScreen("\(name), settled")
+        }
+
+        // Every row laid out again while the reader is scrolled up (a setting changed): the row they read stays put.
+        let clip = list.scrollView.contentView
+        list.restore(.anchor(second[300].id, offset: 40))
+        await settle()
+        func offset() -> CGFloat { list.tableView.rect(ofRow: 300).minY - clip.bounds.minY }
+        let before = offset()
+        list.invalidateHeights()
+        list.update(second, reload: true)
+        window.layoutIfNeeded()
+        #expect(abs(offset() - before) <= 1, "the reader's row moved from \(before) to \(offset())")
+        await settle()
+        expectRowsInPlace("relaid out while scrolled up")
+    }
+
     // MARK: The user's messages
 
     private func userMessage(_ index: Int) -> TranscriptRow {
