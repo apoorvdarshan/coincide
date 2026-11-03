@@ -41,6 +41,7 @@ final class BitwardenPasskeyHandler: NSObject, WKScriptMessageHandlerWithReply {
         let body = message.body as? [String: Any]
         let kind = body?["kind"] as? String
         guard let webView = message.webView, let origin = Self.origin(of: message.frameInfo) else {
+            if kind == "get" { PasskeySignIn.log.notice("Passkey request left to the browser: it came from a frame Coincide doesn't answer") }
             replyHandler(kind == "available" ? false : WebAuthnReply.fallback.message, nil)
             return
         }
@@ -52,6 +53,12 @@ final class BitwardenPasskeyHandler: NSObject, WKScriptMessageHandlerWithReply {
             replyHandler(nil, nil)
         case "get":
             start(message.body, from: origin, in: webView, reply: replyHandler)
+        case "skipped":
+            // The script's own word, so only a known reason is logged.
+            if let reason = body?["reason"] as? String, ["signal", "options"].contains(reason) {
+                PasskeySignIn.log.notice("Passkey request left to the browser: the page script couldn't read its \(reason, privacy: .public)")
+            }
+            replyHandler(nil, nil)
         default:
             replyHandler(nil, nil)
         }
@@ -71,10 +78,13 @@ final class BitwardenPasskeyHandler: NSObject, WKScriptMessageHandlerWithReply {
 
     private func start(_ body: Any, from origin: WebAuthnOrigin, in webView: WKWebView,
         reply: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
-        guard let request = WebAuthnGetRequest(message: body), let vault = vault(), isShown(webView), let ui = makeUI(webView) else {
-            reply(WebAuthnReply.fallback.message, nil)
-            return
+        guard let request = WebAuthnGetRequest(message: body) else {
+            return leave("Coincide couldn't read it (\(WebAuthnGetRequest.summary(of: body)))", reply: reply)
         }
+        guard let vault = vault() else {
+            return leave("Bitwarden passkeys are off, or Bitwarden is locked or not set up in Coincide", reply: reply)
+        }
+        guard isShown(webView), let ui = makeUI(webView) else { return leave("the browser isn't on screen to ask", reply: reply) }
         let key = ObjectIdentifier(webView)
         guard pending[key] == nil else {
             reply(WebAuthnReply.pending.message, nil)
@@ -105,6 +115,12 @@ final class BitwardenPasskeyHandler: NSObject, WKScriptMessageHandlerWithReply {
             // A page that went away gets nothing.
             reply(webView == nil || task.isCancelled ? WebAuthnReply.notAllowed.message : answer.message, nil)
         }
+    }
+
+    /// Hands the request to the browser, saying why in the log.
+    private func leave(_ reason: String, reply: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        PasskeySignIn.log.notice("Passkey request left to the browser: \(reason, privacy: .public)")
+        reply(WebAuthnReply.fallback.message, nil)
     }
 }
 

@@ -117,8 +117,10 @@ public nonisolated struct WebAuthnGetRequest: Sendable, Equatable {
         }
     }
 
-    public static let maxChallenge = 4_096
-    public static let maxAllowedCredentials = 64
+    /// Generous bounds on what a page may send: Google's sign-in challenges and the credential lists of accounts with
+    /// many passkeys must fit.
+    public static let maxChallenge = 65_536
+    public static let maxAllowedCredentials = 256
     /// WebAuthn's limit for a credential ID.
     public static let maxCredentialID = 1_023
     public static let maxRPID = 253
@@ -192,6 +194,16 @@ public nonisolated struct WebAuthnGetRequest: Sendable, Equatable {
         }
         self.init(id: id, challenge: challenge, rpID: rpID, allowCredentials: allowed, userVerification: userVerification,
             timeout: timeout, mediation: mediation)
+    }
+
+    /// The shape of a message, for the log when it can't be read: sizes and the mediation only, never the values.
+    public static func summary(of body: Any) -> String {
+        let body = body as? [String: Any]
+        let options = body?["publicKey"] as? [String: Any]
+        let challenge = (options?["challenge"] as? String).map { "\($0.utf8.count) chars" } ?? "missing"
+        let allowed = options?["allowCredentials"].map { ($0 as? [Any]).map { "\($0.count)" } ?? "not a list" } ?? "none"
+        let mediation = (body?["mediation"] as? String).map { String($0.prefix(16)) } ?? "none"
+        return "challenge \(challenge), allowCredentials \(allowed), mediation \(mediation)"
     }
 
     /// How long Coincide waits for the user, from the page's timeout clamped as Bitwarden clamps it: 30 seconds to 10
