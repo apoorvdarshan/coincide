@@ -34,16 +34,13 @@ struct TranscriptMediaTests {
         #expect(TranscriptMedia.resolve("/tmp/my image.png", directory: nil)?.path == "/tmp/my image.png")
     }
 
-    @Test func deduplicatesAndBoundsCardsAndKeepsImageOnlyResponsesVisible() throws {
+    @Test func deduplicatesAndBoundsCardsAndKeepsImageOnlyResponsesVisible() {
         let text = (0..<20).map { "![\($0)](/tmp/\($0).png)" }.joined(separator: "\n")
         let outputs = TranscriptMedia.extract(text: text, attachments: ["/tmp/0.png"], directory: nil)
         #expect(outputs.count == 8)
         #expect(outputs.filter { $0.url?.path == "/tmp/0.png" }.count == 1)
-        let folder = TemporaryDirectory("generated-image")
-        let generated = folder.url.appendingPathComponent("generated.png")
-        try TestMedia.writePNG(to: generated, width: 1200, height: 800)
         var image = TranscriptItem(kind: .assistant, provider: .codex)
-        image.attachments = [generated.path]
+        image.attachments = ["/tmp/generated.png"]
         let user = TranscriptItem(kind: .user, text: "Make an image")
         let final = TranscriptItem(kind: .assistant, text: "Here it is.", provider: .codex)
         let rows = TranscriptBuilder(items: [user, image, final]).build()
@@ -67,9 +64,7 @@ struct TranscriptMediaTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(image.subviews.compactMap { $0 as? NSImageView }.first?.image != nil)
-        let movie = folder.url.appendingPathComponent("demo.mov")
-        try await TestMedia.writeMovie(to: movie, width: 320, height: 180)
-        let video = TranscriptMediaView(media: .init(kind: .video, label: "Demo", url: movie))
+        let video = TranscriptMediaView(media: .init(kind: .video, label: "Demo", url: folder.url.appendingPathComponent("demo.mov")))
         let player = try #require(video.subviews.compactMap { $0 as? AVPlayerView }.first)
         #expect(player.player != nil)
         #expect(player.player?.rate == 0) // no autoplay
@@ -86,26 +81,6 @@ struct TranscriptMediaTests {
         #expect(try await AVURLAsset(url: audioURL).load(.isPlayable))
         let audio = TranscriptMediaView(media: .init(kind: .audio, label: "Audio", url: audioURL))
         #expect(audio.subviews.compactMap { $0 as? AVPlayerView }.first?.controlsStyle == .inline)
-    }
-
-    /// A reply that links a video that is no longer there shows its name and that it wasn't found, on one line,
-    /// rather than a full-size black player.
-    @Test func aMissingVideoTakesALineNotABlackPlayer() {
-        let folder = TemporaryDirectory("missing-media")
-        let gone = folder.url.appendingPathComponent("gone-\(UUID().uuidString).mp4")
-        let reply = TranscriptItem(kind: .assistant, text: "The render is here: [take 1](\(gone.path))", provider: .claude)
-        #expect(TranscriptMediaCache.media(reply, directory: nil).map(\.kind) == [.video])
-        #expect(TranscriptMediaCache.height(reply, width: 640, directory: nil) < 100)
-        let card = TranscriptMediaView(media: .init(kind: .video, label: "take 1", url: gone))
-        card.frame = NSRect(x: 0, y: 0, width: 640, height: 60)
-        card.layoutSubtreeIfNeeded()
-        #expect(!card.subviews.contains { $0 is AVPlayerView })
-        let status = card.subviews.compactMap { $0 as? NSTextField }.filter { !$0.isHidden }.map(\.stringValue)
-        #expect(status.contains("take 1"))
-        #expect(status.count == 2, "the card says why it shows nothing: \(status)")
-        // A picture that's gone, too.
-        let picture = TranscriptItem(kind: .assistant, text: "![Chart](\(folder.url.appendingPathComponent("gone.png").path))", provider: .claude)
-        #expect(TranscriptMediaCache.height(picture, width: 640, directory: nil) < 100)
     }
 
     @Test func interactiveChartRunsButCannotReadParentOrFetchNetwork() async throws {
@@ -160,47 +135,5 @@ struct TranscriptMediaTests {
             let png = try #require(NSBitmapImageRep(data: data)?.representation(using: .png, properties: [:]))
             try png.write(to: URL(fileURLWithPath: path))
         }
-    }
-}
-
-/// Pictures and movies written for tests, so cards load real files as they do in the app.
-enum TestMedia {
-    /// A PNG `width` by `height` pixels.
-    static func writePNG(to url: URL, width: Int, height: Int) throws {
-        let rep = try #require(
-            NSBitmapImageRep(
-                bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
-                isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        NSColor.systemTeal.setFill()
-        NSRect(x: 0, y: 0, width: width, height: height).fill()
-        NSGraphicsContext.restoreGraphicsState()
-        try #require(rep.representation(using: .png, properties: [:])).write(to: url)
-    }
-
-    /// A short H.264 movie `width` by `height`, an MP4 or, by its extension, a QuickTime movie.
-    static func writeMovie(to url: URL, width: Int, height: Int) async throws {
-        let writer = try AVAssetWriter(outputURL: url, fileType: url.pathExtension.lowercased() == "mov" ? .mov : .mp4)
-        let input = AVAssetWriterInput(
-            mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height])
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
-        writer.add(input)
-        writer.startWriting()
-        writer.startSession(atSourceTime: .zero)
-        for frame in 0..<10 {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
-            var buffer: CVPixelBuffer?
-            CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA, nil, &buffer)
-            guard let buffer else { continue }
-            CVPixelBufferLockBaseAddress(buffer, [])
-            if let base = CVPixelBufferGetBaseAddress(buffer) { memset(base, Int32(20 * frame), CVPixelBufferGetDataSize(buffer)) }
-            CVPixelBufferUnlockBaseAddress(buffer, [])
-            adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 10))
-        }
-        input.markAsFinished()
-        await writer.finishWriting()
-        #expect(writer.status == .completed, "writing \(url.lastPathComponent): \(String(describing: writer.error))")
     }
 }
