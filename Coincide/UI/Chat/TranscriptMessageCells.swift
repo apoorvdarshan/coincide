@@ -613,10 +613,9 @@ final class TranscriptAssistantCell: TranscriptCell {
         var mediaY = textView.frame.maxY
         for view in mediaViews {
             mediaY += 12
-            // Each card fits its picture or video and starts where the text does (`TranscriptMedia.size`).
-            let size = view.media.size(width: textWidth)
-            view.frame = NSRect(x: column.x + Self.textInset, y: mediaY, width: size.width, height: size.height)
-            mediaY += size.height
+            let height = view.media.height(width: textWidth)
+            view.frame = NSRect(x: column.x + Self.textInset, y: mediaY, width: textWidth, height: height)
+            mediaY += height
         }
         guard meta != nil else { return }
         let y = mediaY + 8
