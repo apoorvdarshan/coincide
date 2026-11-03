@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import CoincideKit
 import Testing
@@ -273,6 +274,234 @@ final class StubTranscriptHost: TranscriptHost {
         change(nextReply) { $0.status = .completed }
         running = nil
         await apply("new turn ended")
+    }
+
+    // MARK: A long thread with media
+
+    /// Writes a short H.264 movie, so video cards load a real asset as they do in the app.
+    private static func writeMovie(to url: URL) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(
+            mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 180])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        writer.add(input)
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<10 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+            var buffer: CVPixelBuffer?
+            CVPixelBufferCreate(nil, 320, 180, kCVPixelFormatType_32BGRA, nil, &buffer)
+            guard let buffer else { continue }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            if let base = CVPixelBufferGetBaseAddress(buffer) {
+                memset(base, Int32(20 * frame), CVPixelBufferGetDataSize(buffer))
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 10))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+    }
+
+    /// A long thread like a real one: hundreds of turns whose work folds under "Worked for…", replies with headings,
+    /// lists, tables and code, screenshots the user attached, and replies that show images, videos and audio inline.
+    private func longMixedThread(turns: Int, media folder: URL) throws -> [TranscriptItem] {
+        var paths: [String] = []
+        for (index, color) in [NSColor.systemTeal, .systemOrange, .systemPurple].enumerated() {
+            let size = [NSSize(width: 1600, height: 1000), NSSize(width: 400, height: 900), NSSize(width: 64, height: 64)][index]
+            let image = NSImage(size: size, flipped: false) { rect in
+                color.setFill()
+                rect.fill()
+                return true
+            }
+            let url = folder.appendingPathComponent("shot-\(index).png")
+            let rep = try #require(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+            try #require(rep.representation(using: .png, properties: [:])).write(to: url)
+            paths.append(url.path)
+        }
+        let movie = folder.appendingPathComponent("demo.mp4").path
+        let missingMovie = folder.appendingPathComponent("gone.mov").path
+        let audio = folder.appendingPathComponent("voice.m4a").path
+        let date = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        var items: [TranscriptItem] = []
+        func add(_ kind: TranscriptItem.Kind, _ text: String, attachments: [String]? = nil) {
+            let status: ItemStatus? = kind == .user || kind == .notice ? nil : .completed
+            let provider: ProviderKind? = kind == .user || kind == .notice ? nil : .claude
+            items.append(
+                TranscriptItem(
+                    kind: kind, text: text, title: kind == .tool ? "Run" : nil, category: kind == .tool ? .command : nil,
+                    status: status, provider: provider, attachments: attachments, createdAt: date,
+                    completedAt: kind == .assistant ? date : nil))
+        }
+        let paragraph = "The change keeps every row where the table lays it out, so the reader never sees gaps or text drawn over other text. "
+        for turn in 0..<turns {
+            if turn % 17 == 16 {
+                add(.notice, "Background task finished")
+            }
+            let question = turn % 11 == 5 ? String(repeating: "A long question that wraps over many lines. ", count: 30) : "Question \(turn)?"
+            add(.user, question, attachments: turn % 7 == 3 ? Array(paths.prefix(1 + turn % 3)) : nil)
+            add(.reasoning, "Thinking about turn \(turn).")
+            for step in 0..<(1 + turn % 4) { add(.tool, "output \(step)") }
+            if turn % 5 == 2 {
+                // Shown mid-turn: a reply with media stays visible above the turn's final reply.
+                add(.assistant, "Here is the screenshot so far:\n\n![Screenshot](\(paths[turn % paths.count]))")
+                add(.tool, "ok")
+            }
+            var reply = "## Turn \(turn)\n\n" + String(repeating: paragraph, count: 1 + turn % 6) + "\n\n- one\n- two with `code`\n- three\n\n"
+            if turn % 3 == 0 {
+                reply += "```swift\n" + (0..<(4 + turn % 9)).map { "let value\($0) = rows[\($0)].height" }.joined(separator: "\n") + "\n```\n\n"
+            }
+            if turn % 4 == 1 {
+                reply += "| Row | Height | Exact |\n|---|---|---|\n" + (0..<(2 + turn % 5)).map { "| \($0) | \($0 * 40) | yes |" }.joined(separator: "\n") + "\n\n"
+            }
+            if turn % 4 == 2 { reply += "![Result](\(paths[(turn / 4) % paths.count]))\n\n" }
+            if turn % 9 == 4 { reply += "[demo.mp4](\(movie)) and [the old take](\(missingMovie))\n\n" }
+            if turn % 23 == 7 { reply += "[voice.m4a](\(audio))\n\n" }
+            reply += "Done."
+            add(.assistant, reply)
+        }
+        return items
+    }
+
+    /// The rows the table shows on screen, top to bottom, with their cells.
+    private func rowsOnScreen() -> [(index: Int, frame: NSRect, cell: TranscriptCell?)] {
+        let visible = list.scrollView.contentView.documentVisibleRect
+        var shown: [(index: Int, frame: NSRect, cell: TranscriptCell?)] = []
+        list.tableView.enumerateAvailableRowViews { rowView, index in
+            guard !rowView.isHidden, rowView.frame.intersects(visible) else { return }
+            shown.append((index, rowView.frame, rowView.view(atColumn: 0) as? TranscriptCell))
+        }
+        return shown.sorted { $0.index < $1.index }
+    }
+
+    /// What the reader sees is drawn edge to edge by consecutive rows, each as tall as it measures, each showing its
+    /// own row, with its text and media inside it. Unlike `expectRowsInPlace`, this doesn't first ask the table for
+    /// every row's place, which settles rows the table had only guessed: it checks what is on screen as it is.
+    private func expectScreenCovered(_ comment: Comment) {
+        let tableView = list.tableView
+        let visible = list.scrollView.contentView.documentVisibleRect
+        let shown = rowsOnScreen()
+        #expect(!shown.isEmpty, "\(comment): nothing on screen at \(Int(visible.minY))…\(Int(visible.maxY)) of \(Int(tableView.frame.height))")
+        guard let first = shown.first, let last = shown.last else { return }
+        if first.index > 0 {
+            #expect(first.frame.minY <= visible.minY + 0.5, "\(comment): a gap above row \(first.index)")
+        }
+        #expect(
+            last.frame.maxY >= min(visible.maxY, tableView.frame.height) - 0.5,
+            "\(comment): a gap below row \(last.index) of \(list.rows.count): \(Int(last.frame.maxY)) < \(Int(min(visible.maxY, tableView.frame.height)))")
+        for (above, below) in zip(shown, shown.dropFirst()) {
+            #expect(below.index == above.index + 1, "\(comment): rows \(above.index + 1)…\(below.index - 1) are missing on screen")
+            #expect(abs(below.frame.minY - above.frame.maxY) < 0.5, "\(comment): \(Int(below.frame.minY - above.frame.maxY)) between rows \(above.index) and \(below.index)")
+        }
+        for entry in shown {
+            let row = list.rows[entry.index]
+            #expect(abs(entry.frame.minY - tableView.rect(ofRow: entry.index).minY) < 0.5, "\(comment): row \(entry.index) is drawn away from its place")
+            #expect(entry.frame.height == exactHeight(of: row), "\(comment): row \(entry.index) is \(entry.frame.height) tall, measures \(exactHeight(of: row))")
+            guard let cell = entry.cell else {
+                Issue.record("\(comment): row \(entry.index) has no cell")
+                continue
+            }
+            #expect(cell.row?.id == row.id, "\(comment): row \(entry.index) shows another row's content")
+            cell.layoutSubtreeIfNeeded()
+            for case let text as ChatTextView in cell.subviews {
+                guard let layoutManager = text.layoutManager, let container = text.textContainer else { continue }
+                layoutManager.ensureLayout(for: container)
+                let drawn = text.frame.minY + layoutManager.usedRect(for: container).height
+                #expect(drawn <= cell.bounds.height + 0.5, "\(comment): row \(entry.index)'s text runs into the next row")
+            }
+            for case let media as TranscriptMediaView in cell.subviews {
+                #expect(media.frame.maxY <= cell.bounds.height + 0.5, "\(comment): row \(entry.index)'s \(media.media.kind) runs into the next row")
+                #expect(media.frame.height == media.media.height(width: media.frame.width), "\(comment): row \(entry.index)'s media card")
+            }
+        }
+    }
+
+    /// Scrolls as the reader does with a trackpad: the clip moves, then the list hears about it.
+    private func readerScroll(by delta: CGFloat) {
+        let clip = list.scrollView.contentView
+        let maxY = max(-clip.contentInsets.top, list.tableView.frame.height + clip.contentInsets.bottom - clip.bounds.height)
+        clip.setBoundsOrigin(NSPoint(x: 0, y: min(maxY, max(-clip.contentInsets.top, clip.bounds.minY + delta))))
+        list.scrollView.reflectScrolledClipView(clip)
+        list.scrollView.onReaderScroll?(delta < 0)
+    }
+
+    /// A long thread with images, videos and audio opens at its latest messages, and every screen the reader scrolls
+    /// through, up to the top and back, is drawn edge to edge, across width changes and a reload of every row, without
+    /// another message coming in to lay the rows out again.
+    @Test func aLongThreadWithMediaIsDrawnEdgeToEdgeWhereverTheReaderScrolls() async throws {
+        let folder = TemporaryDirectory("long-thread-media")
+        try await Self.writeMovie(to: folder.url.appendingPathComponent("demo.mp4"))
+        let items = try longMixedThread(turns: 180, media: folder.url)
+        for item in items { host.items[item.id] = item }
+        let rows = TranscriptBuilder(items: items).build()
+        #expect(rows.count > 500)
+        window.setContentSize(NSSize(width: 900, height: 700))
+        list.update(rows, reload: true)
+        list.restore(nil)
+        await settle()
+        await settle()
+        // Opens at the latest messages: the last reply is on screen and nothing is left to scroll to.
+        #expect(list.isPinnedToBottom)
+        #expect(list.distanceFromBottom <= 1, "opened \(list.distanceFromBottom) from the bottom")
+        let lastReply = try #require(rows.lastIndex { if case .assistant = $0.kind { true } else { false } })
+        #expect(rowsOnScreen().contains { $0.index == lastReply }, "opened without the last reply on screen")
+        expectScreenCovered("opened")
+
+        let clip = list.scrollView.contentView
+        var steps = 0
+        while clip.bounds.minY > -clip.contentInsets.top + 0.5, steps < 2000 {
+            readerScroll(by: -clip.bounds.height * 0.9)
+            await settle()
+            expectScreenCovered("scrolling up, step \(steps)")
+            steps += 1
+        }
+        #expect(steps > 20)
+        // Down again, past rows measured on the way up and rows still estimated.
+        for width in [620, 1180] as [CGFloat] {
+            window.setContentSize(NSSize(width: width, height: 700))
+            await settle()
+            await settle()
+            expectScreenCovered("at the top at \(width)")
+        }
+        steps = 0
+        while list.distanceFromBottom > 1, steps < 2000 {
+            readerScroll(by: clip.bounds.height * 0.9)
+            await settle()
+            expectScreenCovered("scrolling down, step \(steps)")
+            steps += 1
+        }
+        #expect(list.distanceFromBottom <= 1)
+
+        // Scrolled into the middle, every row lays out again (a setting changed) and the width changes.
+        readerScroll(by: -list.tableView.frame.height / 2)
+        await settle()
+        list.invalidateHeights()
+        list.update(rows, reload: true)
+        await settle()
+        await settle()
+        expectScreenCovered("reloaded in the middle")
+        window.setContentSize(NSSize(width: 760, height: 560))
+        await settle()
+        await settle()
+        expectScreenCovered("resized in the middle")
+        for step in 0..<12 {
+            readerScroll(by: (step < 6 ? -1 : 1) * clip.bounds.height * 1.5)
+            await settle()
+            expectScreenCovered("after the reload, step \(step)")
+        }
+
+        // Opening it again lands on the latest messages, even after the reader's place is gone.
+        list.forgetHeights()
+        list.update([], reload: true)
+        list.update(rows, reload: true)
+        list.restore(.anchor(.item(UUID()), offset: 120))
+        await settle()
+        await settle()
+        #expect(list.isPinnedToBottom)
+        #expect(list.distanceFromBottom <= 1, "reopened \(list.distanceFromBottom) from the bottom")
+        #expect(rowsOnScreen().contains { $0.index == lastReply }, "reopened without the last reply on screen")
+        expectScreenCovered("reopened")
     }
 
     // MARK: The user's messages
