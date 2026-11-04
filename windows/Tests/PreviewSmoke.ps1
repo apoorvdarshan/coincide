@@ -157,6 +157,13 @@ try {
     if ($saved.sessions[0].id -ne 'fixture-thread') { throw 'The native Codex session identity was not persisted.' }
     $checks += 'Native Send streams Unicode, reconciles the final item, and saves the session without duplicates'
 
+    Send-Message 'hello'
+    Wait-Until { (Latest-IsVisible $replyMarker) -and !(Find-Control $script:window 'Stop').Current.IsEnabled } 'A repeated reply made the window unresponsive.'
+    $repeated = Get-Content $threadFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $answers = @($repeated.messages | Where-Object {$_.role -eq 'assistant'})
+    if ($repeated.messages.Count -ne 4 -or $answers.Count -ne 2 -or $answers[0].text -ne $answers[1].text) { throw 'Identical replies were merged or lost.' }
+    $checks += 'Identical replies keep distinct transcript rows and accessible controls remain responsive'
+
     Send-Message 'approval'
     Wait-Until { $null -ne (Find-Control $script:window 'DenyApproval') } 'No native approval card appeared.'
     Select-Thread 'Smoke B'
@@ -192,6 +199,15 @@ try {
     $box = Find-Control $script:window 'Composer'
     if ($box.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'next draft') { throw 'Stopping lost the draft typed during the turn.' }
     $checks += 'Stop interrupts the active turn and preserves the next draft'
+
+    Invoke-Control 'NewChat'
+    Wait-Until { (Find-Control $script:window 'AgentStatus').Current.Name -like 'Codex*' } 'The second untitled conversation did not open.'
+    $list = Find-Control $script:window 'Threads'
+    $sameTitle = New-Object Windows.Automation.AndCondition(
+        (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ListItem)),
+        (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, $codex[0].title)))
+    if ($list.FindAll([Windows.Automation.TreeScope]::Descendants, $sameTitle).Count -ne 2) { throw 'Identical conversation titles do not have separate accessible rows.' }
+    $checks += 'Identical conversation titles retain separate accessible sidebar rows'
 
     Save-WindowEvidence
     Write-JsonFile (Join-Path $Results 'result.json') @{passed=$true; checks=$checks; dataDirectory=$data}

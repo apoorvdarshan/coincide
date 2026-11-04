@@ -11,17 +11,19 @@ delivery route; neither replacement has been implemented or validated yet. These
 ## Verified development milestone
 
 - The native WinUI executable builds on the physical Windows laptop; GitHub Windows runners also compile it.
-- 71 workspace/process, 17 storage, 39 protocol, 42 subprocess connection, and 30 Codex session lifecycle checks
-  passed on the laptop (199 total), without a provider account or model call.
-- Eight native UI checks passed: the four long-history/draft checks plus Codex Send/Unicode/final-text reconciliation,
-  command approval denial across thread switching, a native question answer, and Stop preserving the next draft.
-- A screenshot and native accessibility tree were inspected. The native transcript and composer render correctly.
-- The source now also includes two file-approval lifecycle assertions and a ninth native UI check for path/diff display
-  and denial. SSH timed out before the follow-up laptop run; these additions are not claimed as locally verified.
-- Codex turn orchestration and the composer are connected. Native session IDs persist and resume; unsupported requests
-  fail closed. Other providers, real Codex sign-in/conversation, rich content, and full parity remain pending.
-- The Mac thread-click focus fix is separately committed on this branch, built and tested; it has not been installed
-  into the running Mac app.
+- All 201 automated checks pass on the laptop: 71 workspace/process, 17 storage, 39 protocol, 42 subprocess connection,
+  and 32 Codex session lifecycle checks. They do not use a provider account or call a model.
+- All eleven native UI checks pass: four long-history/draft checks; Codex Send/Unicode/final-text reconciliation;
+  repeated identical replies; command approval denial across thread switching; file approval path/diff display and
+  denial; typed question answers; Stop preserving a draft; and duplicate conversation titles.
+- A freeze exposed by identical replies is fixed with distinct bindable row identities. Equal display strings no longer
+  make WinUI's accessibility sibling traversal revisit the same item. Both transcript and sidebar have regression coverage.
+- Screenshots and the native accessibility tree were inspected. Codex turn orchestration and the composer are connected;
+  native session IDs persist and resume, and unsupported requests fail closed.
+- The native Windows Codex CLI 0.166.0 starts and exposes app-server tooling. Sign-in and a real account conversation
+  remain unverified. Other providers, rich content, and full parity remain pending.
+- The Mac thread-click focus fix passes 16 focused checks. Async-question rendering/answering passes 98 focused checks;
+  these fixes are built and pushed but have not been installed into the running Mac app.
 - Source is tracked in draft PR #235. Check its current CI result separately from the local results above.
 
 ## Platform decisions
@@ -53,9 +55,9 @@ needs both the relevant automated coverage and actual Windows verification befor
 | Persistence | Fast index, lazy transcripts, drafts, crash-safe writes, recovery and forward compatibility | Initial isolated store passes 17 Windows regression checks; full recovery/migration still pending |
 | Agents | Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity; detect, sign in, catalogs and account selection | Codex orchestration, resume and failure paths pass subprocess fixtures; real sign-in/conversation and other providers pending |
 | Model controls | Favorites, hidden models, effort, speed, permissions, plan/build mode, project defaults | Not implemented |
-| Streaming runtime | Tools, approvals, questions, cancellation, steering, queueing and background work | Codex Send, streaming, command approvals, questions and Stop pass native fixture UI checks; file-approval extension awaits verification; steering, queueing and background persistence pending |
+| Streaming runtime | Tools, approvals, questions, cancellation, steering, queueing and background work | Codex Send, streaming, command approvals, questions and Stop pass native fixture UI checks; file approval denial also passes; steering, queueing and background persistence pending |
 | Provider handoff | Per-provider/per-thread session IDs, missed turns, reset/resume behavior and context limits | Initial bookkeeping tests; provider integration and bounded recap pending |
-| Transcript | Markdown, code, work logs, links, images, audio/video, media opening, previews and copy/selection | Virtualized plain text, long-thread switching, Unicode streaming and final-text reconciliation pass native UI checks; rich content and full performance validation pending |
+| Transcript | Markdown, code, work logs, links, images, audio/video, media opening, previews and copy/selection | Virtualized plain text, long-thread switching, repeated replies, Unicode streaming and final-text reconciliation pass native UI checks; rich content and full performance validation pending |
 | Composer | Attachments, mentions, slash commands, quotes, terminal/diff context and per-thread drafts | Send/Ctrl+Enter, Stop and per-thread drafts connected; attachments, mentions and other context controls pending |
 | Git | Status/diffs, stage/commit/push, checkpoints/revert, worktrees and turn diffs | Not implemented |
 | Code hosting | GitHub native PR workspace; other supported forge CLIs/pages, checks, reviews and exact-head merges | Not implemented |

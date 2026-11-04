@@ -9,6 +9,8 @@
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
+#include <winrt/Microsoft.UI.Xaml.Data.h>
+#include <winrt/Windows.UI.Xaml.Interop.h>
 #include <winrt/Microsoft.UI.Xaml.XamlTypeInfo.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -89,6 +91,39 @@ std::filesystem::path codex_executable() {
         }
     }
     throw std::runtime_error("Install the native Windows Codex CLI and sign in with codex login, then try again.");
+}
+
+// ListView needs an identity for each row. Equal boxed strings otherwise identify two different messages
+// as the same item, which can make UI Automation sibling traversal cycle indefinitely.
+using Inspectable = winrt::Windows::Foundation::IInspectable;
+using XamlType = winrt::Windows::UI::Xaml::Interop::TypeName;
+using TypeKind = winrt::Windows::UI::Xaml::Interop::TypeKind;
+struct DisplayProperty : winrt::implements<DisplayProperty, xaml::Data::ICustomProperty> {
+    explicit DisplayProperty(hstring text) : text_(std::move(text)) {}
+    XamlType Type() const { return {L"String", TypeKind::Primitive}; }
+    hstring Name() const { return L"Text"; }
+    Inspectable GetValue(const Inspectable&) const { return winrt::box_value(text_); }
+    bool CanRead() const { return true; }
+    bool CanWrite() const { return false; }
+    void SetValue(const Inspectable&, const Inspectable&) const { throw winrt::hresult_access_denied(); }
+    Inspectable GetIndexedValue(const Inspectable&, const Inspectable&) const { throw winrt::hresult_not_implemented(); }
+    void SetIndexedValue(const Inspectable&, const Inspectable&, const Inspectable&) const { throw winrt::hresult_not_implemented(); }
+private:
+    hstring text_;
+};
+struct DisplayItem : winrt::implements<DisplayItem, xaml::Data::ICustomPropertyProvider> {
+    explicit DisplayItem(hstring text) : text_(std::move(text)) {}
+    xaml::Data::ICustomProperty GetCustomProperty(const hstring& name) const {
+        return name == L"Text" ? winrt::make<DisplayProperty>(text_) : nullptr;
+    }
+    xaml::Data::ICustomProperty GetIndexedProperty(const hstring&, const XamlType&) const { return nullptr; }
+    hstring GetStringRepresentation() const { return text_; }
+    XamlType Type() const { return {L"Coincide.DisplayItem", TypeKind::Custom}; }
+private:
+    hstring text_;
+};
+winrt::Windows::Foundation::IInspectable display_item(const std::string& text) {
+    return winrt::make<DisplayItem>(winrt::to_hstring(text));
 }
 
 struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
@@ -182,6 +217,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
 
         sidebar = controls::ListView{};
         identify(sidebar, L"Threads");
+        sidebar.DisplayMemberPath(L"Text");
         sidebar.SelectionMode(controls::ListViewSelectionMode::Single);
         sidebar.SelectionChanged([this](const auto&, const auto&) {
             const auto index = sidebar.SelectedIndex();
@@ -242,7 +278,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         transcript.SelectionMode(controls::ListViewSelectionMode::None);
         transcript.HorizontalContentAlignment(xaml::HorizontalAlignment::Stretch);
         transcript.ItemTemplate(xaml::Markup::XamlReader::Load(
-            LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><TextBlock Text="{Binding}" TextWrapping="Wrap" IsTextSelectionEnabled="True" Margin="12,8,12,8"/></DataTemplate>)"
+            LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><TextBlock Text="{Binding Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True" Margin="12,8,12,8"/></DataTemplate>)"
         ).as<xaml::DataTemplate>());
         controls::Grid::SetRow(transcript, 1);
         content.Children().Append(transcript);
@@ -347,7 +383,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 const auto p = std::find_if(workspace.projects.begin(), workspace.projects.end(), [&](const auto& p) {return p.id == *t.project_id;});
                 if (p != workspace.projects.end()) display = p->name + " / " + display;
             }
-            sidebar.Items().Append(winrt::box_value(winrt::to_hstring(display)));
+            sidebar.Items().Append(display_item(display));
         }
         const auto at = std::find(visible.begin(), visible.end(), selected);
         if (at != visible.end()) sidebar.SelectedIndex(static_cast<int32_t>(std::distance(visible.begin(), at)));
@@ -370,7 +406,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             transcript.Items().Clear();
             for (const auto& m : t.messages) {
                 const auto speaker = m.role == "user" ? winrt::to_string(label(L"You", L"You")) : m.provider;
-                transcript.Items().Append(winrt::box_value(winrt::to_hstring(speaker + "\n" + m.text)));
+                transcript.Items().Append(display_item(speaker + "\n" + m.text));
             }
             selecting = false;
             render_prompts(); update_composer();
@@ -499,7 +535,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 thread.draft = input.text; thread.messages.pop_back(); store->save_thread(thread); return;
             }
             at->second.failed = false; at->second.status = winrt::to_string(label(L"Connecting", L"Connecting…"));
-            transcript.Items().Append(winrt::box_value(winrt::to_hstring(winrt::to_string(label(L"You", L"You")) + "\n" + input.text)));
+            transcript.Items().Append(display_item(winrt::to_string(label(L"You", L"You")) + "\n" + input.text));
             selecting = true; composer.Text(L""); selecting = false;
             update_composer(); show_latest(); composer.Focus(xaml::FocusState::Programmatic);
         } catch (...) {report_exception();}
@@ -516,7 +552,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         dirty_threads.insert(thread.id);
         if (selected == thread.id && !closing) {
             const auto row = static_cast<uint32_t>(std::distance(thread.messages.begin(), at));
-            const auto value = winrt::box_value(winrt::to_hstring("codex\n" + at->text));
+            const auto value = display_item("codex\n" + at->text);
             if (row < transcript.Items().Size()) transcript.Items().SetAt(row, value);
             else transcript.Items().Append(value);
             show_latest();

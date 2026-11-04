@@ -27,10 +27,10 @@ isolated 1,500-message conversations and uses an explicitly labeled subprocess f
 streaming, command/file approval denial, questions, and Stop. It records UI evidence, closes its own process, and
 removes its temporary conversation data. It does not use real conversations or a provider account.
 
-On the physical Windows laptop, 199 automated checks and eight native UI checks passed. The last two file-approval
-lifecycle assertions and ninth native UI check were added afterwards; the follow-up laptop run was blocked by an SSH
-timeout. See the current CI result for the final source revision rather than treating that earlier run as validation
-of these additions.
+On the physical Windows laptop, all 201 automated checks and eleven native UI checks pass. The UI suite covers
+long histories, saved drafts, streaming/final-text reconciliation, repeated identical replies, duplicate chat titles,
+command/file approval denial, typed question answers, and Stop. Distinct view-model identities keep equal visible text
+from confusing WinUI's item lookup and accessibility traversal. Check exact-head CI separately from these local results.
 
 The initial preview keeps its data under `%LOCALAPPDATA%\Coincide Windows Preview`. Override `COINCIDE_DATA_DIR` for
 isolated tests. It does not import or rewrite an existing Mac data directory. The small workspace index loads at launch;
