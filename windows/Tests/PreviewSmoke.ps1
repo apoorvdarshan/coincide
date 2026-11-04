@@ -43,7 +43,9 @@ foreach ($entry in @(@($first, 'Smoke A', 'END-A'), @($second, 'Smoke B', 'END-B
 }
 Write-JsonFile (Join-Path $data 'workspace.json') @{version=1; projects=@(); threads=$threads}
 $previousData = $env:COINCIDE_DATA_DIR
+$previousDiagnostics = $env:COINCIDE_DIAGNOSTICS_PATH
 $env:COINCIDE_DATA_DIR = $data
+$env:COINCIDE_DIAGNOSTICS_PATH = Join-Path $Results 'startup.txt'
 $process = $null
 $checks = @()
 
@@ -119,6 +121,7 @@ try {
         if (!$process.WaitForExit(10000)) { $process.Kill() }
     }
     $env:COINCIDE_DATA_DIR = $previousData
+    $env:COINCIDE_DIAGNOSTICS_PATH = $previousDiagnostics
     # Test data was created under the results directory, never the user's normal application data.
     Remove-Item -Recurse -Force $data
 }

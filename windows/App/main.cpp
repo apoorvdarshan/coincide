@@ -8,6 +8,7 @@
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
+#include <winrt/Microsoft.UI.Xaml.XamlTypeInfo.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Dispatching.h>
@@ -25,6 +26,16 @@ namespace foundation = winrt::Windows::Foundation;
 using winrt::hstring;
 
 namespace {
+void diagnostic(const hstring& message) noexcept {
+    try {
+        wchar_t path[32768]{};
+        const auto length = GetEnvironmentVariableW(L"COINCIDE_DIAGNOSTICS_PATH", path, 32768);
+        if (length > 0 && length < 32768) {
+            std::ofstream output(std::filesystem::path(path), std::ios::app);
+            output << winrt::to_string(message) << '\n';
+        }
+    } catch (...) { }
+}
 hstring label(const wchar_t* key, const wchar_t* fallback) {
     try {
         winrt::Microsoft::Windows::ApplicationModel::Resources::ResourceLoader resources;
@@ -54,7 +65,8 @@ std::filesystem::path data_directory() {
     return root / L"Coincide Windows Preview";
 }
 
-struct App : xaml::ApplicationT<App> {
+struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
+    xaml::XamlTypeInfo::XamlControlsXamlMetaDataProvider metadata;
     xaml::Window window{nullptr};
     controls::Grid root{nullptr};
     controls::ListView sidebar{nullptr};
@@ -74,14 +86,23 @@ struct App : xaml::ApplicationT<App> {
     bool writable{};
 
     App() {
+        diagnostic(L"Application constructed");
         Resources().MergedDictionaries().Append(controls::XamlControlsResources{});
         UnhandledException([this](const auto&, const xaml::UnhandledExceptionEventArgs& args) {
+            diagnostic(args.Message());
             args.Handled(true);
             show_error(args.Message());
         });
     }
 
+    xaml::Markup::IXamlType GetXamlType(const winrt::Windows::UI::Xaml::Interop::TypeName& name) {
+        return metadata.GetXamlType(name);
+    }
+    xaml::Markup::IXamlType GetXamlType(const hstring& name) { return metadata.GetXamlType(name); }
+    winrt::com_array<xaml::Markup::XmlnsDefinition> GetXmlnsDefinitions() { return metadata.GetXmlnsDefinitions(); }
+
     void OnLaunched(const xaml::LaunchActivatedEventArgs&) {
+        diagnostic(L"OnLaunched");
         window = xaml::Window{};
         window.Title(L"Coincide — Windows Preview");
         root = controls::Grid{};
@@ -345,6 +366,7 @@ struct App : xaml::ApplicationT<App> {
     }
 
     void show_error(const hstring& message) {
+        diagnostic(message);
         if (state) state.Text(message);
         else MessageBoxW(nullptr, message.c_str(), L"Coincide", MB_OK | MB_ICONERROR);
     }
@@ -376,9 +398,11 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         xaml::Application::Start([](auto&&) { winrt::make<App>(); });
         return 0;
     } catch (const winrt::hresult_error& error) {
+        diagnostic(error.message());
         MessageBoxW(nullptr, error.message().c_str(), L"Coincide could not start", MB_OK | MB_ICONERROR);
         return 1;
     } catch (const std::exception& error) {
+        diagnostic(winrt::to_hstring(error.what()));
         MessageBoxW(nullptr, winrt::to_hstring(error.what()).c_str(), L"Coincide could not start", MB_OK | MB_ICONERROR);
         return 1;
     }
