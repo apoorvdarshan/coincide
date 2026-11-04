@@ -7,6 +7,13 @@
   <description>Feature videos, launch notes and deep dives on Coincide, the native Mac app for coding agents.</description>
   <language>en</language>
   <item>
+    <title>One picker for your coding agents</title>
+    <link>https://coincide.dev/blog/one-picker-every-agent</link>
+    <guid isPermaLink="true">https://coincide.dev/blog/one-picker-every-agent</guid>
+    <pubDate>Wed, 04 Nov 2026 02:57:11 GMT</pubDate>
+    <description>A 12-second preview of Coincide’s agent and model picker: choose Claude Code, Codex or Cursor without leaving your conversation.</description>
+  </item>
+  <item>
     <title>Coding agents with a face: meet the Coincide bots</title>
     <link>https://coincide.dev/blog/coding-agents-with-a-face</link>
     <guid isPermaLink="true">https://coincide.dev/blog/coding-agents-with-a-face</guid>
