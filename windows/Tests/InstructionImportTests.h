@@ -52,11 +52,18 @@ inline int instruction_tests(const std::filesystem::path& report){
         check(shared.files.front().protected_master&&std::find(shared.files.front().readers.begin(),shared.files.front().readers.end(),"codex")!=shared.files.front().readers.end(),"overlapping global provider homes must merge readers without hiding the protected master");
         fixture.write(L"empty/AGENTS.md",std::string_view("a\0b",3));const auto binary=InstructionService::project_files(empty);rejects([&]{InstructionService::read(binary.files[0]);},"instruction previews must reject NUL-bearing content");
         fixture.write(L"empty/AGENTS.md",std::string(1024*1024+1,'x'));const auto large=InstructionService::project_files(empty);rejects([&]{InstructionService::read(large.files[0]);},"instruction reads must enforce the one MB bound");
-        const auto linked=project/L"linked";std::filesystem::create_directory(linked);
+        // Discovery returns paths beneath its canonical selected root. Windows runners may
+        // provide TEMP through an 8.3 alias (RUNNER~1), so retain the link name under that root.
+        const auto linked=std::filesystem::canonical(project)/L"linked";std::filesystem::create_directory(linked);
         if(CreateSymbolicLinkW((linked/L"CLAUDE.md").c_str(),(project/L"AGENTS.md").c_str(),SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)){
             const auto links=InstructionService::project_files(project);const auto at=std::find_if(links.files.begin(),links.files.end(),[&](const auto& file){return file.path==linked/L"CLAUDE.md";});
             check(at!=links.files.end()&&at->linked&&InstructionService::read(*at).text=="agents\n","read-only in-project instruction links must retain their identity and resolve safely");
             check(local_file::reparse(linked/L"CLAUDE.md"),"previewing a link must never replace it");
+            std::array<wchar_t,32768> short_name{};const auto short_length=GetShortPathNameW(project.c_str(),short_name.data(),static_cast<DWORD>(short_name.size()));
+            if(short_length&&short_length<short_name.size()){
+                const auto alias=InstructionService::project_files(std::filesystem::path(short_name.data()));const auto preserved=std::find_if(alias.files.begin(),alias.files.end(),[&](const auto& file){return file.path==linked/L"CLAUDE.md";});
+                check(preserved!=alias.files.end()&&preserved->linked&&InstructionService::read(*preserved).text=="agents\n","canonical discovery through a Windows short-path alias must preserve the actual instruction link identity");
+            }
             if(CreateSymbolicLinkW((linked/L"AGENTS.md").c_str(),master.c_str(),SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)){
                 const auto external=InstructionService::project_files(project);const auto out=std::find_if(external.files.begin(),external.files.end(),[&](const auto& file){return file.path==linked/L"AGENTS.md";});check(out!=external.files.end()&&!out->readable,"project instruction links outside the selected scope must not be read automatically");
             }else ++skipped;
