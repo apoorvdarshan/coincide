@@ -75,6 +75,8 @@ private:
     std::optional<CodexTurn> input_;
     std::deque<AgentQueuedTurn> queued_;
     std::unordered_set<std::string> deliveries_;
+    std::unordered_set<std::string> current_usage_messages_,retired_usage_messages_;
+    std::deque<std::string> retired_usage_history_;
     std::deque<std::string> delivery_history_;
     std::deque<std::pair<std::string, std::string>> answers_;
     std::deque<std::string> lines_, writes_;
@@ -324,7 +326,7 @@ private:
         }
         if (type == "stream_event") {
             const auto event = frame.GetNamedObject(L"event", Object{}); const auto event_type = text(event, L"type");
-            if (event_type == "message_start") {message_ = text(event.GetNamedObject(L"message", Object{}), L"id"); blocks_.clear();}
+            if (event_type == "message_start") {message_ = text(event.GetNamedObject(L"message", Object{}), L"id");if(retired_usage_messages_.contains(message_))message_.clear();else if(!message_.empty()){if(current_usage_messages_.size()>=65536&&!current_usage_messages_.contains(message_))throw RpcError("Claude streamed too many message identities");current_usage_messages_.insert(message_);}blocks_.clear();}
             else if (!message_.empty() && event_type == "content_block_start") {
                 const auto block = event.GetNamedObject(L"content_block", Object{}); const auto index = static_cast<int>(event.GetNamedNumber(L"index", -1));
                 if (index < 0 || index > 100000) return;
@@ -338,6 +340,8 @@ private:
         } else if (type == "assistant") {
             const auto error = text(frame, L"error"); if (!error.empty() && error != "max_output_tokens") {failure_ = "Claude Code reported an assistant error: " + error; return;}
             const auto message = frame.GetNamedObject(L"message", Object{}); const auto id = text(message, L"id"); if (id.empty()) return;
+            if(retired_usage_messages_.contains(id))return;if(current_usage_messages_.size()>=65536&&!current_usage_messages_.contains(id))throw RpcError("Claude streamed too many message identities");current_usage_messages_.insert(id);
+            if(const auto usage=UsageProtocol::normalize([&]{return UsageProtocol::claude(frame);},launch_.session_id,current_))emit(Kind::usage,current_,*usage,"assistant.usage");
             int index{};
             for (const auto& raw : message.GetNamedArray(L"content", Array{})) {
                 const auto block = raw.GetObject(); const auto item = current_ + "/" + id + "/" + std::to_string(index++);
@@ -351,13 +355,14 @@ private:
             if (echoed && !matching) return;
             const auto origin = text(frame.GetNamedObject(L"origin", Object{}), L"kind"); if (!origin.empty() && origin != "human" && !matching) return;
             if (!echoed && lifecycle_ && !started_) return;
+            if(const auto usage=UsageProtocol::normalize([&]{return UsageProtocol::claude(frame);},launch_.session_id,current_))emit(Kind::usage,current_,*usage,"result.usage");
             if (frame.GetNamedBoolean(L"is_error", false) || text(frame, L"subtype").starts_with("error")) failure_ = "Claude Code could not finish this turn";
             if (!saw_reply_ && failure_.empty() && !text(frame, L"result").empty()) emit(Kind::text_complete, current_ + "/result", text(frame, L"result"));
             done_ = true;
         }
     }
     void run_turn(CodexTurn turn) {
-        done_ = sent_ = saw_reply_ = started_ = false; blocks_.clear(); finalized_.clear(); failure_.clear(); current_ = uuid(); message_.clear();
+        done_ = sent_ = saw_reply_ = started_ = false; blocks_.clear(); finalized_.clear();current_usage_messages_.clear(); failure_.clear(); current_ = uuid(); message_.clear();
         std::string outcome = "failed";
         try {
             emit(Kind::status, {}, "Connecting to Claude Code…"); connect(turn); if (stopping_ || cancel_) throw Cancelled{};
@@ -380,6 +385,7 @@ private:
             try {write(ClaudeProtocol::response(id, ClaudeProtocol::deny(prompt.request)));} catch (...) {}
             emit(Kind::resolved, winrt::to_string(Json::CreateStringValue(winrt::to_hstring(id)).Stringify()));
         }
+        for(const auto& id:current_usage_messages_)if(retired_usage_messages_.insert(id).second)retired_usage_history_.push_back(id);while(retired_usage_history_.size()>65536){retired_usage_messages_.erase(retired_usage_history_.front());retired_usage_history_.pop_front();}
         prompts_.clear(); done_ = true; emit(Kind::completed, current_, outcome);
         std::lock_guard lock(mutex_); active_ = false;
         if (outcome != "completed") {paused_ = true; if (!queued_.empty()) emit_locked(Kind::queue_changed, {}, {}, "paused");}

@@ -1,0 +1,62 @@
+#pragma once
+#include "NativeStrings.h"
+#include "../Runtime/CredentialSettings.h"
+#ifdef GetCurrentTime
+#undef GetCurrentTime
+#endif
+#include <winrt/Microsoft.UI.Xaml.h>
+#include <winrt/Microsoft.UI.Xaml.Controls.h>
+#include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
+#include <winrt/Microsoft.UI.Xaml.Automation.h>
+
+namespace coincide {
+class CredentialsPanel:public std::enable_shared_from_this<CredentialsPanel> {
+public:
+    struct Services {
+        std::function<void(credentials::Manager)> refresh;
+        std::function<void()> choose_csv;
+        std::function<void(const std::vector<const credentials::CsvLogin*>&)> import;
+        std::function<void(credentials::Settings)> changed;
+    };
+    static std::shared_ptr<CredentialsPanel> create(std::filesystem::path data_directory,Services services={}){
+        auto panel=std::shared_ptr<CredentialsPanel>(new CredentialsPanel(std::move(data_directory),std::move(services)));try{panel->settings_=panel->store_.open();panel->loaded_=true;}catch(...){panel->initial_error_=true;}panel->build();panel->refresh();return panel;
+    }
+    winrt::Microsoft::UI::Xaml::Controls::StackPanel view()const{return root_;}
+    credentials::Settings settings()const{return settings_;}
+    void select_thread(std::string thread){if(!thread.empty())thread=credentials::thread_id(thread);if(thread_!=thread)deny();thread_=std::move(thread);}
+    // Caller uses its native picker; paths/CSV bytes never enter agent-visible messages.
+    void preview_csv_file(const std::filesystem::path& file){auto snapshot=local_file::read(file,8*1024*1024);struct Wipe{std::string& value;~Wipe(){if(!value.empty())SecureZeroMemory(value.data(),value.size());}}wipe{snapshot.bytes};preview_csv(std::string_view(snapshot.bytes));}
+    void preview_csv(std::string_view bytes){if(closed_)return;try{auto next=credentials::CsvReview::parse(bytes);review_=std::move(next);render_review();error_.Text(L"");}catch(...){error_.Text(ui_text(L"That file is not a readable bounded password export. The previous review was preserved."));}}
+    void set_status(credentials::Manager manager,std::string text){credentials::text_bound(text,512);if(closed_)return;statuses_.at(manager).Text(winrt::to_hstring(text));}
+    // Public metadata only. Root owns the single-use broker and the private browser fill sink.
+    bool request_fill(credentials::FillRequest request,std::function<void(bool)> decision){if(closed_||thread_.empty()||credentials::context(request.frame).thread!=thread_||!settings_.enabled(request.item.source))return false;credentials::validate(request.item);if(!credentials::matches(request.item,request.frame.origin))return false;deny();if(closed_||thread_.empty()||credentials::context(request.frame).thread!=thread_||!settings_.enabled(request.item.source))return false;pending_=std::move(request);decide_=std::move(decision);expires_=GetTickCount64()+300000;fill_label_.Text(ui_text(L"Allow sign-in to ")+winrt::to_hstring(pending_->frame.origin)+ui_text(L" with ")+winrt::to_hstring(pending_->item.title)+L" ("+winrt::to_hstring(pending_->item.username)+L")?");fill_card_.Visibility(winrt::Microsoft::UI::Xaml::Visibility::Visible);return true;}
+    void cancel_navigation(const std::string& frame){if(pending_&&pending_->frame.frame==frame)deny();}
+    void tick(){if(pending_&&GetTickCount64()>=expires_)deny();}
+    void close(){if(closed_)return;closed_=true;deny();review_.reset();services_={};refresh();}
+private:
+    using Panel=winrt::Microsoft::UI::Xaml::Controls::StackPanel;using Text=winrt::Microsoft::UI::Xaml::Controls::TextBlock;using Toggle=winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch;using Button=winrt::Microsoft::UI::Xaml::Controls::Button;using Check=winrt::Microsoft::UI::Xaml::Controls::CheckBox;
+    credentials::SettingsStore store_;credentials::Settings settings_;Services services_;bool loaded_{},closed_{},syncing_{},initial_error_{},retry_pending_{};std::string thread_;std::optional<credentials::CsvReview> review_;std::optional<credentials::FillRequest> pending_;std::function<void(bool)> decide_;std::uint64_t expires_{};
+    Panel root_{nullptr},review_rows_{nullptr},fill_card_{nullptr};Text error_{nullptr},review_label_{nullptr},fill_label_{nullptr};Button import_{nullptr},retry_{nullptr};std::map<credentials::Manager,Toggle> toggles_;std::map<credentials::Manager,Text> statuses_;std::vector<Check> selections_;
+    CredentialsPanel(std::filesystem::path directory,Services services):store_(std::move(directory)),services_(std::move(services)){}
+    static void id(const winrt::Microsoft::UI::Xaml::DependencyObject& value,const std::wstring& name){winrt::Microsoft::UI::Xaml::Automation::AutomationProperties::SetAutomationId(value,name);}
+    static Text note(const wchar_t* value,const wchar_t* name=nullptr){Text text;text.Text(ui_text(value));text.TextWrapping(winrt::Microsoft::UI::Xaml::TextWrapping::Wrap);if(name)id(text,name);return text;}
+    static Button button(const wchar_t* value,const wchar_t* name){Button result;result.Content(winrt::box_value(ui_text(value)));id(result,name);return result;}
+    static bool checked(const Check& value){const auto current=value.IsChecked();return current&&current.Value();}
+    void refresh(){syncing_=true;for(const auto& [manager,toggle]:toggles_){toggle.IsOn(settings_.enabled(manager));toggle.IsEnabled(loaded_&&!closed_);}syncing_=false;import_.IsEnabled(!closed_&&loaded_&&review_&&review_->size()&&static_cast<bool>(services_.import));retry_.Visibility(retry_pending_?winrt::Microsoft::UI::Xaml::Visibility::Visible:winrt::Microsoft::UI::Xaml::Visibility::Collapsed);retry_.IsEnabled(!closed_&&loaded_);if(initial_error_)error_.Text(ui_text(L"Password settings could not be loaded. Managers remain off; the original file was preserved."));}
+    void notify(){if(services_.changed)services_.changed(settings_);}
+    void toggle(credentials::Manager manager){if(syncing_||closed_||!loaded_)return;const bool on=toggles_.at(manager).IsOn();auto next=settings_;next.set(manager,on);if(!on){settings_=next;if(pending_&&pending_->item.source==manager)deny();try{notify();}catch(...){}retry_pending_=true;}
+        try{store_.save(next);settings_=next;retry_pending_=false;notify();error_.Text(L"");}catch(...){error_.Text(ui_text(L"The manager preference could not be saved. Disabled managers stay off in this session."));}refresh();}
+    void deny(){auto callback=std::move(decide_);pending_.reset();if(fill_card_)fill_card_.Visibility(winrt::Microsoft::UI::Xaml::Visibility::Collapsed);if(callback)callback(false);}
+    void answer(){if(closed_||!pending_)return;if(GetTickCount64()>=expires_||pending_->frame.thread!=thread_||!settings_.enabled(pending_->item.source)){deny();return;}auto callback=std::move(decide_);pending_.reset();fill_card_.Visibility(winrt::Microsoft::UI::Xaml::Visibility::Collapsed);if(callback)callback(true);}
+    void render_review(){review_rows_.Children().Clear();selections_.clear();if(!review_){review_label_.Text(L"");refresh();return;}review_label_.Text(winrt::to_hstring(std::to_string(review_->size()))+ui_text(L" logins ready for local review. Skipped rows: ")+winrt::to_hstring(std::to_string(review_->skipped())));if(review_->size()>500){review_.reset();review_label_.Text(ui_text(L"This panel accepts up to 500 logins per reviewed import. Split larger exports before importing."));refresh();return;}
+        for(std::size_t index=0;index<review_->size();++index){const auto& item=review_->item(index);Check check;check.IsChecked(false);check.Content(winrt::box_value(winrt::to_hstring(item.title+" · "+item.username+" · "+credentials::origin(item.urls.front()))));id(check,L"CredentialImportRow-"+std::to_wstring(index));selections_.push_back(check);review_rows_.Children().Append(check);}refresh();}
+    void import_review(){if(closed_||!review_||!services_.import)return;std::vector<std::size_t> selected;for(std::size_t i=0;i<selections_.size();++i)if(checked(selections_[i]))selected.push_back(i);try{const auto count=review_->commit(selected,services_.import);review_.reset();render_review();error_.Text(winrt::to_hstring(std::to_string(count))+ui_text(L" logins imported. The source CSV was preserved; it contains unencrypted passwords."));}catch(...){error_.Text(ui_text(L"The selected logins were not imported. Review the selection and local storage, then try again."));}}
+    void build(){namespace ui=winrt::Microsoft::UI::Xaml::Controls;const auto weak=weak_from_this();root_=Panel{};root_.Spacing(10);root_.Padding({12,8,12,12});id(root_,L"CredentialsPanel");root_.Children().Append(note(L"Connect password managers through their existing Windows command-line tools. Managers start off. Opening Settings does not read a vault, sign in or unlock an account.",L"CredentialHelp"));
+        for(const auto manager:{credentials::Manager::saved,credentials::Manager::bitwarden,credentials::Manager::one_password}){const auto key=std::wstring(winrt::to_hstring(credentials::manager_id(manager)));Toggle control;control.Header(winrt::box_value(ui_text(manager==credentials::Manager::saved?L"Coincide saved logins":manager==credentials::Manager::bitwarden?L"Bitwarden":L"1Password")));id(control,L"CredentialManager-"+key);control.Toggled([weak,manager](const auto&,const auto&){if(const auto self=weak.lock())self->toggle(manager);});toggles_.emplace(manager,control);root_.Children().Append(control);auto state=note(L"Not checked. Refresh is explicit.");id(state,L"CredentialStatus-"+key);statuses_.emplace(manager,state);root_.Children().Append(state);auto refresh_button=button(L"Refresh manager status",L"Unused");id(refresh_button,L"CredentialRefresh-"+key);refresh_button.Click([weak,manager](const auto&,const auto&){if(const auto self=weak.lock();self&&!self->closed_&&self->settings_.enabled(manager)&&self->services_.refresh)self->services_.refresh(manager);});root_.Children().Append(refresh_button);}
+        root_.Children().Append(note(L"Passwords and one-time codes are handed directly to the approved browser frame. Agents receive only the username and fill status. Each approval expires and is canceled when its frame navigates."));
+        root_.Children().Append(note(L"Passkeys use the browser's native WebAuthn handoff when available. Bitwarden private-key extraction and Windows Hello sign-in are not connected in this Windows candidate.",L"CredentialPasskeysStatus"));
+        auto choose=button(L"Choose password CSV…",L"CredentialChooseCsv");choose.Click([weak](const auto&,const auto&){if(const auto self=weak.lock();self&&!self->closed_&&self->loaded_&&self->services_.choose_csv)self->services_.choose_csv();});root_.Children().Append(choose);review_label_=note(L"No CSV selected.",L"CredentialImportPreview");root_.Children().Append(review_label_);review_rows_=Panel{};root_.Children().Append(review_rows_);import_=button(L"Import selected logins",L"CredentialImportSelected");import_.Click([weak](const auto&,const auto&){if(const auto self=weak.lock())self->import_review();});root_.Children().Append(import_);auto cancel=button(L"Cancel import",L"CredentialCancelImport");cancel.Click([weak](const auto&,const auto&){if(const auto self=weak.lock()){self->review_.reset();self->render_review();}});root_.Children().Append(cancel);
+        fill_card_=Panel{};fill_card_.Spacing(6);id(fill_card_,L"CredentialFillApproval");fill_card_.Visibility(winrt::Microsoft::UI::Xaml::Visibility::Collapsed);fill_label_=note(L"",L"CredentialFillPrompt");fill_card_.Children().Append(fill_label_);auto allow=button(L"Allow once",L"CredentialAllowFill"),deny_button=button(L"Deny",L"CredentialDenyFill");allow.Click([weak](const auto&,const auto&){if(const auto self=weak.lock())self->answer();});deny_button.Click([weak](const auto&,const auto&){if(const auto self=weak.lock())self->deny();});fill_card_.Children().Append(allow);fill_card_.Children().Append(deny_button);root_.Children().Append(fill_card_);error_=note(L"",L"CredentialError");root_.Children().Append(error_);retry_=button(L"Retry saving disabled preferences",L"CredentialRetrySave");retry_.Click([weak](const auto&,const auto&){if(const auto self=weak.lock();self&&!self->closed_&&self->retry_pending_)try{self->store_.save(self->settings_);self->retry_pending_=false;self->error_.Text(L"");self->refresh();}catch(...){self->error_.Text(ui_text(L"The disabled preference is still pending a successful save."));}});root_.Children().Append(retry_);
+    }
+};
+} // namespace coincide

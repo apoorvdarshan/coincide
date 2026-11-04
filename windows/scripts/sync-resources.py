@@ -32,15 +32,16 @@ def labels():
             continue
         source = path.read_text(encoding='utf-8')
         literal = r'"((?:[^"\\]|\\.)*)"'
-        for match in re.finditer(r'\b(?:label\(\s*L' + literal + r'\s*,\s*L' + literal + r'|(?:button|toolbar_button|action)\(\s*L' + literal + r'\s*,\s*L' + literal + r'\s*,)', source):
+        for match in re.finditer(r'\b(?:label\(\s*L' + literal + r'\s*,\s*L' + literal + r'|(?:button|toolbar_button|action)\(\s*L' + literal + r'\s*,\s*L' + literal + r'\s*,\s*L")', source):
             resource, text = [json.loads('"' + value + '"') for value in match.groups() if value is not None]
-            result[resource] = text
+            if resource and resource.replace('_', '').isalnum():
+                result[resource] = text
         # Panel helpers take (English text, automation ID), unlike the app's
         # three-argument (resource key, fallback, automation ID) helpers.
         for match in re.finditer(r'\bbutton\(\s*L' + literal + r'\s*,\s*L' + literal + r'\s*\)', source):
             text = json.loads('"' + match.group(1) + '"')
             result[ui_key(text)] = text
-        for match in re.finditer(r'\b(?:ui_text|toggle|edit|add_page|link)\(\s*L' + literal, source):
+        for match in re.finditer(r'\b(?:ui_text|toggle|edit|add_page|link|note|command)\(\s*L' + literal, source):
             text = json.loads('"' + match.group(1) + '"')
             result[ui_key(text)] = text
         for match in re.finditer(r'(?:std::pair\{\s*|\{\s*)L' + literal + r'\s*,\s*L' + literal + r'\s*\}', source):

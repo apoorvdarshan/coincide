@@ -399,6 +399,9 @@ private:
             }
             interrupted_ = interrupted_ || status == "interrupted"; done_ = true; return;
         }
+        if(method=="thread/tokenUsage/updated"){
+            if(done_||turn_id_.empty())return;if(const auto usage=UsageProtocol::normalize([&]{return UsageProtocol::codex(params);},launch_.session_id,turn_id_))emit(Kind::usage,turn_id_,*usage,method);return;
+        }
         if (!our_turn(params)) return;
         const auto item_id = text(params, L"itemId");
         if (method == "item/agentMessage/delta" && !item_id.empty()) {

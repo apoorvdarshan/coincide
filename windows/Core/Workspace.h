@@ -436,6 +436,16 @@ struct ProviderModelPreference {
     std::string provider, model, effort, service_tier;
     bool plan{}, full_access{};
 };
+struct HostEventCursor {
+    std::string provider,epoch;std::uint64_t sequence{};
+    bool operator==(const HostEventCursor&)const=default;
+};
+inline bool valid_host_event_cursor(const HostEventCursor& value){
+    if(std::find(provider_ids.begin(),provider_ids.end(),value.provider)==provider_ids.end()||value.sequence>9007199254740991ULL)return false;
+    auto id=std::string_view(value.epoch);if(id.size()==38&&id.front()=='{'&&id.back()=='}')id=id.substr(1,36);if(id.size()!=36)return false;bool nonzero{};
+    for(std::size_t i=0;i<id.size();++i){const auto c=id[i];if(i==8||i==13||i==18||i==23){if(c!='-')return false;}else{if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))return false;nonzero=nonzero||c!='0';}}
+    return nonzero;
+}
 struct Thread {
     std::string id, title;
     std::optional<std::string> project_id;
@@ -451,6 +461,11 @@ struct Thread {
     bool plan{}, full_access{}, titled_by_user{};
     // UTC Unix seconds; zero means absent. Old workspaces keep their original stable order.
     std::int64_t created_at{}, updated_at{}, snoozed_until{}, settled_at{}, deleted_at{};
+    std::optional<std::string> bot_id;
+    // Last saved bot working folder also makes a removed bot's history recoverable as chats.
+    std::optional<std::string> bot_folder;
+    std::optional<std::string> preferred_profile_id;
+    std::vector<HostEventCursor> host_cursors;
 };
 enum class ThreadView { inbox, archived, snoozed, settled, trash, all };
 
@@ -459,6 +474,7 @@ class Workspace {
 public:
     std::vector<Project> projects;
     std::vector<Thread> threads;
+    bool requires_background_host{};
     static std::int64_t now_seconds() {
         return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     }
@@ -508,6 +524,13 @@ public:
         }
         validate_model_fields(value.model, value.effort, value.service_tier);
         validate_model_preferences(value.model_preferences);
+        if(value.bot_id){auto id=std::string_view(*value.bot_id);if(id.size()==38&&id.front()=='{'&&id.back()=='}')id=id.substr(1,36);bool nonzero{};
+            if(id.size()!=36)throw std::invalid_argument("Invalid bot conversation identity");for(std::size_t i=0;i<id.size();++i){const auto ch=static_cast<unsigned char>(id[i]);if(i==8||i==13||i==18||i==23){if(ch!='-')throw std::invalid_argument("Invalid bot conversation identity");}else{if(!((ch>='0'&&ch<='9')||(ch>='a'&&ch<='f')||(ch>='A'&&ch<='F')))throw std::invalid_argument("Invalid bot conversation identity");nonzero=nonzero||ch!='0';}}
+            if(!nonzero)throw std::invalid_argument("Invalid bot conversation identity");}
+        if(value.bot_folder&&(value.bot_folder->empty()||value.bot_folder->size()>32768||value.bot_folder->find('\0')!=std::string::npos))throw std::invalid_argument("Invalid bot conversation folder");
+        if(value.preferred_profile_id&&!valid_session_binding({"","",0,*value.preferred_profile_id,{}}))throw std::invalid_argument("Invalid conversation account profile");
+        if(value.host_cursors.size()>provider_ids.size())throw std::invalid_argument("Too many hosted event cursors");std::vector<std::string> hosted;
+        for(const auto& cursor:value.host_cursors){if(!valid_host_event_cursor(cursor)||std::find(hosted.begin(),hosted.end(),cursor.provider)!=hosted.end())throw std::invalid_argument("Invalid or duplicate hosted event cursor");hosted.push_back(cursor.provider);}
     }
     static void validate_model_fields(const std::string& model, const std::string& effort, const std::string& service_tier) {
         for (const auto* setting : {&model, &effort, &service_tier}) {

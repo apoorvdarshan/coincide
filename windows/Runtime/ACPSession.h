@@ -372,6 +372,9 @@ private:
         if (!sent_) return;
         const auto meta = params.GetNamedObject(L"_meta", Object{}); const auto prompt_id = text(meta, L"promptId"); if (!prompt_id.empty() && prompt_id != current_) return;
         if (type == "state_update" && text(update, L"state") == "idle") {idle_ = true; idle_reason_ = text(update, L"stopReason"); if (update.HasKey(L"error")) failure_ = "The ACP agent could not finish this turn"; return;}
+        if(type=="usage_update"){
+            if(const auto usage=UsageProtocol::normalize([&]{return UsageProtocol::acp_snapshot(update);},launch_.session_id,current_))emit(Kind::usage,current_,*usage,type);return;
+        }
         if (type == "agent_message_chunk" || type == "agent_message") {
             const auto message = text(update, L"messageId"); if (!message.empty() && (retired_messages_.contains(message) || finalized_messages_.contains(message))) return;
             if (!message.empty() && !segment_message_.empty() && message != segment_message_) flush_segment();
@@ -385,7 +388,7 @@ private:
         if (type == "tool_call" || type == "tool_call_update" || type == "tool_call_content_chunk" || type == "agent_thought_chunk" || type == "agent_thought") {
             flush_segment(); emit(Kind::tool, current_ + "/tool/" + text(update, L"toolCallId"), winrt::to_string(update.Stringify()), type); return;
         }
-        if (type == "plan" || type == "plan_update" || type == "notice" || type == "usage_update") emit(Kind::tool, current_ + "/" + type, winrt::to_string(update.Stringify()), type);
+        if (type == "plan" || type == "plan_update" || type == "notice") emit(Kind::tool, current_ + "/" + type, winrt::to_string(update.Stringify()), type);
     }
     void pump() {
         if (overflow_) throw RpcError("The ACP input queue exceeded its limit");
@@ -415,7 +418,7 @@ private:
             bool acknowledged{}; std::string reason;
             for (;;) {
                 if (stopping_ || cancel_) throw Cancelled{}; pump();
-                if (!acknowledged && response.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {const auto result = Object::Parse(winrt::to_hstring(response.get())); acknowledged = true; reason = text(result, L"stopReason"); pump();}
+                if (!acknowledged && response.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {const auto result = Object::Parse(winrt::to_hstring(response.get())); acknowledged = true; reason = text(result, L"stopReason");if(const auto usage=UsageProtocol::normalize([&]{return UsageProtocol::acp_result(UsageProtocol::object(result,L"usage"),provider_=="grok");},launch_.session_id,current_))emit(Kind::usage,current_,*usage,"session/prompt.usage");pump();}
                 if (acknowledged && (!generation_two_ || idle_)) break; wait();
             }
             if (generation_two_) reason = idle_reason_; flush_segment();

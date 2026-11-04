@@ -41,9 +41,12 @@ public:
         const auto path = directory_ / L"workspace.json";
         if (!std::filesystem::exists(path)) { opened_ = true; return result; }
         original_ = read(path);
-        if (original_.GetNamedNumber(L"version", 0) != 1) {
+        const auto version=original_.GetNamedNumber(L"version",0);
+        if (version!=1&&version!=2) {
             throw std::runtime_error("This workspace format is not supported. Its files have been left unchanged.");
         }
+        if(version==2)require_host_format(original_);
+        result.requires_background_host=version==2;
         std::unordered_set<std::string> project_ids, thread_ids;
         for (const auto& value : original_.GetNamedArray(L"projects")) {
             const auto p = value.GetObject();
@@ -71,6 +74,10 @@ public:
             thread.model_preferences = read_model_preferences(optional_array(t, L"modelPreferences"));
             const auto project = text(t, L"project");
             if (!project.empty()) thread.project_id = project;
+            const auto bot=text(t,L"botID");if(!bot.empty()){validate_id(bot);thread.bot_id=canonical_id(bot);}
+            const auto bot_folder=text(t,L"botFolder");if(!bot_folder.empty())thread.bot_folder=bot_folder;
+            const auto preferred_profile=text(t,L"preferredProfileID");if(!preferred_profile.empty())thread.preferred_profile_id=preferred_profile;
+            thread.host_cursors=read_host_cursors(optional_array(t,L"hostEventCursors"));if(version==1&&!thread.host_cursors.empty())throw std::runtime_error("Hosted work requires the newer workspace format. Its files were preserved.");
             thread.pinned = boolean(t, L"pinned");
             thread.archived = boolean(t, L"archived");
             result.add_thread(std::move(thread));
@@ -92,9 +99,15 @@ public:
             return;
         }
         const auto value = read(path);
-        if (value.GetNamedNumber(L"version", 0) != 1 || text(value, L"id") != thread.id) {
+        const auto version=value.GetNamedNumber(L"version",0);
+        if ((version!=1&&version!=2) || text(value, L"id") != thread.id) {
             throw std::runtime_error("The conversation format or identity is not supported. Its file has been left unchanged.");
         }
+        if(version==2)require_host_format(value);
+        auto host_cursors=read_host_cursors(optional_array(value,L"hostEventCursors"));
+        if(version==1&&!host_cursors.empty())throw std::runtime_error("Hosted event receipts require the newer conversation format. Its file was preserved.");
+        for(const auto& indexed:thread.host_cursors){const auto durable=std::find_if(host_cursors.begin(),host_cursors.end(),[&](const auto& cursor){return cursor.provider==indexed.provider;});
+            if(durable==host_cursors.end()||durable->epoch!=indexed.epoch||durable->sequence<indexed.sequence)throw std::runtime_error("The hosted conversation receipt does not match its index. Review its saved history before reconnecting.");}
         auto messages = std::vector<Message>{};
         for (const auto& item : value.GetNamedArray(L"messages")) {
             const auto m = item.GetObject();
@@ -122,6 +135,7 @@ public:
         thread.draft = std::move(draft);
         thread.draft_attachments = std::move(draft_attachments);
         thread.queued_inputs = std::move(queued_inputs);
+        thread.host_cursors=std::move(host_cursors);
         transcript_originals_.insert_or_assign(thread.id, value);
         loaded_.insert(thread.id);
     }
@@ -143,7 +157,10 @@ public:
         }
         auto root = original_ ? json::JsonObject::Parse(original_.Stringify()) : json::JsonObject{};
         auto project_originals=clone_objects(project_originals_),index_originals=clone_objects(index_originals_);
-        root.SetNamedValue(L"version", json::JsonValue::CreateNumberValue(1));
+        const bool hosted=workspace.requires_background_host||(original_&&original_.GetNamedNumber(L"version",1)==2)||std::any_of(workspace.threads.begin(),workspace.threads.end(),[](const auto& thread){return !thread.host_cursors.empty();});
+        // Old clients reject version2 before they can start an in-process duplicate provider.
+        root.SetNamedValue(L"version", json::JsonValue::CreateNumberValue(hosted?2:1));
+        if(hosted)put_host_format(root);
         json::JsonArray projects;
         for (const auto& p : workspace.projects) {
             auto value = project_originals.contains(p.id) ? project_originals.at(p.id) : json::JsonObject{};
@@ -156,6 +173,10 @@ public:
             auto value = index_originals.contains(t.id) ? index_originals.at(t.id) : json::JsonObject{};
             put(value, L"id", t.id); put(value, L"title", t.title); put(value, L"provider", t.provider);
             put(value, L"model", t.model); put(value, L"project", t.project_id.value_or(""));
+            put(value,L"botID",t.bot_id?canonical_id(*t.bot_id):std::string{});
+            put(value,L"botFolder",t.bot_folder.value_or(""));
+            put(value,L"preferredProfileID",t.preferred_profile_id.value_or(""));
+            value.SetNamedValue(L"hostEventCursors",host_cursors_json(t.host_cursors,optional_array(value,L"hostEventCursors")));
             put(value, L"effort", t.effort); put(value, L"serviceTier", t.service_tier);
             value.SetNamedValue(L"plan", json::JsonValue::CreateBooleanValue(t.plan));
             value.SetNamedValue(L"fullAccess", json::JsonValue::CreateBooleanValue(t.full_access));
@@ -191,7 +212,9 @@ public:
         value.SetNamedValue(L"draftAttachments", attachments_json(thread.draft_attachments,
             optional_array(value, L"draftAttachments")));
         value.SetNamedValue(L"queuedInputs", queue_json(thread.queued_inputs, optional_array(value, L"queuedInputs")));
-        value.SetNamedValue(L"version", json::JsonValue::CreateNumberValue(1));
+        const bool hosted=!thread.host_cursors.empty()||value.GetNamedNumber(L"version",1)==2;
+        value.SetNamedValue(L"version", json::JsonValue::CreateNumberValue(hosted?2:1));if(hosted)put_host_format(value);
+        value.SetNamedValue(L"hostEventCursors",host_cursors_json(thread.host_cursors,optional_array(value,L"hostEventCursors")));
         json::JsonArray messages;
         const auto existing = value.GetNamedArray(L"messages", json::JsonArray{});
         std::unordered_map<std::string, json::JsonObject> originals;
@@ -231,7 +254,8 @@ public:
             if (!seen.insert(canonical_id(id)).second) throw std::runtime_error("Duplicate conversation identity in session snapshot");
             const auto file = directory / L"threads" / winrt::to_hstring(id + ".json").c_str();
             const auto value = read_session_file(file, total);
-            if (value.GetNamedNumber(L"version", 0) != 1 || text(value, L"id") != id) throw std::runtime_error("A conversation identity or format is invalid; duplicate checking was stopped");
+            const auto version=value.GetNamedNumber(L"version",0);if ((version!=1&&version!=2) || text(value, L"id") != id) throw std::runtime_error("A conversation identity or format is invalid; duplicate checking was stopped");
+            if(version==2)require_host_format(value);
             const auto count = value.GetNamedArray(L"messages").Size();
             if (count > 100000) throw std::runtime_error("A conversation exceeds the native-session snapshot record limit");
             const auto sessions = value.GetNamedArray(L"sessions");
@@ -476,6 +500,23 @@ private:
             }
             if (total_bytes > 64ULL * 1024 * 1024) throw std::runtime_error("The saved input queue exceeds its byte limit");
         }
+    }
+    static void require_host_format(const json::JsonObject& value){if(value.GetNamedString(L"hostFormat",L"")!=L"coincide.windows.background-agent"||value.GetNamedNumber(L"hostFormatVersion",0)!=1)throw std::runtime_error("This hosted storage format is not supported. Its file was preserved.");}
+    static void put_host_format(const json::JsonObject& value){put(value,L"hostFormat","coincide.windows.background-agent");value.SetNamedValue(L"hostFormatVersion",json::JsonValue::CreateNumberValue(1));}
+    static std::vector<HostEventCursor> read_host_cursors(const json::JsonArray& array){
+        if(array.Size()>provider_ids.size())throw std::runtime_error("Too many hosted event receipts");std::vector<HostEventCursor> result;std::unordered_set<std::string> providers;
+        for(const auto& raw:array){const auto value=raw.GetObject();const auto number=value.GetNamedNumber(L"sequence",-1);
+            if(!std::isfinite(number)||number<0||number>9007199254740991.0||number!=std::floor(number))throw std::runtime_error("Invalid hosted event receipt sequence");
+            HostEventCursor cursor{text(value,L"provider"),canonical_id(text(value,L"epoch")),static_cast<std::uint64_t>(number)};
+            if(!valid_host_event_cursor(cursor)||!providers.insert(cursor.provider).second)throw std::runtime_error("Invalid or duplicate hosted event receipt");result.push_back(std::move(cursor));
+        }return result;
+    }
+    static json::JsonArray host_cursors_json(const std::vector<HostEventCursor>& cursors,const json::JsonArray& existing){
+        if(cursors.size()>provider_ids.size())throw std::runtime_error("Too many hosted event receipts");json::JsonArray result;std::unordered_set<std::string> providers;std::unordered_map<std::string,json::JsonObject> originals;
+        for(const auto& raw:existing){const auto item=raw.GetObject();originals.insert_or_assign(text(item,L"provider"),item);}
+        for(const auto& cursor:cursors){if(!valid_host_event_cursor(cursor)||!providers.insert(cursor.provider).second)throw std::runtime_error("Invalid or duplicate hosted event receipt");auto item=originals.contains(cursor.provider)?originals.at(cursor.provider):json::JsonObject{};
+            put(item,L"provider",cursor.provider);put(item,L"epoch",canonical_id(cursor.epoch));item.SetNamedValue(L"sequence",json::JsonValue::CreateNumberValue(static_cast<double>(cursor.sequence)));result.Append(item);
+        }return result;
     }
     static std::vector<QueuedInput> read_queue(const json::JsonArray& array) {
         if (array.Size() > 100) throw std::runtime_error("The saved input queue exceeds its entry limit");

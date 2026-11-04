@@ -146,6 +146,11 @@ inline int codex_session_fixture(std::wstring_view mode) {
             if(original=="wait")return;complete(prompt_text);lifecycle("turn/completed","completed");previous=active;return;
         }
         if (prompt_text == "wait") return;
+        if(mode==L"usage"){
+            auto used=params(active);used.SetNamedValue(L"tokenUsage",Object::Parse(LR"({"last":{"totalTokens":-1}})"));notice("thread/tokenUsage/updated",used);
+            used=params("foreign-turn");used.SetNamedValue(L"tokenUsage",Object::Parse(LR"({"last":{"totalTokens":99999}})"));notice("thread/tokenUsage/updated",used);
+            used=params(active);used.SetNamedValue(L"tokenUsage",Object::Parse(LR"({"last":{"totalTokens":125},"modelContextWindow":200000})"));notice("thread/tokenUsage/updated",used);
+        }
         if (prompt_text == "fail") {lifecycle("turn/completed", "failed"); previous = active; return;}
         if (prompt_text == "stream-then-wait" || prompt_text == "stream-finish") {
             delta("partial");

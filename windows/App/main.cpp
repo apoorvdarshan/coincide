@@ -19,67 +19,32 @@
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.System.h>
 #include "WorkspaceStore.h"
-#include "../Tests/StoreTests.h"
-#include "../Tests/ProtocolTests.h"
-#include "../Tests/ConnectionTests.h"
 #include "../Runtime/CodexSession.h"
 #include "../Runtime/AgentFactory.h"
 #include "../Core/Handoff.h"
-#include "../Tests/SessionTests.h"
 #include "DisplayItem.h"
-#include "../Tests/DisplayTests.h"
-#include "../Tests/GitTests.h"
-#include "../Tests/ProviderTests.h"
-#include "../Tests/ClaudeTests.h"
-#include "../Tests/TerminalTests.h"
 #include "GitPanel.h"
 #include "QuestionForm.h"
-#include "../Tests/QuestionFormTests.h"
-#include "../Tests/WindowsCalendarTests.h"
-#include "../Tests/ScheduleStoreTests.h"
-#include "../Tests/OpenCodeTests.h"
-#include "../Tests/BrowserTests.h"
-#include "../Tests/PreviewTests.h"
-#include "../Tests/CredentialTests.h"
-#include "../Tests/ACPTests.h"
 #include "BrowserPanel.h"
 #include "TerminalPanel.h"
 #include "PreviewPanel.h"
 #include "PreferencesPanel.h"
 #include "SchedulePanel.h"
 #include "../Runtime/DesktopServices.h"
-#include "../Tests/PreferencesTests.h"
-#include "../Tests/DesktopServicesTests.h"
-#include "../Tests/SchedulePanelTests.h"
-#include "../Tests/PreferencesPanelTests.h"
 #include "InstructionsPanel.h"
 #include "ImportPanel.h"
-#include "../Tests/InstructionImportTests.h"
-#include "../Tests/ImportStoreTests.h"
-#include "../Tests/InstructionImportPanelTests.h"
 #include "ProviderAccountsPanel.h"
-#include "../Tests/ProviderAccountsTests.h"
-#include "../Tests/ProviderAccountsPanelTests.h"
 #include "../Runtime/WindowsNotifications.h"
-#include "../Tests/WindowsNotificationsTests.h"
-#include "../Tests/VoiceTests.h"
 #include "VoicePanel.h"
-#include "../Tests/VoiceSettingsTests.h"
-#include "../Tests/VoicePanelTests.h"
 #include "../Runtime/ComputerUseNative.h"
-#include "../Tests/ComputerUseTests.h"
-#include "../Tests/ComputerUseProcessTests.h"
+#include "../Runtime/ComputerUseProcess.h"
 #include "ComputerUsePanel.h"
-#include "../Tests/ComputerUseSettingsTests.h"
-#include "../Tests/ComputerUsePanelTests.h"
-#include "../Tests/GitManagementTests.h"
-#include "../Tests/GitPanelTests.h"
-#include "../Tests/TerminalPanelTests.h"
-#include "../Tests/ToolContextTests.h"
-#include "../Tests/AppToolBridgeTests.h"
 #include "../Runtime/AppToolBridge.h"
-#include "../Tests/ScheduleToolTests.h"
-#include "../Tests/ComputerUseDesktopLeaseTests.h"
+#include "../Runtime/VerifiedACPLaunch.h"
+#include "../Tests/NativeTestRoutes.h"
+#include "UsagePanel.h"
+#include "PersonaPanel.h"
+#include "BotWorkspace.h"
 #include <winrt/Windows.Globalization.h>
 #include <memory>
 #include <chrono>
@@ -168,6 +133,14 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     std::shared_ptr<coincide::app_tools::AppToolBridge> tool_bridge;
     std::unordered_set<std::string> terminal_tool_threads;
     std::vector<std::future<void>> tool_workers;
+    std::shared_ptr<coincide::UsageStore> usage_store;
+    std::shared_ptr<coincide::UsagePanel> usage_panel;
+    std::shared_ptr<coincide::BotStore> bot_store;
+    std::unique_ptr<coincide::BotWorkspace> bot_workspace;
+    std::shared_ptr<coincide::PersonaPanel> persona_panel;
+    std::deque<coincide::UsageRecord> pending_usage;
+    std::string usage_warning;
+    std::uint64_t usage_retry_at{};
     std::unordered_map<std::string,coincide::ProviderAccountMetadata> account_metadata;
     std::string account_browser_context;
     std::vector<coincide::StoredSessionIdentity> import_identities;
@@ -229,6 +202,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         std::string schedule_id,schedule_delivery;
         bool schedule_success{},schedule_uncertain{},schedule_result_pending{},notify_completion{};
         std::string schedule_status;
+        std::unique_ptr<coincide::UsageTurn> usage;
     };
     std::unordered_map<std::string, RunningThread> running;
     std::unordered_set<std::string> dirty_threads;
@@ -257,7 +231,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(!question_test_report.empty()){
             window=xaml::Window{};window.Title(L"Coincide — Question Fixture Test");root=controls::Grid{};window.Content(root);
             root.Loaded([this](const auto&,const auto&){window.DispatcherQueue().TryEnqueue([this]{
-                const auto result=native_ui_suite=="terminal-panel"?coincide::terminal_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="git-panel"?coincide::git_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="computer-use-panel"?coincide::computer_use_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="voice-panel"?coincide::voice_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="schedule-panel"?coincide::schedule_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="preferences-panel"?coincide::preferences_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="provider-accounts-panel"?coincide::provider_accounts_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="instruction-import-panel"?coincide::instruction_import_panel_tests(question_test_report,root.XamlRoot()):coincide::question_form_tests(question_test_report,root.XamlRoot());if(question_test_result)*question_test_result=result;
+                const auto result=coincide::tests::run_ui_test(native_ui_suite,question_test_report,root.XamlRoot());if(question_test_result)*question_test_result=result;
                 window.Close();xaml::Application::Current().Exit();
             });});
             window.Activate();window.AppWindow().Hide();return;
@@ -297,6 +271,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         create.HorizontalAlignment(xaml::HorizontalAlignment::Stretch);
         create.Click([this](const auto&, const auto&) { create_thread(); });
         sidebar_top.Children().Append(create);
+        auto bots=button(L"Bots",L"Bots",L"OpenBots");bots.HorizontalAlignment(xaml::HorizontalAlignment::Stretch);
+        bots.Click([this](const auto&,const auto&){show_bots();});sidebar_top.Children().Append(bots);
         auto project = button(L"AddProject", L"Add Project…", L"AddProject");
         project.HorizontalAlignment(xaml::HorizontalAlignment::Stretch);
         project.Click([this](const auto&, const auto&) { add_project(); });
@@ -397,6 +373,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         auto accounts=toolbar_button(L"Accounts",L"Accounts",L"OpenAccounts");accounts.Click([this](const auto&,const auto&){show_accounts();});toolbar.PrimaryCommands().Append(accounts);
         auto voice=toolbar_button(L"Voice",L"Voice",L"OpenVoice");voice.Click([this](const auto&,const auto&){show_voice();});toolbar.PrimaryCommands().Append(voice);
         auto tools=toolbar_button(L"AgentTools",L"Agent tools",L"AgentToolAccess");tools.Click([this](const auto&,const auto&){show_tool_access();});toolbar.PrimaryCommands().Append(tools);
+        auto usage=toolbar_button(L"Usage",L"Usage",L"OpenUsage");usage.Click([this](const auto&,const auto&){show_usage();});toolbar.PrimaryCommands().Append(usage);
         content.Children().Append(toolbar);
 
         transcript = controls::ListView{};
@@ -429,7 +406,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                     if(thread_busy(selected))throw std::runtime_error("Stop the agent before changing providers.");
                     if(!workspace.thread(selected).queued_inputs.empty())throw std::runtime_error("Finish or remove this conversation's queued messages before changing providers.");
                     const auto before=workspace.thread(selected);
-                    try{workspace.select_provider(selected,std::string(coincide::provider_ids[index]));store->save_index(workspace);}catch(...){workspace.thread(selected)=before;throw;}
+                    try{workspace.select_provider(selected,std::string(coincide::provider_ids[index]));workspace.thread(selected).preferred_profile_id.reset();store->save_index(workspace);}catch(...){workspace.thread(selected)=before;throw;}
                     const auto at=running.find(selected);if(at!=running.end()){at->second.session->shutdown();running.erase(at);}
                     render_prompts();update_composer();
                 } catch (...) { selecting=true;const auto& provider=workspace.thread(selected).provider;providers.SelectedIndex(static_cast<int32_t>(std::distance(coincide::provider_ids.begin(),std::find(coincide::provider_ids.begin(),coincide::provider_ids.end(),provider))));selecting=false;report_exception(); }
@@ -517,7 +494,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             for (auto& [id, run] : running) {(void)id; run.session->shutdown();}
             drain_sessions(); flush_dirty(); save_current();
             if(git_panel)git_panel->close();if(browser_panel)browser_panel->close();if(terminal_panel)terminal_panel->close();if(preview_panel)preview_panel->close();
-            if(schedule_panel)schedule_panel->close();if(instructions_panel)instructions_panel->close();if(import_panel)import_panel->close();if(accounts_panel)accounts_panel->close();close_voice();if(computer_use)computer_use->stop();if(notifications)notifications->close();power_request.close();if(desktop)desktop->close();
+            if(schedule_panel)schedule_panel->close();if(instructions_panel)instructions_panel->close();if(import_panel)import_panel->close();if(accounts_panel)accounts_panel->close();if(usage_panel)usage_panel->close();if(persona_panel)persona_panel->close();flush_usage();close_voice();if(computer_use)computer_use->stop();if(notifications)notifications->close();power_request.close();if(desktop)desktop->close();
         });
 
         try {
@@ -529,7 +506,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             writable = false;
             report_exception();
         }
-        if(writable){try{ensure_schedules();}catch(...){report_exception();}}
+        if(writable){try{ensure_bots();}catch(...){report_exception();}try{ensure_schedules();}catch(...){report_exception();}}
         if(desktop){HWND handle{};winrt::check_hresult(window.as<IWindowNative>()->get_WindowHandle(&handle));desktop->attach(handle,[this]{show_window();},[this]{quit_app();},[this](std::string id){show_window();if(!id.empty())try{open_thread(id);}catch(...){report_exception();}},[this]{schedule_wake_pending=true;});}
         install_shortcuts();platform_timer.Start();platform_tick();
         window.Activate();
@@ -544,6 +521,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         const auto previous_selection = selected_thread_ids();
         selecting = true;
         visible = workspace.listed_threads(thread_view, winrt::to_string(search.Text()));
+        const auto active_bot=selected.empty()?std::optional<std::string>{}:workspace.thread(selected).bot_id;
+        std::erase_if(visible,[&](const auto& id){const auto& thread=workspace.thread(id);return thread.bot_id&&bot_store&&bot_store->find(*thread.bot_id)&&thread.bot_id!=active_bot;});
         sidebar.Items().Clear();
         for (const auto& id : visible) {
             const auto& t = workspace.thread(id);
@@ -773,10 +752,11 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(dialog_open||ids.empty()||!writable)co_return;
         dialog_open=true;
         try {
+            if(std::any_of(ids.begin(),ids.end(),[&](const auto& id){return workspace.thread(id).bot_id.has_value();}))throw std::runtime_error("Remove the bot with Keep Conversations before moving its histories to another project.");
             controls::ComboBox destinations;identify(destinations,L"ProjectDestination");
             add_choice(destinations,label(L"Projectless",L"No Project"));
             std::vector<std::string> projects;
-            for(const auto& project:workspace.projects){projects.push_back(project.id);add_choice(destinations,winrt::to_hstring(project.name));}
+            for(const auto& project:workspace.projects)if(project.id!=coincide::bots_container_id){projects.push_back(project.id);add_choice(destinations,winrt::to_hstring(project.name));}
             destinations.SelectedIndex(0);
             controls::ContentDialog dialog;dialog.XamlRoot(root.XamlRoot());dialog.Title(winrt::box_value(label(L"MoveToProject",L"Move to Project")));
             dialog.Content(destinations);dialog.PrimaryButtonText(label(L"Save",L"Save"));dialog.CloseButtonText(label(L"Cancel",L"Cancel"));
@@ -795,10 +775,10 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
 
     winrt::fire_and_forget manage_projects() {
-        auto lifetime=get_strong();if(dialog_open||!writable||workspace.projects.empty())co_return;dialog_open=true;
+        auto lifetime=get_strong();if(dialog_open||!writable||std::none_of(workspace.projects.begin(),workspace.projects.end(),[](const auto& project){return project.id!=coincide::bots_container_id;}))co_return;dialog_open=true;
         try {
             controls::StackPanel fields;fields.Spacing(8);controls::ComboBox picker;identify(picker,L"ProjectPicker");
-            std::vector<std::string> ids;for(const auto& project:workspace.projects){ids.push_back(project.id);add_choice(picker,winrt::to_hstring(project.name));}
+            std::vector<std::string> ids;for(const auto& project:workspace.projects)if(project.id!=coincide::bots_container_id){ids.push_back(project.id);add_choice(picker,winrt::to_hstring(project.name));}
             controls::TextBox name;identify(name,L"ProjectName");name.MaxLength(512);
             auto selection_revoker=picker.SelectionChanged(winrt::auto_revoke,[this,picker,name,ids](const auto&,const auto&){if(picker.SelectedIndex()>=0){const auto id=ids.at(static_cast<std::size_t>(picker.SelectedIndex()));for(const auto& p:workspace.projects)if(p.id==id)name.Text(winrt::to_hstring(p.name));}});
             picker.SelectedIndex(0);fields.Children().Append(picker);fields.Children().Append(name);
@@ -865,6 +845,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
 
     std::filesystem::path working_directory(const coincide::Thread& thread) {
+        if(thread.bot_id){ensure_bots();const auto bot=bot_store->find(*thread.bot_id);if(!bot)throw std::runtime_error("This bot was removed. Reopen its conversations as chats before continuing.");return bot_store->working_directory(*bot);}
         if(thread.project_id){
             const auto project=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& p){return p.id==*thread.project_id;});
             if(project==workspace.projects.end())throw std::runtime_error("The conversation's project is missing.");
@@ -917,15 +898,19 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             else{launch.executable=std::filesystem::path(winrt::to_hstring(provider.executable).c_str());if(!coincide::ProviderDiscovery::windows_executable(launch.executable))throw std::runtime_error("The provider override must be an existing native Windows executable.");}
         }
         const auto native=std::find_if(thread.sessions.begin(),thread.sessions.end(),[&](const auto& s){return s.provider==thread.provider;});
+        const auto preferred_profile=native!=thread.sessions.end()?native->profile_id:thread.preferred_profile_id.value_or(preferences.providers.at(thread.provider).profile_id.empty()?"default":preferences.providers.at(thread.provider).profile_id);
+        if(!fixture_preview&&thread.provider!="cursor"&&preferred_profile!="default")throw std::runtime_error("This provider's separate Windows profiles are not connected yet. Use its default account or a verified Cursor profile.");
         launch.fixture_account_reviewed=fixture_preview;
         if(native!=thread.sessions.end()){launch.session_id=native->id;launch.saved_profile_id=native->profile_id;launch.saved_account_scope=native->account_scope;}
         launch.instructions=coincide::handoff_context(thread,thread.provider).text;
+        if(thread.bot_id){const auto bot=bot_store->find(*thread.bot_id);if(!bot)throw std::runtime_error("This bot no longer exists.");launch.instructions=bot->instructions_block()+"\n\n"+launch.instructions;
+        }
         if(!fixture_preview){ensure_thread_tools(id);const auto weak=std::weak_ptr(tool_bridge);launch.tool_context=[weak,id]{const auto bridge=weak.lock();if(!bridge)return std::string{};auto context=bridge->current_instructions(id);
             if(context.find("<coincide_schedule>")!=std::string::npos)context+="\nSchedule requests use action list; create with name, prompt and schedule; update with id and the changed fields; pause/resume/delete/run-now with id. A schedule is {kind:once,at:ISO-date-time} or {kind:once,inMinutes:number}, {kind:daily|weekdays,time:HH:mm}, {kind:weekly,day:monday,time:HH:mm}, {kind:days,days:[mon,thu],time:HH:mm}, {kind:interval,minutes:number} or hours:number, or {kind:cron,expression:five-fields}. Quote all JSON keys/strings. An optional timeZone is an IANA zone. Repeats must be at least five minutes. Creation and edits await approval; never claim they are active before approval.\n";
             if(context.find("<coincide_terminal>")!=std::string::npos)context+="\nTerminal requests use action status/read/show/hide/interrupt. Read accepts limit (1-2000 lines, default 200) and page (default 1); output is scoped to this conversation's existing panes. Show does not start a shell. Interrupt sends Ctrl+C to those panes.\n";return context;};}
         std::optional<coincide::ACPLaunchOptions> acp_options;
         if(thread.provider=="cursor"){
-            const auto profile_id=native!=thread.sessions.end()?native->profile_id:preferences.providers.at("cursor").profile_id;
+            const auto profile_id=preferred_profile;
             coincide::ProviderAccountStore profiles(data_directory()/L"provider-profiles");const auto records=profiles.open();
             const auto record=std::find_if(records.begin(),records.end(),[&](const auto& value){return value.id==profile_id&&value.provider=="cursor";});
             const auto account=account_metadata.find(profile_id);
@@ -1014,7 +999,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     bool repository_busy(const coincide::Thread& thread)const{
         if(!git_panel||!git_panel->mutating())return false;
         std::filesystem::path folder=data_directory()/L"workspaces"/winrt::to_hstring(thread.id).c_str();
-        if(thread.project_id){const auto project=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& value){return value.id==*thread.project_id;});if(project==workspace.projects.end())return true;folder=std::filesystem::path(winrt::to_hstring(project->path).c_str());}
+        if(thread.bot_id){if(!bot_store)return true;const auto bot=bot_store->find(*thread.bot_id);if(!bot)return true;try{folder=bot_store->working_directory(*bot);}catch(...){return true;}}
+        else if(thread.project_id){const auto project=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& value){return value.id==*thread.project_id;});if(project==workspace.projects.end())return true;folder=std::filesystem::path(winrt::to_hstring(project->path).c_str());}
         try{const auto repository=git_panel->repository_root(),target=git_panel->mutation_target();return within_folder(repository,folder)||within_folder(folder,repository)||within_folder(target,folder)||within_folder(folder,target);}catch(...){return true;}
     }
     bool native_available(const std::string& provider)const{
@@ -1065,13 +1051,14 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(std::any_of(thread.messages.begin(),thread.messages.end(),[&](const auto& message){return message.id==intent.delivery_id;}))return false;
         workspace.note_activity(id);store->save_index(workspace);thread.messages.push_back({intent.delivery_id,"user",intent.prompt,thread.provider});
         try{store->save_thread(thread);}catch(...){thread.messages.pop_back();throw;}
-        if(!run.session->send(turn)){thread.messages.pop_back();store->save_thread(thread);return false;}
+        prepare_usage(thread,run,intent.delivery_id);if(!run.session->send(turn)){run.usage.reset();thread.messages.pop_back();store->save_thread(thread);return false;}
         run.schedule_id=intent.schedule_id;run.schedule_delivery=intent.delivery_id;run.awaiting_completion=true;run.completion_received=false;run.failed=false;run.status=winrt::to_string(label(L"Connecting",L"Connecting…"));
         if(selected==id){transcript.Items().Append(message_row(thread.messages.back(),winrt::to_string(label(L"You",L"You"))));show_latest();update_composer();}
         refresh_sidebar();return true;
     }
     void platform_tick(){
         if(closing)return;
+        flush_usage();
         std::erase_if(tool_workers,[](auto& worker){if(worker.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return false;try{worker.get();}catch(...){}return true;});
         if(quitting){if(quit_when_safe&&(!git_panel||!git_panel->mutating()))quit_app();return;}
         if(computer_use)computer_use->idle_tick();
@@ -1157,6 +1144,56 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                     self->selecting=true;try{self->composer.Text(winrt::to_hstring(thread.draft));}catch(...){self->selecting=false;throw;}self->selecting=false;self->update_composer();return true;
                 },owner);tool_views.Children().Append(voice_panel->view());}
             select_tool("voice",voice_panel->view(),label(L"Voice",L"Voice"));
+        }catch(...){report_exception();}
+    }
+    void ensure_usage(){if(!usage_store){auto value=std::make_shared<coincide::UsageStore>(data_directory());value->open();usage_store=std::move(value);}}
+    void prepare_usage(const coincide::Thread& thread,RunningThread& run,const std::string& delivery)noexcept{
+        try{if(run.usage)return;coincide::UsageOwner owner;owner.provider=run.provider;owner.project_id=thread.project_id.value_or("");owner.thread_id=thread.id;owner.profile_id=run.profile_id;owner.account_scope=run.account_scope;owner.model=thread.model;owner.delivery_id=delivery;
+            const auto native=std::find_if(thread.sessions.begin(),thread.sessions.end(),[&](const auto& value){return value.provider==run.provider;});if(native!=thread.sessions.end()){owner.native_session=native->id;if(owner.account_scope.empty())owner.account_scope=native->account_scope;}
+            run.usage=std::make_unique<coincide::UsageTurn>(std::move(owner),coincide::UsageStore::now_ms());
+        }catch(...){usage_warning="Usage could not be recorded for this turn.";run.usage.reset();}
+    }
+    void finish_usage(RunningThread& run,const std::string& outcome)noexcept{
+        if(!run.usage)return;try{if(pending_usage.size()>=1000){usage_warning="Usage recording is paused until local history can be saved.";run.usage.reset();return;}pending_usage.push_back(run.usage->finish(outcome,coincide::UsageStore::now_ms()));}catch(...){usage_warning="Usage could not be recorded for this turn.";}run.usage.reset();
+    }
+    void flush_usage()noexcept{
+        if(pending_usage.empty()||GetTickCount64()<usage_retry_at)return;try{ensure_usage();while(!pending_usage.empty()){usage_store->record(pending_usage.front());pending_usage.pop_front();}usage_warning.clear();usage_retry_at=0;}catch(...){usage_warning="Local usage history could not be saved. Existing history was preserved.";usage_retry_at=GetTickCount64()+30000;}
+    }
+    coincide::BotSelection bot_defaults()const{
+        coincide::BotSelection result;result.provider=preferences.provider_default({});const auto defaults=preferences.model_defaults({},result.provider);
+        result.profile_id=preferences.providers.at(result.provider).profile_id;if(result.profile_id.empty())result.profile_id="default";
+        result.model=defaults.model;result.effort=defaults.effort;result.service_tier=defaults.service_tier;result.plan=defaults.plan;result.full_access=defaults.full_access;return result;
+    }
+    void ensure_bots(){
+        if(bot_store&&bot_workspace)return;if(!writable)throw std::runtime_error("The workspace is read-only.");
+        std::filesystem::path home;
+        if(fixture_preview){home=data_directory()/L"fixture-home";std::filesystem::create_directories(home);}
+        else{PWSTR path{};winrt::check_hresult(SHGetKnownFolderPath(FOLDERID_Profile,KF_FLAG_DEFAULT,nullptr,&path));home=path;CoTaskMemFree(path);}
+        std::filesystem::create_directories(data_directory());auto bots=std::make_shared<coincide::BotStore>(data_directory()/L"bots",home);bots->open();bots->ensure_starters(bot_defaults());const auto weak=get_weak();
+        auto controller=std::make_unique<coincide::BotWorkspace>(workspace,*store,*bots,[weak](const auto& id){const auto self=weak.get();return !self||self->closing||self->thread_busy(id)||self->active_terminal(id)||self->repository_busy(self->workspace.thread(id))||self->dirty_threads.contains(id)||!self->persistence_error.empty();},
+            [weak](const auto& ids){if(const auto self=weak.get();self&&!self->closing)self->invalidate_project_context(ids);else throw std::runtime_error("The app is closing.");});
+        controller->recover_orphans();bot_store=std::move(bots);bot_workspace=std::move(controller);
+    }
+    void show_bots(){
+        if(!writable)return;try{ensure_bots();if(!persona_panel){const auto weak=get_weak();coincide::PersonaCallbacks callbacks;
+            callbacks.conversations=[weak](const auto& id){const auto self=weak.get();if(!self||self->closing)throw std::runtime_error("The app is closing.");return self->bot_workspace->conversations(id);};
+            callbacks.open=[weak](const auto& plan){if(const auto self=weak.get();self&&!self->closing){const auto id=self->bot_workspace->open(plan);self->thread_view=coincide::ThreadView::inbox;self->thread_filter.SelectedIndex(0);self->search.Text(L"");self->open_thread(id);}};
+            callbacks.before_change=[weak](const auto& change){const auto self=weak.get();if(!self||self->closing)throw std::runtime_error("The app is closing.");self->bot_workspace->before_change(change);};
+            callbacks.changed=[weak](const auto&){if(const auto self=weak.get();self&&!self->closing){self->bot_workspace->recover_orphans();self->refresh_sidebar();self->update_composer();}};
+            callbacks.before_remove=[weak](const auto& bot,auto disposition){const auto self=weak.get();if(!self||self->closing)throw std::runtime_error("The app is closing.");self->bot_workspace->before_remove(bot,disposition);};
+            callbacks.removed=[weak](const auto& id,auto disposition){const auto self=weak.get();if(!self||self->closing)throw std::runtime_error("The app is closing.");self->bot_workspace->removed(id,disposition);self->reconcile_selection();};
+            callbacks.pick_folder=[weak](auto completion){std::optional<std::string> path;try{if(const auto self=weak.get();self&&!self->closing){winrt::com_ptr<IFileOpenDialog> picker;winrt::check_hresult(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(picker.put())));DWORD options{};winrt::check_hresult(picker->GetOptions(&options));winrt::check_hresult(picker->SetOptions(options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM));HWND hwnd{};winrt::check_hresult(self->window.as<IWindowNative>()->get_WindowHandle(&hwnd));const auto result=picker->Show(hwnd);
+                    if(result!=HRESULT_FROM_WIN32(ERROR_CANCELLED)){winrt::check_hresult(result);winrt::com_ptr<IShellItem> item;winrt::check_hresult(picker->GetResult(item.put()));PWSTR value{};winrt::check_hresult(item->GetDisplayName(SIGDN_FILESYSPATH,&value));path=winrt::to_string(value);CoTaskMemFree(value);}}}catch(...){if(const auto self=weak.get())self->report_exception();}completion(std::move(path));};
+            std::vector<coincide::BotProviderChoice> choices;for(const auto& provider:preferences.providers){coincide::BotProviderChoice choice{provider.first,provider.first,{{"default","Default account"}}};choices.push_back(std::move(choice));}
+            coincide::ProviderAccountStore profiles(data_directory()/L"provider-profiles");for(const auto& record:profiles.open())for(auto& choice:choices)if(choice.id==record.provider)choice.profiles.push_back({record.id,record.label});
+            persona_panel=coincide::PersonaPanel::create(bot_store,bot_defaults(),std::move(callbacks),std::move(choices));tool_views.Children().Append(persona_panel->view());}
+            persona_panel->refresh();select_tool("bots",persona_panel->view(),label(L"Bots",L"Bots"));
+        }catch(...){report_exception();}
+    }
+    void show_usage(){
+        if(!writable)return;try{ensure_usage();flush_usage();if(usage_panel){std::uint32_t index{};if(tool_views.Children().IndexOf(usage_panel->view(),index))tool_views.Children().RemoveAt(index);usage_panel->close();}
+            std::vector<coincide::UsageLabel> projects,threads;std::vector<coincide::UsageAccountStatus> accounts;for(const auto& value:workspace.projects)projects.push_back({value.id,value.name});for(const auto& value:workspace.threads)threads.push_back({value.id,value.title});for(const auto& entry:account_metadata)accounts.push_back(coincide::UsageAccountStatus::from(entry.second));
+            usage_panel=coincide::UsagePanel::create(usage_store,std::move(projects),std::move(threads),std::move(accounts));usage_panel->set_recording_warning(usage_warning);tool_views.Children().Append(usage_panel->view());select_tool("usage",usage_panel->view(),label(L"Usage",L"Usage"));if(!usage_warning.empty())state.Text(winrt::to_hstring(usage_warning));
         }catch(...){report_exception();}
     }
     static std::string tool_error(const std::string& message){coincide::app_tools::Object result;coincide::computer_use::put(result,L"error",message);return winrt::to_string(result.Stringify());}
@@ -1307,10 +1344,11 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     bool git_target_allowed(const std::filesystem::path& target,bool removing)const{
         if(closing||quitting||!writable)return false;
         try{
-            if(removing)for(const auto& project:workspace.projects){const auto folder=std::filesystem::path(winrt::to_hstring(project.path).c_str());if(within_folder(target,folder)||within_folder(folder,target))return false;}
+            if(removing)for(const auto& project:workspace.projects)if(project.id!=coincide::bots_container_id){const auto folder=std::filesystem::path(winrt::to_hstring(project.path).c_str());if(within_folder(target,folder)||within_folder(folder,target))return false;}
             for(const auto& thread:workspace.threads){
                 std::filesystem::path folder=data_directory()/L"workspaces"/winrt::to_hstring(thread.id).c_str();
-                if(thread.project_id){const auto project=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& value){return value.id==*thread.project_id;});if(project==workspace.projects.end())return false;folder=std::filesystem::path(winrt::to_hstring(project->path).c_str());}
+                if(thread.bot_id){if(!bot_store)return false;const auto bot=bot_store->find(*thread.bot_id);if(!bot)return false;folder=bot_store->working_directory(*bot);}
+                else if(thread.project_id){const auto project=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& value){return value.id==*thread.project_id;});if(project==workspace.projects.end())return false;folder=std::filesystem::path(winrt::to_hstring(project->path).c_str());}
                 if((within_folder(target,folder)||within_folder(folder,target))&&(removing||thread_busy(thread.id)||active_terminal(thread.id)||!thread.queued_inputs.empty()))return false;
             }return true;
         }catch(...){return false;}
@@ -1498,7 +1536,9 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             thread.messages.push_back({id, "user", original_draft,thread.provider,original_attachments}); thread.draft.clear();thread.draft_attachments.clear();
             try {store->save_thread(thread);}
             catch (...) {thread.draft = original_draft;thread.draft_attachments=original_attachments;thread.messages.pop_back(); throw;}
+            prepare_usage(thread,at->second,id);
             if (!at->second.session->send(input)) {
+                at->second.usage.reset();
                 thread.draft = original_draft;thread.draft_attachments=original_attachments;thread.messages.pop_back(); store->save_thread(thread); return;
             }
             at->second.awaiting_completion = true;at->second.completion_received=false;
@@ -1542,6 +1582,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                             coincide::NativeSession binding{run.provider,"pending",0,event.id,event.text};
                             if(!coincide::valid_session_binding(binding)||binding.account_scope.empty())throw std::runtime_error("The provider returned invalid verified account routing metadata.");
                             run.profile_id=binding.profile_id;run.account_scope=binding.account_scope;
+                            if(run.usage)try{if(run.usage->owner().profile_id!=run.profile_id||!run.usage->bind_account_scope(run.account_scope))run.usage.reset();}catch(...){run.usage.reset();}
                             const auto session=std::find_if(thread.sessions.begin(),thread.sessions.end(),[&](const auto& value){return value.provider==run.provider;});
                             if(session!=thread.sessions.end()){
                                 if(!session->account_scope.empty()&&(session->account_scope!=run.account_scope||session->profile_id!=run.profile_id))throw std::runtime_error("The verified provider account differs from this saved conversation.");
@@ -1553,10 +1594,12 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                         {
                             const auto previous = std::find_if(thread.sessions.begin(), thread.sessions.end(), [&](const auto& s) {return s.provider == run.provider && s.id == event.id;});
                             const auto acknowledged = previous == thread.sessions.end() ? 0 : previous->acknowledged_messages;
-                            workspace.remember_session(id, {run.provider,event.id,acknowledged,run.account_scope.empty()&&previous!=thread.sessions.end()?previous->profile_id:run.profile_id,run.account_scope.empty()&&previous!=thread.sessions.end()?previous->account_scope:run.account_scope});dirty_threads.insert(id);break;
+                            workspace.remember_session(id, {run.provider,event.id,acknowledged,run.account_scope.empty()&&previous!=thread.sessions.end()?previous->profile_id:run.profile_id,run.account_scope.empty()&&previous!=thread.sessions.end()?previous->account_scope:run.account_scope});dirty_threads.insert(id);if(run.usage)try{if(!run.usage->bind_session(event.id))run.usage.reset();}catch(...){run.usage.reset();}break;
                         }
                     case Kind::started:
-                        run.completion_received=false;run.status = run.provider+" is working…"; break;
+                        run.completion_received=false;run.status = run.provider+" is working…";if(run.usage)try{if(!run.usage->bind_native_turn(event.id))run.usage.reset();}catch(...){run.usage.reset();}break;
+                    case Kind::usage:
+                        if(run.usage&&event.id==run.usage->owner().turn_id)try{(void)run.usage->observe(coincide::UsageProtocol::decode_text(event.text));}catch(...){}break;
                     case Kind::status: run.status = event.text; break;
                     case Kind::text_delta: case Kind::text_complete: case Kind::tool:
                         upsert_output(thread,event,run.provider); received_output = true; break;
@@ -1573,6 +1616,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                         const auto duplicate=std::any_of(thread.messages.begin(),thread.messages.end(),[&](const auto& message){return message.id==event.id;});
                         if(!duplicate){thread.messages.push_back({event.id,"user",pending->text,run.provider,pending->attachments});if(selected==id)transcript.Items().Append(message_row(thread.messages.back(),winrt::to_string(label(L"You",L"You"))));}
                         thread.queued_inputs.erase(pending);workspace.note_activity(id);dirty_threads.insert(id);dirty_index=true;run.awaiting_completion=true;run.completion_received=false;run.failed=false;
+                        if(event.detail!="steered")prepare_usage(thread,run,event.id);
                         if(selected==id){render_queue();show_latest();}break;
                     }
                     case Kind::prompt:
@@ -1584,6 +1628,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                     case Kind::error:
                         run.failed = true; run.status = event.text; break;
                     case Kind::completed:
+                        finish_usage(run,event.text=="interrupted"?"interrupted":run.failed||event.text!="completed"?"failed":"completed");
                         run.prompts.clear(); changed_prompts = changed_prompts || selected == id;
                         if (!run.failed) run.status = event.text == "interrupted" ? "Stopped" : winrt::to_string(label(L"Ready", L"Ready"));
                         if (event.text == "completed") {
@@ -1724,146 +1769,17 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             const auto owner=std::stoull(value);LocalFree(argv);if(!owner||owner>MAXDWORD)return 2;
             return coincide::computer_use::computer_use_helper_main(static_cast<DWORD>(owner));
         }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--schedule-tool-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::schedule_tool_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--tool-context-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::tool_context_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--app-tool-bridge-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::app_tool_bridge_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--git-management-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::git_management_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--computer-use-settings-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::computer_use_settings_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--computer-use-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::computer_use_tests(report);
-        }
-        if(argv&&argc==4&&std::wstring_view(argv[1])==L"--computer-use-process-tests"){
-            const auto report=std::filesystem::path(argv[2]),fixture=std::filesystem::path(argv[3]);LocalFree(argv);return coincide::computer_use_process_tests(report,fixture);
-        }
-        if(argv&&argc==4&&std::wstring_view(argv[1])==L"--computer-use-desktop-lease-tests"){
-            const auto report=std::filesystem::path(argv[2]),fixture=std::filesystem::path(argv[3]);LocalFree(argv);return coincide::computer_use_desktop_lease_tests(report,fixture);
-        }
-        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--store-tests") {
-            const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
-            return coincide::store_tests(report);
-        }
-        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--protocol-tests") {
-            const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
-            return coincide::protocol_tests(report);
-        }
-        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--connection-tests") {
-            const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
-            return coincide::connection_tests(report);
-        }
-        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--display-tests") {
-            const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
-            return coincide::display_tests(report);
-        }
-        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--git-tests") {
-            const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
-            return coincide::git_tests(report);
-        }
-        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--session-tests") {
-            const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
-            return coincide::session_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--provider-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::provider_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--claude-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::claude_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--terminal-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::terminal_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--calendar-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::windows_calendar_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--opencode-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::opencode_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--browser-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::browser_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--preview-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::preview_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--schedule-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::schedule_store_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--opencode-http-fixture"){
-            const auto mode=std::wstring(argv[2]);LocalFree(argv);return coincide::opencode_http_fixture(mode);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--acp-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::acp_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--acp-session-fixture"){
-            const auto mode=std::wstring(argv[2]);LocalFree(argv);return coincide::acp_session_fixture(mode);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--acp-terminal-fixture"){
-            const auto mode=std::wstring(argv[2]);LocalFree(argv);return coincide::acp_terminal_fixture(mode);
-        }
-        if(argv&&argc>=5&&std::wstring_view(argv[1])==L"--provider-account-fixture"){
-            const auto result=coincide::provider_account_fixture(argc,argv);LocalFree(argv);return result;
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--provider-accounts-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::provider_accounts_tests(report);
-        }
-        if(argv&&argc==4&&std::wstring_view(argv[1])==L"--voice-tests"){
-            const auto report=std::filesystem::path(argv[2]),fixture=std::filesystem::path(argv[3]);LocalFree(argv);return coincide::voice_tests(report,fixture);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--voice-settings-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::voice_settings_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--notifications-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::windows_notifications_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--instructions-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::instruction_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--imports-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::import_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--import-store-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::import_store_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--preferences-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::preferences_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--desktop-services-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::desktop_services_tests(report);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--credential-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::credential_tests(report);
-        }
-        if(argv&&argc==3&&(std::wstring_view(argv[1])==L"--question-tests"||std::wstring_view(argv[1])==L"--schedule-panel-tests"||std::wstring_view(argv[1])==L"--preferences-panel-tests"||std::wstring_view(argv[1])==L"--instruction-import-panel-tests"||std::wstring_view(argv[1])==L"--provider-accounts-panel-tests"||std::wstring_view(argv[1])==L"--voice-panel-tests"||std::wstring_view(argv[1])==L"--computer-use-panel-tests"||std::wstring_view(argv[1])==L"--git-panel-tests"||std::wstring_view(argv[1])==L"--terminal-panel-tests")){
-            const auto suite=std::wstring_view(argv[1])==L"--terminal-panel-tests"?"terminal-panel":std::wstring_view(argv[1])==L"--git-panel-tests"?"git-panel":std::wstring_view(argv[1])==L"--computer-use-panel-tests"?"computer-use-panel":std::wstring_view(argv[1])==L"--voice-panel-tests"?"voice-panel":std::wstring_view(argv[1])==L"--provider-accounts-panel-tests"?"provider-accounts-panel":std::wstring_view(argv[1])==L"--schedule-panel-tests"?"schedule-panel":std::wstring_view(argv[1])==L"--preferences-panel-tests"?"preferences-panel":std::wstring_view(argv[1])==L"--instruction-import-panel-tests"?"instruction-import-panel":"question";const auto report=std::filesystem::path(argv[2]);LocalFree(argv);int result=1;winrt::com_ptr<App> application;
-            xaml::Application::Start([&](auto&&){application=winrt::make_self<App>(true);application->question_test_report=report;application->question_test_result=&result;application->native_ui_suite=suite;});return result;
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--claude-account-fixture"){
-            const auto mode=std::wstring(argv[2]);LocalFree(argv);return coincide::claude_account_fixture(mode);
-        }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--claude-session-fixture"){
-            const auto mode=std::wstring(argv[2]);LocalFree(argv);return coincide::claude_session_fixture(mode);
-        }
-        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--codex-session-fixture") {
-            const auto mode = std::wstring(argv[2]); LocalFree(argv);
-            return coincide::codex_session_fixture(mode);
-        }
-        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--rpc-fixture") {
-            const auto mode = std::wstring(argv[2]); LocalFree(argv);
-            return coincide::rpc_fixture(mode);
-        }
+        if(argv){if(const auto result=coincide::tests::run_contract_test(argc,argv)){LocalFree(argv);return *result;}}
+        if(argv&&argc==3){if(const auto suite=coincide::tests::ui_test_suite(argv[1])){
+            const auto report=std::filesystem::path(argv[2]);const auto name=*suite;LocalFree(argv);int result=1;winrt::com_ptr<App> application;
+            xaml::Application::Start([&](auto&&){application=winrt::make_self<App>(true);application->question_test_report=report;application->question_test_result=&result;application->native_ui_suite=name;});return result;
+        }}
         const auto desktop_test=argv&&argc==2&&std::wstring_view(argv[1])==L"--desktop-fixture-preview";
         const auto fixture = desktop_test||(argv && argc == 2 && std::wstring_view(argv[1]) == L"--codex-fixture-preview");
         if (fixture && GetEnvironmentVariableW(L"COINCIDE_DATA_DIR", nullptr, 0) <= 1) {
             throw std::runtime_error("Protocol fixture previews require an explicit isolated test data directory.");
         }
+        if(argv&&argc>1&&!fixture){const std::wstring_view flag(argv[1]);if(flag.find(L"-tests")!=std::wstring_view::npos||flag.find(L"-fixture")!=std::wstring_view::npos){LocalFree(argv);return 2;}}
         if (argv) LocalFree(argv);
         // Keep the programmatic application (including its metadata provider and callbacks) alive
         // for the complete dispatcher loop, independently of generated XAML application glue.

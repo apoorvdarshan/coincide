@@ -1,7 +1,11 @@
 #pragma once
 #include "CodexProtocol.h"
+#include "UsageProtocol.h"
 #include <filesystem>
 #include <functional>
+#include <cstdint>
+#include <optional>
+#include <utility>
 
 namespace coincide {
 struct CodexLaunch {
@@ -35,18 +39,25 @@ inline CodexTurn with_current_tool_context(const AgentLaunch& launch,const Codex
     result.text+="\n</coincide_current_tools>\n\n";result.text+=source.text;return result;
 }
 
+// A durable host prefix belongs to this session's fixed thread/provider/physical data scope.
+struct AgentEventCursor {std::string epoch;std::uint64_t sequence{};bool operator==(const AgentEventCursor&)const=default;};
+struct AgentEventReceipt {std::string epoch;std::uint64_t sequence{};std::string delivery_id;};
+struct AgentPersistReceipt {AgentEventCursor cursor;bool transcript_durable{},index_durable{};};
 // Shared plain-value boundary between native provider workers and WinUI. No COM/UI object crosses it.
 struct SessionEvent {
     enum class Kind { status, session, started, text_delta, text_complete, tool, prompt, resolved, completed, error,
-        models, catalog_error, queued, queue_changed, input, delivery_failed, account_scope };
+        models, catalog_error, queued, queue_changed, input, delivery_failed, account_scope, usage };
     Kind kind;
     std::string id, text, detail;
+    // Optional trailing metadata preserves existing provider aggregate initializers and wire shapes.
+    std::optional<AgentEventReceipt> receipt{};
 };
 struct AgentQueuedTurn { std::string id; CodexTurn turn; };
 class AgentSession {
 public:
     virtual ~AgentSession() = default;
     virtual bool send(CodexTurn) = 0;
+    virtual bool send_identified(CodexTurn turn,std::string){return send(std::move(turn));}
     virtual bool busy() const noexcept = 0;
     virtual void interrupt() noexcept = 0;
     virtual bool refresh_models() = 0;
@@ -56,10 +67,17 @@ public:
     virtual bool queue_paused() const = 0;
     virtual bool remove_queued(const std::string&) = 0;
     virtual bool resume_queue() = 0;
+    virtual bool edit_queued(const std::string&,CodexTurn){return false;}
+    virtual bool pause_queue(){return false;}
     virtual bool steer(CodexTurn, std::string) = 0;
     virtual void respond(std::string, std::string) = 0;
     virtual std::vector<SessionEvent> take_events() = 0;
     virtual void close() noexcept = 0;
     virtual void shutdown() noexcept = 0;
+    // Draining/applying events never acknowledges host storage. Only Root's completed durable
+    // transcript+index save may supply this receipt; confirmation itself queues asynchronous IPC.
+    virtual std::optional<AgentEventCursor> pending_persistence()const{return{};}
+    virtual bool confirm_persisted(AgentPersistReceipt){return false;}
+    virtual std::optional<AgentEventCursor> acknowledged_persistence()const{return{};}
 };
 } // namespace coincide

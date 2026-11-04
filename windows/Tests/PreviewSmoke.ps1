@@ -3,7 +3,7 @@ param(
     [string]$Results = (Join-Path $PSScriptRoot '..\build\ui-smoke'),
     [ValidateRange(0,30)][int]$FixtureStartupDelaySeconds = 0,
     [switch]$NativePanelsOnly,
-    [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel')][string]$NativeSuite
+    [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel')][string]$NativeSuite
 )
 # Run in an interactive Windows desktop session. SSH's service session cannot validate a visible UI.
 $ErrorActionPreference = 'Stop'
@@ -271,11 +271,43 @@ try {
     if ($scheduleState.tasks[0].inFlight -or $scheduleState.tasks[0].deliveryID) { throw 'A finished scheduled fixture retained an in-flight delivery token.' }
     $checks += 'A persisted approved schedule dispatches through the app, preserves the draft and records completion'
 
+    $usageFile=Join-Path $data 'usage-history.json'
+    Wait-Until {if(!(Test-Path $usageFile)){return $false};$history=Get-Content $usageFile -Raw -Encoding UTF8 | ConvertFrom-Json;@($history.records).Count -ge 8} 'Local usage lifecycle records were not saved for the owned turns.'
+    $history=Get-Content $usageFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $usageTurns=@($history.records | Where-Object {$_.thread -eq $codex[0].id})
+    if($usageTurns.Count -ne 7 -or @($usageTurns | Where-Object {$_.outcome -eq 'interrupted'}).Count -ne 1){throw 'Usage history lost, duplicated or misclassified an owned conversation turn.'}
+    if(@($history.records | Where-Object {$_.thread -eq $scheduledThread -and $_.outcome -eq 'completed'}).Count -ne 1){throw 'Scheduled usage was not scoped to its original thread.'}
+    if(@($history.records | Where-Object {($_.usage.PSObject.Properties.Name -contains 'costUSD') -or ($_.usage.PSObject.Properties.Name -contains 'tokens')}).Count){throw 'The app invented billing totals for a fixture that reported no billable usage.'}
+    $checks += 'Local usage records preserve thread/delivery ownership, interruption and unavailable billing totals'
+
+    Invoke-Control 'OpenBots'
+    Wait-Until { $control=Find-Control $script:window 'BotOpen';$control -and $control.Current.IsEnabled } 'The native bot editor did not open.'
+    Invoke-Control 'BotOpen'
+    Wait-Until {
+        $index=Get-Content (Join-Path $data 'workspace.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($index.threads | Where-Object {$_.botID}).Count -eq 1
+    } 'Opening Brulee did not persist its owned conversation.'
+    $index=Get-Content (Join-Path $data 'workspace.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $botThread=@($index.threads | Where-Object {$_.botID})[0]
+    $botFile=Join-Path $data "threads\$($botThread.id).json"
+    $botHistory=Get-Content $botFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    if($botHistory.messages.Count -or $botHistory.sessions.Count -or $botHistory.draft -or !$botThread.botFolder){throw 'Opening a bot sent a message, started a provider, or lost its working folder.'}
+    $checks += 'Opening the starter bot creates a scoped conversation without sending a greeting or starting a provider'
+    Set-Message 'Keep this bot draft'
+    Invoke-Control 'BotNewConversation'
+    Wait-Until {
+        $index=Get-Content (Join-Path $data 'workspace.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($index.threads | Where-Object {$_.botID}).Count -eq 2
+    } 'New Conversation reused a bot history that contains a draft.'
+    $botHistory=Get-Content $botFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    if($botHistory.draft -ne 'Keep this bot draft' -or $botHistory.messages.Count -or $botHistory.sessions.Count){throw 'Creating another bot conversation changed the original draft or started a provider.'}
+    $checks += 'New bot conversations preserve the original draft and keep separate empty histories'
+
 
     }
     # These suites need the real user logon session: XAML controls and Credential Manager
     # cannot be accepted from an SSH service session. Each creates and removes only owned fixtures.
-    $nativeSuites=if($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel')}
+    $nativeSuites=if($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel','usage-panel','credentials-panel','persona-panel')}
     foreach ($suite in $nativeSuites) {
         $report = Join-Path $Results "$suite-test-result.txt"
         Remove-Item $report -ErrorAction SilentlyContinue

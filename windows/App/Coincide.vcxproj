@@ -39,7 +39,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <LanguageStandard>stdcpp20</LanguageStandard><WarningLevel>Level4</WarningLevel>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader><AdditionalOptions>/bigobj /utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader><AdditionalOptions>/MP2 /bigobj /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>UNICODE;_UNICODE;NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
     </ClCompile>
@@ -50,7 +50,7 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.5" />
     <PackageReference Include="Microsoft.Windows.CppWinRT" Version="3.0.260818.1" />
   </ItemGroup>
-  <ItemGroup><ClCompile Include="main.cpp" /><ClInclude Include="WorkspaceStore.h" /><ClInclude Include="..\Core\Workspace.h" /></ItemGroup>
+  <ItemGroup><ClCompile Include="main.cpp" /><ClCompile Include="..\Tests\NativeTestRoutes.cpp" /><ClCompile Include="..\Tests\NativeProviderTestRoutes.cpp" /><ClCompile Include="..\Tests\NativeDataTestRoutes.cpp" /><ClCompile Include="..\Tests\NativePlatformTestRoutes.cpp" /><ClCompile Include="..\Tests\NativePanelTestRoutes.cpp" /><ClCompile Include="..\Tests\NativeDesktopPanelTestRoutes.cpp" /><ClInclude Include="WorkspaceStore.h" /><ClInclude Include="..\Core\Workspace.h" /></ItemGroup>
   <ItemGroup><PRIResource Include="..\Strings\**\*.resw" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

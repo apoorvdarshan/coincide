@@ -45,7 +45,7 @@ if (!$CoreOnly) {
     Copy-Item (Join-Path $root 'Notices\T3-Code-LICENSE.txt') $notices
     Write-Output "Built: $executable"
     if ($Architecture -eq 'x64') {
-        foreach ($suite in @('store', 'protocol', 'connection', 'session', 'display', 'git', 'provider', 'claude', 'terminal', 'calendar', 'opencode', 'browser', 'preview', 'schedule', 'acp', 'preferences', 'desktop-services', 'instructions', 'imports', 'import-store', 'provider-accounts', 'notifications', 'voice-settings', 'computer-use', 'computer-use-settings', 'git-management', 'tool-context', 'app-tool-bridge', 'schedule-tool')) {
+        foreach ($suite in @('store', 'protocol', 'connection', 'session', 'display', 'git', 'provider', 'claude', 'terminal', 'calendar', 'opencode', 'browser', 'preview', 'schedule', 'acp', 'preferences', 'desktop-services', 'instructions', 'imports', 'import-store', 'provider-accounts', 'notifications', 'voice-settings', 'computer-use', 'computer-use-settings', 'git-management', 'tool-context', 'app-tool-bridge', 'schedule-tool', 'usage', 'usage-runtime', 'browser-credential', 'bot', 'bot-workspace', 'host-persistence')) {
             $report = Join-Path $root "build\$suite-test-result.txt"
             Remove-Item $report -ErrorAction SilentlyContinue
             $process = Start-Process -FilePath $executable -ArgumentList @("--$suite-tests", "`"$report`"") -PassThru

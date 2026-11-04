@@ -19,13 +19,18 @@ class ResourceLabels(unittest.TestCase):
                 app = MODULE.ROOT / 'App'
                 app.mkdir()
                 (app / 'main.cpp').write_text('label(L"Cancel", L"Cancel"); button(L"Save", L"Save", L"SaveApp");', encoding='utf-8')
-                (app / 'zPanel.h').write_text('button(L"Cancel", L"CancelProviderAccount"); button(L"Check profile", L"CheckProfile");', encoding='utf-8')
+                (app / 'zPanel.h').write_text('button(L"Cancel", L"CancelProviderAccount"); button(L"Check profile", L"CheckProfile"); label(L"", L"PanelStatus"); command(L"New Bot", L"BotNew", [](auto&){}); note(L"Bot instructions"); button(L"Cancel", L"AutomationOnly", [](auto&){});', encoding='utf-8')
                 values = MODULE.labels()
                 self.assertEqual(values['Cancel'], 'Cancel')
                 self.assertEqual(values['Save'], 'Save')
                 self.assertEqual(values[MODULE.ui_key('Check profile')], 'Check profile')
                 self.assertNotIn('CancelProviderAccount', values.values())
                 self.assertNotIn('CheckProfile', values.values())
+                self.assertNotIn('', values)
+                self.assertNotIn('PanelStatus', values.values())
+                self.assertNotIn('AutomationOnly', values.values())
+                self.assertEqual(values[MODULE.ui_key('New Bot')], 'New Bot')
+                self.assertEqual(values[MODULE.ui_key('Bot instructions')], 'Bot instructions')
         finally:
             MODULE.ROOT = original
 

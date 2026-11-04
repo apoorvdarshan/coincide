@@ -31,7 +31,9 @@ inline int acp_session_fixture(std::wstring_view mode) {
     const auto update = [&](Object value, const std::string& owner = "") {Object params, frame, meta; put(params, L"sessionId", owner.empty() ? session : owner); params.SetNamedValue(L"update", value); put(meta, L"promptId", current); params.SetNamedValue(L"_meta", meta); put(frame, L"method", "session/update"); frame.SetNamedValue(L"params", params); write(frame);};
     const auto chunk = [&](const std::string& body, const std::string& owner = "", const std::string& id = "") {Object value, content; put(value, L"sessionUpdate", "agent_message_chunk"); put(value, L"messageId", id.empty() ? message : id); put(content, L"type", "text"); put(content, L"text", body); value.SetNamedValue(L"content", content); update(value, owner);};
     const auto finish = [&](const std::string& body) {
-        chunk(body); Object result; if (mode != L"v2") put(result, L"stopReason", "end_turn"); response(active, result);
+        chunk(body);Object result;if(mode==L"usage"){
+            Object snapshot;put(snapshot,L"sessionUpdate","usage_update");snapshot.SetNamedValue(L"used",Json::CreateNumberValue(-1));update(snapshot);snapshot=Object::Parse(LR"({"sessionUpdate":"usage_update","used":1000,"size":100000,"cost":{"currency":"USD","amount":4}})");update(snapshot,"foreign-session");update(snapshot);result.SetNamedValue(L"usage",Object::Parse(LR"({"inputTokens":10,"cachedReadTokens":3,"cachedWriteTokens":2,"outputTokens":5,"totalTokens":20,"costUsdTicks":10000000})"));}
+        if (mode != L"v2") put(result, L"stopReason", "end_turn"); response(active, result);
         if (mode == L"v2") {Object idle; put(idle, L"sessionUpdate", "state_update"); put(idle, L"state", "idle"); put(idle, L"stopReason", "end_turn"); update(idle);}
     };
     const auto request = [&](const char* method, Object params) {Object envelope; put(envelope, L"method", method); put(envelope, L"id", "acp-request-你好"); params.SetNamedValue(L"sessionId", Json::CreateStringValue(winrt::to_hstring(session))); envelope.SetNamedValue(L"params", params); write(envelope);};

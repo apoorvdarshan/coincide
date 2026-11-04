@@ -8,10 +8,10 @@ The owner deferred iCloud instruction sync on Windows for this phase. Local/proj
 in scope. The owner approved a Windows-compatible offline dictation replacement and an alternative phone-alert
 delivery route; phone alerts remain pending, while offline dictation is now being implemented and tested synthetically. These decisions affect the Windows port.
 
-## Current completion checklist — 2026-11-04
+## Current completion checklist — 2026-11-05
 
-The full Windows port is **in progress**. The most recent combined development candidate passes **1,657 automated
-checks on the physical Windows laptop**. This is not a completed or released port. The same candidate passes **13 conversation/scheduled-delivery UI flows and 286 native panel checks**. Further
+The full Windows port is **in progress**. The most recent combined development candidate passes **2,069 automated
+checks on the physical Windows laptop**. This is not a completed or released port. The same candidate passes **16 conversation/scheduled/usage/bot flows and 364 native panel checks**. Further
 feature integration and final end-to-end acceptance are still in progress; a source implementation alone is not a completed checklist item.
 The rough feature estimate is 50–55%, not a measurement derived from the number of tests.
 
@@ -30,27 +30,33 @@ The rough feature estimate is 50–55%, not a measurement derived from the numbe
 | Browser and preview | WebView2, shared-profile policy and network-disabled inline preview implemented; **23 browser + 13 preview policy checks pass**; earlier offline engine checks pass **7 + 11** separately; full browser/password/tool parity is being implemented in parallel |
 | Scheduling | All recurrence/time-zone/store policies and native UI/timer dispatch implemented; **76 core + 70 store + 18 IANA + 61 native panel checks pass**; the app fixture verifies persisted scheduled delivery, completion and draft preservation; thread-scoped agent requests pass **33 checks** and always retain proposal approval |
 | Preferences | Native General/Providers/Models/Keyboard/About controls and atomic settings implemented; **33 settings checks pass**; **73 native panel checks pass** after the CR/LF model-editor fix; profile/inheritance integration is implemented; the newest combined candidate passes |
-| Instructions and imports | Read-only local/project/global discovery, bounded Codex/Claude JSONL previews, duplicate detection and atomic publication implemented; **16 instruction + 29 import + 40 transaction checks pass**; **11 native panel checks pass**; instruction Git sync remains pending |
+| Instructions and imports | Read-only local/project/global discovery, bounded Codex/Claude JSONL previews, duplicate detection and atomic publication implemented; **17 instruction + 29 import + 40 transaction checks pass**; **11 native panel checks pass**; instruction Git sync remains pending |
 | Background window lifetime | Physical desktop verifies active work survives window close, same-data relaunch reactivates it, different data stays independent, and Stop preserves the Unicode draft: **all 6 checks pass**, including Composer-focused Ctrl+Q and owned-child/tray cleanup; separate crash-isolated background host/IPC still pending |
 | Notifications | Native Windows notification adapter and thread-scoped activation/storage controls implemented; **68 injected-transport checks pass**; actual OS registration, delivery, cold-start activation and phone alerts remain unverified |
-| Credentials | Credential Manager foundation passes **10 interactive fixture checks**; password-manager UI, fill, imports, TOTP and passkeys remain pending |
+| Credentials | **91 synthetic manager/CSV/TOTP/store checks + 29 native panel checks** pass, alongside **10 owned Credential Manager checks**; browser fill/controller integration and passkeys remain pending |
+| Bots | Starter artwork/personality and metadata pass **57 checks**; app workspace integration passes **19**, including separate histories, drafts, immutable per-conversation defaults, working-folder retention and removal recovery; **37 native editor checks and two full-app bot flows pass** |
+| Usage | Passive local history, provider normalization and per-delivery ownership pass **50 store/accounting + 181 provider fixture + 12 native panel checks**; app lifecycle acceptance covers interrupted and scheduled deliveries; unreported costs, balances and rate limits remain unavailable |
 | Offline voice | Windows capture/CLI foundation passes **29 synthetic + 20 settings checks**; **18 native voice-panel checks pass**; no microphone capture or real recognition has run |
 | Computer Use | Permission/token/helper foundations pass **62 policy + 33 settings + 20 owned-pipe checks**; **29 native settings-panel checks pass**; the cross-process desktop lease passes **32 synthetic checks**. Actual native UIA/capture/input and app-tool acceptance remain pending |
 | Real signed-in conversations | **Not verified.** The correct existing Codex account needs interactive password/passkey approval. No prompt was sent while the owner was absent. A different account's phone-verification page is not the correct-account blocker. |
 | Remaining full parity | Complete provider flows, background host, phone routing, Computer Use, browser/password tools, instruction sync, usage, personas, voice, localization, accessibility/DPI/ARM64, distribution/signing/updating and final native acceptance |
 
-The 1,657-check combined run consists of 153 workspace/process, 22 Markdown, 10 handoff, 63 terminal screen,
+The 2,069-check combined run consists of 153 workspace/process, 22 Markdown, 10 handoff, 63 terminal screen,
 76 scheduler, 66 store, 49 protocol, 42 RPC connection, 78 Codex lifecycle, 8 display/media, 55 Git,
 12 provider discovery, 33 Claude, 28 ConPTY, 18 IANA, 39 OpenCode, 23 browser policy, 13 preview policy,
-70 schedule store, 93 ACP, 33 preferences, 13 desktop/power, 16 instructions, 29 imports, 40 atomic import-store,
+70 schedule store, 93 ACP, 33 preferences, 13 desktop/power, 17 instructions, 29 imports, 40 atomic import-store,
 42 provider accounts, 68 notification policy, 20 voice settings, 62 Computer Use policy, 33 Computer Use settings,
 48 Git management, 86 per-delivery tool context, 102 private app-tool bridge, 33 schedule app-tool,
-29 synthetic voice, 20 owned-helper IPC and 32 shared desktop lease checks. These use no real account/model turn,
+50 local usage, 181 provider usage, 91 credential foundation, 57 bot catalog/store/artwork, 19 bot workspace,
+13 hosted receipt persistence, 29 synthetic voice, 20 owned-helper IPC and 32 shared desktop lease checks. These use no real account/model turn,
 notification registration, or microphone capture. Interactive UI and Credential Manager checks are counted separately.
 
 The previous pushed checkpoint `1d124b4` passed Windows CI and its other applicable checks. The expanded checkpoint
 above has been validated on the physical laptop; check PR #235 for its own exact-revision CI result. Required notices
-accompany the Windows build output. Browser, usage, credentials and background-host expansion are still in development.
+accompany the Windows build output. The fixture-only schedule clock now starts when its controller opens; a deliberate 12-second startup delay
+passes the real app scheduled-delivery flow without changing production missed-run behavior. CI subsequently exposed
+a Git mutation-observation fixture race, whose fix passes the expanded native panel run. Browser, credentials and background-host
+integration remain in development.
 
 ## Previously pushed milestone (4008aa4)
 
@@ -115,9 +121,9 @@ needs both the relevant automated coverage and actual Windows verification befor
 | Passwords/passkeys | Approved fill, CSV import, TOTP, Bitwarden/1Password and passkey boundaries | Platform replacement prepared where indicated; complete integration and owner acceptance pending |
 | Computer Use | Discover windows, inspect, click/type/scroll, screenshot, permissions and single-thread arbitration | Platform replacement prepared where indicated; complete integration and owner acceptance pending |
 | Scheduling | All existing recurrence kinds/time zones, approval cards, missed-run and busy-thread handling | 76 recurrence, 70 store, 18 IANA and 61 native panel checks pass; app fixture verifies durable scheduled delivery and draft preservation; thread-scoped agent requests pass **33 checks** and always retain proposal approval |
-| Bots | Starter lineup, artwork/personality, project folders and separate histories | Not implemented |
-| Instructions | Discovery, global/project masters, local links/copies, Git sync and conflict handling | Read-only project/global discovery and native previews are implemented; 16 backend and 11 instruction/import UI checks pass; Git sync remains pending; iCloud sync is explicitly deferred |
-| Usage | Provider account limits, balances, activity, usage/cost scopes and local history | Not implemented |
+| Bots | Starter lineup, artwork/personality, project folders and separate histories | Native metadata/editor and root workspace integration implemented; 57 bot + 19 workspace + 37 native editor checks and two full-app flows pass |
+| Instructions | Discovery, global/project masters, local links/copies, Git sync and conflict handling | Read-only project/global discovery and native previews are implemented; 17 backend and 11 instruction/import UI checks pass; Git sync remains pending; iCloud sync is explicitly deferred |
+| Usage | Provider account limits, balances, activity, usage/cost scopes and local history | Local reported-usage accounting, provider normalization and native panel pass 50 + 181 + 12 checks; balances/rate limits remain unavailable |
 | Remote/CLI | iPhone/iPad pairing, TLS protocol, controls, alerts/presence and local CLI | Not implemented; preserve protocol compatibility |
 | Notifications | Completion/input, activation, dismissal synchronization and phone routing | 68 injected native notification storage/routing checks pass; actual OS registration/delivery, cold-start activation and alternative phone routing remain unverified |
 | Voice | Dictation, trigger/insertion, offline models and existing transcription providers | Native offline capture/CLI settings and draft-only insertion are implemented; 29 synthetic, 20 settings and 18 native panel checks pass; real microphone/recognition remains unverified |

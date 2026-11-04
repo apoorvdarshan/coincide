@@ -62,6 +62,8 @@ private:
     std::optional<CodexTurn> input_;
     std::deque<AgentQueuedTurn> queued_;
     std::unordered_set<std::string> deliveries_;
+    std::unordered_set<std::string> current_usage_messages_,retired_usage_messages_;
+    std::deque<std::string> retired_usage_history_;
     std::deque<std::string> delivery_history_;
     std::deque<std::pair<std::string, std::string>> answers_;
     std::vector<SessionEvent> events_;
@@ -262,6 +264,10 @@ private:
             }
         }
         if (!execution_ || !delivered_) return;
+        if(type=="session.step.ended"||type=="session.step.failed"||type=="session.usage.updated"){
+            const auto message=text(data,L"assistantMessageID");if(!message.empty()&&retired_usage_messages_.contains(message))return;
+            if(const auto usage=UsageProtocol::normalize([&]{return UsageProtocol::opencode(type,data);},launch_.session_id,current_)){if(!message.empty()){if(current_usage_messages_.size()>=65536&&!current_usage_messages_.contains(message))throw RpcError("OpenCode emitted too many usage identities");current_usage_messages_.insert(message);}emit(Kind::usage,current_,*usage,type);}return;
+        }
         if (type == "session.step.started") {
             const auto model = data.GetNamedObject(L"model", Object{}); const auto provider = text(model, L"providerID"), id = text(model, L"id");
             if (!provider.empty() && !id.empty()) emit(Kind::status, {}, provider + "/" + id, "model"); return;
@@ -331,7 +337,7 @@ private:
         stop_server();
     }
     void run_turn(CodexTurn turn) {
-        current_ = "msg_coincide_" + uuid(); sent_ = delivered_ = execution_ = done_ = false; failure_.clear(); outcome_ = "failed"; blocks_.clear(); finalized_.clear();
+        current_ = "msg_coincide_" + uuid(); sent_ = delivered_ = execution_ = done_ = false; failure_.clear(); outcome_ = "failed"; blocks_.clear(); finalized_.clear();current_usage_messages_.clear();
         try {
             emit(Kind::status, {}, "Connecting to OpenCode…"); connect(turn); if (stopping_ || cancel_) throw Cancelled{};
             const auto adapted=with_current_tool_context(launch_,turn);if(stopping_||cancel_)throw Cancelled{};
@@ -345,6 +351,7 @@ private:
         for (const auto& block : blocks_) {retired_blocks_.insert(block); block_history_.push_back(block);}
         while (block_history_.size() > 65536) {retired_blocks_.erase(block_history_.front()); block_history_.pop_front();}
         for (const auto& [id, unused] : prompts_) {static_cast<void>(unused); emit(Kind::resolved, winrt::to_string(Json::CreateStringValue(winrt::to_hstring(id)).Stringify()));}
+        for(const auto& id:current_usage_messages_)if(retired_usage_messages_.insert(id).second)retired_usage_history_.push_back(id);while(retired_usage_history_.size()>65536){retired_usage_messages_.erase(retired_usage_history_.front());retired_usage_history_.pop_front();}
         prompts_.clear(); declined_.clear(); emit(Kind::completed, current_, outcome_);
         std::lock_guard lock(mutex_); active_ = false;
         if (outcome_ != "completed") {paused_ = true; if (!queued_.empty()) emit_locked(Kind::queue_changed, {}, {}, "paused");}

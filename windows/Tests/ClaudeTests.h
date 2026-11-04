@@ -18,7 +18,7 @@ inline int claude_session_fixture(std::wstring_view mode) {
     const auto put = [](Object object, const wchar_t* key, const std::string& value) {ClaudeProtocol::put(object, key, value);};
     const auto write = [](Object frame) {fixture_write(GetStdHandle(STD_OUTPUT_HANDLE), winrt::to_string(frame.Stringify()) + "\n");};
     const std::string session = "claude-fixture-session";
-    std::string current, previous, pending, prompt; int message_count{}; bool exit{};
+    std::string current, previous, pending, prompt; int message_count{}; bool exit{};Object previous_assistant{nullptr};
     const auto control_reply = [&](const std::string& id, Object value, bool error = false) {write(ClaudeProtocol::response(id, value, error));};
     const auto result = [&](bool failed = false, const std::string& target = "") {
         Object frame; put(frame, L"type", "result"); put(frame, L"session_id", session); put(frame, L"user_message_uuid", target.empty() ? current : target);
@@ -26,8 +26,8 @@ inline int claude_session_fixture(std::wstring_view mode) {
     };
     const auto answer = [&](const std::string& value) {
         Object frame, message, block; Array content;
-        put(frame, L"type", "assistant"); put(frame, L"session_id", session); put(message, L"id", "fixture-message-" + std::to_string(++message_count));
-        put(block, L"type", "text"); put(block, L"text", value); content.Append(block); message.SetNamedValue(L"content", content); frame.SetNamedValue(L"message", message); write(frame); result();
+        put(frame, L"type", "assistant"); put(frame, L"session_id", session); put(message, L"id", "fixture-message-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(++message_count));
+        put(block, L"type", "text"); put(block, L"text", value); content.Append(block); message.SetNamedValue(L"content", content);if(mode==L"usage")message.SetNamedValue(L"usage",Object::Parse(LR"({"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":3,"cache_creation_input_tokens":2})"));frame.SetNamedValue(L"message", message);write(frame);if(mode==L"usage"){write(frame);previous_assistant=frame;Object snapshot;put(snapshot,L"type","result");put(snapshot,L"session_id",session);put(snapshot,L"user_message_uuid",current);snapshot.SetNamedValue(L"total_cost_usd",Json::CreateNumberValue(12.75));write(snapshot);}else result();
     };
     const auto event = [&](const char* kind, Object value) {Object frame; put(frame, L"type", "stream_event"); put(frame, L"session_id", session); put(value, L"type", kind); frame.SetNamedValue(L"event", value); write(frame);};
     LineFramer framer; std::array<char, 4096> bytes{}; DWORD count{};
@@ -68,6 +68,9 @@ inline int claude_session_fixture(std::wstring_view mode) {
             if(original=="wait")return;answer(prompt);return;
         }
         if (prompt == "wait") return;
+        if(mode==L"usage"){
+            if(previous_assistant)write(previous_assistant);Object malformed,bad_message;put(malformed,L"type","assistant");put(malformed,L"session_id",session);put(bad_message,L"id","invalid-metric");bad_message.SetNamedValue(L"content",Array{});bad_message.SetNamedValue(L"usage",Object::Parse(LR"({"input_tokens":-1})"));malformed.SetNamedValue(L"message",bad_message);write(malformed);answer("usage reply");return;
+        }
         if (prompt == "fail") {result(true); return;}
         if (prompt == "approval" || prompt == "file" || prompt == "question" || prompt == "unknown") {
             pending = "claude-request-你好"; Object request, value, input;
@@ -78,7 +81,7 @@ inline int claude_session_fixture(std::wstring_view mode) {
             else put(input, L"command", "fixture command - never executed");
             value.SetNamedValue(L"input", input); request.SetNamedValue(L"request", value); write(request); return;
         }
-        const auto native_id = "fixture-message-" + std::to_string(++message_count);
+        const auto native_id = "fixture-message-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(++message_count);
         Object start, native; put(native, L"id", native_id); start.SetNamedValue(L"message", native); event("message_start", start);
         Object block, initial; initial.SetNamedValue(L"index", Json::CreateNumberValue(0)); put(block, L"type", "text"); put(block, L"text", ""); initial.SetNamedValue(L"content_block", block); event("content_block_start", initial);
         Object delta, part; delta.SetNamedValue(L"index", Json::CreateNumberValue(0)); put(part, L"type", "text_delta"); put(part, L"text", prompt == "exit" ? "partial before exit" : "नमस्ते "); delta.SetNamedValue(L"delta", part); event("content_block_delta", delta);

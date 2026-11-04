@@ -112,6 +112,10 @@ inline int opencode_http_fixture(std::wstring_view mode) {
                 }
                 if (!state->previous.empty()) {auto stale = frame(); put(stale, L"assistantMessageID", state->previous); stale.SetNamedValue(L"ordinal", Json::CreateNumberValue(0)); put(stale, L"delta", "STALE"); event("session.text.delta", stale);}
                 if (input == "wait") return;
+                if(mode==L"usage"){
+                    const auto step=[&](const std::string& message,double input,const std::string& owner=""){auto data=frame();if(!owner.empty())put(data,L"sessionID",owner);put(data,L"assistantMessageID",message);auto tokens=Object::Parse(LR"({"input":10,"output":3,"reasoning":2,"cache":{"read":3,"write":2}})");tokens.SetNamedValue(L"input",Json::CreateNumberValue(input));data.SetNamedValue(L"tokens",tokens);data.SetNamedValue(L"cost",Json::CreateNumberValue(0.01));event("session.step.ended",data);};
+                    if(!state->previous.empty())step(state->previous,99999);step(state->message,-1);step(state->message,99999,"another-session");step(state->message,10);step(state->message,10);auto cumulative=frame();cumulative.SetNamedValue(L"cost",Json::CreateNumberValue(25));event("session.usage.updated",cumulative);
+                }
                 if (input == "fail") {event("session.execution.failed", frame()); return;}
                 if (input == "question" || input == "hiddenform") {
                     auto event_data = frame(); Object form, field, option; Array fields, options;
