@@ -30,3 +30,14 @@ A crash before durable save replays identical event IDs from the old cursor. A c
 ## Synthetic validation
 
 `background_agent_session_tests(report, exact_fixture_executable)` uses `BackgroundAgentSessionFixture.cpp`, a separate console helper gated to owned temporary directories with an explicit synthetic marker. It covers actual client-process crash/replay, durable-save-before-ACK restoration, failed receipts, account/epoch mismatch, authoritative queue controls, fresh host-side context on queued delivery, response loss with accepted/unknown outcomes, and bounded detach/shutdown under stalled/unavailable IPC. No provider, model, account sign-in, browser, desktop or user repository is involved. Root adds the test route/helper build when integrating.
+
+## Lost fieldless control replies
+
+Resume, Pause and model-refresh commands retain their original command GUID.
+When the response is lost, the proxy queries `command_status` with that exact
+GUID, key, epoch and canonical command digest. It never resubmits the control or
+any user input. Transport-only failures may retry this read-only query within
+the existing action deadline; unknown/intent/uncertain status stays uncertain.
+The normal request and action deadlines are unchanged. A deterministic owned
+child fixture drops an accepted resume response and verifies one resume callback
+and one queued delivery. The pre-fix regression failed; native Windows now passes.

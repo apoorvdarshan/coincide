@@ -172,7 +172,12 @@ private:
     static void perform(State& state,background_host::Client& client,const std::shared_ptr<Work>& work){
         {std::lock_guard lock(state.gate);work->command.key=state.options.key;work->command.epoch=state.snapshot.epoch;work->in_flight=true;}
         BackgroundDeliveryDisposition disposition{};try{const auto response=client.call(work->command);disposition=known_status(background_host::text(response,L"status",32));if(response.HasKey(L"session")){const auto info=background_host::info(response.GetNamedObject(L"session"));std::lock_guard lock(state.gate);update_snapshot_locked(state,info,false);state.needs_status=true;}}
-        catch(const background_host::OutcomeUncertain&){disposition=BackgroundDeliveryDisposition::uncertain;if(input_operation(work->command.operation))try{disposition=known_status(client.delivery_status(state.options.key,work->command.epoch,work->command.delivery_id));}catch(...){} }
+        catch(const background_host::OutcomeUncertain&){disposition=BackgroundDeliveryDisposition::uncertain;if(input_operation(work->command.operation))try{disposition=known_status(client.delivery_status(state.options.key,work->command.epoch,work->command.delivery_id));}catch(...){}else if(work->command.operation==Operation::resume_queue||work->command.operation==Operation::pause_queue||work->command.operation==Operation::refresh_models){
+                // A control may already be durably accepted when its response is lost. Query
+                // only the original command ID/digest; never repeat a mutation or new input.
+                Command query;query.operation=Operation::command_status;query.key=work->command.key;query.epoch=work->command.epoch;query.target_command_id=work->command.id;query.expected_delivery_digest=background_host::command_fingerprint(work->command);
+                while(std::chrono::steady_clock::now()<work->deadline){bool cancelled{};{std::lock_guard lock(state.gate);cancelled=state.stop||work->cancelled;}if(cancelled)break;try{disposition=known_status(background_host::text(client.call(query),L"status",32));break;}catch(...){std::unique_lock lock(state.gate);state.cv.wait_for(lock,std::chrono::milliseconds(10));}}
+            }}
         catch(...){disposition=BackgroundDeliveryDisposition::not_submitted;std::lock_guard lock(state.gate);state.attached=false;state.snapshot.phase=BackgroundAgentPhase::unavailable;++state.snapshot.revision;notice_locked(state,"The owned host could not be reached. No duplicate in-app runtime was started.","host_unavailable");}
         finish(state,work,disposition);if(work->command.operation==Operation::shutdown){std::lock_guard lock(state.gate);state.stop=true;}state.cv.notify_all();
     }
