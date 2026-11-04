@@ -1,5 +1,8 @@
 #pragma once
+#include <winrt/Windows.Foundation.Collections.h>
 #include "RpcPeer.h"
+#include <algorithm>
+#include <unordered_set>
 #include <vector>
 
 namespace coincide {
@@ -16,6 +19,16 @@ struct CodexTurn {
     std::vector<std::string> image_paths;
 };
 
+struct CodexServiceTier {
+    std::string id, name, description;
+};
+struct CodexModel {
+    std::string id, model, display_name, default_effort;
+    std::vector<std::string> efforts;
+    std::vector<CodexServiceTier> service_tiers;
+    bool hidden{}, is_default{}, supports_images{true};
+};
+
 // Mirrors the Mac adapter and the official app-server JSONL contract. It does not call the Responses API directly.
 // Models come from model/list or the thread's resolved model; no Windows-only model list is hardcoded.
 struct CodexProtocol {
@@ -25,6 +38,68 @@ struct CodexProtocol {
 
     static void text(Object value, const wchar_t* name, const std::string& text) {
         value.SetNamedValue(name, Json::CreateStringValue(winrt::to_hstring(text)));
+    }
+    static std::string string(const Object& value, const wchar_t* name) {
+        const auto item = value.GetNamedValue(name, Json::CreateNullValue());
+        return item.ValueType() == rpc_json::JsonValueType::String ? winrt::to_string(item.GetString()) : "";
+    }
+    static Object model_list(const std::string& cursor = {}) {
+        Object params;
+        if (!cursor.empty()) text(params, L"cursor", cursor);
+        return params;
+    }
+    // Catalog data remains provider-owned; no Windows-only model names or reasoning levels are invented.
+    static std::vector<CodexModel> catalog_entries(const Array& entries, bool include_hidden = false) {
+        std::vector<CodexModel> result;
+        std::unordered_set<std::string> models;
+        for (const auto& raw : entries) {
+            if (raw.ValueType() != rpc_json::JsonValueType::Object) continue;
+            const auto entry = raw.GetObject();
+            CodexModel model;
+            model.model = string(entry, L"model");
+            if (model.model.empty()) model.model = string(entry, L"id");
+            model.id = model.model;
+            model.hidden = entry.GetNamedBoolean(L"hidden", false);
+            if (model.id.empty() || (!include_hidden && model.hidden) || !models.insert(model.id).second) continue;
+            model.display_name = string(entry, L"displayName");
+            if (model.display_name.empty()) model.display_name = model.model;
+            model.is_default = entry.GetNamedBoolean(L"isDefault", false);
+            std::unordered_set<std::string> efforts;
+            for (const auto& option : entry.GetNamedArray(L"supportedReasoningEfforts", Array{})) {
+                if (option.ValueType() != rpc_json::JsonValueType::Object) continue;
+                auto value = string(option.GetObject(), L"reasoningEffort");
+                if (!value.empty() && efforts.insert(value).second) model.efforts.push_back(std::move(value));
+            }
+            model.default_effort = string(entry, L"defaultReasoningEffort");
+            if (!model.efforts.empty() && !efforts.contains(model.default_effort)) model.default_effort.clear();
+            const auto modalities = entry.GetNamedValue(L"inputModalities", Json::CreateNullValue());
+            if (modalities.ValueType() == rpc_json::JsonValueType::Array) {
+                model.supports_images = false;
+                for (const auto& modality : modalities.GetArray()) {
+                    if (modality.ValueType() == rpc_json::JsonValueType::String && modality.GetString() == L"image") model.supports_images = true;
+                }
+            }
+            std::unordered_set<std::string> tiers;
+            const auto advertised_tiers = entry.GetNamedArray(L"serviceTiers", Array{});
+            for (const auto& raw_tier : advertised_tiers) {
+                if (raw_tier.ValueType() != rpc_json::JsonValueType::Object) continue;
+                const auto tier = raw_tier.GetObject();
+                auto id = string(tier, L"id");
+                if (id.empty() || id == "default" || !tiers.insert(id).second) continue;
+                auto name = string(tier, L"name");
+                model.service_tiers.push_back({id, name.empty() ? id : name, string(tier, L"description")});
+            }
+            if (advertised_tiers.Size() == 0) {
+                for (const auto& raw_tier : entry.GetNamedArray(L"additionalSpeedTiers", Array{})) {
+                    if (raw_tier.ValueType() != rpc_json::JsonValueType::String) continue;
+                    auto id = winrt::to_string(raw_tier.GetString());
+                    if (!id.empty() && id != "default" && tiers.insert(id).second) model.service_tiers.push_back({id, id, {}});
+                }
+            }
+            result.push_back(std::move(model));
+        }
+        std::stable_sort(result.begin(), result.end(), [](const auto& a, const auto& b) {return a.is_default && !b.is_default;});
+        return result;
     }
     static Object initialize() {
         Object result, client, capabilities;

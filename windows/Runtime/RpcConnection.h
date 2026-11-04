@@ -15,9 +15,11 @@ public:
     using Closed = std::function<void(std::string)>;
 
     RpcConnection(std::filesystem::path executable, std::vector<std::wstring> arguments,
-            std::filesystem::path cwd, Notification notification = {}, ServerRequest request = {}, Closed closed = {})
+            std::filesystem::path cwd, Notification notification = {}, ServerRequest request = {}, Closed closed = {},
+            WindowsProcess::Environment environment = {}, bool json_rpc_2 = false)
         : executable_(std::move(executable)), arguments_(std::move(arguments)), cwd_(std::move(cwd)),
           notification_(std::move(notification)), request_(std::move(request)), closed_(std::move(closed)),
+          environment_(std::move(environment)), json_rpc_2_(json_rpc_2),
           host_([this] { run(); }) {}
     ~RpcConnection() { shutdown(); }
     RpcConnection(const RpcConnection&) = delete;
@@ -53,10 +55,10 @@ public:
         submit(std::move(task));
     }
 
-    void reject(std::string id_json, const std::string& message) {
+    void reject(std::string id_json, const std::string& message, int code = -32601) {
         Task task;
-        task.action = [id=std::move(id_json), message](RpcPeer& peer, auto&) {
-            peer.respond_error(rpc_json::JsonValue::Parse(winrt::to_hstring(id)), -32601, message);
+        task.action = [id=std::move(id_json), message, code](RpcPeer& peer, auto&) {
+            peer.respond_error(rpc_json::JsonValue::Parse(winrt::to_hstring(id)), code, message);
         };
         submit(std::move(task));
     }
@@ -84,6 +86,8 @@ private:
     Notification notification_;
     ServerRequest request_;
     Closed closed_;
+    WindowsProcess::Environment environment_;
+    bool json_rpc_2_{};
     std::mutex incoming_mutex_, outgoing_mutex_;
     std::condition_variable incoming_cv_, outgoing_cv_;
     std::deque<std::string> lines_, writes_;
@@ -110,6 +114,10 @@ private:
         incoming_cv_.notify_one();
     }
     void enqueue_write(std::string line) {
+        if (json_rpc_2_) {
+            auto envelope = rpc_json::JsonObject::Parse(winrt::to_hstring(line));
+            envelope.SetNamedValue(L"jsonrpc", rpc_json::JsonValue::CreateStringValue(L"2.0")); line = winrt::to_string(envelope.Stringify());
+        }
         std::lock_guard lock(outgoing_mutex_);
         if (stopping_ || transport_failed_) throw RpcError("The agent transport is closed");
         if (line.size() > queue_limit - outgoing_bytes_) {
@@ -159,7 +167,7 @@ private:
                         submit(std::move(task));
                     }
                 });
-            process = WindowsProcess::start(executable_, arguments_, cwd_, [this](auto line) {enqueue_line(std::move(line));});
+            process = WindowsProcess::start(executable_, arguments_, cwd_, [this](auto line) {enqueue_line(std::move(line));}, environment_);
             writer = std::thread([this, raw=process.get()] {write_loop(*raw);});
             while (!stopping_) {
                 std::deque<Task> tasks;

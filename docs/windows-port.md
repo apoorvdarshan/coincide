@@ -10,33 +10,42 @@ delivery route; neither replacement has been implemented or validated yet. These
 
 ## Current completion checklist — 2026-11-04
 
-The completion pass is active. The results below distinguish the latest integrated build from newer modules tested
-in isolation. New source in the working tree is being integrated and is not yet a completed or released Windows port.
+This checkpoint distinguishes combined app validation from isolated module checks. It is an expanded development
+build, not a completed or released Windows port. The unchecked parity and acceptance work remains in scope.
 
 | Work | Updated status |
 |---|---|
-| Last complete integrated Windows test run | **430 automated checks passed**, plus **all 11 existing native UI checks** on the physical laptop |
+| Last complete integrated Windows test run | **880 automated checks passed**, plus **12 native UI flows, 25 question-form checks and 10 credential checks** on the physical laptop |
 | Conversation/project management | Rename, pin, settle, snooze, soft delete/restore, project changes, batch undo/redo, Unicode search, attachments and recoverable outbox implemented; expanded core/store checks pass; new UI-flow verification underway |
 | Codex runtime | Model catalogue, explicit model/effort/speed/plan/access controls, FIFO queues, safe steering and Stop/failure recovery implemented; **49 protocol + 63 lifecycle checks pass** |
 | Claude runtime | Native stream-json adapter, resume, streaming, approvals/questions and queues implemented; **25 deterministic checks pass**; live account conversation pending |
-| OpenCode runtime | Native Windows OpenCode 2.2.5 installed and metadata-only smoke verified; HTTP/SSE adapter has **36 deterministic checks passing**; full app wiring underway, no live model turn run |
+| OpenCode runtime | Native Windows OpenCode 2.2.5 installed and metadata-only smoke verified; HTTP/SSE adapter has **39 checks passing in the combined app**; app wiring compiles, no live model turn run |
+| ACP foundation | Shared Cursor/Grok/Antigravity protocol, scoped filesystem/terminal requests and account-routing guard pass **49 contract checks** in the combined app; providers stay unadvertised until vendor setup/account integration is verified |
 | Provider discovery | Native executable validation and bounded metadata probes implemented; **12 checks pass**; unsupported/wrapper-only providers remain explicit |
-| Git | Status/diffs, literal-path stage/unstage, commit/push, branches, worktrees and non-destructive checkpoints implemented; **55 Git + 23 subprocess checks pass**; native panel integration underway |
+| Git | Status/diffs, literal-path stage/unstage, commit/push, branches, worktrees and non-destructive checkpoints implemented; **55 Git + 27 subprocess checks pass**; native panel integration underway |
 | Rich transcript | Native Markdown/code/link/table renderer is integrated and retains the existing 11 UI regressions; **22 Markdown checks pass**; image/audio/video attachment controls are being validated |
 | Provider handoff | Bounded role/provider-preserving reference context implemented; **10 checks pass**; app/provider transition verification underway |
-| Terminal | Native ConPTY session and per-thread tab/split UI implemented; **63 portable VT-screen checks pass**; ConPTY/native UI execution pending integration |
-| Browser | Native WebView2 controller implemented; **23 policy + 7 offline native engine checks pass**; shared-profile default adjustment and app integration are being verified |
-| Structured questions | Native single/multiple choice, free text, secret fields and validation implemented; **25 native form assertions prepared**, execution pending |
-| Inline HTML/SVG previews | Isolated, network-disabled private preview implementation in progress |
+| Terminal | Native ConPTY session and per-thread tab/split UI implemented; **63 VT-screen + 28 native ConPTY checks pass** in the combined build; terminal panel UI acceptance pending |
+| Browser | Native WebView2 controller implemented; **23 policy + 7 offline native engine checks pass**; shared-profile default verified; native app panel integration compiles |
+| Structured questions | Native single/multiple choice, free text, secret fields and validation implemented; **25 native form checks pass** in initialized WinUI, including radio/custom-text synchronization, immediate Submit, required validation, multiple selection, secret fields and retry |
+| Inline HTML/SVG previews | Isolated, network-disabled private preview implemented; **13 policy + 11 native engine checks pass**; app Preview actions compile, combined UI validation pending |
+| Scheduling | All recurrence kinds, time zones, approval/recovery/overlap policies and atomic store implemented; **76 core + 70 store + 18 native IANA checks pass**; schedule UI/timer dispatch pending |
+| Windows credentials | Windows Credential Manager foundation passes **10 interactive fixture checks in the combined app**; password-manager UI/fill/import integration pending |
 | Real signed-in conversations | **Still unverified**. The correct existing Codex account needs interactive password/passkey approval. No approval prompt was sent while the owner is absent. A different saved Google account requested phone verification; that is not the correct-account blocker. |
-| Remaining parity | Other provider adapters, background lifetime, scheduling, notifications/phone routing, Computer Use, credential integrations, instructions/imports/usage, offline voice, complete settings/localization and distribution still need implementation or acceptance |
+| Remaining parity | ACP provider setup/account routing, background lifetime, scheduling UI/dispatch, notifications/phone routing, Computer Use, credential UI, instructions/imports/usage, offline voice, complete settings/localization and distribution still need implementation or acceptance |
 
-The 430-check result is a complete earlier integration snapshot, **not** a sum of all newer isolated results. The next
-integration build reached the expanded core/store/runtime suites but exposed a local-image URI escaping regression;
-the correction is implemented and awaiting rerun. No newer total or full-parity percentage is claimed.
+The 880-check result is one complete combined native build: 153 workspace/process, 22 Markdown, 10 handoff,
+63 terminal screen, 76 scheduler, 62 store, 49 protocol, 42 RPC connection, 63 Codex lifecycle, 8 display/media,
+55 Git, 12 provider discovery, 25 Claude, 28 ConPTY, 18 IANA calendar, 39 OpenCode, 23 browser policy,
+13 preview policy, 70 schedule store/policy, and 49 ACP contract checks. No provider account or model is used.
 
-The previously pushed milestone and CI results are recorded below. Current implementation changes will be committed
-and pushed after their integration checks; the live checklist is updated while work continues.
+The earlier media URI and fixture-threading/repaint failures are fixed. Code review also found project-context,
+repository-operation exclusion, and drained-event persistence issues; their corrections compile in this build and passed focused review.
+Expanded native UI validation passes all 12 flows, including a transient storage-failure recovery regression. The
+same interactive run passes 25 question-form and 10 credential checks. No full-parity percentage is claimed.
+
+The previously pushed milestone and CI results are recorded below. The current source checkpoint and checklist are
+tracked on `windows-native`; check its new CI result separately from the laptop validation above.
 
 ## Previously pushed milestone (4008aa4)
 
@@ -86,28 +95,28 @@ needs both the relevant automated coverage and actual Windows verification befor
 | Feature group | Required behavior | Current state |
 |---|---|---|
 | Native foundation | Window, resize, DPI, keyboard, focus, accessibility | Initial native window builds and opens on Windows; broader input/DPI checks pending |
-| Projects and conversations | Projectless chats, search, rename, pin, archive, settle, snooze, delete, batch operations, undo/redo | Basic project/chat/archive model and UI; remaining operations pending |
-| Persistence | Fast index, lazy transcripts, drafts, crash-safe writes, recovery and forward compatibility | Initial isolated store passes 17 Windows regression checks; full recovery/migration still pending |
-| Agents | Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity; detect, sign in, catalogs and account selection | Codex, Claude and OpenCode adapters/discovery pass isolated fixtures; full integration and real sign-in remain pending; other adapters unfinished |
+| Projects and conversations | Projectless chats, search, rename, pin, archive, settle, snooze, delete, batch operations, undo/redo | Rename, pin, archive, settle, snooze, trash/restore, batch undo/redo, project management and Unicode search implemented; expanded native UI flows pending |
+| Persistence | Fast index, lazy transcripts, drafts, crash-safe writes, recovery and forward compatibility | Expanded store passes 62 native checks, including queues, attachments, model preferences and unknown fields; full crash/migration acceptance pending |
+| Agents | Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity; detect, sign in, catalogs and account selection | Codex, Claude and OpenCode pass combined native fixtures; ACP foundation passes 49 contract checks; vendor/account setup and real sign-in remain pending |
 | Model controls | Favorites, hidden models, effort, speed, permissions, plan/build mode, project defaults | Per-provider model preferences and model/effort/speed/plan/access controls implemented; UI integration underway; favorites/hidden models/project defaults pending |
-| Streaming runtime | Tools, approvals, questions, cancellation, steering, queueing and background work | Codex Send, streaming, command approvals, questions and Stop pass native fixture UI checks; file approval denial also passes; steering, queueing and background persistence pending |
-| Provider handoff | Per-provider/per-thread session IDs, missed turns, reset/resume behavior and context limits | Initial bookkeeping tests; provider integration and bounded recap pending |
-| Transcript | Markdown, code, work logs, links, images, audio/video, media opening, previews and copy/selection | Virtualized plain text, long-thread switching, repeated replies, Unicode streaming and final-text reconciliation pass native UI checks; rich content and full performance validation pending |
-| Composer | Attachments, mentions, slash commands, quotes, terminal/diff context and per-thread drafts | Send/Ctrl+Enter, Stop and per-thread drafts connected; attachments, mentions and other context controls pending |
+| Streaming runtime | Tools, approvals, questions, cancellation, steering, queueing and background work | Codex/Claude/OpenCode runtimes include queues, approvals/questions and cancellation; Codex steering implemented. Full app UI validation and process-independent background lifetime pending |
+| Provider handoff | Per-provider/per-thread session IDs, missed turns, reset/resume behavior and context limits | Provider-isolated native session bookkeeping and bounded role-preserving handoff context implemented; account-switch and app/provider-transition acceptance pending |
+| Transcript | Markdown, code, work logs, links, images, audio/video, media opening, previews and copy/selection | Native Markdown/code/link/table and local media controls implemented; existing long-thread regressions passed earlier rich-renderer build; current media URI regressions pass; complete panel/performance acceptance pending |
+| Composer | Attachments, mentions, slash commands, quotes, terminal/diff context and per-thread drafts | Send/Ctrl+Enter, Stop, saved drafts, file attachments, queued input, Codex steering and Git diff quotes implemented; mentions/slash commands/terminal selection context pending |
 | Git | Status/diffs, stage/commit/push, checkpoints/revert, worktrees and turn diffs | Backend passes 55 Git checks; native panel integration underway; checkpoint restoration/turn-diff acceptance still pending |
 | Code hosting | GitHub native PR workspace; other supported forge CLIs/pages, checks, reviews and exact-head merges | Not implemented |
-| Terminal | Per-thread terminals, tabs/splits, resize, Unicode, output and process cleanup | ConPTY + native VT-screen/tab/split candidate implemented; 63 screen checks pass; native process/UI acceptance pending |
-| Browser | Persistent/private profiles, tabs, navigation, downloads, history/bookmarks/import, agent API and user handoff | WebView2 candidate passes 23 policy +7 offline engine checks; integration/profile recheck underway; history/bookmarks/import/agent API pending |
-| Passwords/passkeys | Approved fill, CSV import, TOTP, Bitwarden/1Password and passkey boundaries | Awaiting platform decision |
-| Computer Use | Discover windows, inspect, click/type/scroll, screenshot, permissions and single-thread arbitration | Awaiting platform decision |
-| Scheduling | All existing recurrence kinds/time zones, approval cards, missed-run and busy-thread handling | Not implemented |
+| Terminal | Per-thread terminals, tabs/splits, resize, Unicode, output and process cleanup | ConPTY + native VT-screen/tab/split panel compiles; 63 screen + 28 ConPTY checks pass; panel UI acceptance pending |
+| Browser | Persistent/private profiles, tabs, navigation, downloads, history/bookmarks/import, agent API and user handoff | WebView2 shared/private profiles pass 23 policy + 7 native engine checks; native panel compiles; full panel flows, history/bookmarks/import/agent API pending |
+| Passwords/passkeys | Approved fill, CSV import, TOTP, Bitwarden/1Password and passkey boundaries | Platform replacement prepared where indicated; complete integration and owner acceptance pending |
+| Computer Use | Discover windows, inspect, click/type/scroll, screenshot, permissions and single-thread arbitration | Platform replacement prepared where indicated; complete integration and owner acceptance pending |
+| Scheduling | All existing recurrence kinds/time zones, approval cards, missed-run and busy-thread handling | Recurrence/coordinator/store and IANA calendar validated; UI, dispatch and background integration pending |
 | Bots | Starter lineup, artwork/personality, project folders and separate histories | Not implemented |
 | Instructions | Discovery, global/project masters, local links/copies, Git sync and conflict handling | Implementation pending; iCloud sync explicitly deferred on Windows |
 | Usage | Provider account limits, balances, activity, usage/cost scopes and local history | Not implemented |
 | Remote/CLI | iPhone/iPad pairing, TLS protocol, controls, alerts/presence and local CLI | Not implemented; preserve protocol compatibility |
 | Notifications | Completion/input, activation, dismissal synchronization and phone routing | Alternative phone-alert route approved; implementation pending |
 | Voice | Dictation, trigger/insertion, offline models and existing transcription providers | Windows-compatible offline replacement approved; implementation pending |
-| Keep Awake | Charger/battery/lid behavior, optional mute/display and restoration | Awaiting platform decision |
+| Keep Awake | Charger/battery/lid behavior, optional mute/display and restoration | Platform replacement prepared where indicated; complete integration and owner acceptance pending |
 | Preferences/help | Appearance, shortcuts/conflicts, languages, About/legal/community links and updates | Not implemented |
 | Localization | All 19 existing languages, placeholders/plurals, accessibility and RTL/long-text checks | Shared labels generated; full UI and runtime checks pending |
 | Imports | Claude/Codex originals preserved, limits, branch/rollback semantics and duplicate handling | Not implemented |

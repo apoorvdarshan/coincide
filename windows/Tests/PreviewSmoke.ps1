@@ -179,6 +179,23 @@ try {
     Wait-Until { (Latest-IsVisible 'decline') -and !(Find-Control $script:window 'Stop').Current.IsEnabled } 'The denial did not reach the fixture.'
     $checks += 'Approval remains with its thread and explicit denial reaches the subprocess'
 
+    Send-Message 'approval'
+    Wait-Until { $null -ne (Find-Control $script:window 'DenyApproval') } 'No approval appeared for persistence recovery.'
+    # Block only this owned fixture transcript's atomic replacement. The runtime may still finish;
+    # its later events must remain in memory and completion must recover after storage is available.
+    $lockedTranscript = [IO.File]::Open($threadFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        Invoke-Control 'DenyApproval'
+        Wait-Until { (Latest-IsVisible 'decline') -and (Find-Control $script:window 'Stop').Current.IsEnabled } 'The completed reply was lost during a fixture write failure.'
+        Start-Sleep -Milliseconds 500
+        if (!(Find-Control $script:window 'Stop').Current.IsEnabled) { throw 'Completion was reported before the blocked transcript was saved.' }
+    } finally { $lockedTranscript.Dispose() }
+    Wait-Until { !(Find-Control $script:window 'Stop').Current.IsEnabled } 'Completion did not recover after the transcript write lock was released.'
+    $recovered = Get-Content $threadFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($recovered.messages[-1].text -ne 'decline') { throw 'Recovered completion did not persist the final reply.' }
+    $checks += 'A transient storage failure preserves later events and retries persistence before completion'
+
+
     Send-Message 'file-approval'
     Wait-Until { $null -ne (Find-Control $script:window 'DenyApproval') } 'No file-change approval appeared.'
     # Query the exposed detail control directly rather than enumerating the virtualized transcript.
@@ -214,6 +231,19 @@ try {
     if ($list.FindAll([Windows.Automation.TreeScope]::Descendants, $sameTitle).Count -ne 2) { throw 'Identical conversation titles do not have separate accessible rows.' }
     $checks += 'Identical conversation titles retain separate accessible sidebar rows'
 
+    # These suites need the real user logon session: XAML controls and Credential Manager
+    # cannot be accepted from an SSH service session. Each creates and removes only owned fixtures.
+    foreach ($suite in @('question', 'credential')) {
+        $report = Join-Path $Results "$suite-test-result.txt"
+        Remove-Item $report -ErrorAction SilentlyContinue
+        $fixtureProcess = Start-Process -FilePath $Executable -ArgumentList @("--$suite-tests", "`"$report`"") -PassThru
+        if (!$fixtureProcess.WaitForExit(45000)) { $fixtureProcess.Kill(); throw "Native $suite fixture timed out." }
+        if (!(Test-Path $report) -or $fixtureProcess.ExitCode -ne 0) {
+            $detail = if (Test-Path $report) { Get-Content $report -Raw } else { 'No report produced' }
+            throw "Native $suite fixture failed: $detail"
+        }
+        $checks += (Get-Content $report -Raw).Trim()
+    }
     Save-WindowEvidence
     Write-JsonFile (Join-Path $Results 'result.json') @{passed=$true; checks=$checks; dataDirectory=$data}
 } catch {

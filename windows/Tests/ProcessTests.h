@@ -36,6 +36,35 @@ inline int process_fixture(int argc, wchar_t** argv) {
         return 7;
     }
     if (mode == L"wait") { Sleep(30000); return 0; }
+    if (mode == L"raw") {
+        fixture_write(output, std::string_view("raw\0record\r\nlast\r", 17)); return 0;
+    }
+    if (mode == L"raw-flood") {
+        for (int i = 0; i < 1024; ++i) fixture_write(output, std::string(4096, 'x'));
+        return 0;
+    }
+    if (mode == L"merged") {
+        fixture_write(output, "out"); fixture_write(GetStdHandle(STD_ERROR_HANDLE), std::string_view("err\0\r", 5));
+        fixture_write(output, "last"); return 7;
+    }
+    if (mode == L"merged-wait") {
+        fixture_write(output, "live"); fixture_write(GetStdHandle(STD_ERROR_HANDLE), "-error"); Sleep(30000); return 0;
+    }
+    if (mode == L"merged-flood") {
+        for (int i = 0; i < 1024; ++i) fixture_write(GetStdHandle(STD_ERROR_HANDLE), std::string(4096, 'e'));
+        return 0;
+    }
+    if (mode == L"environment") {
+        wchar_t value[256]{};
+        const auto count = GetEnvironmentVariableW(L"COINCIDE_PROCESS_ENV_PROBE", value, 256);
+        if (!count || count >= 256) return 3;
+        fixture_write(output, process_utf8(std::wstring_view(value, count))); return 0;
+    }
+    if (mode == L"environment-unset") {
+        SetLastError(ERROR_SUCCESS);
+        if (GetEnvironmentVariableW(L"PATH", nullptr, 0) || GetLastError() != ERROR_ENVVAR_NOT_FOUND) return 3;
+        fixture_write(output, "unset"); return 0;
+    }
     if (mode == L"cwd") { fixture_write(output, process_utf8(std::filesystem::current_path().wstring()) + "\n"); return 0; }
     if (mode == L"echo") {
         LineFramer framer;
@@ -71,6 +100,69 @@ template<class Check, class Rejects> void process_tests(Check&& check, Rejects&&
     } cleanup{directory};
     const auto executable = directory / L"Agent fixture.exe";
     std::filesystem::copy_file(std::filesystem::path(module), executable);
+
+    std::string raw;
+    auto raw_process = WindowsProcess::start_bytes(executable, {L"--process-fixture", L"raw"}, directory,
+        [&](std::string_view bytes) {raw.append(bytes);});
+    raw_process->close_input();
+    const auto raw_exit = raw_process->wait(std::chrono::seconds(5));
+    check(raw_exit && raw_exit->status == 0 && !raw_exit->stdout_truncated, "raw subprocess output must finish normally");
+    check(raw == std::string("raw\0record\r\nlast\r", 17), "raw output must preserve NULs and carriage returns exactly");
+    raw.clear();
+    auto merged = WindowsProcess::start_bytes(executable, {L"--process-fixture", L"merged"}, directory,
+        [&](std::string_view bytes) {raw.append(bytes);}, 1024, {}, true);
+    merged->close_input();
+    const auto merged_exit = merged->wait(std::chrono::seconds(5));
+    check(merged_exit && merged_exit->status == 7 && merged_exit->stderr_tail.empty() && raw == std::string("outerr\0\rlast", 12),
+        "merged terminal bytes must retain write order, NULs and carriage returns without a second stderr copy");
+    raw.clear();
+    merged = WindowsProcess::start_bytes(executable, {L"--process-fixture", L"merged-flood"}, directory,
+        [&](std::string_view bytes) {raw.append(bytes);}, 1024, {}, true);
+    merged->close_input();
+    const auto merged_cap = merged->wait(std::chrono::seconds(5));
+    check(merged_cap && merged_cap->stdout_truncated && merged_cap->stderr_tail.empty() && raw == std::string(1024, 'e'),
+        "merged stderr must share the bounded byte capture and terminate only its owned producer on overflow");
+    std::atomic<std::size_t> live_bytes{};
+    merged = WindowsProcess::start_bytes(executable, {L"--process-fixture", L"merged-wait"}, directory,
+        [&](std::string_view bytes) {live_bytes += bytes.size();}, 1024, {}, true);
+    const auto live_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (live_bytes < 10 && std::chrono::steady_clock::now() < live_deadline) Sleep(10);
+    check(live_bytes == 10 && !merged->wait(std::chrono::milliseconds(0)), "merged terminal output must stream while its process is still running");
+    merged->stop();
+    check(merged->wait(std::chrono::seconds(5)).has_value(), "a merged terminal process must release its pipes promptly after Stop");
+    raw.clear();
+    raw_process = WindowsProcess::start_bytes(executable, {L"--process-fixture", L"raw-flood"}, directory,
+        [&](std::string_view bytes) {raw.append(bytes);}, 1024);
+    raw_process->close_input();
+    const auto bounded_exit = raw_process->wait(std::chrono::seconds(5));
+    check(bounded_exit && bounded_exit->stdout_truncated, "a raw output cap must terminate the owned producer and release its waiting caller");
+    check(raw.size() == 1024 && bounded_exit->channel_error.empty(), "a bounded preview must retain exactly its prefix and report truncation separately");
+    wchar_t original_probe[256]{};
+    const auto original_count = GetEnvironmentVariableW(L"COINCIDE_PROCESS_ENV_PROBE", original_probe, 256);
+    raw.clear();
+    raw_process = WindowsProcess::start_bytes(executable, {L"--process-fixture", L"environment"}, directory,
+        [&](std::string_view bytes) {raw.append(bytes);}, 1024, {{L"COINCIDE_PROCESS_ENV_PROBE", L"child-only-你好"}});
+    raw_process->close_input();
+    const auto environment_exit = raw_process->wait(std::chrono::seconds(5));
+    check(environment_exit && environment_exit->status == 0 && raw == "child-only-你好", "child environment overrides must preserve Unicode");
+    wchar_t after_probe[256]{};
+    const auto after_count = GetEnvironmentVariableW(L"COINCIDE_PROCESS_ENV_PROBE", after_probe, 256);
+    check(original_count == after_count && std::wstring_view(original_probe) == std::wstring_view(after_probe),
+        "a child environment override must never modify the parent process environment");
+    const auto path_before = GetEnvironmentVariableW(L"PATH", nullptr, 0);
+    raw.clear();
+    raw_process = WindowsProcess::start_bytes(executable, {L"--process-fixture", L"environment-unset"}, directory,
+        [&](std::string_view bytes) {raw.append(bytes);}, 1024, {{L"PATH", std::nullopt}});
+    raw_process->close_input();
+    const auto unset_exit = raw_process->wait(std::chrono::seconds(5));
+    check(unset_exit && unset_exit->status == 0 && raw == "unset", "explicit child removals must remove variables instead of assigning an empty value");
+    check(path_before == GetEnvironmentVariableW(L"PATH", nullptr, 0), "child environment removal must preserve the parent's PATH without logging its contents");
+    raw.clear();
+    auto framed_environment = WindowsProcess::start(executable, {L"--process-fixture", L"environment"}, directory,
+        [&](std::string line) {raw += line;}, {{L"COINCIDE_PROCESS_ENV_PROBE", L"framed-child-你好"}});
+    framed_environment->close_input();
+    const auto framed_exit = framed_environment->wait(std::chrono::seconds(5));
+    check(framed_exit && framed_exit->status == 0 && raw == "framed-child-你好", "framed RPC subprocesses must support the same isolated child environment overrides");
 
     std::vector<std::string> lines;
     auto process = WindowsProcess::start(executable, {L"--process-fixture", L"echo"}, directory,

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <system_error>
@@ -37,14 +38,18 @@ private:
 // Lifecycle calls (wait/stop/destruction) are serialized on the owning host thread, not inside reader callbacks.
 class WindowsProcess {
 public:
-    struct Exit { DWORD status{}; std::string stderr_tail; std::string channel_error; };
+    struct Exit { DWORD status{}; std::string stderr_tail; std::string channel_error; bool stdout_truncated{}; };
     using OnLine = std::function<void(std::string)>;
+    using OnBytes = std::function<void(std::string_view)>;
+    // A null value removes a variable in the child only; an empty string remains an explicit empty value.
+    using Environment = std::vector<std::pair<std::wstring, std::optional<std::wstring>>>;
 
     static std::unique_ptr<WindowsProcess> start(const std::filesystem::path& executable,
-            const std::vector<std::wstring>& arguments, const std::filesystem::path& cwd, OnLine on_line) {
+            const std::vector<std::wstring>& arguments, const std::filesystem::path& cwd, OnLine on_line,
+            const Environment& environment = {}) {
         auto result = std::unique_ptr<WindowsProcess>(new WindowsProcess);
         result->on_line_ = std::move(on_line);
-        result->launch(executable, arguments, cwd);
+        result->launch(executable, arguments, cwd, environment);
         try {
             result->stdout_reader_ = std::thread([p=result.get()] { p->read_stdout(); });
             result->stderr_reader_ = std::thread([p=result.get()] { p->read_stderr(); });
@@ -52,6 +57,24 @@ public:
             result->stop();
             throw;
         }
+        return result;
+    }
+
+    // Git's NUL-delimited paths and binary previews must not pass through JSONL/CRLF normalization.
+    // The callback must consume the view before returning. Exceeding the cap terminates only this job.
+    static std::unique_ptr<WindowsProcess> start_bytes(const std::filesystem::path& executable,
+            const std::vector<std::wstring>& arguments, const std::filesystem::path& cwd,
+            OnBytes on_bytes, std::size_t output_limit = 16 * 1024 * 1024,
+            const Environment& environment = {}, bool merge_stderr = false) {
+        if (!output_limit) throw std::invalid_argument("A raw process output limit is required");
+        auto result = std::unique_ptr<WindowsProcess>(new WindowsProcess);
+        result->on_bytes_ = std::move(on_bytes);
+        result->raw_output_ = true; result->output_limit_ = output_limit;
+        result->launch(executable, arguments, cwd, environment, merge_stderr);
+        try {
+            result->stdout_reader_ = std::thread([p=result.get()] {p->read_stdout();});
+            if (!merge_stderr) result->stderr_reader_ = std::thread([p=result.get()] {p->read_stderr();});
+        } catch (...) {result->stop(); throw;}
         return result;
     }
 
@@ -64,6 +87,16 @@ public:
             throw std::invalid_argument("Process messages must be a single framed line");
         }
         std::string bytes(line); bytes += '\n';
+        write_input(bytes);
+    }
+
+    void write_bytes(std::string_view bytes) {
+        if (!raw_output_) throw std::logic_error("Raw input is only available to a raw process");
+        write_input(bytes);
+    }
+
+private:
+    void write_input(std::string_view bytes) {
         std::lock_guard lock(writer_);
         if (!stdin_write_.get()) throw std::runtime_error("The agent input channel is closed");
         std::size_t offset{};
@@ -76,6 +109,7 @@ public:
         }
     }
 
+public:
     void close_input() { std::lock_guard lock(writer_); stdin_write_.reset(); }
 
     std::optional<Exit> wait(std::chrono::milliseconds timeout) {
@@ -89,7 +123,7 @@ public:
         TerminateJobObject(job_.get(), ERROR_PROCESS_ABORTED);
         join_readers();
         std::lock_guard lock(output_);
-        completed_ = Exit{exit, stderr_tail_, channel_error_};
+        completed_ = Exit{exit, stderr_tail_, channel_error_, stdout_truncated_};
         return completed_;
     }
 
@@ -106,6 +140,9 @@ private:
     std::thread stdout_reader_, stderr_reader_;
     std::mutex writer_, output_;
     OnLine on_line_;
+    OnBytes on_bytes_;
+    bool raw_output_{}, stdout_truncated_{};
+    std::size_t output_limit_{};
     std::string stderr_tail_, channel_error_;
     std::optional<Exit> completed_;
     WindowsProcess() = default;
@@ -118,12 +155,44 @@ private:
         read.reset(r); write.reset(w);
     }
 
+    struct EnvironmentOrder {
+        bool operator()(const std::wstring& a, const std::wstring& b) const {
+            return CompareStringOrdinal(a.c_str(), static_cast<int>(a.size()), b.c_str(),
+                static_cast<int>(b.size()), TRUE) == CSTR_LESS_THAN;
+        }
+    };
+    static std::vector<wchar_t> child_environment(const Environment& overrides) {
+        std::map<std::wstring, std::wstring, EnvironmentOrder> values;
+        auto inherited = GetEnvironmentStringsW();
+        if (!inherited) fail();
+        struct ReleaseEnvironment {wchar_t* value; ~ReleaseEnvironment(){FreeEnvironmentStringsW(value);}} release{inherited};
+        for (auto at = inherited; *at; at += wcslen(at) + 1) {
+            const std::wstring entry(at);
+            const auto separator = entry.find(L'=', entry.front() == L'=' ? 1 : 0);
+            if (separator != std::wstring::npos) values.insert_or_assign(entry.substr(0, separator), entry.substr(separator + 1));
+        }
+        for (const auto& [key, value] : overrides) {
+            if (key.empty() || key.find_first_of(L"=\0", 0, 2) != std::wstring::npos
+                    || (value && value->find(L'\0') != std::wstring::npos)) throw std::invalid_argument("Invalid child environment override");
+            if (value) values.insert_or_assign(key, *value);
+            else values.erase(key);
+        }
+        std::vector<wchar_t> block;
+        for (const auto& [key, value] : values) {
+            block.insert(block.end(), key.begin(), key.end()); block.push_back(L'=');
+            block.insert(block.end(), value.begin(), value.end()); block.push_back(L'\0');
+        }
+        block.push_back(L'\0');
+        return block;
+    }
+
     void launch(const std::filesystem::path& executable, const std::vector<std::wstring>& arguments,
-            const std::filesystem::path& cwd) {
+            const std::filesystem::path& cwd, const Environment& overrides, bool merge_stderr = false) {
         NativeHandle child_input, child_output, child_error;
-        pipe(child_input, stdin_write_); pipe(stdout_read_, child_output); pipe(stderr_read_, child_error);
+        pipe(child_input, stdin_write_); pipe(stdout_read_, child_output);
+        if (!merge_stderr) pipe(stderr_read_, child_error);
         for (const auto handle : {stdin_write_.get(), stdout_read_.get(), stderr_read_.get()}) {
-            if (!SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0)) fail();
+            if (handle && !SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0)) fail();
         }
         job_.reset(CreateJobObjectW(nullptr, nullptr));
         if (!job_.get()) fail();
@@ -140,22 +209,24 @@ private:
             LPPROC_THREAD_ATTRIBUTE_LIST value;
             ~DeleteAttributes() { DeleteProcThreadAttributeList(value); }
         } cleanup{attributes};
-        HANDLE inherited[]{child_input.get(), child_output.get(), child_error.get()};
-        if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited, sizeof(inherited), nullptr, nullptr)) fail();
+        std::vector<HANDLE> inherited{child_input.get(), child_output.get()};
+        if (!merge_stderr) inherited.push_back(child_error.get());
+        if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited.data(), inherited.size() * sizeof(HANDLE), nullptr, nullptr)) fail();
 
         STARTUPINFOEXW startup{};
         startup.StartupInfo.cb = sizeof(startup);
         startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
         startup.StartupInfo.hStdInput = child_input.get();
         startup.StartupInfo.hStdOutput = child_output.get();
-        startup.StartupInfo.hStdError = child_error.get();
+        startup.StartupInfo.hStdError = merge_stderr ? child_output.get() : child_error.get();
         startup.lpAttributeList = attributes;
         auto command = quote_windows_argument(executable.wstring());
         for (const auto& argument : arguments) command += L" " + quote_windows_argument(argument);
         PROCESS_INFORMATION process{};
+        auto environment = overrides.empty() ? std::vector<wchar_t>{} : child_environment(overrides);
         if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
                 EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-                nullptr, cwd.c_str(), &startup.StartupInfo, &process)) fail();
+                environment.empty() ? nullptr : environment.data(), cwd.c_str(), &startup.StartupInfo, &process)) fail();
         process_.reset(process.hProcess);
         NativeHandle thread(process.hThread);
         if (!AssignProcessToJobObject(job_.get(), process_.get())) {
@@ -176,11 +247,21 @@ private:
         try {
             LineFramer lines;
             std::array<char, 8192> buffer{};
+            std::size_t received{};
             DWORD count{};
             while (ReadFile(stdout_read_.get(), buffer.data(), static_cast<DWORD>(buffer.size()), &count, nullptr) && count) {
-                lines.consume(std::string_view(buffer.data(), count), on_line_);
+                if (raw_output_) {
+                    const auto accepted = std::min<std::size_t>(count, output_limit_ - received);
+                    if (accepted && on_bytes_) on_bytes_(std::string_view(buffer.data(), accepted));
+                    received += accepted;
+                    if (accepted != count) {
+                        {std::lock_guard lock(output_); stdout_truncated_ = true;}
+                        TerminateJobObject(job_.get(), ERROR_BUFFER_OVERFLOW);
+                        return;
+                    }
+                } else lines.consume(std::string_view(buffer.data(), count), on_line_);
             }
-            lines.finish(on_line_);
+            if (!raw_output_) lines.finish(on_line_);
         } catch (...) { channel_error("The agent output channel failed"); }
     }
 

@@ -25,6 +25,14 @@ if ($LASTEXITCODE) { throw 'Core test configuration failed.' }
 if ($LASTEXITCODE) { throw 'Core test build failed.' }
 & (Join-Path $coreBuild "$Configuration\CoincideWorkspaceTests.exe")
 if ($LASTEXITCODE) { throw 'Core tests failed.' }
+& (Join-Path $coreBuild "$Configuration\CoincideMarkdownTests.exe")
+if ($LASTEXITCODE) { throw 'Markdown tests failed.' }
+& (Join-Path $coreBuild "$Configuration\CoincideHandoffTests.exe")
+if ($LASTEXITCODE) { throw 'Handoff tests failed.' }
+& (Join-Path $coreBuild "$Configuration\CoincideTerminalScreenTests.exe")
+if ($LASTEXITCODE) { throw 'Terminal screen tests failed.' }
+& (Join-Path $coreBuild "$Configuration\CoincideSchedulerTests.exe")
+if ($LASTEXITCODE) { throw 'Scheduler tests failed.' }
 
 if (!$CoreOnly) {
     & $msbuild (Join-Path $root 'App\Coincide.vcxproj') /restore /m /verbosity:minimal "/p:Configuration=$Configuration" "/p:Platform=$Architecture"
@@ -33,7 +41,7 @@ if (!$CoreOnly) {
     if (!(Test-Path $executable)) { throw 'MSBuild returned successfully but no Windows application was produced.' }
     Write-Output "Built: $executable"
     if ($Architecture -eq 'x64') {
-        foreach ($suite in @('store', 'protocol', 'connection', 'session', 'display')) {
+        foreach ($suite in @('store', 'protocol', 'connection', 'session', 'display', 'git', 'provider', 'claude', 'terminal', 'calendar', 'opencode', 'browser', 'preview', 'schedule', 'acp')) {
             $report = Join-Path $root "build\$suite-test-result.txt"
             Remove-Item $report -ErrorAction SilentlyContinue
             $process = Start-Process -FilePath $executable -ArgumentList @("--$suite-tests", "`"$report`"") -PassThru

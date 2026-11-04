@@ -133,6 +133,32 @@ inline int protocol_tests(const std::filesystem::path& report) {
         rejects([&]{(void)CodexProtocol::thread_resume("", cwd);}, "resuming requires an actual native session identity");
         rejects([&]{(void)CodexProtocol::interrupt("thread", "");}, "interrupting must never target an unknown turn");
 
+        const auto catalog_json = Json::Parse(LR"([
+            {"model":"hidden-model","hidden":true},
+            {"id":"legacy","displayName":"Legacy","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"},{"reasoningEffort":"high"}],"defaultReasoningEffort":"high","additionalSpeedTiers":["default","priority","priority"],"inputModalities":["text"]},
+            {"model":"catalog-default","isDefault":true,"serviceTiers":[{"id":"default"},{"id":"fast","name":"Faster","description":"Catalog terms"}],"inputModalities":["text","image"]},
+            {"model":"catalog-default","displayName":"duplicate"}, null, {"displayName":"No model"}
+        ])").GetArray();
+        const auto catalog = CodexProtocol::catalog_entries(catalog_json);
+        check(catalog.size() == 2 && catalog.front().model == "catalog-default", "catalogs must hide unavailable entries, deduplicate models, and put their default first");
+        check(catalog.back().id == "legacy" && catalog.back().display_name == "Legacy" && catalog.back().efforts == std::vector<std::string>{"low", "high"}
+            && catalog.back().default_effort == "high", "legacy identifiers and unique advertised reasoning levels must remain available");
+        check(catalog.front().supports_images && !catalog.back().supports_images, "image support must come from each model's advertised modalities");
+        check(catalog.front().service_tiers.size() == 1 && catalog.front().service_tiers.front().id == "fast"
+            && catalog.front().service_tiers.front().description == "Catalog terms", "service-tier names and terms must retain provider metadata");
+        check(catalog.back().service_tiers.size() == 1 && catalog.back().service_tiers.front().id == "priority", "legacy speed identifiers must exclude the ordinary tier and duplicates");
+        check(CodexProtocol::catalog_entries(catalog_json, true).size() == 3, "model-management controls must be able to inspect hidden catalog entries explicitly");
+        const auto conflicting = CodexProtocol::catalog_entries(Json::Parse(LR"([{"id":"current","supportedReasoningEfforts":[{"reasoningEffort":"low"}],"defaultReasoningEffort":"unavailable","serviceTiers":[{"id":"default"}],"additionalSpeedTiers":["obsolete"]}])").GetArray());
+        check(conflicting.front().default_effort.empty() && conflicting.front().service_tiers.empty(), "current catalog capabilities must not be replaced by unsupported defaults or obsolete legacy tiers");
+        check(CodexProtocol::model_list("next-你好").GetNamedString(L"cursor") == L"next-你好", "model pagination must preserve an opaque Unicode cursor");
+        input.plan = false; input.model = "catalog-model"; input.effort = "high"; input.service_tier = "default";
+        turn = CodexProtocol::turn_start("native-session", input);
+        check(turn.GetNamedString(L"model") == L"catalog-model" && turn.GetNamedString(L"effort") == L"high" && turn.GetNamedString(L"serviceTier") == L"default",
+            "model controls must preserve the explicit ordinary service tier as well as reasoning and model choice");
+        const auto steering = CodexProtocol::steer("native-session", "running-turn", input);
+        check(steering.GetNamedString(L"threadId") == L"native-session" && steering.GetNamedString(L"expectedTurnId") == L"running-turn"
+            && steering.GetNamedArray(L"input").Size() == 2 && !steering.HasKey(L"model"), "steering must target the exact live turn and must not silently change its model controls");
+
         std::ofstream output(report);
         output << "PASS: " << checks << " RPC/Codex protocol checks\n";
         return output ? 0 : 2;

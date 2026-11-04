@@ -1,60 +1,522 @@
 <?xml version="1.0" encoding="utf-8"?>
 <root>
-  <data name="NewChat" xml:space="preserve">
-    <value>Yeni Sohbet</value>
-  </data>
   <data name="AddProject" xml:space="preserve">
     <value>Proje Ekle…</value>
   </data>
-  <data name="Search" xml:space="preserve">
-    <value>Ara</value>
-  </data>
-  <data name="ShowArchived" xml:space="preserve">
-    <value>Arşivlenmiş Sohbetleri Göster</value>
-  </data>
-  <data name="Settings" xml:space="preserve">
-    <value>Ayarlar</value>
-  </data>
-  <data name="Archive" xml:space="preserve">
-    <value>Arşivle</value>
-  </data>
-  <data name="Undo" xml:space="preserve">
-    <value>Geri Al</value>
-  </data>
-  <data name="Redo" xml:space="preserve">
-    <value>Yinele</value>
-  </data>
-  <data name="Message" xml:space="preserve">
-    <value>Mesaj</value>
-  </data>
-  <data name="You" xml:space="preserve">
-    <value>Siz</value>
-  </data>
-  <data name="Close" xml:space="preserve">
-    <value>Kapat</value>
-  </data>
-  <data name="Send" xml:space="preserve">
-    <value>Gönder</value>
-  </data>
-  <data name="Stop" xml:space="preserve">
-    <value>Durdur</value>
-  </data>
-  <data name="Ready" xml:space="preserve">
-    <value>Hazır</value>
+  <data name="AllThreads" xml:space="preserve">
+    <value>All Threads</value>
   </data>
   <data name="Allow" xml:space="preserve">
     <value>İzin Ver</value>
   </data>
-  <data name="Deny" xml:space="preserve">
-    <value>Reddet</value>
+  <data name="Archive" xml:space="preserve">
+    <value>Arşivle</value>
   </data>
-  <data name="Submit" xml:space="preserve">
-    <value>Gönder</value>
+  <data name="ArchivedThreads" xml:space="preserve">
+    <value>Arşivlenmiş konuşmalar</value>
   </data>
-  <data name="Dismiss" xml:space="preserve">
+  <data name="Attach" xml:space="preserve">
+    <value>İliştir</value>
+  </data>
+  <data name="Browser" xml:space="preserve">
+    <value>Tarayıcı</value>
+  </data>
+  <data name="Cancel" xml:space="preserve">
+    <value>Vazgeç</value>
+  </data>
+  <data name="Close" xml:space="preserve">
     <value>Kapat</value>
   </data>
   <data name="Connecting" xml:space="preserve">
     <value>Bağlanıyor…</value>
+  </data>
+  <data name="Delete" xml:space="preserve">
+    <value>Sil</value>
+  </data>
+  <data name="DeletedThreads" xml:space="preserve">
+    <value>Deleted Threads</value>
+  </data>
+  <data name="Deny" xml:space="preserve">
+    <value>Reddet</value>
+  </data>
+  <data name="Dismiss" xml:space="preserve">
+    <value>Kapat</value>
+  </data>
+  <data name="Git" xml:space="preserve">
+    <value>Git</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>Mesaj</value>
+  </data>
+  <data name="Model" xml:space="preserve">
+    <value>Model</value>
+  </data>
+  <data name="ModelSettings" xml:space="preserve">
+    <value>Model Ayarları</value>
+  </data>
+  <data name="MoveToProject" xml:space="preserve">
+    <value>Projeye Taşı</value>
+  </data>
+  <data name="NewChat" xml:space="preserve">
+    <value>Yeni Sohbet</value>
+  </data>
+  <data name="OneHour" xml:space="preserve">
+    <value>1 hour</value>
+  </data>
+  <data name="OneWeek" xml:space="preserve">
+    <value>1 week</value>
+  </data>
+  <data name="Plan" xml:space="preserve">
+    <value>Plan</value>
+  </data>
+  <data name="Preview" xml:space="preserve">
+    <value>Önizleme</value>
+  </data>
+  <data name="Projectless" xml:space="preserve">
+    <value>No Project</value>
+  </data>
+  <data name="Projects" xml:space="preserve">
+    <value>Projeler</value>
+  </data>
+  <data name="Queue" xml:space="preserve">
+    <value>Sıraya Al</value>
+  </data>
+  <data name="Ready" xml:space="preserve">
+    <value>Hazır</value>
+  </data>
+  <data name="Reasoning" xml:space="preserve">
+    <value>Akıl yürütme</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>Yinele</value>
+  </data>
+  <data name="Refresh" xml:space="preserve">
+    <value>Yenile</value>
+  </data>
+  <data name="Remove" xml:space="preserve">
+    <value>Kaldır</value>
+  </data>
+  <data name="Rename" xml:space="preserve">
+    <value>Yeniden Adlandır</value>
+  </data>
+  <data name="Restore" xml:space="preserve">
+    <value>Geri yükle</value>
+  </data>
+  <data name="Resume" xml:space="preserve">
+    <value>Sürdür</value>
+  </data>
+  <data name="Save" xml:space="preserve">
+    <value>Kaydet</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>Ara</value>
+  </data>
+  <data name="Send" xml:space="preserve">
+    <value>Gönder</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>Ayarlar</value>
+  </data>
+  <data name="Settle" xml:space="preserve">
+    <value>Tamamlandı Olarak İşaretle</value>
+  </data>
+  <data name="Settled" xml:space="preserve">
+    <value>Tamamlandı</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>Arşivlenmiş Sohbetleri Göster</value>
+  </data>
+  <data name="Snooze" xml:space="preserve">
+    <value>Ertele</value>
+  </data>
+  <data name="Speed" xml:space="preserve">
+    <value>Hız</value>
+  </data>
+  <data name="Steer" xml:space="preserve">
+    <value>Yönlendir</value>
+  </data>
+  <data name="Stop" xml:space="preserve">
+    <value>Durdur</value>
+  </data>
+  <data name="Submit" xml:space="preserve">
+    <value>Gönder</value>
+  </data>
+  <data name="Terminal" xml:space="preserve">
+    <value>Terminal</value>
+  </data>
+  <data name="Text_03f42eea72154959" xml:space="preserve">
+    <value>Username</value>
+  </data>
+  <data name="Text_0b978fa5dd3e4463" xml:space="preserve">
+    <value>This navigation is blocked.</value>
+  </data>
+  <data name="Text_0f811b617ba5423a" xml:space="preserve">
+    <value>Tamamlandı Olarak İşaretle</value>
+  </data>
+  <data name="Text_11326fd2590f4e5e" xml:space="preserve">
+    <value>Varsayılan</value>
+  </data>
+  <data name="Text_12d6dde9b30c3093" xml:space="preserve">
+    <value>Kapat</value>
+  </data>
+  <data name="Text_1351e0f681727ace" xml:space="preserve">
+    <value>The preview process stopped.</value>
+  </data>
+  <data name="Text_142e390b955f4f74" xml:space="preserve">
+    <value>Working…</value>
+  </data>
+  <data name="Text_199f5853f4e718f7" xml:space="preserve">
+    <value>Projeler</value>
+  </data>
+  <data name="Text_1e571a852c803bbc" xml:space="preserve">
+    <value>Answer every required question before submitting.</value>
+  </data>
+  <data name="Text_232f88877550dfa9" xml:space="preserve">
+    <value>Mikrofon</value>
+  </data>
+  <data name="Text_26f91b6796e33111" xml:space="preserve">
+    <value>Geri yükle</value>
+  </data>
+  <data name="Text_2ceb11be2290bb1b" xml:space="preserve">
+    <value>Vazgeç</value>
+  </data>
+  <data name="Text_2d05099c8b47e2f0" xml:space="preserve">
+    <value>Read and Write Files</value>
+  </data>
+  <data name="Text_2ee366cbb0141712" xml:space="preserve">
+    <value>İzin Ver</value>
+  </data>
+  <data name="Text_337dd38e3527e5d9" xml:space="preserve">
+    <value>Copy to Composer</value>
+  </data>
+  <data name="Text_33f85f24c0f5f008" xml:space="preserve">
+    <value>Kaydet</value>
+  </data>
+  <data name="Text_394ac6bb96eecec0" xml:space="preserve">
+    <value>Terminal display buffer limit reached.</value>
+  </data>
+  <data name="Text_3e178098bb55daf3" xml:space="preserve">
+    <value>Commit mesajı</value>
+  </data>
+  <data name="Text_41431c2bbdc5f824" xml:space="preserve">
+    <value>İliştir</value>
+  </data>
+  <data name="Text_417b90913e05bc17" xml:space="preserve">
+    <value>Önizleme</value>
+  </data>
+  <data name="Text_41b0f0819b67cacb" xml:space="preserve">
+    <value>Staged</value>
+  </data>
+  <data name="Text_42e470ef1d707a28" xml:space="preserve">
+    <value>Autoplay</value>
+  </data>
+  <data name="Text_44ef1526bf1d8106" xml:space="preserve">
+    <value>Yarın</value>
+  </data>
+  <data name="Text_4c2254c3453e1fca" xml:space="preserve">
+    <value>Arşivlenmiş konuşmalar</value>
+  </data>
+  <data name="Text_4e207ae69a6c4490" xml:space="preserve">
+    <value>Enter URL</value>
+  </data>
+  <data name="Text_5360d33e7f91fb81" xml:space="preserve">
+    <value>Yükleniyor…</value>
+  </data>
+  <data name="Text_53a526d5c80c3e28" xml:space="preserve">
+    <value>Standart</value>
+  </data>
+  <data name="Text_54d1b2a64667e32e" xml:space="preserve">
+    <value>Camera</value>
+  </data>
+  <data name="Text_54d7d627cfbaf10c" xml:space="preserve">
+    <value>Projeye Taşı</value>
+  </data>
+  <data name="Text_5507b36022816801" xml:space="preserve">
+    <value>Terminal input</value>
+  </data>
+  <data name="Text_565adaaff41a281c" xml:space="preserve">
+    <value>Window Management</value>
+  </data>
+  <data name="Text_57adf424d57c8a0f" xml:space="preserve">
+    <value>Gönder</value>
+  </data>
+  <data name="Text_598a5dbb3832aa57" xml:space="preserve">
+    <value>Proje Ekle…</value>
+  </data>
+  <data name="Text_5be3c6d61cd9182f" xml:space="preserve">
+    <value>Bildirimler</value>
+  </data>
+  <data name="Text_5d929ff1619ac0c9" xml:space="preserve">
+    <value>Ara</value>
+  </data>
+  <data name="Text_5da52af9b083c29a" xml:space="preserve">
+    <value>Model</value>
+  </data>
+  <data name="Text_5e8250fb85d64c23" xml:space="preserve">
+    <value>Kapat</value>
+  </data>
+  <data name="Text_60320a18282b2b33" xml:space="preserve">
+    <value>Yeniden Adlandır</value>
+  </data>
+  <data name="Text_612bdafe4f589b3c" xml:space="preserve">
+    <value>Multiple Downloads</value>
+  </data>
+  <data name="Text_62c75c025c5c6db1" xml:space="preserve">
+    <value>Terminal</value>
+  </data>
+  <data name="Text_62c7ef96f831327b" xml:space="preserve">
+    <value>Arşivlenmiş Sohbetleri Göster</value>
+  </data>
+  <data name="Text_64b94e4bdb16dfc5" xml:space="preserve">
+    <value>All Threads</value>
+  </data>
+  <data name="Text_6578b674c8c810cf" xml:space="preserve">
+    <value>No Project</value>
+  </data>
+  <data name="Text_6607f3c90e5c7daf" xml:space="preserve">
+    <value>Tarayıcı</value>
+  </data>
+  <data name="Text_661045907dd942bc" xml:space="preserve">
+    <value>Commit</value>
+  </data>
+  <data name="Text_7030546b1c47d2da" xml:space="preserve">
+    <value>Show in File Explorer</value>
+  </data>
+  <data name="Text_7405fd7d5819142e" xml:space="preserve">
+    <value>Tam erişim</value>
+  </data>
+  <data name="Text_7417792bbe720149" xml:space="preserve">
+    <value>Yinele</value>
+  </data>
+  <data name="Text_7578ef6e9a65e338" xml:space="preserve">
+    <value>Stop the agent before changing the repository.</value>
+  </data>
+  <data name="Text_76293c58814dd2e9" xml:space="preserve">
+    <value>Kodu Kopyala</value>
+  </data>
+  <data name="Text_79e8cc71a5975b04" xml:space="preserve">
+    <value>Mesaj</value>
+  </data>
+  <data name="Text_7a07940a2b62f185" xml:space="preserve">
+    <value>Dal</value>
+  </data>
+  <data name="Text_7b7163270e57e8b4" xml:space="preserve">
+    <value>Yenile</value>
+  </data>
+  <data name="Text_7d736af6cd8199c8" xml:space="preserve">
+    <value>Open a terminal for this conversation.</value>
+  </data>
+  <data name="Text_823190519895dcf1" xml:space="preserve">
+    <value>Downloading…</value>
+  </data>
+  <data name="Text_82521c4c60652c01" xml:space="preserve">
+    <value>Starting terminal…</value>
+  </data>
+  <data name="Text_831262ec45aa79b1" xml:space="preserve">
+    <value>Could not read text from the clipboard.</value>
+  </data>
+  <data name="Text_850da60a15c7009a" xml:space="preserve">
+    <value>Yeni Sekme</value>
+  </data>
+  <data name="Text_89118d3a7be870ca" xml:space="preserve">
+    <value>Sürdür</value>
+  </data>
+  <data name="Text_8b60bf2db1580306" xml:space="preserve">
+    <value>Sohbetler</value>
+  </data>
+  <data name="Text_8c12d8939e4e4834" xml:space="preserve">
+    <value>Unstage</value>
+  </data>
+  <data name="Text_8c7fc9051c0d8003" xml:space="preserve">
+    <value>Terminal input limit reached or session closed.</value>
+  </data>
+  <data name="Text_8f4be9f086eb530f" xml:space="preserve">
+    <value>Geri Al</value>
+  </data>
+  <data name="Text_8fb36ad31d5c0382" xml:space="preserve">
+    <value>Local Fonts</value>
+  </data>
+  <data name="Text_955656e78a18bdcc" xml:space="preserve">
+    <value>Exited</value>
+  </data>
+  <data name="Text_970d041a28d1067d" xml:space="preserve">
+    <value>Push</value>
+  </data>
+  <data name="Text_9899f07ee811b5ca" xml:space="preserve">
+    <value>1 hour</value>
+  </data>
+  <data name="Text_9b26ee7433b506fb" xml:space="preserve">
+    <value>Open a browser tab to begin.</value>
+  </data>
+  <data name="Text_9c13a2548d254014" xml:space="preserve">
+    <value>Hazır</value>
+  </data>
+  <data name="Text_9c666009a7be1bff" xml:space="preserve">
+    <value>Ertele</value>
+  </data>
+  <data name="Text_9d8b8aa2b404c2c8" xml:space="preserve">
+    <value>Ayarlar</value>
+  </data>
+  <data name="Text_a0ca791d0f13f0e5" xml:space="preserve">
+    <value>Arşivle</value>
+  </data>
+  <data name="Text_a0f113d1aea9e3af" xml:space="preserve">
+    <value>MIDI Devices</value>
+  </data>
+  <data name="Text_a20c185606f42958" xml:space="preserve">
+    <value>Sensors</value>
+  </data>
+  <data name="Text_a3b9964327605427" xml:space="preserve">
+    <value>Kullanıcı adı veya parola içermeyen bir HTTP veya HTTPS adresi girin.</value>
+  </data>
+  <data name="Text_abd480ab5c691fa7" xml:space="preserve">
+    <value>Akıl yürütme</value>
+  </data>
+  <data name="Text_ae5da213b7f896ed" xml:space="preserve">
+    <value>Stage</value>
+  </data>
+  <data name="Text_b055b780a919f111" xml:space="preserve">
+    <value>Bağlanıyor…</value>
+  </data>
+  <data name="Text_b3d4f79d9d8b71e5" xml:space="preserve">
+    <value>Gönder</value>
+  </data>
+  <data name="Text_b4b253c20d6919bb" xml:space="preserve">
+    <value>New Branch</value>
+  </data>
+  <data name="Text_b5a14d20e2063f7f" xml:space="preserve">
+    <value>Checkpoint</value>
+  </data>
+  <data name="Text_b663fa25462d8aa9" xml:space="preserve">
+    <value>Preparing preview…</value>
+  </data>
+  <data name="Text_be9a2afda356a007" xml:space="preserve">
+    <value>Read Clipboard</value>
+  </data>
+  <data name="Text_c0f4254f45363d61" xml:space="preserve">
+    <value>Worktrees</value>
+  </data>
+  <data name="Text_c4525d2fe5250dbb" xml:space="preserve">
+    <value>Switch Branch</value>
+  </data>
+  <data name="Text_c7637275f670c938" xml:space="preserve">
+    <value>Sıraya Al</value>
+  </data>
+  <data name="Text_c82317db41b29853" xml:space="preserve">
+    <value>Model kimliği</value>
+  </data>
+  <data name="Text_c82ec093ac725aca" xml:space="preserve">
+    <value>The browser process stopped.</value>
+  </data>
+  <data name="Text_cac4c9636dbe7d3d" xml:space="preserve">
+    <value>Yeni Sohbet</value>
+  </data>
+  <data name="Text_cb6a9c1a1757adbc" xml:space="preserve">
+    <value>Siz</value>
+  </data>
+  <data name="Text_cd104d19b5a0ef92" xml:space="preserve">
+    <value>Plan</value>
+  </data>
+  <data name="Text_cd154be35b039a26" xml:space="preserve">
+    <value>Thread actions</value>
+  </data>
+  <data name="Text_cd225b15c0dda097" xml:space="preserve">
+    <value>Create Branch</value>
+  </data>
+  <data name="Text_d001953bf6bcf290" xml:space="preserve">
+    <value>Ertelemeyi Kaldır</value>
+  </data>
+  <data name="Text_d0680e7343dedb27" xml:space="preserve">
+    <value>Reddet</value>
+  </data>
+  <data name="Text_d1bb1f13cc349256" xml:space="preserve">
+    <value>Yönlendir</value>
+  </data>
+  <data name="Text_d8bbc6ae6b1e90b8" xml:space="preserve">
+    <value>1 week</value>
+  </data>
+  <data name="Text_d9ad53251f2330a5" xml:space="preserve">
+    <value>Durdur</value>
+  </data>
+  <data name="Text_d9cf21b33b26b096" xml:space="preserve">
+    <value>Terminal is running.</value>
+  </data>
+  <data name="Text_db9694f31d64cfc8" xml:space="preserve">
+    <value>Your answer</value>
+  </data>
+  <data name="Text_dc0ac38569b2f0df" xml:space="preserve">
+    <value>Not a Git repository.</value>
+  </data>
+  <data name="Text_dc673e73b5c13aea" xml:space="preserve">
+    <value>Sil</value>
+  </data>
+  <data name="Text_df8e15fc3771c1bf" xml:space="preserve">
+    <value>Could not dismiss the question. Try again.</value>
+  </data>
+  <data name="Text_e24130f1123560a0" xml:space="preserve">
+    <value>Hız</value>
+  </data>
+  <data name="Text_e33355ddf7739b77" xml:space="preserve">
+    <value>Full access allows commands and file changes without asking. Leave it off to require approval.</value>
+  </data>
+  <data name="Text_e66240ab33ffe32d" xml:space="preserve">
+    <value>Sohbeti Sabitle veya Sabitlemeyi Kaldır</value>
+  </data>
+  <data name="Text_e7bee6e9a9b5394c" xml:space="preserve">
+    <value>Private</value>
+  </data>
+  <data name="Text_e7bf49555654cbfb" xml:space="preserve">
+    <value>Model Ayarları</value>
+  </data>
+  <data name="Text_ea47f4110bb2b0b3" xml:space="preserve">
+    <value>Uzak</value>
+  </data>
+  <data name="Text_ea4f08110bb8f15d" xml:space="preserve">
+    <value>Kaldır</value>
+  </data>
+  <data name="Text_ea654a4dc5fd0d5b" xml:space="preserve">
+    <value>Could not submit the answer. Try again.</value>
+  </data>
+  <data name="Text_eb14831998868b6b" xml:space="preserve">
+    <value>Git</value>
+  </data>
+  <data name="Text_ee2fcaedf9743ec6" xml:space="preserve">
+    <value>Konum</value>
+  </data>
+  <data name="Text_ef95e345b26702fb" xml:space="preserve">
+    <value>Deleted Threads</value>
+  </data>
+  <data name="Text_f0e6f67c08e8527e" xml:space="preserve">
+    <value>Could not save browser tabs.</value>
+  </data>
+  <data name="Text_f6e1665c7022a1f8" xml:space="preserve">
+    <value>Password</value>
+  </data>
+  <data name="Text_fc2490f62b243fa2" xml:space="preserve">
+    <value>Navigation failed.</value>
+  </data>
+  <data name="Text_fda3e4a519cfc5ba" xml:space="preserve">
+    <value>Tamamlandı</value>
+  </data>
+  <data name="ThreadActions" xml:space="preserve">
+    <value>Thread actions</value>
+  </data>
+  <data name="Threads" xml:space="preserve">
+    <value>Sohbetler</value>
+  </data>
+  <data name="TogglePin" xml:space="preserve">
+    <value>Sohbeti Sabitle veya Sabitlemeyi Kaldır</value>
+  </data>
+  <data name="Tomorrow" xml:space="preserve">
+    <value>Yarın</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>Geri Al</value>
+  </data>
+  <data name="Unsnooze" xml:space="preserve">
+    <value>Ertelemeyi Kaldır</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>Siz</value>
   </data>
 </root>
