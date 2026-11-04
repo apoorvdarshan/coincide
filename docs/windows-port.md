@@ -4,6 +4,10 @@ Target: standalone, native C++/WinRT + WinUI 3 Windows desktop application. A Ma
 run agents. This is a full feature-port request, not permission to replace features with a remote-only client or a web shell.
 Baseline: the Mac application at `b54ad87`, including the thread-switch and image-click fixes in #229 and #230.
 
+The owner deferred iCloud instruction sync on Windows for this phase. Local/project instructions and Git sync remain
+in scope. The owner approved a Windows-compatible offline dictation replacement and an alternative phone-alert
+delivery route; neither replacement has been implemented or validated yet. These decisions affect the Windows port.
+
 ## Verified development milestone
 
 - SSH access and the native C++ toolchain are working on the owner's Windows laptop.
@@ -19,7 +23,7 @@ Baseline: the Mac application at `b54ad87`, including the thread-switch and imag
   connection to the composer are not. The preview still cannot run an agent and says so.
 - Source is pushed in draft PR #235. Check its current Windows CI result separately from the local results above.
 
-## Platform decisions awaiting the owner's answer
+## Platform decisions
 
 No decision below is treated as approval merely because development continues elsewhere.
 
@@ -29,9 +33,9 @@ No decision below is treated as approval merely because development continues el
 | Keychain and browser encryption keys | Windows Credential Manager/DPAPI; preserve Bitwarden and 1Password CLI integration | Asked; pending |
 | SwiftTerm/POSIX terminals | ConPTY-backed native terminal with tabs, splits, and selection context | Asked; pending |
 | macOS Accessibility/Screen Recording and bundled Cua Driver | Windows UI Automation and capture with the same permission and per-thread access boundaries | Asked; pending |
-| iCloud Drive instruction copies | iCloud for Windows folder where installed, keeping local and repository copies; no automatic OneDrive substitution | Asked; pending |
-| WhisperKit/Core ML and Apple Speech | Windows-compatible offline dictation; retain existing cloud providers | Design requested; approval pending |
-| CloudKit iPhone lock-screen alerts | Design a cross-platform alert path; present hosting, account and cost requirements before setup | Design requested; approval pending |
+| iCloud Drive instruction copies | Defer iCloud sync on Windows for this phase; retain local/project instruction handling and Git sync | Owner deferred; excluded from current Windows acceptance |
+| WhisperKit/Core ML and Apple Speech | Windows-compatible offline dictation; retain existing cloud providers | Replacement approved; engine selection, implementation and validation pending |
+| CloudKit iPhone lock-screen alerts | Use an alternative phone-alert delivery route; present concrete hosting, account and cost requirements before external setup | Alternative route approved; design and implementation pending |
 | launchd background agent host | Windows-owned background process and authenticated local IPC, preserving running sessions across window closure | Must present implementation before replacing behavior |
 | pmset/lid/battery helper | Windows power APIs with exact restoration of prior settings | Must present implementation and limitations before changes |
 | Developer ID, notarization and app updater | Windows packaging/signing/update path, preserving verified download/install behavior | Signing, distribution and update decisions pending |
@@ -60,11 +64,11 @@ needs both the relevant automated coverage and actual Windows verification befor
 | Computer Use | Discover windows, inspect, click/type/scroll, screenshot, permissions and single-thread arbitration | Awaiting platform decision |
 | Scheduling | All existing recurrence kinds/time zones, approval cards, missed-run and busy-thread handling | Not implemented |
 | Bots | Starter lineup, artwork/personality, project folders and separate histories | Not implemented |
-| Instructions | Discovery, global/project masters, links/copies, git sync, conflict handling and iCloud choice | Awaiting sync decision; protected instruction files untouched |
+| Instructions | Discovery, global/project masters, local links/copies, Git sync and conflict handling | Implementation pending; iCloud sync explicitly deferred on Windows |
 | Usage | Provider account limits, balances, activity, usage/cost scopes and local history | Not implemented |
 | Remote/CLI | iPhone/iPad pairing, TLS protocol, controls, alerts/presence and local CLI | Not implemented; preserve protocol compatibility |
-| Notifications | Completion/input, activation, dismissal synchronization and phone routing | Not implemented; Apple alerts need decision |
-| Voice | Dictation, trigger/insertion, offline models and existing transcription providers | Awaiting platform decision |
+| Notifications | Completion/input, activation, dismissal synchronization and phone routing | Alternative phone-alert route approved; implementation pending |
+| Voice | Dictation, trigger/insertion, offline models and existing transcription providers | Windows-compatible offline replacement approved; implementation pending |
 | Keep Awake | Charger/battery/lid behavior, optional mute/display and restoration | Awaiting platform decision |
 | Preferences/help | Appearance, shortcuts/conflicts, languages, About/legal/community links and updates | Not implemented |
 | Localization | All 19 existing languages, placeholders/plurals, accessibility and RTL/long-text checks | Shared labels generated; full UI and runtime checks pending |
