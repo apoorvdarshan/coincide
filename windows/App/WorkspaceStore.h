@@ -26,7 +26,7 @@ public:
     Workspace open() {
         Workspace result;
         const auto path = directory_ / L"workspace.json";
-        if (!std::filesystem::exists(path)) return result;
+        if (!std::filesystem::exists(path)) { opened_ = true; return result; }
         original_ = read(path);
         if (original_.GetNamedNumber(L"version", 0) != 1) {
             throw std::runtime_error("This workspace format is not supported. Its files have been left unchanged.");
@@ -53,10 +53,12 @@ public:
             result.add_thread(std::move(thread));
             index_originals_.insert_or_assign(text(t, L"id"), t);
         }
+        opened_ = true;
         return result;
     }
 
     void load_thread(Thread& thread) {
+        require_open();
         if (loaded_.contains(thread.id)) return;
         validate_id(thread.id);
         const auto path = thread_path(thread.id);
@@ -93,6 +95,7 @@ public:
     }
 
     void save_index(const Workspace& workspace) {
+        require_open();
         auto root = original_ ? original_ : json::JsonObject{};
         root.SetNamedValue(L"version", json::JsonValue::CreateNumberValue(1));
         json::JsonArray projects;
@@ -116,6 +119,7 @@ public:
     }
 
     void save_thread(const Thread& thread) {
+        require_open();
         validate_id(thread.id);
         if (!loaded_.contains(thread.id)) throw std::logic_error("Refusing to overwrite a conversation that was not loaded");
         auto value = transcript_originals_.contains(thread.id) ? transcript_originals_.at(thread.id) : json::JsonObject{};
@@ -131,8 +135,12 @@ public:
             messages.Append(item);
         }
         json::JsonArray sessions;
+        std::unordered_map<std::string, json::JsonObject> session_originals;
+        for (const auto& s : value.GetNamedArray(L"sessions", json::JsonArray{})) {
+            session_originals.insert_or_assign(text(s.GetObject(), L"provider"), s.GetObject());
+        }
         for (const auto& s : thread.sessions) {
-            json::JsonObject item;
+            auto item = session_originals.contains(s.provider) ? session_originals.at(s.provider) : json::JsonObject{};
             put(item, L"provider", s.provider); put(item, L"id", s.id);
             item.SetNamedValue(L"acknowledged", json::JsonValue::CreateNumberValue(static_cast<double>(s.acknowledged_messages)));
             sessions.Append(item);
@@ -144,9 +152,14 @@ public:
 
 private:
     std::filesystem::path directory_;
+    bool opened_{};
     json::JsonObject original_{nullptr};
     std::unordered_map<std::string, json::JsonObject> project_originals_, index_originals_, transcript_originals_;
     std::unordered_set<std::string> loaded_;
+
+    void require_open() const {
+        if (!opened_) throw std::logic_error("The workspace must open successfully before any reads or writes");
+    }
 
     static void validate_id(const std::string& id) {
         if (id.size() != 36 && id.size() != 38) throw std::runtime_error("Invalid conversation identity");

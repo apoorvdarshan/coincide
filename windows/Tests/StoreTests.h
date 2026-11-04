@@ -49,6 +49,7 @@ inline int store_tests(const std::filesystem::path& report) {
         auto doc = json::JsonObject::Parse(winrt::to_hstring(contents(transcript_path)));
         doc.SetNamedValue(L"future", json::JsonValue::CreateStringValue(L"preserve me"));
         doc.GetNamedArray(L"messages").GetAt(0).GetObject().SetNamedValue(L"futureMessage", json::JsonValue::CreateBooleanValue(true));
+        doc.GetNamedArray(L"sessions").GetAt(0).GetObject().SetNamedValue(L"futureSession", json::JsonValue::CreateStringValue(L"keep"));
         {std::ofstream stream(transcript_path, std::ios::binary); stream << winrt::to_string(doc.Stringify());}
         WorkspaceStore third(root); auto round_trip = third.open(); third.load_thread(round_trip.thread(thread_id));
         round_trip.thread(thread_id).draft = "Edited draft";
@@ -56,6 +57,7 @@ inline int store_tests(const std::filesystem::path& report) {
         auto saved = json::JsonObject::Parse(winrt::to_hstring(contents(transcript_path)));
         check(saved.GetNamedString(L"future") == L"preserve me", "unknown transcript fields must survive edits");
         check(saved.GetNamedArray(L"messages").GetAt(0).GetObject().GetNamedBoolean(L"futureMessage"), "unknown message fields must survive edits");
+        check(saved.GetNamedArray(L"sessions").GetAt(0).GetObject().GetNamedString(L"futureSession") == L"keep", "unknown session fields must survive edits");
 
         WorkspaceStore unopened(root); auto unopened_workspace = unopened.open();
         rejects([&]{unopened.save_thread(unopened_workspace.thread(thread_id));}, "unloaded transcripts must never be overwritten");
@@ -69,11 +71,13 @@ inline int store_tests(const std::filesystem::path& report) {
         const auto invalid = contents(index_path);
         WorkspaceStore invalid_store(root);
         rejects([&]{(void)invalid_store.open();}, "malformed workspaces must fail closed");
+        rejects([&]{invalid_store.save_index(workspace);}, "failed opens must prevent later index writes");
         check(contents(index_path) == invalid, "malformed workspaces must remain untouched");
         {std::ofstream stream(index_path, std::ios::binary); stream << R"({"version":2,"projects":[],"threads":[]})";}
         const auto future = contents(index_path);
         WorkspaceStore future_store(root);
         rejects([&]{(void)future_store.open();}, "future store versions must fail closed");
+        rejects([&]{future_store.save_index(workspace);}, "future-version refusal must prevent later index writes");
         check(contents(index_path) == future, "future store versions must remain untouched");
 
         std::filesystem::remove_all(root);
