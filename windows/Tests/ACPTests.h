@@ -2,6 +2,8 @@
 #include "../Runtime/ACPSession.h"
 #include "ProcessTests.h"
 #include <fstream>
+#include <winioctl.h>
+#include <cstring>
 
 namespace coincide {
 inline int acp_session_fixture(std::wstring_view mode) {
@@ -87,6 +89,42 @@ inline int acp_session_fixture(std::wstring_view mode) {
 }
 inline int acp_terminal_fixture(std::wstring_view) {fixture_write(GetStdHandle(STD_OUTPUT_HANDLE), "terminal 你好\n"); fixture_write(GetStdHandle(STD_ERROR_HANDLE), "stderr fixture\n"); return 7;}
 
+// A task-owned DOS drive alias reproduces runner TEMP spellings whose canonical path names another
+// drive/long directory. No existing drive is changed, and the exact mapping is removed on every exit.
+struct ACPTestDriveAlias {
+    std::wstring drive, target;
+    explicit ACPTestDriveAlias(const std::filesystem::path& folder) {
+        target = L"\\??\\" + std::filesystem::canonical(folder).wstring();
+        for (wchar_t letter = L'Z'; letter >= L'P'; --letter) {
+            const auto candidate = std::wstring(1, letter) + L":"; wchar_t existing[32768]{};
+            if (QueryDosDeviceW(candidate.c_str(), existing, 32768)) continue;
+            if (GetLastError() != ERROR_FILE_NOT_FOUND) continue;
+            if (DefineDosDeviceW(DDD_RAW_TARGET_PATH | DDD_NO_BROADCAST_SYSTEM, candidate.c_str(), target.c_str())) {drive = candidate; return;}
+        }
+        throw std::runtime_error("Could not create the isolated ACP drive-alias fixture");
+    }
+    ~ACPTestDriveAlias() {if (!drive.empty()) DefineDosDeviceW(DDD_REMOVE_DEFINITION | DDD_EXACT_MATCH_ON_REMOVE | DDD_RAW_TARGET_PATH | DDD_NO_BROADCAST_SYSTEM, drive.c_str(), target.c_str());}
+    ACPTestDriveAlias(const ACPTestDriveAlias&) = delete;
+    ACPTestDriveAlias& operator=(const ACPTestDriveAlias&) = delete;
+};
+inline void acp_test_junction(const std::filesystem::path& link, const std::filesystem::path& target) {
+    std::filesystem::create_directory(link);
+    NativeHandle handle(CreateFileW(link.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    if (handle.get() == INVALID_HANDLE_VALUE) throw std::runtime_error("Could not open the ACP junction fixture");
+    struct Header {DWORD tag; WORD length, reserved, substitute_offset, substitute_length, print_offset, print_length;};
+    static_assert(sizeof(Header) == 16);
+    const auto print = std::filesystem::canonical(target).wstring(); const auto substitute = L"\\??\\" + print;
+    const auto bytes = (substitute.size() + print.size() + 2) * sizeof(wchar_t);
+    if (bytes > 16000) throw std::runtime_error("ACP junction fixture path is too long");
+    std::vector<unsigned char> buffer(sizeof(Header) + bytes);
+    const Header header{IO_REPARSE_TAG_MOUNT_POINT, static_cast<WORD>(bytes + 8), 0, 0, static_cast<WORD>(substitute.size() * sizeof(wchar_t)),
+        static_cast<WORD>((substitute.size() + 1) * sizeof(wchar_t)), static_cast<WORD>(print.size() * sizeof(wchar_t))};
+    std::memcpy(buffer.data(), &header, sizeof(header)); std::memcpy(buffer.data() + sizeof(header), substitute.c_str(), (substitute.size() + 1) * sizeof(wchar_t));
+    std::memcpy(buffer.data() + sizeof(header) + (substitute.size() + 1) * sizeof(wchar_t), print.c_str(), (print.size() + 1) * sizeof(wchar_t));
+    DWORD returned{};
+    if (!DeviceIoControl(handle.get(), FSCTL_SET_REPARSE_POINT, buffer.data(), static_cast<DWORD>(buffer.size()), nullptr, 0, &returned, nullptr)) throw std::runtime_error("Could not create the ACP junction fixture");
+}
+
 inline int acp_tests(const std::filesystem::path& report) {
     using namespace std::chrono_literals; using Kind = SessionEvent::Kind; using Object = ACPProtocol::Object;
     int checks{}; const auto check = [&](bool value, const char* message) {++checks; if (!value) throw std::runtime_error(message);};
@@ -96,6 +134,22 @@ inline int acp_tests(const std::filesystem::path& report) {
         const auto root = sandbox / L"project"; std::filesystem::create_directories(root); std::ofstream(root / L"read.txt", std::ios::binary) << "first\r\n你好\nlast"; std::ofstream(sandbox / L"outside.txt") << "outside fixture";
         {
             ACPFileSystem files(root); check(files.read(winrt::to_string((root / L"read.txt").wstring())).find("你好") != std::string::npos, "ACP reads must retain project UTF-8 text");
+            auto upper = (root / L"read.txt").wstring(); std::transform(upper.begin(), upper.end(), upper.begin(), [](wchar_t value) {return static_cast<wchar_t>(std::towupper(value));});
+            check(files.read(winrt::to_string(upper)).find("你好") != std::string::npos, "ACP project drive and directory case must not change its identity");
+            {
+                ACPTestDriveAlias alias(sandbox); const auto aliased_root = std::filesystem::path(alias.drive + L"\\project"); ACPFileSystem aliased(aliased_root);
+                check(aliased.read(winrt::to_string((aliased_root / L"read.txt").wstring())).find("你好") != std::string::npos, "ACP must read through its explicitly selected root alias after canonicalizing the project");
+                aliased.write(winrt::to_string((aliased_root / L"alias write.txt").wstring()), "alias write");
+                check(files.read(winrt::to_string((root / L"alias write.txt").wstring())) == "alias write", "Alias writes must remain inside the same pinned physical project");
+                bool escaped{}; try {aliased.read(winrt::to_string((std::filesystem::path(alias.drive + L"\\outside.txt")).wstring()));} catch (const std::exception&) {escaped = true;}
+                check(escaped, "Accepting a declared root alias must not grant its parent directory");
+            }
+            const auto outside = sandbox / L"outside directory"; std::filesystem::create_directory(outside); std::ofstream(outside / L"secret.txt") << "outside junction fixture";
+            acp_test_junction(root / L"junction", outside);
+            bool followed{}; try {files.read(winrt::to_string((root / L"junction" / L"secret.txt").wstring()));} catch (const std::exception&) {followed = true;}
+            check(followed, "ACP must still refuse descendant junction reads after root-alias normalization");
+            followed = false; try {files.write(winrt::to_string((root / L"junction" / L"secret.txt").wstring()), "unsafe");} catch (const std::exception&) {followed = true;}
+            check(followed, "ACP must still refuse descendant junction writes after root-alias normalization");
             files.write(winrt::to_string((root / L"new folder" / L"literal & name.txt").wstring()), "written 你好");
             check(files.read(winrt::to_string((root / L"new folder" / L"literal & name.txt").wstring())) == "written 你好", "ACP writes must create literal paths without a shell");
             files.write(winrt::to_string((root / L"read.txt").wstring()), "first\r\n你好\nlast");

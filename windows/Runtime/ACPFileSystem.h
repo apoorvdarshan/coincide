@@ -15,20 +15,30 @@ class ACPFileSystem {
 public:
     static constexpr std::size_t max_bytes = 8 * 1024 * 1024;
     explicit ACPFileSystem(const std::filesystem::path& root) {
-        root_ = std::filesystem::canonical(root); validate_literal(root_);
+        const auto declared = root_alias(std::filesystem::absolute(root));
+        root_ = root_alias(std::filesystem::canonical(root)); validate_literal(root_); validate_literal(declared);
         const auto drive = root_.root_path().wstring(); const auto type = GetDriveTypeW(drive.c_str());
         if (type != DRIVE_FIXED && type != DRIVE_RAMDISK) throw std::invalid_argument("ACP requires a local project folder");
         root_handle_ = directory(root_); root_name_ = final_name(root_handle_.get());
+        // TEMP can use an 8.3 name or a DOS drive alias while canonical() returns its physical
+        // spelling. Freeze only the explicitly selected root spellings, then map them onto the
+        // pinned handle's physical root. Never canonicalize an untrusted descendant to admit it.
+        if (!root_name_.starts_with(L"\\\\?\\")) throw std::invalid_argument("ACP requires a local DOS project path");
+        const auto physical = root_alias(std::filesystem::path(root_name_.substr(4))); validate_literal(physical);
+        root_aliases_ = {physical, root_, declared}; root_ = physical;
     }
     const std::filesystem::path& root() const {return root_;}
     std::filesystem::path literal(const std::string& requested, bool allow_root = false) const {
         const std::filesystem::path value(wide(requested)); validate_literal(value);
-        const auto name = value.lexically_normal().wstring(); const auto base = root_.wstring();
+        const auto name = value.lexically_normal().wstring();
         const auto equal = [](std::wstring_view a, std::wstring_view b) {return a.size() == b.size() && CompareStringOrdinal(a.data(), static_cast<int>(a.size()), b.data(), static_cast<int>(b.size()), TRUE) == CSTR_EQUAL;};
-        if (equal(name, base)) {if (allow_root) return root_; throw std::invalid_argument("An ACP file path must name a file inside the project");}
-        const auto prefix = base.ends_with(L'\\') ? base : base + L"\\";
-        if (name.size() <= prefix.size() || !equal(std::wstring_view(name).substr(0, prefix.size()), prefix)) throw std::invalid_argument("The ACP path is outside the project");
-        return root_ / std::filesystem::path(name.substr(prefix.size()));
+        for (const auto& alias : root_aliases_) {
+            const auto base = alias.wstring();
+            if (equal(name, base)) {if (allow_root) return root_; throw std::invalid_argument("An ACP file path must name a file inside the project");}
+            const auto prefix = base.ends_with(L'\\') ? base : base + L"\\";
+            if (name.size() > prefix.size() && equal(std::wstring_view(name).substr(0, prefix.size()), prefix)) return root_ / std::filesystem::path(name.substr(prefix.size()));
+        }
+        throw std::invalid_argument("The ACP path is outside the project");
     }
     std::filesystem::path working_directory(const std::string& requested) const {
         const auto value = requested.empty() ? root_ : literal(requested, true); auto pinned = parents(value, true, false); static_cast<void>(pinned); return value;
@@ -75,6 +85,12 @@ public:
     static bool valid_utf8(const std::string& value) {return value.empty() || (value.size() <= INT_MAX && MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), nullptr, 0) > 0);}
 private:
     std::filesystem::path root_; NativeHandle root_handle_; std::wstring root_name_;
+    std::vector<std::filesystem::path> root_aliases_;
+    static std::filesystem::path root_alias(std::filesystem::path value) {
+        value = value.lexically_normal();
+        while (value != value.root_path() && !value.has_filename()) value = value.parent_path();
+        return value;
+    }
     static void validate_literal(const std::filesystem::path& value) {
         const auto name = value.wstring();
         if (!value.is_absolute() || name.size() > 240 || name.starts_with(L"\\\\") || name.find_first_of(L"\0*?<>|\"", 0, 7) != std::wstring::npos || name.find(L':', 2) != std::wstring::npos || value.root_name().wstring().size() != 2)
