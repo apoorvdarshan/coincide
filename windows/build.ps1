@@ -33,11 +33,13 @@ if (!$CoreOnly) {
     if (!(Test-Path $executable)) { throw 'MSBuild returned successfully but no Windows application was produced.' }
     Write-Output "Built: $executable"
     if ($Architecture -eq 'x64') {
-        $report = Join-Path $root 'build\store-test-result.txt'
-        Remove-Item $report -ErrorAction SilentlyContinue
-        $process = Start-Process -FilePath $executable -ArgumentList @('--store-tests', "`"$report`"") -PassThru
-        if (!$process.WaitForExit(60000)) { $process.Kill(); throw 'Windows store tests timed out.' }
-        if (Test-Path $report) { Get-Content $report }
-        if ($process.ExitCode -ne 0 -or !(Test-Path $report)) { throw 'Windows store tests failed.' }
+        foreach ($suite in @('store', 'protocol', 'connection')) {
+            $report = Join-Path $root "build\$suite-test-result.txt"
+            Remove-Item $report -ErrorAction SilentlyContinue
+            $process = Start-Process -FilePath $executable -ArgumentList @("--$suite-tests", "`"$report`"") -PassThru
+            if (!$process.WaitForExit(60000)) { $process.Kill(); throw "Windows $suite tests timed out." }
+            if (Test-Path $report) { Get-Content $report }
+            if ($process.ExitCode -ne 0 -or !(Test-Path $report)) { throw "Windows $suite tests failed." }
+        }
     }
 }

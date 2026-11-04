@@ -19,6 +19,8 @@
 #include <winrt/Windows.System.h>
 #include "WorkspaceStore.h"
 #include "../Tests/StoreTests.h"
+#include "../Tests/ProtocolTests.h"
+#include "../Tests/ConnectionTests.h"
 #include <memory>
 
 namespace xaml = winrt::Microsoft::UI::Xaml;
@@ -410,6 +412,18 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--store-tests") {
             const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
             return coincide::store_tests(report);
+        }
+        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--protocol-tests") {
+            const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
+            return coincide::protocol_tests(report);
+        }
+        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--connection-tests") {
+            const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
+            return coincide::connection_tests(report);
+        }
+        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--rpc-fixture") {
+            const auto mode = std::wstring(argv[2]); LocalFree(argv);
+            return coincide::rpc_fixture(mode);
         }
         if (argv) LocalFree(argv);
         // Keep the programmatic application (including its metadata provider and callbacks) alive

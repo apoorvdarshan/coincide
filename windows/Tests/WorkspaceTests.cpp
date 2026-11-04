@@ -1,6 +1,10 @@
 #include "../Core/Workspace.h"
+#include "../Core/LineFramer.h"
 #include <iostream>
 #include <functional>
+#ifdef _WIN32
+#include "ProcessTests.h"
+#endif
 
 namespace {
 int checks{};
@@ -22,7 +26,7 @@ coincide::Thread thread(std::string id, std::string provider = "claude") {
 }
 }
 
-int main() {
+int run_workspace_tests() {
     try {
         coincide::Workspace w;
         w.add_project({"p", "A project", "C:\\Projects\\A folder"});
@@ -79,10 +83,35 @@ int main() {
         for (int i = 0; i < 10000; ++i) messages.push_back({std::to_string(i + 5), "assistant", "A streamed reply", "codex"});
         w.remember_session("a", {"claude", "claude-session", messages.size() - 1});
         check(w.missed_messages("a", "claude").size() == 1, "long histories must not replay acknowledged messages");
-        std::cout << checks << " workspace checks passed\n";
+        const std::string stream = "one\r\nनमस्ते\nlast";
+        for (std::size_t split = 0; split <= stream.size(); ++split) {
+            coincide::LineFramer framer;
+            std::vector<std::string> framed;
+            auto emit = [&](std::string line) {framed.push_back(std::move(line));};
+            framer.consume(std::string_view(stream).substr(0, split), emit);
+            framer.consume(std::string_view(stream).substr(split), emit);
+            framer.finish(emit);
+            check(framed == std::vector<std::string>{"one", "नमस्ते", "last"}, "JSONL framing must preserve every possible chunk boundary");
+        }
+        coincide::LineFramer bounded(4);
+        bounded.consume("1234", [](auto){});
+        rejects([&]{bounded.consume("5", [](auto){});}, "oversized lines must fail instead of growing without bound");
+#ifdef _WIN32
+        coincide::process_tests(check, [](auto operation, const char* message){rejects(operation, message);});
+#endif
+        std::cout << checks << " workspace/process checks passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;
     }
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv) {
+    if (argc > 1 && std::wstring_view(argv[1]) == L"--process-fixture") return coincide::process_fixture(argc, argv);
+    return run_workspace_tests();
+}
+#else
+int main() { return run_workspace_tests(); }
+#endif

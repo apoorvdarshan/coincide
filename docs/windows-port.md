@@ -8,11 +8,15 @@ Baseline: the Mac application at `b54ad87`, including the thread-switch and imag
 
 - SSH access and the native C++ toolchain are working on the owner's Windows laptop.
 - The WinUI executable builds on that laptop; GitHub Windows runners also compile the application.
-- 27 workspace/core checks and 17 Windows storage checks pass on Windows.
+- 71 workspace/process checks and 17 Windows storage checks pass on Windows.
+- 39 RPC/Codex protocol checks and 42 real-subprocess RPC connection checks pass on the laptop. These exercise
+  initialization ordering, Unicode streaming, opaque approval IDs, explicit declines, deadlines, failed startup,
+  child exits, and cancellation while the child stops reading stdin. They do not use a provider account.
 - Four native UI checks pass on the laptop: opening the latest row of a 1,500-message thread, switching to another
   1,500-message thread without scrolling, keeping that thread's draft, and returning to the first thread without a blank view.
 - A screenshot and the native accessibility tree were inspected. The initial window and plain-text rows render.
-- Full parity is not complete. Agent execution is not implemented in this milestone, and the preview says so.
+- Full parity is not complete. The subprocess/RPC foundation is implemented; agent session orchestration and its
+  connection to the composer are not. The preview still cannot run an agent and says so.
 - Source is pushed in draft PR #235. Check its current Windows CI result separately from the local results above.
 
 ## Platform decisions awaiting the owner's answer
@@ -42,9 +46,9 @@ needs both the relevant automated coverage and actual Windows verification befor
 | Native foundation | Window, resize, DPI, keyboard, focus, accessibility | Initial native window builds and opens on Windows; broader input/DPI checks pending |
 | Projects and conversations | Projectless chats, search, rename, pin, archive, settle, snooze, delete, batch operations, undo/redo | Basic project/chat/archive model and UI; remaining operations pending |
 | Persistence | Fast index, lazy transcripts, drafts, crash-safe writes, recovery and forward compatibility | Initial isolated store passes 17 Windows regression checks; full recovery/migration still pending |
-| Agents | Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity; detect, sign in, catalogs and account selection | Not implemented; Windows availability must be verified individually |
+| Agents | Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity; detect, sign in, catalogs and account selection | Codex protocol and Windows process/RPC transport pass fixture tests; live sessions and other providers pending |
 | Model controls | Favorites, hidden models, effort, speed, permissions, plan/build mode, project defaults | Not implemented |
-| Streaming runtime | Tools, approvals, questions, cancellation, steering, queueing and background work | Not implemented |
+| Streaming runtime | Tools, approvals, questions, cancellation, steering, queueing and background work | Bounded asynchronous RPC queues and process cancellation tested; turn orchestration, UI and background persistence pending |
 | Provider handoff | Per-provider/per-thread session IDs, missed turns, reset/resume behavior and context limits | Initial bookkeeping tests; provider integration and bounded recap pending |
 | Transcript | Markdown, code, work logs, links, images, audio/video, media opening, previews and copy/selection | Virtualized plain text and four long-thread UI checks pass on Windows; rich content and full performance validation pending |
 | Composer | Attachments, mentions, slash commands, quotes, terminal/diff context and per-thread drafts | Drafts only; remaining composer behavior pending |
@@ -72,6 +76,9 @@ needs both the relevant automated coverage and actual Windows verification befor
 - Core checks: projectless/project threads, drafts, atomic batch archive undo/redo, provider-isolated sessions,
   acknowledged/missed turns, invalid-state rejection and long-history bookkeeping.
 - Store checks: round trips, malformed/future files, missing transcripts, Unicode and unknown-field preservation.
+- Process/RPC checks: Windows quoting and Unicode paths, separate stdout/stderr, owned-process cleanup, response
+  matching, closed/failed channels, explicit approval responses, deadlines and blocked pipe writes. The host owns its
+  peer on a dedicated thread; UI callbacks receive UTF-8 values rather than pipe-thread COM/UI objects.
 - WinUI checks: switch long mixed threads without scrolling, show the latest rows, resize/reflow, click media,
   copy/select text and keyboard navigation. A successful compile does not satisfy this gate.
 - Provider checks: deterministic protocol fixtures and subprocess failure/cancellation tests first. Live provider tests

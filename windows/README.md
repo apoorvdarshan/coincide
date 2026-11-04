@@ -19,7 +19,8 @@ The script executes core regression tests and builds the unpackaged application.
 Do not copy just the EXE. `-CoreOnly` runs the core checks without building WinUI. ARM64 app builds can be requested
 with `-Architecture ARM64`; automated execution of ARM64 artifacts remains a separate validation task.
 
-The build runs 27 portable core checks and 17 Windows storage checks. In an **interactive desktop session**, run
+On Windows the build runs 71 workspace/process, 17 storage, 39 RPC/Codex protocol and 42 subprocess connection checks.
+The portable workspace/framing checks also compile without the Windows runtime. In an **interactive desktop session**, run
 `./windows/Tests/PreviewSmoke.ps1` for the native long-thread switching and draft checks. It seeds two isolated
 1,500-message conversations, checks the latest rows without scrolling, records UI evidence, closes its own process,
 and removes its temporary conversation data. It does not use the owner's real conversations or an agent account.
@@ -35,6 +36,11 @@ Implemented in the development source: native window, folder picking, local proj
 per-thread saved drafts, archive/undo/redo, provider selection, provider-scoped session bookkeeping, and a virtualized
 plain-text transcript. Provider execution and the full application feature set are still pending. The preview explicitly
 reports that agent connections are unavailable; it never fabricates agent output. No release or full-parity claim is made.
+
+The runtime foundation starts an explicit executable without a shell, confines its descendants to an owned job,
+frames UTF-8 JSONL, and keeps pipe reads/writes off the UI thread. Protocol fixtures verify initialization, streamed
+notifications, explicit approval decisions, deadlines, and shutdown even when stdin is blocked. These checks do not
+sign in, run an agent turn, or spend account quota. Agent session orchestration and composer integration are pending.
 
 Shared labels reuse the existing Mac string catalog in all its languages:
 
