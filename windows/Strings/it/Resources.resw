@@ -3,9 +3,6 @@
   <data name="Accounts" xml:space="preserve">
     <value>Account</value>
   </data>
-  <data name="Add local profile" xml:space="preserve">
-    <value>AddProviderProfile</value>
-  </data>
   <data name="AddProject" xml:space="preserve">
     <value>Aggiungi progetto…</value>
   </data>
@@ -33,9 +30,6 @@
   <data name="Cancel" xml:space="preserve">
     <value>Annulla</value>
   </data>
-  <data name="Check status" xml:space="preserve">
-    <value>CheckProviderAccount</value>
-  </data>
   <data name="Close" xml:space="preserve">
     <value>Chiudi</value>
   </data>
@@ -56,9 +50,6 @@
   </data>
   <data name="Git" xml:space="preserve">
     <value>Git</value>
-  </data>
-  <data name="Grant access" xml:space="preserve">
-    <value>ComputerUseGrant</value>
   </data>
   <data name="ImportSessions" xml:space="preserve">
     <value>Import Sessions</value>
@@ -117,9 +108,6 @@
   <data name="Refresh" xml:space="preserve">
     <value>Aggiorna</value>
   </data>
-  <data name="Release desktop" xml:space="preserve">
-    <value>ComputerUseRelease</value>
-  </data>
   <data name="Remove" xml:space="preserve">
     <value>Rimuovi</value>
   </data>
@@ -131,12 +119,6 @@
   </data>
   <data name="Resume" xml:space="preserve">
     <value>Riprendi</value>
-  </data>
-  <data name="Retry saving disabled setting" xml:space="preserve">
-    <value>ComputerUseRetrySave</value>
-  </data>
-  <data name="Revoke access" xml:space="preserve">
-    <value>ComputerUseRevoke</value>
   </data>
   <data name="Save" xml:space="preserve">
     <value>Salva</value>
@@ -161,9 +143,6 @@
   </data>
   <data name="ShowArchived" xml:space="preserve">
     <value>Mostra thread archiviati</value>
-  </data>
-  <data name="Sign in" xml:space="preserve">
-    <value>SignInProviderAccount</value>
   </data>
   <data name="Snooze" xml:space="preserve">
     <value>Posticipa</value>
@@ -284,9 +263,6 @@
   </data>
   <data name="Text_200678f33346fc6e" xml:space="preserve">
     <value>Inserted into draft</value>
-  </data>
-  <data name="Text_21995058eb0a1e32" xml:space="preserve">
-    <value>AddProviderProfile</value>
   </data>
   <data name="Text_227494b1230c5a55" xml:space="preserve">
     <value>Worktree removal is unavailable in this window.</value>
@@ -612,9 +588,6 @@
   <data name="Text_7a07940a2b62f185" xml:space="preserve">
     <value>Branch</value>
   </data>
-  <data name="Text_7ab078c5a09ab558" xml:space="preserve">
-    <value>ComputerUseRelease</value>
-  </data>
   <data name="Text_7b7163270e57e8b4" xml:space="preserve">
     <value>Aggiorna</value>
   </data>
@@ -641,6 +614,9 @@
   </data>
   <data name="Text_8352c6fa87ade989" xml:space="preserve">
     <value>Ctrl+Enter always sends. During an active turn it queues your message.</value>
+  </data>
+  <data name="Text_83688e4f1568299f" xml:space="preserve">
+    <value>Retry saving disabled setting</value>
   </data>
   <data name="Text_850da60a15c7009a" xml:space="preserve">
     <value>Nuovo pannello</value>
@@ -705,9 +681,6 @@
   <data name="Text_92c081dd9af79a04" xml:space="preserve">
     <value>Select a remote branch first.</value>
   </data>
-  <data name="Text_92e65fdd4b72ae93" xml:space="preserve">
-    <value>ComputerUseGrant</value>
-  </data>
   <data name="Text_9400cb7b4f9ce6c6" xml:space="preserve">
     <value>No schedules in this conversation.</value>
   </data>
@@ -747,8 +720,8 @@
   <data name="Text_97a98f731b91f87d" xml:space="preserve">
     <value>Review interrupted delivery</value>
   </data>
-  <data name="Text_989495cdc8aa90fe" xml:space="preserve">
-    <value>ComputerUseRetrySave</value>
+  <data name="Text_97c7f25a581b01d7" xml:space="preserve">
+    <value>Revoke access</value>
   </data>
   <data name="Text_9899f07ee811b5ca" xml:space="preserve">
     <value>1 hour</value>
@@ -767,9 +740,6 @@
   </data>
   <data name="Text_9d8b8aa2b404c2c8" xml:space="preserve">
     <value>Impostazioni</value>
-  </data>
-  <data name="Text_9e8e28a44ad464d1" xml:space="preserve">
-    <value>ComputerUseRevoke</value>
   </data>
   <data name="Text_9eaa6e7fbfd5cdd7" xml:space="preserve">
     <value>Wednesday</value>
@@ -846,9 +816,6 @@
   <data name="Text_b3d4f79d9d8b71e5" xml:space="preserve">
     <value>Invia</value>
   </data>
-  <data name="Text_b3ef6811b862c8c9" xml:space="preserve">
-    <value>CheckProviderAccount</value>
-  </data>
   <data name="Text_b46d3613edb66558" xml:space="preserve">
     <value>Interval</value>
   </data>
@@ -882,6 +849,9 @@
   <data name="Text_b99af8f463fbfa26" xml:space="preserve">
     <value>Save for approval</value>
   </data>
+  <data name="Text_b9cc43eb67f1373a" xml:space="preserve">
+    <value>Release desktop</value>
+  </data>
   <data name="Text_be9a2afda356a007" xml:space="preserve">
     <value>Read Clipboard</value>
   </data>
@@ -911,6 +881,9 @@
   </data>
   <data name="Text_c9757b387904aaba" xml:space="preserve">
     <value>Time zone</value>
+  </data>
+  <data name="Text_c9b9e80e4a82d845" xml:space="preserve">
+    <value>Grant access</value>
   </data>
   <data name="Text_cac4c9636dbe7d3d" xml:space="preserve">
     <value>Nuova chat</value>
@@ -974,9 +947,6 @@
   </data>
   <data name="Text_dc91fbc5acf8e4f5" xml:space="preserve">
     <value>I understand the documented Antigravity account risk</value>
-  </data>
-  <data name="Text_dd5bb6d4e39f1205" xml:space="preserve">
-    <value>SignInProviderAccount</value>
   </data>
   <data name="Text_de483d657caae16e" xml:space="preserve">
     <value>Remove Worktree</value>
@@ -1077,9 +1047,6 @@
   <data name="Text_f0e6f67c08e8527e" xml:space="preserve">
     <value>Could not save browser tabs.</value>
   </data>
-  <data name="Text_f2244667a444cf92" xml:space="preserve">
-    <value>UseProviderProfile</value>
-  </data>
   <data name="Text_f2d616b20d62240d" xml:space="preserve">
     <value>Schedules</value>
   </data>
@@ -1136,9 +1103,6 @@
   </data>
   <data name="Unsnooze" xml:space="preserve">
     <value>Annulla posticipo</value>
-  </data>
-  <data name="Use profile" xml:space="preserve">
-    <value>UseProviderProfile</value>
   </data>
   <data name="Voice" xml:space="preserve">
     <value>Voice</value>

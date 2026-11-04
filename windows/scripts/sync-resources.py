@@ -25,14 +25,21 @@ def ui_key(text):
 
 def labels():
     result = dict(LABELS)
-    for path in sorted((ROOT / 'App').glob('*')):
+    # Path ordering is case-insensitive on Windows. Sort by the filename string so
+    # every platform resolves source labels in exactly the same order.
+    for path in sorted((ROOT / 'App').glob('*'), key=lambda value: value.name):
         if path.suffix not in {'.cpp', '.h', '.inl'}:
             continue
         source = path.read_text(encoding='utf-8')
         literal = r'"((?:[^"\\]|\\.)*)"'
-        for match in re.finditer(r'\b(?:label|button|toolbar_button|action)\(\s*L' + literal + r'\s*,\s*L' + literal, source):
-            resource, text = [json.loads('"' + value + '"') for value in match.groups()]
+        for match in re.finditer(r'\b(?:label\(\s*L' + literal + r'\s*,\s*L' + literal + r'|(?:button|toolbar_button|action)\(\s*L' + literal + r'\s*,\s*L' + literal + r'\s*,)', source):
+            resource, text = [json.loads('"' + value + '"') for value in match.groups() if value is not None]
             result[resource] = text
+        # Panel helpers take (English text, automation ID), unlike the app's
+        # three-argument (resource key, fallback, automation ID) helpers.
+        for match in re.finditer(r'\bbutton\(\s*L' + literal + r'\s*,\s*L' + literal + r'\s*\)', source):
+            text = json.loads('"' + match.group(1) + '"')
+            result[ui_key(text)] = text
         for match in re.finditer(r'\b(?:ui_text|toggle|edit|add_page|link)\(\s*L' + literal, source):
             text = json.loads('"' + match.group(1) + '"')
             result[ui_key(text)] = text

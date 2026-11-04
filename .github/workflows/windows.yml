@@ -25,7 +25,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Check shared label resources
-        run: python windows/scripts/sync-resources.py --check
+        run: |
+          python windows/scripts/test-sync-resources.py
+          python windows/scripts/sync-resources.py --check
       - name: Build and run core tests, then build WinUI
         id: build
         shell: pwsh
