@@ -39,9 +39,13 @@ if (!$CoreOnly) {
     if ($LASTEXITCODE) { throw 'The WinUI application build failed.' }
     $executable = Join-Path $root "build\$Architecture\$Configuration\Coincide.exe"
     if (!(Test-Path $executable)) { throw 'MSBuild returned successfully but no Windows application was produced.' }
+    $notices=Join-Path (Split-Path $executable) 'Notices'
+    New-Item -ItemType Directory -Force $notices | Out-Null
+    Copy-Item (Join-Path $root '..\LICENSE') (Join-Path $notices 'Coincide-LICENSE.txt')
+    Copy-Item (Join-Path $root 'Notices\T3-Code-LICENSE.txt') $notices
     Write-Output "Built: $executable"
     if ($Architecture -eq 'x64') {
-        foreach ($suite in @('store', 'protocol', 'connection', 'session', 'display', 'git', 'provider', 'claude', 'terminal', 'calendar', 'opencode', 'browser', 'preview', 'schedule', 'acp')) {
+        foreach ($suite in @('store', 'protocol', 'connection', 'session', 'display', 'git', 'provider', 'claude', 'terminal', 'calendar', 'opencode', 'browser', 'preview', 'schedule', 'acp', 'preferences', 'desktop-services', 'instructions', 'imports', 'import-store', 'provider-accounts', 'notifications', 'voice-settings', 'computer-use', 'computer-use-settings', 'git-management', 'tool-context', 'app-tool-bridge', 'schedule-tool')) {
             $report = Join-Path $root "build\$suite-test-result.txt"
             Remove-Item $report -ErrorAction SilentlyContinue
             $process = Start-Process -FilePath $executable -ArgumentList @("--$suite-tests", "`"$report`"") -PassThru
@@ -49,5 +53,25 @@ if (!$CoreOnly) {
             if (Test-Path $report) { Get-Content $report }
             if ($process.ExitCode -ne 0 -or !(Test-Path $report)) { throw "Windows $suite tests failed." }
         }
+        $report=Join-Path $root 'build\voice-test-result.txt'
+        Remove-Item $report -ErrorAction SilentlyContinue
+        $fixture=Join-Path $coreBuild "$Configuration\CoincideVoiceFixture.exe"
+        $process=Start-Process -FilePath $executable -ArgumentList @('--voice-tests', "`"$report`"", "`"$fixture`"") -PassThru
+        if(!$process.WaitForExit(30000)){$process.Kill();throw 'Windows voice fixture timed out.'}
+        if(Test-Path $report){Get-Content $report}
+        if($process.ExitCode -ne 0 -or !(Test-Path $report)){throw 'Windows offline voice tests failed.'}
+        $report=Join-Path $root 'build\computer-use-process-test-result.txt'
+        Remove-Item $report -ErrorAction SilentlyContinue
+        $fixture=Join-Path $coreBuild "$Configuration\CoincideComputerUseFixture.exe"
+        $process=Start-Process -FilePath $executable -ArgumentList @('--computer-use-process-tests', "`"$report`"", "`"$fixture`"") -PassThru
+        if(!$process.WaitForExit(30000)){$process.Kill();throw 'Windows Computer Use IPC fixture timed out.'}
+        if(Test-Path $report){Get-Content $report}
+        if($process.ExitCode -ne 0 -or !(Test-Path $report)){throw 'Windows Computer Use IPC tests failed.'}
+        $report=Join-Path $root 'build\computer-use-desktop-lease-test-result.txt'
+        Remove-Item $report -ErrorAction SilentlyContinue
+        $process=Start-Process -FilePath $executable -ArgumentList @('--computer-use-desktop-lease-tests', "`"$report`"", "`"$fixture`"") -PassThru
+        if(!$process.WaitForExit(30000)){$process.Kill();throw 'Windows Computer Use shared lease fixture timed out.'}
+        if(Test-Path $report){Get-Content $report}
+        if($process.ExitCode -ne 0 -or !(Test-Path $report)){throw 'Windows Computer Use shared lease tests failed.'}
     }
 }

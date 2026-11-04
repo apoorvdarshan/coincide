@@ -115,6 +115,7 @@ inline Inspectable row_content(const Inspectable& target){return winrt::get_self
 } // namespace terminal_ui
 
 struct TerminalPaneSnapshot{std::string id,tab_id,thread_id,title,status;bool running{},starting{};std::size_t columns{},rows{};};
+struct TerminalReadSnapshot{TerminalPaneSnapshot pane;std::string text;bool truncated{};};
 class TerminalPanel:public std::enable_shared_from_this<TerminalPanel>{
 public:
     static std::shared_ptr<TerminalPanel> create(std::filesystem::path base_data_path,bool fixture_mode=false){
@@ -122,6 +123,7 @@ public:
         auto result=std::shared_ptr<TerminalPanel>(new TerminalPanel(std::move(base_data_path),fixture_mode));result->build_view();return result;
     }
     terminal_ui::ui::Grid view()const{return root_;}
+    void set_command_guard(std::function<bool(const std::string&,const std::filesystem::path&)> guard){command_guard_=std::move(guard);}
     void select_thread(std::string id,std::filesystem::path cwd){
         if(id.empty()){selected_thread_.clear();show_active();return;}
         if(id.size()!=36&&id.size()!=38)throw std::invalid_argument("Invalid terminal conversation identity");
@@ -162,6 +164,22 @@ public:
         for(const auto& tab:state->second.tabs)for(const auto& pane:tab->panes)result.push_back({pane->id,tab->id,id,pane->screen.title(),pane->status,
             pane->session&&pane->session->running(),pane->starting.valid(),pane->screen.columns(),pane->screen.rows()});return result;
     }
+    TerminalReadSnapshot read(const std::string& thread,const std::string& pane_id,std::size_t maximum=65536)const{
+        if(closed_||maximum<1||maximum>65536)throw std::invalid_argument("Invalid terminal read limit");
+        const auto state=threads_.find(thread);if(state==threads_.end())throw std::invalid_argument("This conversation has no terminal");
+        for(const auto& tab:state->second.tabs)for(const auto& pane:tab->panes)if(pane->id==pane_id){
+            TerminalReadSnapshot result{{pane->id,tab->id,thread,pane->screen.title(),pane->status,pane->session&&pane->session->running(),pane->starting.valid(),pane->screen.columns(),pane->screen.rows()},{},false};
+            std::vector<std::string> tail;std::size_t bytes{};
+            const auto append=[&](const auto& lines){for(auto row=lines.rbegin();row!=lines.rend();++row){if(bytes>=maximum){result.truncated=true;break;}auto text=TerminalScreen::line_text(*row);text+='\n';bytes+=text.size();tail.push_back(std::move(text));}};
+            append(pane->screen.lines());append(pane->screen.scrollback());result.text.reserve(bytes);for(auto line=tail.rbegin();line!=tail.rend();++line)result.text+=*line;
+            if(result.text.size()>maximum){auto remove=result.text.size()-maximum;while(remove<result.text.size()&&(static_cast<unsigned char>(result.text[remove])&0xc0)==0x80)++remove;result.text.erase(0,remove);result.truncated=true;}return result;
+        }
+        throw std::invalid_argument("The terminal pane does not belong to this conversation");
+    }
+    bool interrupt(const std::string& thread,const std::string& pane_id){
+        if(closed_)return false;const auto state=threads_.find(thread);if(state==threads_.end())return false;
+        for(const auto& tab:state->second.tabs)for(const auto& pane:tab->panes)if(pane->id==pane_id){if(!pane->session||!pane->session->running())return false;return send(pane,std::string(1,'\x03'));}return false;
+    }
     void close()noexcept{
         if(closed_)return;closed_=true;try{timer_.Stop();}catch(...){}
         for(auto& [id,state]:threads_){(void)id;for(const auto& tab:state.tabs)for(const auto& pane:tab->panes){pane->closed=true;if(pane->session)pane->session->stop();}}
@@ -194,6 +212,7 @@ private:
     struct ThreadTabs{std::filesystem::path cwd;std::vector<std::shared_ptr<Tab>> tabs;std::string selected;};
     std::filesystem::path base_;bool fixture_{},visible_{},closed_{},refreshing_{};std::string selected_thread_;
     std::unordered_map<std::string,ThreadTabs> threads_;std::vector<std::shared_ptr<Pane>> retired_;
+    std::function<bool(const std::string&,const std::filesystem::path&)> command_guard_;
     std::vector<std::string> displayed_tabs_;
     terminal_ui::ui::Grid root_{nullptr},panes_view_{nullptr};terminal_ui::ui::ComboBox tabs_{nullptr};terminal_ui::ui::TextBlock status_{nullptr};
     winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer timer_{nullptr};
@@ -215,6 +234,7 @@ private:
         auto count=retired_.size();for(const auto& [id,state]:threads_){(void)id;for(const auto& tab:state.tabs)count+=tab->panes.size();}return count;
     }
     void show_error(const std::string& value){if(status_)status_.Text(winrt::to_hstring(value));}
+    bool command_allowed(const std::string& thread,const std::filesystem::path& cwd)const noexcept{try{return !closed_&&(!command_guard_||command_guard_(thread,cwd));}catch(...){return false;}}
     terminal_ui::ui::Button make_button(const wchar_t* text,const wchar_t* id,std::function<void(TerminalPanel&)> action){
         terminal_ui::ui::Button value;value.Content(winrt::box_value(ui_text(text)));terminal_ui::identify(value,id);
         value.Click([weak=weak_from_this(),action=std::move(action)](const auto&,const auto&){if(const auto self=weak.lock())try{action(*self);}catch(const std::exception& error){self->show_error(error.what());}catch(const winrt::hresult_error& error){self->show_error(winrt::to_string(error.message()));}});
@@ -257,6 +277,7 @@ private:
         return result;
     }
     std::shared_ptr<Pane> create_pane(const std::string& thread,const std::filesystem::path& cwd,bool focus){
+        if(!command_allowed(thread,cwd))throw std::runtime_error("Wait for the repository operation to finish before starting a terminal.");
         if(session_count()>=session_limit)throw std::runtime_error("Close an existing terminal before opening another session.");
         auto pane=std::make_shared<Pane>();pane->id=identity();pane->thread_id=thread;pane->cwd=cwd;pane->pending_focus=focus;
         pane->status=winrt::to_string(ui_text(L"Starting terminal…"));
@@ -321,6 +342,7 @@ private:
     }
     bool send(const std::shared_ptr<Pane>& pane,std::string bytes){
         if(closed_||pane->closed||pane->exited)return false;
+        if(!command_allowed(pane->thread_id,pane->cwd)){pane->status=winrt::to_string(ui_text(L"Wait for the repository operation to finish before sending terminal input."));pane->dirty=true;return false;}
         bool accepted{};
         if(pane->session)accepted=pane->session->write(bytes);
         else if(pane->starting.valid()&&bytes.size()<=1024*1024-pane->pending_input.size()){pane->pending_input+=bytes;accepted=true;}

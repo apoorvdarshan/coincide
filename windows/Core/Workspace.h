@@ -421,7 +421,17 @@ struct QueuedInput {
 struct NativeSession {
     std::string provider, id;
     std::size_t acknowledged_messages{};
+    std::string profile_id{"default"}, account_scope;
 };
+inline bool valid_session_binding(const NativeSession& session) {
+    const auto hex=[](unsigned char ch){return(ch>='0'&&ch<='9')||(ch>='a'&&ch<='f')||(ch>='A'&&ch<='F');};
+    if(!session.account_scope.empty()&&(session.account_scope.size()!=64||!std::all_of(session.account_scope.begin(),session.account_scope.end(),hex)))return false;
+    if(session.profile_id=="default")return true;
+    if(session.profile_id.size()!=36)return false;
+    bool nonzero{};
+    for(std::size_t i=0;i<36;++i){const auto ch=session.profile_id[i];if(i==8||i==13||i==18||i==23){if(ch!='-')return false;}else{if(!hex(static_cast<unsigned char>(ch)))return false;nonzero=nonzero||ch!='0';}}
+    return nonzero;
+}
 struct ProviderModelPreference {
     std::string provider, model, effort, service_tier;
     bool plan{}, full_access{};
@@ -627,7 +637,7 @@ public:
 
     void remember_session(std::string_view thread_id, NativeSession session) {
         auto& value = thread(thread_id);
-        if (!known_provider(session.provider) || session.id.empty() || session.acknowledged_messages > value.messages.size()) {
+        if (!known_provider(session.provider) || session.id.empty() || session.acknowledged_messages > value.messages.size() || !valid_session_binding(session)) {
             throw std::invalid_argument("Invalid native session");
         }
         auto at = std::find_if(value.sessions.begin(), value.sessions.end(), [&](const auto& item) { return item.provider == session.provider; });

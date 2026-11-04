@@ -4,6 +4,14 @@
 #include <fstream>
 
 namespace coincide {
+inline int claude_account_fixture(std::wstring_view mode) {
+    if(mode==L"startup-hang"||mode==L"account-hang"){Sleep(30000);return 0;}
+    auto status=ClaudeProtocol::Object::Parse(LR"({"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","email":"fixture@example.invalid","orgId":"fixture-org"})");
+    if(mode==L"signed-out")status.SetNamedValue(L"loggedIn",ClaudeProtocol::Json::CreateBooleanValue(false));
+    wchar_t profile[32768]{};const auto count=GetEnvironmentVariableW(L"CLAUDE_CONFIG_DIR",profile,32768);
+    if(count&&count<32768){std::ifstream selected(std::filesystem::path(profile)/L"account-email.txt");std::string email;if(std::getline(selected,email)&&!email.empty())ClaudeProtocol::put(status,L"email",email);}
+    fixture_write(GetStdHandle(STD_OUTPUT_HANDLE),winrt::to_string(status.Stringify())+"\n");return 0;
+}
 inline int claude_session_fixture(std::wstring_view mode) {
     using Object = ClaudeProtocol::Object; using Array = ClaudeProtocol::Array; using Json = ClaudeProtocol::Json;
     if (mode == L"startup-hang") {Sleep(30000); return 0;}
@@ -55,6 +63,10 @@ inline int claude_session_fixture(std::wstring_view mode) {
         Object initialized; put(initialized, L"type", "system"); put(initialized, L"subtype", "init"); put(initialized, L"session_id", session); write(initialized);
         if (!previous.empty()) result(true, previous);
         Object lifecycle; put(lifecycle, L"type", "command_lifecycle"); put(lifecycle, L"command_uuid", current); put(lifecycle, L"state", "started"); write(lifecycle);
+        if(mode==L"context"){
+            const auto boundary=prompt.find("</coincide_current_tools>\n\n");const auto original=boundary==std::string::npos?prompt:prompt.substr(boundary+27);
+            if(original=="wait")return;answer(prompt);return;
+        }
         if (prompt == "wait") return;
         if (prompt == "fail") {result(true); return;}
         if (prompt == "approval" || prompt == "file" || prompt == "question" || prompt == "unknown") {
@@ -85,7 +97,7 @@ inline int claude_tests(const std::filesystem::path& report) {
     const auto check = [&](bool value, const char* message) {++checks; if (!value) throw std::runtime_error(message);};
     try {
         wchar_t executable[32768]{}; if (!GetModuleFileNameW(nullptr, executable, 32768)) throw std::runtime_error("Cannot locate the Claude fixture");
-        const auto launch = [&](const wchar_t* mode = L"normal") {CodexLaunch value; value.executable = executable; value.cwd = value.executable.parent_path(); value.arguments = {L"--claude-session-fixture", mode}; value.interrupt_grace = 100ms; return value;};
+        const auto launch = [&](const wchar_t* mode = L"normal") {CodexLaunch value; value.executable = executable; value.cwd = value.executable.parent_path(); value.arguments = {L"--claude-session-fixture", mode}; value.interrupt_grace = 100ms;value.fixture_account_reviewed=true; return value;};
         const auto input = [](const char* body = "hello") {CodexTurn value; value.text = body; return value;};
         const auto has = [](const auto& events, Kind kind) {return std::any_of(events.begin(), events.end(), [&](const auto& event) {return event.kind == kind;});};
         const auto until = [&](ClaudeSession& session, auto test) {
@@ -141,6 +153,23 @@ inline int claude_tests(const std::filesystem::path& report) {
         approval.access = AgentAccess::full_access; const auto full_args = ClaudeProtocol::arguments(approval, "id", true);
         check(std::find(full_args.begin(), full_args.end(), L"--allow-dangerously-skip-permissions") != full_args.end() && std::find(full_args.begin(), full_args.end(), L"--resume=id") != full_args.end(), "explicit full access and resume must use their intended native CLI flags");
         check(ClaudeProtocol::base64("f") == "Zg==" && ClaudeProtocol::base64("fo") == "Zm8=" && ClaudeProtocol::base64("foo") == "Zm9v", "Claude image encoding must preserve all base64 padding cases");
+        {
+            const auto folder=std::filesystem::temp_directory_path()/(L"coincide-claude-account-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));std::filesystem::create_directories(folder);
+            struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code ignored;std::filesystem::remove_all(path,ignored);}}cleanup{folder};
+            auto scoped_launch=launch();scoped_launch.profile_directory=folder;ClaudeSession scoped(scoped_launch);scoped.send(input());const auto verified=finished(scoped);
+            const auto scope=std::find_if(verified.begin(),verified.end(),[](const auto& value){return value.kind==Kind::account_scope;});const auto native=std::find_if(verified.begin(),verified.end(),[](const auto& value){return value.kind==Kind::session;});
+            check(scope!=verified.end()&&native!=verified.end()&&scope<native&&scope->text.size()==64&&scope->id=="default","Claude must verify its current account before native session persistence or user delivery");
+            const auto saved_scope=scope->text;std::ofstream(folder/L"account-email.txt")<<"another@example.invalid\n";
+            scoped.queue(input("keep original account"),"scope-first");scoped.queue(input("retained original-account draft"),"scope-second");const auto blocked=finished(scoped);
+            check(has(blocked,Kind::error)&&!has(blocked,Kind::started)&&!has(blocked,Kind::session)&&scoped.queue_paused()&&scoped.queued_count()==1,"Claude must pause queued work when native status reports another account, preserving remaining drafts");
+            std::ofstream(folder/L"account-email.txt")<<"fixture@example.invalid\n";check(scoped.resume_queue(),"Claude must resume its retained original-account queue only after explicit action");const auto recovered=finished(scoped);check(!has(recovered,Kind::error)&&std::any_of(recovered.begin(),recovered.end(),[](const auto& value){return value.kind==Kind::input&&value.id=="scope-second";}),"Returning to the original Claude account must retain native conversation ownership and its queued input identity");
+            std::ofstream(folder/L"account-email.txt")<<"another@example.invalid\n";
+            auto scoped_resume=scoped_launch;scoped_resume.session_id="claude-fixture-session";scoped_resume.saved_profile_id="default";scoped_resume.saved_account_scope=saved_scope;ClaudeSession mismatch(scoped_resume);mismatch.send(input());const auto denied=finished(mismatch);
+            check(has(denied,Kind::error)&&!has(denied,Kind::started)&&!has(denied,Kind::session),"Claude account mismatch must fail before constructing a native --resume stream process");
+            auto unreviewed=launch();unreviewed.fixture_account_reviewed=false;ClaudeSession missing_gate(unreviewed);missing_gate.send(input());const auto rejected=finished(missing_gate);check(has(rejected,Kind::error)&&!has(rejected,Kind::started),"Claude's synthetic account review opt-in must never be assumed automatically");
+            auto hung=launch(L"account-hang");hung.request_timeout=10s;ClaudeSession cancellable(hung);cancellable.send(input());Sleep(100);const auto start=std::chrono::steady_clock::now();cancellable.interrupt();const auto cancelled=finished(cancellable);check(combined(cancelled,Kind::completed)=="interrupted"&&std::chrono::steady_clock::now()-start<2s,"A stalled metadata-only auth check must stay cancellable before any user conversation begins");
+            const auto api=ClaudeProtocol::Object::Parse(LR"({"loggedIn":true,"authMethod":"api_key","email":"fixture@example.invalid"})");check(AgentAccountBinding::claude_subject(api).empty(),"API-key credentials without nonsecret provider ownership metadata must not impersonate an OAuth account scope");
+        }
         std::ofstream output(report); output << "PASS: " << checks << " Claude stream-json checks\n"; return output ? 0 : 2;
     } catch (const winrt::hresult_error& error) {std::ofstream(report) << "FAIL: " << winrt::to_string(error.message()) << '\n';}
       catch (const std::exception& error) {std::ofstream(report) << "FAIL: " << error.what() << '\n';}

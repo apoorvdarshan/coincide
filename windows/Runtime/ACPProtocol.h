@@ -55,7 +55,11 @@ struct ACPProtocol {
         const auto selected = config(setup, "model", "model");
         if (selected) {
             Array values;
-            for (const auto& raw : choices(selected->GetNamedArray(L"options", Array{}))) {const auto option = raw.GetObject(); Object model; put(model, L"modelId", text(option, L"value")); put(model, L"name", text(option, L"name")); values.Append(model);}
+            for (const auto& raw : choices(selected->GetNamedArray(L"options", Array{}))) {
+                const auto option = raw.GetObject(); Object model; const auto id = text(option, L"value"); put(model, L"modelId", id); put(model, L"name", text(option, L"name"));
+                for (const auto& legacy : advertised) if (legacy.ValueType() == Type::Object && text(legacy.GetObject(), L"modelId") == id && legacy.GetObject().HasKey(L"_meta")) model.SetNamedValue(L"_meta", legacy.GetObject().GetNamedValue(L"_meta"));
+                values.Append(model);
+            }
             advertised = values;
         }
         const auto current = selected ? text(*selected, L"currentValue") : text(state, L"currentModelId"); const auto reasoning = config(setup, "thought_level", "reasoning_effort");
@@ -112,13 +116,22 @@ struct ACPProtocol {
         const auto answers = OpenCodeProtocol::form_answer(form, response); Object result;
         if (kind == "elicitation") {put(result, L"action", answers.Size() ? "accept" : "cancel"); if (answers.Size()) result.SetNamedValue(L"content", answers); return result;}
         if (kind == "cursor") {
-            Object outcome; Array selections;
+            Object outcome; Array selections; std::string in_words; bool typed{};
             for (const auto& field : form.GetNamedArray(L"fields")) {
                 const auto key = text(field.GetObject(), L"key"); const auto value = answers.GetNamedValue(winrt::to_hstring(key), Json::CreateNullValue()); Array selected;
                 if (value.ValueType() == Type::Array) selected = value.GetArray(); else if (value.ValueType() == Type::String) selected.Append(value);
-                if (selected.Size()) {Object entry; put(entry, L"questionId", key); entry.SetNamedValue(L"selectedOptionIds", selected); selections.Append(entry);}
+                if (selected.Size()) {
+                    if (!in_words.empty()) in_words += '\n'; in_words += text(field.GetObject(), L"title") + ": ";
+                    const auto original = response.GetNamedObject(L"answers", Object{}).GetNamedObject(winrt::to_hstring(key), Object{}).GetNamedArray(L"answers", Array{});
+                    for (std::uint32_t index = 0; index < original.Size(); ++index) {if (index) in_words += ", "; in_words += winrt::to_string(original.GetAt(index).GetString());}
+                    if (!field.GetObject().GetNamedArray(L"options", Array{}).Size()) typed = true;
+                    else {Object entry; put(entry, L"questionId", key); entry.SetNamedValue(L"selectedOptionIds", selected); selections.Append(entry);}
+                }
             }
-            put(outcome, L"outcome", selections.Size() ? "answered" : "skipped"); if (selections.Size()) outcome.SetNamedValue(L"answers", selections); result.SetNamedValue(L"outcome", outcome); return result;
+            put(outcome, L"outcome", !typed && selections.Size() ? "answered" : "skipped");
+            if (typed) put(outcome, L"reason", "The user replied in their own words:\n" + in_words);
+            else if (selections.Size()) outcome.SetNamedValue(L"answers", selections);
+            result.SetNamedValue(L"outcome", outcome); return result;
         }
         put(result, L"outcome", answers.Size() ? "accepted" : "cancelled"); Object selected, annotations;
         for (const auto& raw : form.GetNamedArray(L"fields")) {

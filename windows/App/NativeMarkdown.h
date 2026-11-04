@@ -40,11 +40,11 @@ inline void append(const docs::Paragraph& paragraph, const std::vector<markdown:
         } else paragraph.Inlines().Append(run);
     }
 }
-inline ui::RichTextBlock text(const std::vector<markdown::Span>& spans, const Navigator& action) {
-    ui::RichTextBlock block; block.IsTextSelectionEnabled(true); block.TextWrapping(xaml::TextWrapping::Wrap);
+inline ui::RichTextBlock text(const std::vector<markdown::Span>& spans, const Navigator& action,double font_size=14,const winrt::hstring& font=L"Segoe UI") {
+    ui::RichTextBlock block;block.FontSize(font_size);block.FontFamily(xaml::Media::FontFamily(font)); block.IsTextSelectionEnabled(true); block.TextWrapping(xaml::TextWrapping::Wrap);
     docs::Paragraph paragraph; append(paragraph, spans, action); block.Blocks().Append(paragraph); return block;
 }
-inline ui::StackPanel render(std::string_view source, const winrt::hstring& copy_label, Navigator action = {}, Preview preview = {}) {
+inline ui::StackPanel render(std::string_view source, const winrt::hstring& copy_label, Navigator action = {}, Preview preview = {},double font_size=14,const winrt::hstring& font=L"Segoe UI") {
     ui::StackPanel content; content.Spacing(8); content.Margin({12, 8, 12, 8});
     for (const auto& block : markdown::parse(source)) {
         if (block.kind == markdown::Block::fenced_code) {
@@ -63,7 +63,7 @@ inline ui::StackPanel render(std::string_view source, const winrt::hstring& copy
             }
             code.Children().Append(toolbar);
             ui::TextBlock code_text; code_text.Text(winrt::to_hstring(block.text)); code_text.IsTextSelectionEnabled(true);
-            code_text.FontFamily(xaml::Media::FontFamily(L"Consolas")); code_text.TextWrapping(xaml::TextWrapping::Wrap); identify(code_text, L"CodeBlockText");
+            code_text.FontSize(font_size);code_text.FontFamily(xaml::Media::FontFamily(L"Consolas")); code_text.TextWrapping(xaml::TextWrapping::Wrap); identify(code_text, L"CodeBlockText");
             code.Children().Append(code_text);
             ui::Border border; border.BorderThickness({1, 1, 1, 1}); border.CornerRadius({6, 6, 6, 6}); border.Child(code);
             content.Children().Append(border); continue;
@@ -84,14 +84,14 @@ inline ui::StackPanel render(std::string_view source, const winrt::hstring& copy
             for (std::size_t row = 0; row < block.rows.size(); ++row) {
                 ui::RowDefinition definition; definition.Height({1, xaml::GridUnitType::Auto}); table.RowDefinitions().Append(definition);
                 for (std::size_t column = 0; column < block.rows[row].size(); ++column) {
-                    auto cell = text(markdown::inline_text(block.rows[row][column], row == 0 ? markdown::bold : markdown::normal), action);
+                    auto cell = text(markdown::inline_text(block.rows[row][column], row == 0 ? markdown::bold : markdown::normal), action,font_size,font);
                     ui::Grid::SetRow(cell, static_cast<int32_t>(row)); ui::Grid::SetColumn(cell, static_cast<int32_t>(column)); table.Children().Append(cell);
                 }
             }
             content.Children().Append(table); continue;
         }
-        auto paragraph = text(block.spans, action);
-        if (block.kind == markdown::Block::heading) {paragraph.FontSize(std::max(15.0, 27.0 - block.level * 2)); paragraph.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());}
+        auto paragraph = text(block.spans, action,font_size,font);
+        if (block.kind == markdown::Block::heading) {paragraph.FontSize(std::max(font_size+1, font_size+13 - block.level * 2)); paragraph.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());}
         if (block.kind == markdown::Block::bullet) {
             ui::Grid row; ui::ColumnDefinition prefix; prefix.Width({32, xaml::GridUnitType::Pixel}); row.ColumnDefinitions().Append(prefix); row.ColumnDefinitions().Append(ui::ColumnDefinition{});
             ui::TextBlock marker; marker.Text(winrt::to_hstring(block.marker)); row.Children().Append(marker);

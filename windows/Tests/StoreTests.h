@@ -43,7 +43,9 @@ inline int store_tests(const std::filesystem::path& report) {
         queued.id = "queued-image-only"; queued.text.clear(); value.queued_inputs.push_back(queued);
         workspace.select_provider(thread_id, "codex"); value.model = "saved-codex-model"; value.effort = "xhigh";
         workspace.select_provider(thread_id, "claude");
-        workspace.remember_session(thread_id, {"claude", "native-session", 1});
+        workspace.remember_session(thread_id, {"claude", "native-session", 1,"default",std::string(64,'a')});
+        rejects([&]{workspace.remember_session(thread_id,{"claude","native-session",1,"../escape",std::string(64,'a')});},"Profile routing must reject filesystem paths");
+        rejects([&]{workspace.remember_session(thread_id,{"claude","native-session",1,"default","raw-token"});},"Account routing must accept only identity fingerprints");
         first.save_thread(value); first.save_index(workspace);
 
         WorkspaceStore second(root);
@@ -53,6 +55,8 @@ inline int store_tests(const std::filesystem::path& report) {
         check(loaded.thread(thread_id).draft == value.draft, "draft round trip failed");
         check(loaded.thread(thread_id).messages.front().text == value.messages.front().text, "Unicode message round trip failed");
         check(loaded.thread(thread_id).sessions.front().id == "native-session", "native session round trip failed");
+        check(loaded.thread(thread_id).sessions.front().profile_id=="default"&&loaded.thread(thread_id).sessions.front().account_scope==std::string(64,'a'),"Verified profile and account routing must survive a transcript round trip");
+        const auto snapshot=WorkspaceStore::session_snapshot(root,{thread_id});check(snapshot.size()==1&&snapshot.front().session.account_scope==std::string(64,'a'),"Read-only native session discovery must preserve its account binding");
         check(loaded.projects.front().path == workspace.projects.front().path, "Windows project paths must round trip");
         check(loaded.thread(thread_id).model == value.model && loaded.thread(thread_id).effort == "high"
                 && loaded.thread(thread_id).service_tier == "priority", "model and capability choices must round trip");

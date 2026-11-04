@@ -1,6 +1,7 @@
 #pragma once
 #include "AgentSession.h"
 #include "RpcConnection.h"
+#include "AgentAccountBinding.h"
 #include <unordered_map>
 #include <unordered_set>
 
@@ -10,7 +11,7 @@ namespace coincide {
 class CodexSession : public AgentSession {
 public:
     using QueuedTurn = AgentQueuedTurn;
-    explicit CodexSession(CodexLaunch launch) : launch_(std::move(launch)), worker_([this] { run(); }) {}
+    explicit CodexSession(CodexLaunch launch) : launch_(std::move(launch)), account_(launch_,"codex"), worker_([this] { run(); }) {}
     ~CodexSession() { shutdown(); }
     CodexSession(const CodexSession&) = delete;
     CodexSession& operator=(const CodexSession&) = delete;
@@ -99,6 +100,7 @@ private:
     struct PendingSteer { Steering input; std::future<std::string> result; };
     static constexpr std::size_t byte_limit = 64 * 1024 * 1024;
     CodexLaunch launch_;
+    AgentAccountBinding account_;
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::atomic<bool> stopping_{}, cancel_{}, busy_{}, overflow_{};
@@ -179,19 +181,25 @@ private:
         connection_ = std::make_unique<RpcConnection>(launch_.executable, launch_.arguments, launch_.cwd,
             [this](auto method, auto params) {receive(std::move(method), std::move(params));},
             [this](auto id, auto method, auto params) {receive(std::move(method), std::move(params), std::move(id));},
-            [this](auto error) {receive("__closed", std::move(error));});
+            [this](auto error) {receive("__closed", std::move(error));}, account_.environment());
         (void)request("initialize", CodexProtocol::initialize());
         connection_->notify("initialized");
         transport_ready_ = true;
     }
     void connect() {
-        if (connection_ && opened_session_) return;
+        if (account_.credentials_changed()) disconnect();
         connect_transport();
+        const auto credential_revision=account_.credential_revision();
         const auto account = request("account/read", Object{});
         if (account.GetNamedBoolean(L"requiresOpenaiAuth", true) &&
                 account.GetNamedValue(L"account", Json::CreateNullValue()).ValueType() == rpc_json::JsonValueType::Null) {
             throw RpcError("Sign in to the Codex CLI on this Windows account with codex login, then try again.");
         }
+        if(!account.GetNamedBoolean(L"requiresOpenaiAuth",true)&&!account_.fixture())throw RpcError("This model provider has no verified account-routing identity. Review its account before conversation delivery.");
+        if(credential_revision!=account_.credential_revision())throw RpcError("The Codex sign-in changed during verification; verify its account before continuing.");
+        const auto subject=AgentAccountBinding::codex_subject(account);
+        if(account_.accept(subject,"codex-account-read",subject))emit(Kind::account_scope,account_.profile_id(),account_.scope(),account_.detail());
+        if (connection_ && opened_session_) return;
         const auto cwd = winrt::to_string(launch_.cwd.wstring());
         // A failed resume must not silently replace the user's existing session or discard its context.
         const auto opened = launch_.session_id.empty()
@@ -272,8 +280,10 @@ private:
         }
         if (expired) {reject_delivery(input->id, "Codex did not identify a turn for this follow-up in time"); return;}
         try {
+            if(account_.credentials_changed())throw RpcError("The Codex account changed; this follow-up was not delivered. Verify the original account before continuing.");
+            const auto adapted=with_current_tool_context(launch_,input->turn);if(stopping_||cancel_){reject_delivery(input->id,"This follow-up was stopped before delivery");return;}
             auto response = connection_->call("turn/steer",
-                winrt::to_string(CodexProtocol::steer(launch_.session_id, turn_id_, input->turn).Stringify()),
+                winrt::to_string(CodexProtocol::steer(launch_.session_id, turn_id_, adapted).Stringify()),
                 std::min(launch_.request_timeout, std::chrono::milliseconds(10000)));
             pending_steer_.emplace(PendingSteer{std::move(*input), std::move(response)});
         } catch (const winrt::hresult_error& error) {reject_delivery(input->id, winrt::to_string(error.message()));}
@@ -437,6 +447,7 @@ private:
             if (stopping_ || cancel_) throw Cancelled{};
             turn.cwd = winrt::to_string(launch_.cwd.wstring());
             if (turn.model.empty()) turn.model = model_;
+            turn=with_current_tool_context(launch_,turn);if(stopping_||cancel_)throw Cancelled{};
             expecting_turn_ = true;
             const auto result = request("turn/start", CodexProtocol::turn_start(launch_.session_id, turn));
             const auto id = text(result.GetNamedObject(L"turn"), L"id");

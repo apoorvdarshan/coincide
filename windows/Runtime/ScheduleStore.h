@@ -167,6 +167,20 @@ public:
         task.review_required=false;task.paused=false;task.pending_delivery.reset();advance(task,now,calendar_);commit(std::move(values));
     }
     void remove(std::string_view id){require_open();auto values=tasks_;const auto index=find(values,id);if(values[index].in_flight)throw std::runtime_error("Finish the active delivery before removing its schedule");values.erase(values.begin()+static_cast<std::ptrdiff_t>(index));commit(std::move(values));}
+    std::vector<DeliveryIntent> run_now(std::string_view id,Instant now,const std::unordered_set<std::string>& busy_threads){
+        require_open();validate_now(now);auto values=tasks_;auto& task=values.at(find(values,id));
+        if(task.approval_pending)throw std::runtime_error("Approve the schedule before running it");
+        if(task.paused)throw std::runtime_error("Resume the schedule before running it");
+        if(task.review_required)throw std::runtime_error("Review the interrupted delivery before running this schedule");
+        if(task.in_flight||task.pending_delivery)throw std::runtime_error("This schedule already has a running or pending delivery");
+        bool busy{};for(const auto& thread:busy_threads)if(identity(thread)==task.thread_id)busy=true;
+        for(const auto& other:values)if(other.thread_id==task.thread_id&&other.in_flight)busy=true;
+        std::vector<DeliveryIntent> result;consumed(task,now);
+        if(busy)task.pending_delivery=now;else deliver(task,now,now,schedule_identity,result);
+        // A manual run does not alter the configured recurrence or imply approval of a change.
+        // The durable in-flight/pending marker is saved before the host receives a delivery.
+        commit(std::move(values));return result;
+    }
     std::vector<DeliveryIntent> tick(Instant now,const std::unordered_set<std::string>& busy_threads){
         require_open();std::unordered_set<std::string> busy;for(const auto& id:busy_threads)busy.insert(identity(id));auto change=scheduling::tick(tasks_,now,std::move(busy),calendar_,schedule_identity);
         if(change.changed)commit(std::move(change.tasks));return change.deliveries;

@@ -334,7 +334,8 @@ private:
         current_ = "msg_coincide_" + uuid(); sent_ = delivered_ = execution_ = done_ = false; failure_.clear(); outcome_ = "failed"; blocks_.clear(); finalized_.clear();
         try {
             emit(Kind::status, {}, "Connecting to OpenCode…"); connect(turn); if (stopping_ || cancel_) throw Cancelled{};
-            const auto body = prompt_body(turn); sent_ = true; emit(Kind::started, current_); api("POST", path() + "/prompt", body);
+            const auto adapted=with_current_tool_context(launch_,turn);if(stopping_||cancel_)throw Cancelled{};
+            const auto body = prompt_body(adapted); sent_ = true; emit(Kind::started, current_); api("POST", path() + "/prompt", body);
             while (!done_) {if (stopping_ || cancel_) throw Cancelled{}; pump(); answers(); if (!done_) wait();}
             if (cancel_) throw Cancelled{};
             if (!failure_.empty()) emit(Kind::error, {}, failure_);

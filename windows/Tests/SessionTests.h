@@ -76,6 +76,10 @@ inline int codex_session_fixture(std::wstring_view mode) {
         if (!initialized) {error(id, "The initialized notification was not received"); return;}
         if (method == L"account/read") {
             Object result, account; CodexProtocol::text(account, L"type", "chatgpt");
+            if(mode==L"account-change") {
+                std::string email="fixture@example.invalid";wchar_t profile[32768]{};const auto size=GetEnvironmentVariableW(L"CODEX_HOME",profile,32768);
+                if(size&&size<32768){std::ifstream selected(std::filesystem::path(profile)/L"account-email.txt");std::string next;if(std::getline(selected,next)&&!next.empty())email=next;}CodexProtocol::text(account,L"email",email);
+            }
             if (mode == L"signed-out") result.SetNamedValue(L"account", Json::CreateNullValue());
             else result.SetNamedValue(L"account", account);
             result.SetNamedValue(L"requiresOpenaiAuth", Json::CreateBooleanValue(true)); reply(id, result); return;
@@ -126,7 +130,7 @@ inline int codex_session_fixture(std::wstring_view mode) {
             error(id, "The selected model controls did not reach Codex"); return;
         }
         prompt_text = winrt::to_string(input.GetNamedArray(L"input").GetAt(0).GetObject().GetNamedString(L"text"));
-        active = "turn-" + std::to_string(++turn_number);
+        active = "turn-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(++turn_number);
         Object result, t; CodexProtocol::text(t, L"id", active); result.SetNamedValue(L"turn", t);
         if (mode != L"early-complete") reply(id, result);
         if (!previous.empty()) {
@@ -137,6 +141,10 @@ inline int codex_session_fixture(std::wstring_view mode) {
         auto unrelated = params(active); CodexProtocol::text(unrelated, L"threadId", "another-thread");
         CodexProtocol::text(unrelated, L"itemId", "answer"); CodexProtocol::text(unrelated, L"delta", "WRONG THREAD");
         notice("item/agentMessage/delta", unrelated);
+        if(mode==L"context"){
+            const auto boundary=prompt_text.find("</coincide_current_tools>\n\n");const auto original=boundary==std::string::npos?prompt_text:prompt_text.substr(boundary+27);
+            if(original=="wait")return;complete(prompt_text);lifecycle("turn/completed","completed");previous=active;return;
+        }
         if (prompt_text == "wait") return;
         if (prompt_text == "fail") {lifecycle("turn/completed", "failed"); previous = active; return;}
         if (prompt_text == "stream-then-wait" || prompt_text == "stream-finish") {
@@ -189,7 +197,7 @@ inline int session_tests(const std::filesystem::path& report) {
         if (!GetModuleFileNameW(nullptr, module, 32768)) throw std::runtime_error("Cannot locate the session fixture");
         const auto launch = [&](const wchar_t* mode = L"normal", const std::string& resume = "") {
             CodexLaunch value; value.executable = module; value.cwd = value.executable.parent_path();
-            value.arguments = {L"--codex-session-fixture", mode}; value.session_id = resume; value.interrupt_grace = 150ms; return value;
+            value.arguments = {L"--codex-session-fixture", mode}; value.session_id = resume; value.interrupt_grace = 150ms; value.fixture_account_reviewed=true; return value;
         };
         const auto input = [](const char* text = "hello") {CodexTurn turn; turn.text = text; return turn;};
         const auto until = [&](CodexSession& session, auto condition) {
@@ -398,9 +406,35 @@ inline int session_tests(const std::filesystem::path& report) {
         check(combined(immutable, Kind::text_delta) == "नमस्ते 你好" && combined(immutable, Kind::text_complete) == "नमस्ते 你好",
             "late deltas for an already completed assistant item must not corrupt its authoritative final text");
 
+        {
+            const auto folder=std::filesystem::temp_directory_path()/(L"coincide-account-binding-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));std::filesystem::create_directories(folder);
+            struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code ignored;std::filesystem::remove_all(path,ignored);}}cleanup{folder};
+            const auto rejects=[&](const auto& operation,const char* message){bool rejected{};try{operation();}catch(...){rejected=true;}check(rejected,message);};
+            AgentLaunch seed;seed.profile_directory=folder;AgentAccountBinding identity(seed,"codex");
+            check(identity.accept("fixture@example.invalid","synthetic-status")&&!identity.accept("fixture@example.invalid","synthetic-status"),"A provider worker must bind a verified account once and keep repeated verification stable");
+            const auto bound_scope=identity.scope();rejects([&]{identity.accept("other@example.invalid","synthetic-status");},"An existing worker must never adopt another account into its queued conversation");
+            AgentAccountBinding unknown(seed,"codex");rejects([&]{unknown.accept({},"missing-status");},"Unknown native account identity must fail closed without token-derived fallback");
+            auto legacy=seed;legacy.session_id="old-session";legacy.saved_profile_id="default";AgentAccountBinding legacy_guard(legacy,"codex");rejects([&]{legacy_guard.accept("fixture@example.invalid","synthetic-status");},"Legacy native sessions without account scope require explicit owner review");
+            auto match=legacy;match.saved_account_scope=bound_scope;AgentAccountBinding match_guard(match,"codex");check(match_guard.accept("fixture@example.invalid","synthetic-status"),"A saved native session may resume under its verified original profile and account");
+            auto changed=match;changed.saved_account_scope=std::string(64,'a');AgentAccountBinding changed_guard(changed,"codex");rejects([&]{changed_guard.accept("fixture@example.invalid","synthetic-status");},"A mismatched saved account must be rejected before native resume");
+            auto profile=match;profile.saved_profile_id="01234567-89ab-cdef-0123-456789abcdef";AgentAccountBinding profile_guard(profile,"codex");rejects([&]{profile_guard.accept("fixture@example.invalid","synthetic-status");},"A saved session cannot migrate between local profiles automatically");
+            auto missing_profile=seed;missing_profile.profile_id="01234567-89ab-cdef-0123-456789abcdef";missing_profile.profile_directory.clear();AgentAccountBinding missing_profile_guard(missing_profile,"codex");rejects([&]{missing_profile_guard.environment();},"A nondefault account without its explicit private folder must never fall back to the global provider login");
+            auto synthetic=launch();synthetic.fixture_account_reviewed=false;CodexSession unreviewed(synthetic);unreviewed.send(input());const auto unreviewed_events=finished(unreviewed);check(has(unreviewed_events,Kind::error)&&!has(unreviewed_events,Kind::session)&&!has(unreviewed_events,Kind::started),"Recognized synthetic sessions still require the explicit fixture account review gate");
+            synthetic.fixture_account_reviewed=true;synthetic.executable=folder/L"not-the-current-test-executable.exe";AgentAccountBinding foreign(synthetic,"codex");rejects([&]{foreign.environment();},"The fixture review flag cannot bypass identity verification for another executable");
+            auto scoped_launch=launch(L"account-change");scoped_launch.profile_directory=folder;CodexSession scoped(scoped_launch);scoped.send(input());const auto verified=finished(scoped);
+            const auto scope=std::find_if(verified.begin(),verified.end(),[](const auto& value){return value.kind==Kind::account_scope;});const auto native=std::find_if(verified.begin(),verified.end(),[](const auto& value){return value.kind==Kind::session;});
+            check(scope!=verified.end()&&native!=verified.end()&&scope<native&&scope->id=="default"&&scope->text.size()==64,"Codex must emit its verified account binding before the native session identity for atomic persistence");
+            const auto saved_scope=scope->text;std::ofstream(folder/L"account-email.txt")<<"other@example.invalid\n";
+            scoped.queue(input("first original-account draft"),"scope-first");scoped.queue(input("second original-account draft"),"scope-second");const auto blocked=finished(scoped);
+            check(has(blocked,Kind::error)&&!has(blocked,Kind::started)&&!has(blocked,Kind::session)&&scoped.queue_paused()&&scoped.queued_count()==1,"Codex account changes must stop delivery and retain the remaining queue under its original identity");
+            std::ofstream(folder/L"account-email.txt")<<"fixture@example.invalid\n";check(scoped.resume_queue(),"The original account's retained queue must require an explicit resume");const auto recovered=finished(scoped);check(!has(recovered,Kind::error)&&std::any_of(recovered.begin(),recovered.end(),[](const auto& value){return value.kind==Kind::input&&value.id=="scope-second";}),"Restoring the original verified account must deliver its retained draft without changing conversation ownership");
+            std::ofstream(folder/L"account-email.txt")<<"other@example.invalid\n";
+            auto resume=scoped_launch;resume.session_id="fixture-thread";resume.saved_profile_id="default";resume.saved_account_scope=saved_scope;CodexSession wrong_account(resume);wrong_account.send(input());const auto refused=finished(wrong_account);
+            check(has(refused,Kind::error)&&!has(refused,Kind::session)&&!has(refused,Kind::started),"A real-child Codex account mismatch must fail before thread/resume or turn/start");
+        }
         std::ofstream output(report); output << "PASS: " << checks << " Codex session lifecycle checks\n"; return output ? 0 : 2;
-    } catch (const winrt::hresult_error& e) {std::ofstream(report) << "FAIL: " << winrt::to_string(e.message()) << '\n';}
-      catch (const std::exception& e) {std::ofstream(report) << "FAIL: " << e.what() << '\n';}
+    } catch (const winrt::hresult_error& e) {std::ofstream(report) << "FAIL after " << checks << " checks: " << winrt::to_string(e.message()) << '\n';}
+      catch (const std::exception& e) {std::ofstream(report) << "FAIL after " << checks << " checks: " << e.what() << '\n';}
     return 1;
 }
 } // namespace coincide

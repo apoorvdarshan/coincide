@@ -45,6 +45,42 @@
 #include "BrowserPanel.h"
 #include "TerminalPanel.h"
 #include "PreviewPanel.h"
+#include "PreferencesPanel.h"
+#include "SchedulePanel.h"
+#include "../Runtime/DesktopServices.h"
+#include "../Tests/PreferencesTests.h"
+#include "../Tests/DesktopServicesTests.h"
+#include "../Tests/SchedulePanelTests.h"
+#include "../Tests/PreferencesPanelTests.h"
+#include "InstructionsPanel.h"
+#include "ImportPanel.h"
+#include "../Tests/InstructionImportTests.h"
+#include "../Tests/ImportStoreTests.h"
+#include "../Tests/InstructionImportPanelTests.h"
+#include "ProviderAccountsPanel.h"
+#include "../Tests/ProviderAccountsTests.h"
+#include "../Tests/ProviderAccountsPanelTests.h"
+#include "../Runtime/WindowsNotifications.h"
+#include "../Tests/WindowsNotificationsTests.h"
+#include "../Tests/VoiceTests.h"
+#include "VoicePanel.h"
+#include "../Tests/VoiceSettingsTests.h"
+#include "../Tests/VoicePanelTests.h"
+#include "../Runtime/ComputerUseNative.h"
+#include "../Tests/ComputerUseTests.h"
+#include "../Tests/ComputerUseProcessTests.h"
+#include "ComputerUsePanel.h"
+#include "../Tests/ComputerUseSettingsTests.h"
+#include "../Tests/ComputerUsePanelTests.h"
+#include "../Tests/GitManagementTests.h"
+#include "../Tests/GitPanelTests.h"
+#include "../Tests/TerminalPanelTests.h"
+#include "../Tests/ToolContextTests.h"
+#include "../Tests/AppToolBridgeTests.h"
+#include "../Runtime/AppToolBridge.h"
+#include "../Tests/ScheduleToolTests.h"
+#include "../Tests/ComputerUseDesktopLeaseTests.h"
+#include <winrt/Windows.Globalization.h>
 #include <memory>
 #include <chrono>
 #include <ctime>
@@ -114,6 +150,34 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     std::shared_ptr<coincide::TerminalPanel> terminal_panel;
     std::shared_ptr<coincide::PreviewPanel> preview_panel;
     std::string visible_tool;
+    std::uint64_t latest_scroll_generation{};
+    bool latest_scroll_pending{true},latest_layout_active{};
+    std::string latest_scroll_trace;
+    coincide::Preferences preferences;
+    std::unique_ptr<coincide::PreferencesStore> preferences_store;
+    std::unique_ptr<coincide::DesktopServices> desktop;
+    coincide::PowerRequest power_request;
+    std::shared_ptr<coincide::SchedulePanel> schedule_panel;
+    std::shared_ptr<coincide::InstructionsPanel> instructions_panel;
+    std::shared_ptr<coincide::ImportPanel> import_panel;
+    std::shared_ptr<coincide::ProviderAccountsPanel> accounts_panel;
+    std::shared_ptr<coincide::VoicePanel> voice_panel;
+    std::uint64_t draft_revision{};
+    std::shared_ptr<coincide::WindowsNotifications> notifications;
+    std::shared_ptr<coincide::computer_use::Controller> computer_use;
+    std::shared_ptr<coincide::app_tools::AppToolBridge> tool_bridge;
+    std::unordered_set<std::string> terminal_tool_threads;
+    std::vector<std::future<void>> tool_workers;
+    std::unordered_map<std::string,coincide::ProviderAccountMetadata> account_metadata;
+    std::string account_browser_context;
+    std::vector<coincide::StoredSessionIdentity> import_identities;
+    bool imports_loading{};
+
+    winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer platform_timer{nullptr};
+    bool preferences_writable{},quitting{},quit_when_safe{},schedule_wake_pending{};
+    std::string preferences_error,platform_error;
+    std::uint64_t last_platform_tick{};
+
 
     controls::ListView sidebar{nullptr};
     controls::ListView transcript{nullptr};
@@ -144,9 +208,10 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     bool dirty_index{};
     std::string persistence_error;
     bool closing{};
-    bool fixture_preview{};
+    bool fixture_preview{},desktop_fixture{};
     std::filesystem::path question_test_report;
     int* question_test_result{};
+    std::string native_ui_suite{"question"};
     coincide::ThreadView thread_view{coincide::ThreadView::inbox};
     bool dialog_open{};
     struct RunningThread {
@@ -154,17 +219,21 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         std::unordered_map<std::string, coincide::SessionEvent> prompts;
         std::string status;
         std::string provider;
+        std::string profile_id{"default"},account_scope;
         std::filesystem::path cwd;
         std::vector<coincide::CodexModel> models;
         bool failed{};
         // The worker can finish before its final output reaches the UI and the store.
         bool awaiting_completion{};
         bool completion_received{};
+        std::string schedule_id,schedule_delivery;
+        bool schedule_success{},schedule_uncertain{},schedule_result_pending{},notify_completion{};
+        std::string schedule_status;
     };
     std::unordered_map<std::string, RunningThread> running;
     std::unordered_set<std::string> dirty_threads;
 
-    explicit App(bool fixture = false) : fixture_preview(fixture) {
+    explicit App(bool fixture = false,bool desktop_test=false) : fixture_preview(fixture),desktop_fixture(desktop_test) {
         diagnostic(L"Application constructed");
         UnhandledException([this](const auto&, const xaml::UnhandledExceptionEventArgs& args) {
             diagnostic(args.Message());
@@ -188,11 +257,16 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(!question_test_report.empty()){
             window=xaml::Window{};window.Title(L"Coincide — Question Fixture Test");root=controls::Grid{};window.Content(root);
             root.Loaded([this](const auto&,const auto&){window.DispatcherQueue().TryEnqueue([this]{
-                const auto result=coincide::question_form_tests(question_test_report,root.XamlRoot());if(question_test_result)*question_test_result=result;
+                const auto result=native_ui_suite=="terminal-panel"?coincide::terminal_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="git-panel"?coincide::git_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="computer-use-panel"?coincide::computer_use_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="voice-panel"?coincide::voice_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="schedule-panel"?coincide::schedule_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="preferences-panel"?coincide::preferences_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="provider-accounts-panel"?coincide::provider_accounts_panel_tests(question_test_report,root.XamlRoot()):native_ui_suite=="instruction-import-panel"?coincide::instruction_import_panel_tests(question_test_report,root.XamlRoot()):coincide::question_form_tests(question_test_report,root.XamlRoot());if(question_test_result)*question_test_result=result;
                 window.Close();xaml::Application::Current().Exit();
             });});
             window.Activate();window.AppWindow().Hide();return;
         }
+        try{
+            preferences_store=std::make_unique<coincide::PreferencesStore>(data_directory());preferences=preferences_store->open();preferences_writable=true;
+            if(!preferences.language.empty())winrt::Windows::Globalization::ApplicationLanguages::PrimaryLanguageOverride(winrt::to_hstring(preferences.language));
+        }catch(const winrt::hresult_error& error){preferences_error=winrt::to_string(error.message());}catch(const std::exception& error){preferences_error=error.what();}
+        if(!fixture_preview||desktop_fixture){desktop=std::make_unique<coincide::DesktopServices>(data_directory());if(!desktop->primary()){xaml::Application::Current().Exit();return;}}
         window = xaml::Window{};
         window.Title(fixture_preview ? L"Coincide — Protocol Fixture Test" : L"Coincide — Windows Preview");
         window.AppWindow().Resize({1100, 780});
@@ -201,7 +275,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         root.ColumnDefinitions().Append(left);
         root.ColumnDefinitions().Append(controls::ColumnDefinition{});
         tools_column=controls::ColumnDefinition{};tools_column.Width({0,xaml::GridUnitType::Pixel});root.ColumnDefinitions().Append(tools_column);
-        window.Content(root);
+        window.Content(root);apply_appearance();
         tools_host=controls::Grid{};tools_host.Visibility(xaml::Visibility::Collapsed);tools_host.RowDefinitions().Append(controls::RowDefinition{});tools_host.RowDefinitions().GetAt(0).Height({1,xaml::GridUnitType::Auto});tools_host.RowDefinitions().Append(controls::RowDefinition{});
         controls::StackPanel tools_header;tools_header.Orientation(controls::Orientation::Horizontal);tools_header.Spacing(12);tools_header.Padding({12,8,12,8});
         tools_title=controls::TextBlock{};tools_title.VerticalAlignment(xaml::VerticalAlignment::Center);tools_header.Children().Append(tools_title);
@@ -276,6 +350,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         auto header = controls::RowDefinition{}; header.Height({1, xaml::GridUnitType::Auto});
         content.RowDefinitions().Append(header);
         content.RowDefinitions().Append(controls::RowDefinition{});
+        auto prompts_row=controls::RowDefinition{};prompts_row.Height({1,xaml::GridUnitType::Auto});content.RowDefinitions().Append(prompts_row);
         auto composer_row = controls::RowDefinition{}; composer_row.Height({1, xaml::GridUnitType::Auto});
         content.RowDefinitions().Append(composer_row);
         controls::Grid::SetColumn(content, 1);
@@ -316,11 +391,21 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         auto git=toolbar_button(L"Git",L"Git",L"OpenGit");git.Click([this](const auto&,const auto&){show_git();});toolbar.PrimaryCommands().Append(git);
         auto browser=toolbar_button(L"Browser",L"Browser",L"OpenBrowser");browser.Click([this](const auto&,const auto&){show_browser();});toolbar.PrimaryCommands().Append(browser);
         auto terminal=toolbar_button(L"Terminal",L"Terminal",L"OpenTerminal");terminal.Click([this](const auto&,const auto&){show_terminal();});toolbar.PrimaryCommands().Append(terminal);
+        auto schedules=toolbar_button(L"Schedules",L"Schedules",L"OpenSchedules");schedules.Click([this](const auto&,const auto&){show_schedules();});toolbar.PrimaryCommands().Append(schedules);
+        auto instructions=toolbar_button(L"Instructions",L"Instructions",L"OpenInstructions");instructions.Click([this](const auto&,const auto&){show_instructions();});toolbar.PrimaryCommands().Append(instructions);
+        auto imports=toolbar_button(L"ImportSessions",L"Import Sessions",L"OpenImports");imports.Click([this](const auto&,const auto&){show_imports();});toolbar.PrimaryCommands().Append(imports);
+        auto accounts=toolbar_button(L"Accounts",L"Accounts",L"OpenAccounts");accounts.Click([this](const auto&,const auto&){show_accounts();});toolbar.PrimaryCommands().Append(accounts);
+        auto voice=toolbar_button(L"Voice",L"Voice",L"OpenVoice");voice.Click([this](const auto&,const auto&){show_voice();});toolbar.PrimaryCommands().Append(voice);
+        auto tools=toolbar_button(L"AgentTools",L"Agent tools",L"AgentToolAccess");tools.Click([this](const auto&,const auto&){show_tool_access();});toolbar.PrimaryCommands().Append(tools);
         content.Children().Append(toolbar);
 
         transcript = controls::ListView{};
         identify(transcript, L"Transcript");
-        transcript.Loaded([this](const auto&, const auto&) { show_latest(); });
+        transcript.Loaded([this](const auto&, const auto&) { show_latest(true); });
+        transcript.LayoutUpdated([weak=get_weak()](const auto&,const auto&){if(const auto self=weak.get();self&&!self->closing)self->follow_latest_layout();});
+        const auto stop_follow=xaml::Input::PointerEventHandler([weak=get_weak()](const auto&,const auto&){if(const auto self=weak.get())self->latest_scroll_pending=false;});
+        transcript.AddHandler(xaml::UIElement::PointerWheelChangedEvent(),winrt::box_value(stop_follow),true);transcript.AddHandler(xaml::UIElement::PointerPressedEvent(),winrt::box_value(stop_follow),true);
+        transcript.KeyDown([weak=get_weak()](const auto&,const xaml::Input::KeyRoutedEventArgs& args){if(const auto self=weak.get()){const auto key=args.Key();if(key==winrt::Windows::System::VirtualKey::End)self->show_latest(true);else if(key==winrt::Windows::System::VirtualKey::Home||key==winrt::Windows::System::VirtualKey::PageUp||key==winrt::Windows::System::VirtualKey::Up)self->latest_scroll_pending=false;}});
         transcript.SelectionMode(controls::ListViewSelectionMode::None);
         transcript.HorizontalContentAlignment(xaml::HorizontalAlignment::Stretch);
         transcript.ItemTemplate(xaml::Markup::XamlReader::Load(
@@ -342,11 +427,12 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             if (!selecting && !selected.empty() && writable && index >= 0 && index < 6) {
                 try {
                     if(thread_busy(selected))throw std::runtime_error("Stop the agent before changing providers.");
-                    auto at=running.find(selected);if(at!=running.end()){at->second.session->shutdown();running.erase(at);}
-                    workspace.select_provider(selected,std::string(coincide::provider_ids[index]));
-                    store->save_index(workspace);
-                    update_composer();
-                } catch (...) { report_exception(); }
+                    if(!workspace.thread(selected).queued_inputs.empty())throw std::runtime_error("Finish or remove this conversation's queued messages before changing providers.");
+                    const auto before=workspace.thread(selected);
+                    try{workspace.select_provider(selected,std::string(coincide::provider_ids[index]));store->save_index(workspace);}catch(...){workspace.thread(selected)=before;throw;}
+                    const auto at=running.find(selected);if(at!=running.end()){at->second.session->shutdown();running.erase(at);}
+                    render_prompts();update_composer();
+                } catch (...) { selecting=true;const auto& provider=workspace.thread(selected).provider;providers.SelectedIndex(static_cast<int32_t>(std::distance(coincide::provider_ids.begin(),std::find(coincide::provider_ids.begin(),coincide::provider_ids.end(),provider))));selecting=false;report_exception(); }
             }
         });
         compose.Children().Append(providers);
@@ -358,13 +444,14 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         composer.MinHeight(80); composer.MaxHeight(240);
         composer.IsEnabled(false);
         composer.TextChanged([this](const auto&, const auto&) {
+            ++draft_revision;
             if (selecting || selected.empty() || !writable) return;
             workspace.thread(selected).draft = winrt::to_string(composer.Text());
             dirty_threads.insert(selected); save_timer.Stop(); save_timer.Start(); update_composer();
         });
         composer.KeyDown([this](const auto&, const xaml::Input::KeyRoutedEventArgs& args) {
-            if (args.Key() == winrt::Windows::System::VirtualKey::Enter && (GetKeyState(VK_CONTROL) & 0x8000)) {
-                args.Handled(true); send_message();
+            if(args.Key()==winrt::Windows::System::VirtualKey::Enter&&((GetKeyState(VK_CONTROL)&0x8000)||(preferences.send_on_return&&!(GetKeyState(VK_SHIFT)&0x8000)&&!(GetKeyState(VK_MENU)&0x8000)))){
+                args.Handled(true);if(!selected.empty()&&thread_busy(selected))queue_message(false);else send_message();
             }
         });
         compose.Children().Append(composer);
@@ -389,7 +476,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         prompts_scroll.MaxHeight(220);
         prompts_scroll.VerticalScrollBarVisibility(controls::ScrollBarVisibility::Auto);
         prompts_view = controls::StackPanel{}; prompts_view.Spacing(12); identify(prompts_view, L"AgentPrompts");
-        prompts_scroll.Content(prompts_view); compose.Children().Append(prompts_scroll);
+        prompts_scroll.Content(prompts_view);controls::Grid::SetRow(prompts_scroll,2);content.Children().Append(prompts_scroll);
         state = controls::TextBlock{};
         identify(state, L"AgentStatus");
         state.TextWrapping(xaml::TextWrapping::Wrap);
@@ -397,9 +484,9 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         compose.Children().Append(state);
         controls::ScrollViewer compose_scroll; compose_scroll.MaxHeight(420);
         compose_scroll.VerticalScrollBarVisibility(controls::ScrollBarVisibility::Auto);compose_scroll.Content(compose);
-        controls::Grid::SetRow(compose_scroll, 2);
+        controls::Grid::SetRow(compose_scroll, 3);
         content.Children().Append(compose_scroll);
-        root.SizeChanged([compose_scroll](const auto&,const xaml::SizeChangedEventArgs& args){compose_scroll.MaxHeight(std::max(180.0,std::min(440.0,static_cast<double>(args.NewSize().Height)*0.55)));});
+        root.SizeChanged([compose_scroll,prompts_scroll](const auto&,const xaml::SizeChangedEventArgs& args){const auto height=static_cast<double>(args.NewSize().Height);compose_scroll.MaxHeight(std::max(160.0,std::min(400.0,height*0.50)));prompts_scroll.MaxHeight(std::max(90.0,std::min(240.0,height*0.28)));});
 
         save_timer = window.DispatcherQueue().CreateTimer();
         save_timer.Interval(std::chrono::milliseconds(400)); save_timer.IsRepeating(false);
@@ -408,12 +495,29 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         session_timer.Interval(std::chrono::milliseconds(40));
         session_timer.Tick([this](const auto&, const auto&) { drain_sessions(); });
         session_timer.Start();
+        platform_timer=window.DispatcherQueue().CreateTimer();platform_timer.Interval(std::chrono::seconds(1));
+        platform_timer.Tick([this](const auto&,const auto&){platform_tick();});
+        window.AppWindow().Closing([this](const auto&,const winrt::Microsoft::UI::Windowing::AppWindowClosingEventArgs& args){
+            close_voice();
+            if(git_panel&&git_panel->mutating()){
+                args.Cancel(true);
+                if(!quitting&&preferences.background&&desktop&&desktop->tray_available()){hide_tools();window.AppWindow().Hide();}
+                else{quit_when_safe=true;quitting=true;state.Text(coincide::ui_text(L"Finishing the repository operation before quitting…"));}
+                return;
+            }
+            if((!fixture_preview||desktop_fixture)&&!quitting&&preferences.background&&desktop&&desktop->tray_available()&&background_work()){
+                args.Cancel(true);hide_tools();window.AppWindow().Hide();
+            }
+        });
         window.Closed([this](const auto&, const auto&) {
-            closing = true; save_timer.Stop(); session_timer.Stop();
+            if(fixture_preview)diagnostic(L"Window closed; stopping owned work");
+            closing = true; save_timer.Stop(); session_timer.Stop();if(platform_timer)platform_timer.Stop();
+            if(tool_bridge)tool_bridge->stop();
             for (auto& [id, run] : running) {(void)id; run.session->close();}
             for (auto& [id, run] : running) {(void)id; run.session->shutdown();}
             drain_sessions(); flush_dirty(); save_current();
             if(git_panel)git_panel->close();if(browser_panel)browser_panel->close();if(terminal_panel)terminal_panel->close();if(preview_panel)preview_panel->close();
+            if(schedule_panel)schedule_panel->close();if(instructions_panel)instructions_panel->close();if(import_panel)import_panel->close();if(accounts_panel)accounts_panel->close();close_voice();if(computer_use)computer_use->stop();if(notifications)notifications->close();power_request.close();if(desktop)desktop->close();
         });
 
         try {
@@ -425,7 +529,11 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             writable = false;
             report_exception();
         }
+        if(writable){try{ensure_schedules();}catch(...){report_exception();}}
+        if(desktop){HWND handle{};winrt::check_hresult(window.as<IWindowNative>()->get_WindowHandle(&handle));desktop->attach(handle,[this]{show_window();},[this]{quit_app();},[this](std::string id){show_window();if(!id.empty())try{open_thread(id);}catch(...){report_exception();}},[this]{schedule_wake_pending=true;});}
+        install_shortcuts();platform_timer.Start();platform_tick();
         window.Activate();
+        if(writable){configure_notifications();try{ensure_computer_use();}catch(...){report_exception();}}
         diagnostic(L"Window activated");
         refresh_sidebar();
         if (!visible.empty()) open_thread(visible.front());
@@ -477,12 +585,14 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             render_prompts(); render_attachments();render_queue(); update_composer();
             // Let WinUI lay out at the final width before requesting the latest virtualized row.
             window.DispatcherQueue().TryEnqueue([this, id] {
-                if (selected == id) show_latest();
+                if (selected == id) show_latest(true);
             });
             refresh_sidebar();
+            dismiss_notification(id);
+            if(schedule_panel)schedule_panel->select_thread(id);
             if(browser_panel)browser_panel->select_thread(id);
             if(terminal_panel)terminal_panel->select_thread(id,working_directory(t));
-            if(visible_tool=="git")hide_tools();
+            if(visible_tool=="git")hide_tools();else if(visible_tool=="instructions")show_instructions();
         } catch (...) { selecting = false; report_exception(); }
     }
 
@@ -492,24 +602,50 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             const auto self=weak.get();if(!self||self->closing)return;
             if(url.starts_with("http://")||url.starts_with("https://"))self->show_browser(std::move(url));
             else if(url.starts_with("mailto:"))(void)winrt::Windows::System::Launcher::LaunchUriAsync(foundation::Uri(winrt::to_hstring(url)));
-        },[weak](std::string content,bool svg){const auto self=weak.get();if(self&&!self->closing)self->show_preview(std::move(content),svg);});
+        },[weak](std::string content,bool svg){const auto self=weak.get();if(self&&!self->closing)self->show_preview(std::move(content),svg);},preferences.font_size,message.role=="user"?hstring(L"Segoe UI"):preferences.reply_font=="serif"?hstring(L"Georgia"):preferences.reply_font=="mono"?hstring(L"Consolas"):hstring(L"Segoe UI"));
     }
 
-    void show_latest() {
-        // The first dispatcher callback can run before the window's initial measure/arrange.
-        // Loaded handles that case; already-loaded thread switches use the same path after layout.
-        if (!transcript || !transcript.IsLoaded() || transcript.Items().Size() == 0) return;
-        transcript.UpdateLayout();
-        if (transcript.ActualHeight() <= 0 || transcript.ActualWidth() <= 0) return;
-        transcript.ScrollIntoView(transcript.Items().GetAt(transcript.Items().Size() - 1));
-        diagnostic(hstring{L"Transcript height: " + std::to_wstring(transcript.ActualHeight())});
+    static controls::ScrollViewer scroll_host(const controls::ListView& list){
+        // Follow the items panel's ancestors; a rendered message may contain its own ScrollViewer.
+        xaml::DependencyObject value=list.ItemsPanelRoot();
+        while(value&&value!=list){if(const auto scroll=value.try_as<controls::ScrollViewer>())return scroll;value=xaml::Media::VisualTreeHelper::GetParent(value);}
+        return nullptr;
+    }
+
+    void follow_latest_layout(){
+        if(!latest_scroll_pending||latest_layout_active||closing||!transcript||!transcript.IsLoaded()||!transcript.Items().Size()||transcript.ActualHeight()<=0)return;
+        latest_layout_active=true;struct Reset{bool& value;~Reset(){value=false;}} reset{latest_layout_active};
+        const auto item=transcript.Items().GetAt(transcript.Items().Size()-1);
+        const auto container=transcript.ContainerFromItem(item).try_as<xaml::FrameworkElement>();
+        const auto scroll=scroll_host(transcript);
+        const auto trace=[&](std::string bounds){if(!fixture_preview||selected.empty())return;const auto& messages=workspace.thread(selected).messages;if(messages.empty()||messages.back().text!="decline")return;
+            const auto text=std::string("SCROLL c=")+(container?"1":"0")+" rowh="+std::to_string(container?container.ActualHeight():0)+" viewport="+std::to_string(transcript.ActualHeight())+" offset="+std::to_string(scroll?scroll.VerticalOffset():0)+" extent="+std::to_string(scroll?scroll.ScrollableHeight():0)+" "+bounds;
+            if(text!=latest_scroll_trace){latest_scroll_trace=text;diagnostic(winrt::to_hstring(text));}};
+        if(container&&container.ActualHeight()>0){
+            const auto bounds=container.TransformToVisual(transcript).TransformBounds({0,0,static_cast<float>(container.ActualWidth()),static_cast<float>(container.ActualHeight())});
+            trace("y="+std::to_string(bounds.Y)+" h="+std::to_string(bounds.Height));
+            if(bounds.Height>0&&bounds.Y<transcript.ActualHeight()&&bounds.Y+bounds.Height>0&&bounds.Y+bounds.Height<=transcript.ActualHeight()+1){return;}
+        }else{trace("realizing");transcript.ScrollIntoView(item,controls::ScrollIntoViewAlignment::Leading);return;}
+        if(scroll)scroll.ChangeView(nullptr,winrt::box_value(scroll.ScrollableHeight()).as<foundation::IReference<double>>(),nullptr,true);
+    }
+    void show_latest(bool force=false) {
+        if(force)latest_scroll_pending=true;
+        if(!latest_scroll_pending||closing||!transcript||!transcript.IsLoaded()||!transcript.Items().Size())return;
+        // Track actual realization/layout completion: collapsed approval cards can resize the
+        // viewport after the first ScrollIntoView. Keep the tail anchored until the reader scrolls away.
+        latest_scroll_pending=true;const auto generation=++latest_scroll_generation;const auto id=selected;root.UpdateLayout();follow_latest_layout();
+        const auto weak=get_weak();window.DispatcherQueue().TryEnqueue(winrt::Microsoft::UI::Dispatching::DispatcherQueuePriority::Low,[weak,id,generation]{
+            const auto self=weak.get();if(!self||self->closing||self->selected!=id||self->latest_scroll_generation!=generation)return;
+            self->root.UpdateLayout();self->follow_latest_layout();
+        });
     }
 
     void create_thread(std::optional<std::string> project = std::nullopt) {
         if (!writable) return;
         try {
             coincide::Thread t;
-            t.provider = "codex";
+            t.provider=preferences.provider_default(project);const auto defaults=preferences.model_defaults(project,t.provider);
+            t.model=defaults.model;t.effort=defaults.effort;t.service_tier=defaults.service_tier;t.plan=defaults.plan;t.full_access=defaults.full_access;
             t.id = coincide::new_id(); t.title = winrt::to_string(label(L"NewChat", L"New Chat")); t.project_id = std::move(project);
             t.created_at = t.updated_at = coincide::Workspace::now_seconds();
             const auto id = t.id;
@@ -587,6 +723,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             const auto before = workspace;
             try {operation(ids); store->save_index(workspace);}
             catch (...) {workspace = before; throw;}
+            for(const auto& id:ids)if(workspace.thread(id).deleted_at||workspace.thread(id).archived){if(tool_bridge)tool_bridge->disable(id);terminal_tool_threads.erase(id);if(computer_use)computer_use->revoke(id);}
             reconcile_selection();
         } catch (...) {report_exception();}
     }
@@ -710,7 +847,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 const auto value=winrt::to_string(path.wstring());
                 if(std::none_of(attachments.begin(),attachments.end(),[&](const auto& a){return a.path==value;}))attachments.push_back({value,winrt::to_string(path.filename().wstring()),type});
             }
-            workspace.thread(selected).draft_attachments=std::move(attachments);save_current();render_attachments();update_composer();
+            ++draft_revision;workspace.thread(selected).draft_attachments=std::move(attachments);save_current();render_attachments();update_composer();
         }catch(...){report_exception();}
     }
 
@@ -722,7 +859,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             controls::TextBlock name;name.Text(winrt::to_hstring(attachment.name));row.Children().Append(name);
             auto remove=button(L"Remove",L"Remove",L"RemoveAttachment");const auto id=selected;
             remove.IsEnabled(thread.deleted_at==0);
-            remove.Click([this,id,i](const auto&,const auto&){if(selected!=id||workspace.thread(id).deleted_at)return;auto& a=workspace.thread(id).draft_attachments;if(i<a.size()){a.erase(a.begin()+static_cast<std::ptrdiff_t>(i));save_current();render_attachments();update_composer();}});
+            remove.Click([this,id,i](const auto&,const auto&){if(selected!=id||workspace.thread(id).deleted_at)return;auto& a=workspace.thread(id).draft_attachments;if(i<a.size()){++draft_revision;a.erase(a.begin()+static_cast<std::ptrdiff_t>(i));save_current();render_attachments();update_composer();}});
             row.Children().Append(remove);attachments_view.Children().Append(row);
         }
     }
@@ -766,18 +903,38 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(std::find(ids.begin(),ids.end(),selected)!=ids.end())hide_tools();
     }
     RunningThread& session_for(const std::string& id){
+        if(closing||quitting)throw std::runtime_error("The app is closing.");
         if(git_panel&&git_panel->mutating()){
-            const auto folder=working_directory(workspace.thread(id)),repository=git_panel->repository_root();
-            if(within_folder(repository,folder)||within_folder(folder,repository))throw std::runtime_error("Wait for the repository operation to finish before starting the agent.");
+            const auto folder=working_directory(workspace.thread(id)),repository=git_panel->repository_root(),target=git_panel->mutation_target();
+            if(within_folder(repository,folder)||within_folder(folder,repository)||within_folder(target,folder)||within_folder(folder,target))throw std::runtime_error("Wait for the repository operation to finish before starting the agent.");
         }
         if(const auto found=running.find(id);found!=running.end())return found->second;
         auto& thread=workspace.thread(id);coincide::CodexLaunch launch;launch.cwd=working_directory(thread);
         if(fixture_preview){wchar_t module[32768]{};if(!GetModuleFileNameW(nullptr,module,32768))winrt::throw_last_error();launch.executable=module;launch.arguments={thread.provider=="claude"?L"--claude-session-fixture":thread.provider=="opencode"?L"--opencode-http-fixture":L"--codex-session-fixture",L"normal"};}
-        else launch.executable=coincide::ProviderDiscovery::discover(thread.provider);
+        else{
+            const auto& provider=preferences.providers.at(thread.provider);if(!provider.enabled)throw std::runtime_error("This provider is disabled in Settings.");
+            if(provider.executable.empty())launch.executable=coincide::ProviderDiscovery::discover(thread.provider);
+            else{launch.executable=std::filesystem::path(winrt::to_hstring(provider.executable).c_str());if(!coincide::ProviderDiscovery::windows_executable(launch.executable))throw std::runtime_error("The provider override must be an existing native Windows executable.");}
+        }
         const auto native=std::find_if(thread.sessions.begin(),thread.sessions.end(),[&](const auto& s){return s.provider==thread.provider;});
-        if(native!=thread.sessions.end())launch.session_id=native->id;
+        launch.fixture_account_reviewed=fixture_preview;
+        if(native!=thread.sessions.end()){launch.session_id=native->id;launch.saved_profile_id=native->profile_id;launch.saved_account_scope=native->account_scope;}
         launch.instructions=coincide::handoff_context(thread,thread.provider).text;
-        RunningThread run;run.provider=thread.provider;run.cwd=launch.cwd;run.session=coincide::make_agent_session(thread.provider,std::move(launch));
+        if(!fixture_preview){ensure_thread_tools(id);const auto weak=std::weak_ptr(tool_bridge);launch.tool_context=[weak,id]{const auto bridge=weak.lock();if(!bridge)return std::string{};auto context=bridge->current_instructions(id);
+            if(context.find("<coincide_schedule>")!=std::string::npos)context+="\nSchedule requests use action list; create with name, prompt and schedule; update with id and the changed fields; pause/resume/delete/run-now with id. A schedule is {kind:once,at:ISO-date-time} or {kind:once,inMinutes:number}, {kind:daily|weekdays,time:HH:mm}, {kind:weekly,day:monday,time:HH:mm}, {kind:days,days:[mon,thu],time:HH:mm}, {kind:interval,minutes:number} or hours:number, or {kind:cron,expression:five-fields}. Quote all JSON keys/strings. An optional timeZone is an IANA zone. Repeats must be at least five minutes. Creation and edits await approval; never claim they are active before approval.\n";
+            if(context.find("<coincide_terminal>")!=std::string::npos)context+="\nTerminal requests use action status/read/show/hide/interrupt. Read accepts limit (1-2000 lines, default 200) and page (default 1); output is scoped to this conversation's existing panes. Show does not start a shell. Interrupt sends Ctrl+C to those panes.\n";return context;};}
+        std::optional<coincide::ACPLaunchOptions> acp_options;
+        if(thread.provider=="cursor"){
+            const auto profile_id=native!=thread.sessions.end()?native->profile_id:preferences.providers.at("cursor").profile_id;
+            coincide::ProviderAccountStore profiles(data_directory()/L"provider-profiles");const auto records=profiles.open();
+            const auto record=std::find_if(records.begin(),records.end(),[&](const auto& value){return value.id==profile_id&&value.provider=="cursor";});
+            const auto account=account_metadata.find(profile_id);
+            if(record==records.end()||account==account_metadata.end())throw std::runtime_error("Open Accounts and verify this conversation's original Cursor profile before continuing.");
+            const auto profile=profiles.profile(*record),cache=data_directory()/L"cache/cursor-node";std::filesystem::create_directories(cache);
+            const auto spec=coincide::ACPVendorLaunch::inspect("cursor",launch.executable);launch.executable=spec.executable;launch.profile_id=record->id;launch.profile_directory=profile;
+            acp_options=coincide::make_verified_acp_options(spec,coincide::ProviderAccountProgram::from(spec),*record,profile,cache,account->second,launch.saved_account_scope,!launch.session_id.empty());
+        }
+        RunningThread run;run.provider=thread.provider;run.profile_id=launch.profile_id;run.cwd=launch.cwd;run.session=coincide::make_agent_session(thread.provider,std::move(launch),std::move(acp_options));
         // Restored outbox entries always wait for an explicit Resume action; uncertain delivery is never replayed on launch.
         if(!thread.queued_inputs.empty()){
             run.session->interrupt();
@@ -787,6 +944,315 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             }
         }
         return running.emplace(id,std::move(run)).first->second;
+    }
+
+    void apply_appearance(){
+        if(root)root.RequestedTheme(preferences.appearance=="dark"?xaml::ElementTheme::Dark:preferences.appearance=="light"?xaml::ElementTheme::Light:xaml::ElementTheme::Default);
+    }
+    void apply_preferences(coincide::Preferences value){
+        if(!preferences_writable||!preferences_store)throw std::runtime_error("Preferences could not be loaded; their original file was preserved.");
+        coincide::validate_preferences(value);
+        for(const auto& [provider,settings]:value.providers){
+            const auto& before=preferences.providers.at(provider);const bool changed=settings.executable!=before.executable||settings.enabled!=before.enabled||settings.profile_id!=before.profile_id;
+            if(settings.executable!=before.executable||settings.profile_id!=before.profile_id)for(const auto& thread:workspace.threads)if(thread.provider==provider&&!thread.queued_inputs.empty())throw std::runtime_error("Finish or remove this provider's queued messages before changing its executable or account profile.");
+            if(changed)for(const auto& [id,run]:running)if(run.provider==provider&&thread_busy(id))throw std::runtime_error("Stop this provider's active conversations before changing its executable or enabled state.");
+            if(!settings.executable.empty()&&!coincide::ProviderDiscovery::windows_executable(std::filesystem::path(winrt::to_hstring(settings.executable).c_str())))throw std::runtime_error("Choose an existing native Windows executable for the provider override.");
+        }
+        preferences_store->save(value);
+        for(auto at=running.begin();at!=running.end();){const auto& before=preferences.providers.at(at->second.provider);const auto& after=value.providers.at(at->second.provider);
+            if(before.executable!=after.executable||before.enabled!=after.enabled||before.profile_id!=after.profile_id){at->second.session->shutdown();at=running.erase(at);}else ++at;
+        }
+        const bool notification_change=preferences.notifications!=value.notifications;
+        preferences=std::move(value);apply_appearance();install_shortcuts();if(notification_change)configure_notifications();
+        if(!fixture_preview){try{power_request.update({preferences.keep_awake,preferences.awake_on_battery,preferences.keep_display});platform_error.clear();}catch(const std::exception& error){platform_error=error.what();show_error(winrt::to_hstring(platform_error));}}
+        if(!selected.empty())open_thread(selected);
+    }
+    void install_shortcuts(){
+        root.KeyboardAccelerators().Clear();composer.KeyboardAccelerators().Clear();const auto weak=get_weak();
+        for(const auto& [action,text]:preferences.shortcuts){const auto key=coincide::parse_shortcut(text);if(!key.key)continue;
+            xaml::Input::KeyboardAccelerator shortcut;shortcut.Key(static_cast<winrt::Windows::System::VirtualKey>(key.key));auto modifiers=winrt::Windows::System::VirtualKeyModifiers::None;
+            if(key.control)modifiers|=winrt::Windows::System::VirtualKeyModifiers::Control;if(key.shift)modifiers|=winrt::Windows::System::VirtualKeyModifiers::Shift;if(key.alt)modifiers|=winrt::Windows::System::VirtualKeyModifiers::Menu;shortcut.Modifiers(modifiers);
+            const auto invoke=[weak,action_id=std::string(action),key](const auto&,const xaml::Input::KeyboardAcceleratorInvokedEventArgs& args){
+                const auto self=weak.get();if(!self||self->closing)return;
+                try{
+                    const auto& action=action_id;
+                    if(self->fixture_preview)diagnostic(winrt::to_hstring("Shortcut invoked: "+action));
+                    if(key.control&&!key.alt&&(key.key=='A'||key.key=='C'||key.key=='V'||key.key=='X'||key.key=='Z'||key.key=='Y')){
+                        const auto focus=xaml::Input::FocusManager::GetFocusedElement(self->root.XamlRoot());
+                        if(focus&&(focus.try_as<controls::TextBox>()||focus.try_as<controls::PasswordBox>()||focus.try_as<controls::RichEditBox>()))return;
+                    }
+                    if(action=="quit"){args.Handled(true);self->quit_app();return;}
+                    if(self->dialog_open)return;args.Handled(true);
+                    if(action=="new")self->create_thread();else if(action=="search"){self->search.Focus(xaml::FocusState::Keyboard);self->search.SelectAll();}
+                    else if(action=="settings")self->show_status();else if(action=="terminal")self->show_terminal();else if(action=="browser")self->show_browser();
+                    else if(action=="undo")self->history(false);else if(action=="redo")self->history(true);else if(action=="quit")self->quit_app();
+                    else if(action=="archive")self->mutate_selection([&](const auto& ids){self->workspace.archive(ids,!self->workspace.thread(ids.front()).archived);});
+                }catch(...){self->report_exception();}
+            };shortcut.Invoked(invoke);root.KeyboardAccelerators().Append(shortcut);
+            if(action=="quit"){
+                // TextBox's native editor consumes Ctrl+Q before a parent accelerator sees it.
+                // A distinct accelerator on the focused editor gets the configured app action.
+                xaml::Input::KeyboardAccelerator editor;editor.Key(shortcut.Key());editor.Modifiers(modifiers);editor.Invoked(invoke);composer.KeyboardAccelerators().Append(editor);
+            }
+        }
+    }
+    void show_window(){if(!closing){window.AppWindow().Show();window.Activate();if(composer&&composer.IsEnabled())composer.Focus(xaml::FocusState::Programmatic);}}
+    void quit_app(){
+        if(closing)return;quitting=true;
+        if(git_panel&&git_panel->mutating()){quit_when_safe=true;for(auto& [id,run]:running){(void)id;run.session->interrupt();}state.Text(coincide::ui_text(L"Finishing the repository operation before quitting…"));update_composer();return;}
+        quit_when_safe=false;if(fixture_preview)diagnostic(L"Explicit quit requested");window.Close();
+    }
+    bool background_work()const{
+        if(preferences.keep_awake||(git_panel&&git_panel->mutating()))return true;
+        for(const auto& thread:workspace.threads)if(thread_busy(thread.id)||active_terminal(thread.id))return true;
+        if(schedule_panel)for(const auto& task:schedule_panel->store().tasks())if(task.in_flight||(task.active()&&task.next_run))return true;
+        return false;
+    }
+    std::string schedule_target(const std::string& canonical)const{
+        const winrt::guid id(winrt::to_hstring(canonical));for(const auto& thread:workspace.threads)if(winrt::guid(winrt::to_hstring(thread.id))==id)return thread.id;return{};
+    }
+    bool repository_busy(const coincide::Thread& thread)const{
+        if(!git_panel||!git_panel->mutating())return false;
+        std::filesystem::path folder=data_directory()/L"workspaces"/winrt::to_hstring(thread.id).c_str();
+        if(thread.project_id){const auto project=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& value){return value.id==*thread.project_id;});if(project==workspace.projects.end())return true;folder=std::filesystem::path(winrt::to_hstring(project->path).c_str());}
+        try{const auto repository=git_panel->repository_root(),target=git_panel->mutation_target();return within_folder(repository,folder)||within_folder(folder,repository)||within_folder(target,folder)||within_folder(folder,target);}catch(...){return true;}
+    }
+    bool native_available(const std::string& provider)const{
+        if(fixture_preview)return true;
+        try{const auto& value=preferences.providers.at(provider);return value.executable.empty()?coincide::ProviderDiscovery::windows_executable(coincide::ProviderDiscovery::discover(provider)):coincide::ProviderDiscovery::windows_executable(std::filesystem::path(winrt::to_hstring(value.executable).c_str()));}catch(...){return false;}
+    }
+    bool provider_connected(const coincide::Thread& thread)const{
+        if(!preferences.providers.at(thread.provider).enabled)return false;
+        if(thread.provider=="codex"||thread.provider=="claude"||thread.provider=="opencode")return true;
+        if(thread.provider!="cursor")return false;
+        const auto native=std::find_if(thread.sessions.begin(),thread.sessions.end(),[](const auto& value){return value.provider=="cursor";});
+        const auto profile_id=native==thread.sessions.end()?preferences.providers.at("cursor").profile_id:native->profile_id;
+        const auto account=account_metadata.find(profile_id);
+        return !profile_id.empty()&&account!=account_metadata.end()&&account->second.state==coincide::ProviderAccountState::verified&&account->second.provider=="cursor";
+    }
+    bool schedule_eligible(const coincide::Thread& thread)const{
+        if(thread.deleted_at||thread.archived||!preferences.providers.at(thread.provider).enabled)return false;
+        return provider_connected(thread);
+    }
+    void ensure_schedules(){
+        if(schedule_panel||!writable)return;const auto weak=get_weak();
+        schedule_panel=coincide::SchedulePanel::create(data_directory(),[weak]{
+            std::unordered_set<std::string> busy;if(const auto self=weak.get())for(const auto& thread:self->workspace.threads)
+                if(self->thread_busy(thread.id)||!thread.queued_inputs.empty()||self->dirty_threads.contains(thread.id)||!self->persistence_error.empty()||self->repository_busy(thread))busy.insert(thread.id);
+            return busy;
+        },[weak](const auto& intent){if(const auto self=weak.get())return self->dispatch_schedule(intent);return false;});
+        tool_views.Children().Append(schedule_panel->view());schedule_panel->view().Visibility(xaml::Visibility::Collapsed);
+        if(!selected.empty())schedule_panel->select_thread(selected);
+    }
+    void show_schedules(){if(selected.empty()||!writable)return;try{ensure_schedules();schedule_panel->select_thread(selected);select_tool("schedules",schedule_panel->view(),label(L"Schedules",L"Schedules"));}catch(...){report_exception();}}
+    bool dispatch_schedule(const coincide::scheduling::DeliveryIntent& intent){
+        if(closing||!writable)return false;
+        const auto id=schedule_target(intent.thread_id);if(id.empty())return false;auto& thread=workspace.thread(id);store->load_thread(thread);
+        if(!schedule_eligible(thread)||thread_busy(id)||!thread.queued_inputs.empty())return false;
+        auto& run=session_for(id);const auto turn=make_turn(intent.prompt,{},thread.model,thread.effort,thread.service_tier,thread.plan,thread.full_access);
+        if(std::any_of(thread.messages.begin(),thread.messages.end(),[&](const auto& message){return message.id==intent.delivery_id;}))return false;
+        workspace.note_activity(id);store->save_index(workspace);thread.messages.push_back({intent.delivery_id,"user",intent.prompt,thread.provider});
+        try{store->save_thread(thread);}catch(...){thread.messages.pop_back();throw;}
+        if(!run.session->send(turn)){thread.messages.pop_back();store->save_thread(thread);return false;}
+        run.schedule_id=intent.schedule_id;run.schedule_delivery=intent.delivery_id;run.awaiting_completion=true;run.completion_received=false;run.failed=false;run.status=winrt::to_string(label(L"Connecting",L"Connecting…"));
+        if(selected==id){transcript.Items().Append(message_row(thread.messages.back(),winrt::to_string(label(L"You",L"You"))));show_latest();update_composer();}
+        refresh_sidebar();return true;
+    }
+    void platform_tick(){
+        if(closing)return;
+        std::erase_if(tool_workers,[](auto& worker){if(worker.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return false;try{worker.get();}catch(...){}return true;});
+        if(quitting){if(quit_when_safe&&(!git_panel||!git_panel->mutating()))quit_app();return;}
+        if(computer_use)computer_use->idle_tick();
+        try{
+            last_platform_tick=GetTickCount64();
+            if(schedule_panel){
+                bool ready=true;const auto now=coincide::Workspace::now_seconds();const auto tasks=schedule_panel->store().tasks();
+                for(const auto& task:tasks){
+                    const auto id=schedule_target(task.thread_id);bool available=!id.empty()&&schedule_eligible(workspace.thread(id));
+                    if(available&&(task.pending_delivery||(task.next_run&&*task.next_run<=now))){try{store->load_thread(workspace.thread(id));(void)working_directory(workspace.thread(id));available=native_available(workspace.thread(id).provider);}catch(...){available=false;}}
+                    if(!available&&(!task.paused||task.pending_delivery))ready=schedule_panel->pause_thread(task.thread_id)&&ready;
+                }
+                if(ready){if(schedule_wake_pending){if(schedule_panel->wake())schedule_wake_pending=false;}else schedule_panel->tick();}
+            }
+            if(!fixture_preview)power_request.update({preferences.keep_awake,preferences.awake_on_battery,preferences.keep_display});
+        }catch(...){report_exception();}
+    }
+    winrt::fire_and_forget configure_notifications(){
+        auto lifetime=get_strong();if(fixture_preview||closing)co_return;
+        try{
+            if(!notifications){const auto weak=get_weak();notifications=coincide::WindowsNotifications::create(data_directory()/L"notifications",
+                [weak](std::function<void()> action)->bool{const auto self=weak.get();return self&&!self->closing&&self->window.DispatcherQueue().TryEnqueue([action=std::move(action)]{action();});},
+                [weak](const std::string& identity){if(const auto self=weak.get();self&&!self->closing){const auto id=self->schedule_target(identity);if(!id.empty()){self->show_window();self->open_thread(id);}}},
+                [weak](const std::string& identity){if(const auto self=weak.get();self&&!self->closing){const auto id=self->schedule_target(identity);if(!id.empty()){const auto& thread=self->workspace.thread(id);return !thread.deleted_at&&!thread.archived;}}return false;},nullptr,{},
+                [weak](std::string error){if(const auto self=weak.get();self&&!self->closing)self->show_error(winrt::to_hstring(error));});}
+            co_await notifications->set_enabled(preferences.notifications);
+        }catch(...){if(!closing)report_exception();}
+    }
+    winrt::fire_and_forget dismiss_notification(std::string id){
+        auto lifetime=get_strong();if(!notifications||!notifications->enabled()||closing)co_return;
+        try{co_await notifications->dismiss(id);}catch(...){if(!closing)report_exception();}
+    }
+    void notify_thread(const std::string& id,bool response){
+        if(fixture_preview||!preferences.notifications||!notifications||!notifications->enabled()||closing)return;
+        if(window.AppWindow().IsVisible()&&selected==id)return;
+        try{notifications->notify(id,winrt::to_hstring(workspace.thread(id).title).c_str(),response?coincide::ui_text(L"An agent needs your response.").c_str():coincide::ui_text(L"The conversation finished.").c_str());}catch(...){report_exception();}
+    }
+    void account_changed(const coincide::ProviderAccountRecord& record,const coincide::ProviderAccountMetadata& account_state){
+        account_metadata.insert_or_assign(record.id,account_state);
+        for(auto at=running.begin();at!=running.end();){if(at->second.provider==record.provider&&at->second.profile_id==record.id){
+            if(schedule_panel&&!schedule_panel->pause_thread(at->first))schedule_wake_pending=true;
+            at->second.session->interrupt();at->second.session->shutdown();at=running.erase(at);
+        }else ++at;}
+        if(!selected.empty()){render_prompts();render_queue();update_composer();}
+    }
+    void show_accounts(){
+        try{
+            if(!accounts_panel){const auto weak=get_weak();accounts_panel=coincide::ProviderAccountsPanel::create(data_directory()/L"provider-profiles",
+                [weak](const std::string& provider)->std::optional<coincide::ProviderAccountProgram>{const auto self=weak.get();if(!self||self->closing)return{};
+                    try{const auto& settings=self->preferences.providers.at(provider);const auto path=settings.executable.empty()?coincide::ProviderDiscovery::discover(provider):std::filesystem::path(winrt::to_hstring(settings.executable).c_str());return coincide::ProviderAccountProgram::from(coincide::ACPVendorLaunch::inspect(provider,path));}catch(...){return{};}},
+                [weak](const auto& record,const auto& account_state){if(const auto self=weak.get();self&&!self->closing)self->account_changed(record,account_state);},
+                [weak](const std::string& url){if(const auto self=weak.get();self&&!self->closing){try{
+                    if(!self->browser_panel){self->browser_panel=coincide::BrowserPanel::create(data_directory()/L"browser",{},self->fixture_preview);self->tool_views.Children().Append(self->browser_panel->view());}
+                    if(self->account_browser_context.empty())self->account_browser_context=coincide::new_id();self->browser_panel->select_thread(self->account_browser_context);self->select_tool("browser",self->browser_panel->view(),label(L"Browser",L"Browser"));self->browser_panel->navigate(url);
+                }catch(...){self->report_exception();}}});
+                accounts_panel->set_operation_guard([weak](const coincide::ProviderAccountRecord& record,bool){if(const auto self=weak.get();self&&!self->closing){
+                    for(const auto& [id,run]:self->running)if(run.provider==record.provider&&run.profile_id==record.id&&self->thread_busy(id))throw std::runtime_error("Stop this profile's conversations before checking or changing its sign-in.");
+                    self->account_changed(record,{});
+                }else throw std::runtime_error("The app is closing.");});
+                accounts_panel->set_use_profile([weak](const auto& record,const auto& account_state){
+                    const auto self=weak.get();if(!self||self->closing)throw std::runtime_error("The app is closing.");
+                    if(record.provider!="cursor")throw std::runtime_error("This provider's Windows account identity is not verified yet.");
+                    self->account_changed(record,account_state);auto next=self->preferences;next.providers.at(record.provider).profile_id=record.id;self->apply_preferences(std::move(next));
+                },[weak](const auto& record,const auto& account_state){const auto self=weak.get();return self&&!self->closing&&self->preferences_writable&&record.provider=="cursor"&&account_state.state==coincide::ProviderAccountState::verified;});
+                tool_views.Children().Append(accounts_panel->view());}
+            select_tool("accounts",accounts_panel->view(),label(L"Accounts",L"Accounts"));
+        }catch(...){report_exception();}
+    }
+
+    void close_voice(){
+        if(!voice_panel)return;if(visible_tool=="voice")hide_tools();voice_panel->close();std::uint32_t index{};if(tool_views&&tool_views.Children().IndexOf(voice_panel->view(),index))tool_views.Children().RemoveAt(index);voice_panel.reset();
+    }
+    void show_voice(){
+        try{
+            if(fixture_preview)throw std::runtime_error("Voice fixture previews use the separate synthetic native panel tests.");
+            if(!writable||selected.empty()||workspace.thread(selected).deleted_at)throw std::runtime_error("Select an available conversation before opening Voice.");
+            if(!voice_panel){const auto weak=get_weak();HWND owner{};winrt::check_hresult(window.as<IWindowNative>()->get_WindowHandle(&owner));
+                voice_panel=coincide::VoicePanel::create(data_directory()/L"Voice",[weak]{const auto self=weak.get();if(!self||self->closing||!self->writable||self->selected.empty()||self->workspace.thread(self->selected).deleted_at)throw std::runtime_error("Select an available conversation before recording.");return coincide::VoiceDestination{self->selected,self->draft_revision};},
+                [weak](const coincide::VoiceDestination& destination,const std::string& text){const auto self=weak.get();if(!self||self->closing||!self->writable||self->selected!=destination.thread_id||self->draft_revision!=destination.draft_revision)return false;
+                    auto& thread=self->workspace.thread(self->selected);if(thread.deleted_at||text.empty()||text.size()>256*1024||text.find('\0')!=std::string::npos||!coincide::local_file::utf8(text)||thread.draft.size()>4*1024*1024-text.size())return false;
+                    const auto previous=thread.draft;thread.draft+=previous.empty()||std::isspace(static_cast<unsigned char>(previous.back()))?text:" "+text;
+                    try{self->store->save_thread(thread);}catch(...){thread.draft=previous;throw;}
+                    self->selecting=true;try{self->composer.Text(winrt::to_hstring(thread.draft));}catch(...){self->selecting=false;throw;}self->selecting=false;self->update_composer();return true;
+                },owner);tool_views.Children().Append(voice_panel->view());}
+            select_tool("voice",voice_panel->view(),label(L"Voice",L"Voice"));
+        }catch(...){report_exception();}
+    }
+    static std::string tool_error(const std::string& message){coincide::app_tools::Object result;coincide::computer_use::put(result,L"error",message);return winrt::to_string(result.Stringify());}
+    void ensure_tool_bridge(){
+        if(tool_bridge||fixture_preview||!writable)return;const auto folder=data_directory()/L"app-tools";std::filesystem::create_directories(folder);const auto queue=window.DispatcherQueue();
+        tool_bridge=std::make_shared<coincide::app_tools::AppToolBridge>(folder,[queue](std::function<void()> work){return queue.TryEnqueue([work=std::move(work)]{work();});});
+    }
+    void ensure_thread_tools(const std::string& id){
+        if(fixture_preview||closing||quitting||!writable)return;ensure_tool_bridge();const auto& thread=workspace.thread(id);
+        if(thread.deleted_at||thread.archived){tool_bridge->disable(id);return;}const auto weak=get_weak();
+        const auto handler=[weak](const coincide::app_tools::Request& request,const std::shared_ptr<coincide::app_tools::Operation>& operation){if(const auto self=weak.get())self->handle_app_tool(request,operation);else operation->complete("{\"error\":\"Coincide is closing\"}",503);};
+        using Channel=coincide::app_tools::Channel;
+        tool_bridge->enable(id,Channel::schedule,coincide::app_tools::Request::actions(Channel::schedule),handler);
+        if(terminal_tool_threads.contains(id))tool_bridge->enable(id,Channel::terminal,coincide::app_tools::Request::actions(Channel::terminal),handler);else tool_bridge->disable(id,Channel::terminal);
+        if(computer_use&&computer_use->snapshot(id).granted)tool_bridge->enable(id,Channel::computer_use,coincide::app_tools::Request::actions(Channel::computer_use),handler);else tool_bridge->disable(id,Channel::computer_use);
+    }
+    void handle_app_tool(const coincide::app_tools::Request& request,const std::shared_ptr<coincide::app_tools::Operation>& operation){
+        using namespace coincide::app_tools;using Channel=coincide::app_tools::Channel;
+        if(operation->cancelled())return;
+        try{
+            if(closing||quitting||!writable)throw std::runtime_error("Coincide is closing or its workspace is read-only");
+            const auto id=schedule_target(request.thread_id);if(id.empty()||workspace.thread(id).deleted_at||workspace.thread(id).archived)throw std::runtime_error("This conversation is unavailable");
+            if(request.channel==Channel::schedule){ensure_schedules();if((request.action=="run-now"||request.action=="resume")&&!schedule_eligible(workspace.thread(id)))throw std::runtime_error("This conversation's provider or working folder is unavailable");
+                const auto result=schedule_panel->request(id,request.json);operation->complete(winrt::to_string(result.Stringify()));return;}
+            if(request.channel==Channel::computer_use){
+                if(!computer_use||!computer_use->snapshot(id).granted)throw std::runtime_error("Computer Use is not permitted for this conversation");
+                const auto controller=computer_use;const auto json=request.json;
+                tool_workers.push_back(std::async(std::launch::async,[controller,operation,id,json]{coincide::app_tools::Apartment apartment;if(operation->cancelled())return;try{const auto result=controller->perform(id,json);if(!operation->cancelled())operation->complete(winrt::to_string(result.Stringify()));}catch(const winrt::hresult_error& error){operation->complete(tool_error(winrt::to_string(error.message())),400);}catch(const std::exception& error){operation->complete(tool_error(error.what()),400);}}));return;
+            }
+            if(request.channel!=Channel::terminal||!terminal_tool_threads.contains(id))throw std::runtime_error("This app tool is not permitted for this conversation");
+            Object result;winrt::Windows::Data::Json::JsonArray panes;const auto existing=terminal_panel?terminal_panel->panes(id):std::vector<coincide::TerminalPaneSnapshot>{};
+            if(request.action=="show"){
+                if(dialog_open)throw std::runtime_error("Finish the open dialog before showing a terminal");if(existing.empty())throw std::runtime_error("Open this conversation's terminal first; agent access cannot start a shell");
+                if(selected!=id)open_thread(id);select_tool("terminal",terminal_panel->view(),label(L"Terminal",L"Terminal"));
+            }else if(request.action=="hide"){if(selected==id&&visible_tool=="terminal")hide_tools();}
+            else if(request.action=="interrupt"){bool interrupted{};for(const auto& pane:existing)if(!operation->cancelled())interrupted=terminal_panel->interrupt(id,pane.id)||interrupted;result.SetNamedValue(L"interrupted",Value::CreateBooleanValue(interrupted));}
+            const auto options=Object::Parse(winrt::to_hstring(request.json));const auto limit=request.action=="read"?static_cast<std::size_t>(number(options,L"limit",1,2000,200,true)):0,page=request.action=="read"?static_cast<std::size_t>(number(options,L"page",1,1000,1,true)):1;
+            for(const auto& pane:existing){Object item;coincide::computer_use::put(item,L"id",pane.id);coincide::computer_use::put(item,L"tab",pane.tab_id);coincide::computer_use::put(item,L"title",pane.title);coincide::computer_use::put(item,L"status",pane.status);item.SetNamedValue(L"running",Value::CreateBooleanValue(pane.running));item.SetNamedValue(L"starting",Value::CreateBooleanValue(pane.starting));
+                if(request.action=="read"){const auto snapshot=terminal_panel->read(id,pane.id);std::istringstream source(snapshot.text);std::string line,text;std::size_t count{};while(std::getline(source,line)){if(count>=(page-1)*limit&&count<page*limit){text+=line;text+='\n';}++count;}coincide::computer_use::put(item,L"text",text);item.SetNamedValue(L"truncated",Value::CreateBooleanValue(snapshot.truncated));item.SetNamedValue(L"pages",Value::CreateNumberValue(static_cast<double>(std::max<std::size_t>(1,(count+limit-1)/limit))));}
+                panes.Append(item);
+            }
+            result.SetNamedValue(L"panes",panes);operation->complete(winrt::to_string(result.Stringify()));
+        }catch(const winrt::hresult_error& error){operation->complete(tool_error(winrt::to_string(error.message())),400);}catch(const std::exception& error){operation->complete(tool_error(error.what()),400);}
+    }
+    winrt::fire_and_forget show_tool_access(){
+        auto lifetime=get_strong();if(dialog_open||selected.empty()||!writable)co_return;const auto id=selected;dialog_open=true;
+        try{controls::StackPanel body;body.Spacing(12);controls::TextBlock explanation;explanation.Text(coincide::ui_text(L"Share terminal output only with this conversation. Access lasts until revoked or Coincide closes. Agents cannot type or execute commands through this connection."));explanation.TextWrapping(xaml::TextWrapping::Wrap);body.Children().Append(explanation);
+            controls::CheckBox terminal;terminal.Content(winrt::box_value(coincide::ui_text(L"Allow terminal status, output and interrupt")));terminal.IsChecked(terminal_tool_threads.contains(id));identify(terminal,L"AllowTerminalAgentAccess");body.Children().Append(terminal);
+            controls::TextBlock schedules;schedules.Text(coincide::ui_text(L"Schedule proposals always require your approval in the Schedules panel. Computer Use permissions are managed separately in Settings."));schedules.TextWrapping(xaml::TextWrapping::Wrap);body.Children().Append(schedules);
+            controls::ContentDialog dialog;dialog.XamlRoot(root.XamlRoot());dialog.Title(winrt::box_value(coincide::ui_text(L"Agent tool access")));dialog.Content(body);dialog.PrimaryButtonText(label(L"Save",L"Save"));dialog.CloseButtonText(label(L"Cancel",L"Cancel"));
+            if(co_await dialog.ShowAsync()==controls::ContentDialogResult::Primary&&!closing){const auto checked=terminal.IsChecked();if(checked&&checked.Value())terminal_tool_threads.insert(id);else terminal_tool_threads.erase(id);ensure_thread_tools(id);}
+        }catch(...){if(!closing)report_exception();}dialog_open=false;
+    }
+    void ensure_computer_use(){
+        if(computer_use||fixture_preview)return;const auto directory=data_directory()/L"ComputerUse";std::filesystem::create_directories(directory/L"helper");
+        wchar_t module[32768]{};const auto length=GetModuleFileNameW(nullptr,module,32768);if(!length||length>=32768)winrt::throw_last_error();
+        auto backend=std::make_shared<coincide::computer_use::ProcessBackend>(module,directory/L"helper",GetCurrentProcessId());
+        auto controller=std::make_shared<coincide::computer_use::Controller>(std::move(backend));coincide::computer_use::SettingsStore settings(directory);controller->set_enabled(settings.open().enabled);computer_use=std::move(controller);
+    }
+    void show_instructions(){
+        try{
+            if(!instructions_panel){instructions_panel=coincide::InstructionsPanel::create();tool_views.Children().Append(instructions_panel->view());}
+            if(!selected.empty()&&workspace.thread(selected).project_id)instructions_panel->set_project(working_directory(workspace.thread(selected)));else instructions_panel->show_global();
+            select_tool("instructions",instructions_panel->view(),label(L"Instructions",L"Instructions"));
+        }catch(...){report_exception();}
+    }
+    std::optional<std::string> import_duplicate(const coincide::ImportPreview& preview)const{
+        if(const auto live=coincide::ImportService::duplicate_thread(preview,workspace))return live;
+        const winrt::guid expected(winrt::to_hstring(preview.session_id));
+        for(const auto& record:import_identities)if(record.session.provider==preview.provider){try{
+            if(winrt::guid(winrt::to_hstring(record.session.id))==expected&&std::any_of(workspace.threads.begin(),workspace.threads.end(),[&](const auto& thread){return thread.id==record.thread_id;}))return record.thread_id;
+        }catch(const winrt::hresult_error&){}}
+        return std::nullopt;
+    }
+    void commit_import(const std::shared_ptr<const coincide::ImportPreview>& preview){
+        if(closing||!writable||!preview)throw std::runtime_error("The workspace is not available for importing.");
+        if(const auto duplicate=import_duplicate(*preview))throw std::runtime_error("This native session is already imported. Open the existing conversation instead.");
+        coincide::ImportService::verify_unchanged(*preview);
+        auto candidate=workspace;coincide::Thread thread;thread.id=coincide::new_id();thread.provider=preview->provider;thread.title=preview->title.empty()?winrt::to_string(label(L"ImportedSession",L"Imported Session")):preview->title;
+        thread.model=preview->model;thread.titled_by_user=true;thread.created_at=thread.updated_at=coincide::Workspace::now_seconds();thread.messages=preview->messages;
+        bool resumable=false;
+        if(!preview->directory.empty()){
+            const auto folder=std::filesystem::path(winrt::to_hstring(preview->directory).c_str());std::error_code error;
+            if(coincide::local_file::local_path(folder)&&!coincide::local_file::has_reparse(folder)&&std::filesystem::is_directory(folder,error)){
+                const auto canonical=std::filesystem::canonical(folder);auto found=std::find_if(candidate.projects.begin(),candidate.projects.end(),[&](const auto& project){std::error_code ignored;return std::filesystem::equivalent(canonical,std::filesystem::path(winrt::to_hstring(project.path).c_str()),ignored)&&!ignored;});
+                if(found!=candidate.projects.end())thread.project_id=found->id;
+                else{const auto id=coincide::new_id();candidate.add_project({id,winrt::to_string(canonical.filename().empty()?canonical.root_name().wstring():canonical.filename().wstring()),winrt::to_string(canonical.wstring())});thread.project_id=id;}
+                resumable=true;
+            }
+        }
+        if(resumable)thread.sessions.push_back({thread.provider,preview->session_id,thread.messages.size()});
+        // Permission state and pending inputs always start fresh; source provenance cannot grant access.
+        thread.plan=false;thread.full_access=false;const auto id=thread.id;store->publish_import(candidate,thread,coincide::ImportService::provenance(*preview));workspace=std::move(candidate);
+        import_identities.push_back({id,{preview->provider,preview->session_id,0},true});search.Text(L"");thread_view=coincide::ThreadView::inbox;thread_filter.SelectedIndex(0);refresh_sidebar();open_thread(id);
+    }
+    winrt::fire_and_forget show_imports(){
+        auto lifetime=get_strong();if(imports_loading||!writable)co_return;
+        if(import_panel){select_tool("imports",import_panel->view(),label(L"ImportSessions",L"Import Sessions"));co_return;}
+        imports_loading=true;const auto directory=data_directory();std::vector<std::string> ids;for(const auto& thread:workspace.threads)ids.push_back(thread.id);const winrt::apartment_context ui;
+        std::vector<coincide::StoredSessionIdentity> identities;std::string error;
+        co_await winrt::resume_background();try{identities=coincide::WorkspaceStore::session_snapshot(directory,ids);}catch(const std::exception& failure){error=failure.what();}catch(const winrt::hresult_error& failure){error=winrt::to_string(failure.message());}
+        try{co_await ui;}catch(...){co_return;}imports_loading=false;if(closing)co_return;
+        if(!error.empty()){show_error(winrt::to_hstring(error));co_return;}
+        try{
+            import_identities=std::move(identities);HWND owner{};winrt::check_hresult(window.as<IWindowNative>()->get_WindowHandle(&owner));const auto weak=get_weak();
+            import_panel=coincide::ImportPanel::create(coincide::ImportService::default_roots(),[weak](const auto& preview){const auto self=weak.get();if(!self||self->closing)throw std::runtime_error("The app closed before import publication.");self->commit_import(preview);},[weak](const auto& preview)->std::optional<std::string>{const auto self=weak.get();if(!self||self->closing)throw std::runtime_error("The app is closing.");return self->import_duplicate(preview);},owner);
+            tool_views.Children().Append(import_panel->view());select_tool("imports",import_panel->view(),label(L"ImportSessions",L"Import Sessions"));import_panel->refresh();
+        }catch(...){report_exception();}
     }
 
     void hide_tools(){
@@ -814,7 +1280,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     void show_terminal(){
         if(selected.empty()||!writable)return;
         try{
-            if(!terminal_panel){terminal_panel=coincide::TerminalPanel::create(data_directory(),fixture_preview);tool_views.Children().Append(terminal_panel->view());}
+            if(repository_busy(workspace.thread(selected)))throw std::runtime_error("Wait for the repository operation to finish before opening a terminal.");
+            if(!terminal_panel){terminal_panel=coincide::TerminalPanel::create(data_directory(),fixture_preview);const auto weak=get_weak();terminal_panel->set_command_guard([weak](const auto& id,const auto&){const auto self=weak.get();if(!self||self->closing||self->quitting)return false;try{return !self->repository_busy(self->workspace.thread(id));}catch(...){return false;}});tool_views.Children().Append(terminal_panel->view());}
             terminal_panel->select_thread(selected,working_directory(workspace.thread(selected)));select_tool("terminal",terminal_panel->view(),label(L"Terminal",L"Terminal"));
         }catch(...){report_exception();}
     }
@@ -825,6 +1292,27 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         }catch(...){report_exception();}
     }
 
+    bool git_target_allowed(const std::filesystem::path& target,bool removing)const{
+        if(closing||quitting||!writable)return false;
+        try{
+            if(removing)for(const auto& project:workspace.projects){const auto folder=std::filesystem::path(winrt::to_hstring(project.path).c_str());if(within_folder(target,folder)||within_folder(folder,target))return false;}
+            for(const auto& thread:workspace.threads){
+                std::filesystem::path folder=data_directory()/L"workspaces"/winrt::to_hstring(thread.id).c_str();
+                if(thread.project_id){const auto project=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& value){return value.id==*thread.project_id;});if(project==workspace.projects.end())return false;folder=std::filesystem::path(winrt::to_hstring(project->path).c_str());}
+                if((within_folder(target,folder)||within_folder(folder,target))&&(removing||thread_busy(thread.id)||active_terminal(thread.id)||!thread.queued_inputs.empty()))return false;
+            }return true;
+        }catch(...){return false;}
+    }
+    void open_worktree(const std::filesystem::path& target){
+        if(closing||quitting||!writable)return;
+        const auto folder=std::filesystem::canonical(target);if(!coincide::local_file::local_path(folder)||coincide::local_file::has_reparse(folder)||!std::filesystem::is_directory(folder))throw std::runtime_error("Choose an available local worktree.");
+        auto found=std::find_if(workspace.projects.begin(),workspace.projects.end(),[&](const auto& project){std::error_code error;return std::filesystem::equivalent(folder,std::filesystem::path(winrt::to_hstring(project.path).c_str()),error)&&!error;});
+        std::string project;
+        if(found==workspace.projects.end()){const auto before=workspace;project=coincide::new_id();try{workspace.add_project({project,winrt::to_string(folder.filename().empty()?folder.root_name().wstring():folder.filename().wstring()),winrt::to_string(folder.wstring())});store->save_index(workspace);}catch(...){workspace=before;throw;}}
+        else project=found->id;
+        const auto existing=std::find_if(workspace.threads.begin(),workspace.threads.end(),[&](const auto& thread){return thread.project_id==project&&!thread.deleted_at&&!thread.archived;});
+        if(existing!=workspace.threads.end()){thread_view=coincide::ThreadView::inbox;thread_filter.SelectedIndex(0);refresh_sidebar();open_thread(existing->id);}else create_thread(project);
+    }
     void show_git(){
         if(selected.empty()||!writable)return;
         try{
@@ -842,7 +1330,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                     auto& thread=self->workspace.thread(self->selected);if(thread.deleted_at)return;
                     thread.draft+="\n\nRepository diff reference from "+key+":\n```diff\n"+text+"\n```";
                     self->selecting=true;self->composer.Text(winrt::to_hstring(thread.draft));self->selecting=false;self->save_current();self->update_composer();self->composer.Focus(xaml::FocusState::Programmatic);
-                });
+                },[weak](const std::filesystem::path& target,bool removing){const auto self=weak.get();return self&&self->git_target_allowed(target,removing);},[weak](const std::filesystem::path& target){if(const auto self=weak.get();self&&!self->closing)try{self->open_worktree(target);}catch(...){self->report_exception();}});
                 git_view=controls::ScrollViewer{};git_view.VerticalScrollBarVisibility(controls::ScrollBarVisibility::Auto);git_view.Content(git_panel->view());tool_views.Children().Append(git_view);
             }
             select_tool("git",git_view,label(L"Git",L"Git"));
@@ -850,7 +1338,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
 
     void queue_message(bool steer){
-        if(selected.empty()||!writable)return;
+        if(closing||quitting||selected.empty()||!writable)return;
         try{
             auto& thread=workspace.thread(selected);if(thread.deleted_at||(thread.draft.empty()&&thread.draft_attachments.empty()))return;
             auto& run=session_for(selected);
@@ -886,7 +1374,14 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if(!model_picker||selected.empty())return;
         const auto& thread=workspace.thread(selected);model_ids.clear();model_picker.Items().Clear();
         model_ids.push_back("");add_choice(model_picker,coincide::ui_text(L"Default"));int selected_index=0;
-        for(const auto& model:dialog_models){model_ids.push_back(model.model);add_choice(model_picker,winrt::to_hstring(model.display_name));if(model.model==thread.model)selected_index=static_cast<int>(model_ids.size()-1);}
+        const auto& options=preferences.providers.at(thread.provider);auto models=dialog_models;
+        auto favorite=[&](const std::string& id){const auto at=std::find(options.favorites.begin(),options.favorites.end(),id);return at==options.favorites.end()?options.favorites.size():static_cast<std::size_t>(at-options.favorites.begin());};
+        std::stable_sort(models.begin(),models.end(),[&](const auto& first,const auto& second){return favorite(first.model)<favorite(second.model);});
+        for(const auto& model:models){
+            if(model.model!=thread.model&&std::find(options.hidden.begin(),options.hidden.end(),model.model)!=options.hidden.end())continue;
+            model_ids.push_back(model.model);add_choice(model_picker,winrt::to_hstring((favorite(model.model)<options.favorites.size()?"★ ":"")+model.display_name));if(model.model==thread.model)selected_index=static_cast<int>(model_ids.size()-1);
+        }
+        for(const auto& custom:options.custom_models)if(std::find(model_ids.begin(),model_ids.end(),custom)==model_ids.end()&&(custom==thread.model||std::find(options.hidden.begin(),options.hidden.end(),custom)==options.hidden.end())){model_ids.push_back(custom);add_choice(model_picker,winrt::to_hstring(custom));if(custom==thread.model)selected_index=static_cast<int>(model_ids.size()-1);}
         if(!thread.model.empty()&&std::find(model_ids.begin(),model_ids.end(),thread.model)==model_ids.end()){model_ids.push_back(thread.model);add_choice(model_picker,winrt::to_hstring(thread.model));selected_index=static_cast<int>(model_ids.size()-1);}
         model_picker.SelectedIndex(selected_index);fill_model_options();
     }
@@ -901,6 +1396,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             for(const auto& effort:model->efforts){effort_ids.push_back(effort);add_choice(effort_picker,winrt::to_hstring(effort));}
             for(const auto& tier:model->service_tiers){tier_ids.push_back(tier.id);add_choice(tier_picker,winrt::to_hstring(tier.name.empty()?tier.id:tier.name));}
         }
+        if(!thread.effort.empty()&&std::find(effort_ids.begin(),effort_ids.end(),thread.effort)==effort_ids.end()){effort_ids.push_back(thread.effort);add_choice(effort_picker,winrt::to_hstring(thread.effort));}
+        if(!thread.service_tier.empty()&&std::find(tier_ids.begin(),tier_ids.end(),thread.service_tier)==tier_ids.end()){tier_ids.push_back(thread.service_tier);add_choice(tier_picker,winrt::to_hstring(thread.service_tier));}
         const auto effort=std::find(effort_ids.begin(),effort_ids.end(),thread.effort);effort_picker.SelectedIndex(effort==effort_ids.end()?0:static_cast<int32_t>(std::distance(effort_ids.begin(),effort)));
         const auto tier=std::find(tier_ids.begin(),tier_ids.end(),thread.service_tier);tier_picker.SelectedIndex(tier==tier_ids.end()?0:static_cast<int32_t>(std::distance(tier_ids.begin(),tier)));
     }
@@ -940,13 +1437,19 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         auto failed=[&]{report_exception();persistence_error=state?winrt::to_string(state.Text()):"Changes could not be saved.";};
         for(const auto& id:ids){try{store->save_thread(workspace.thread(id));}catch(...){dirty_threads.insert(id);failed();}}
         if(dirty_index){try{store->save_index(workspace);dirty_index=false;}catch(...){failed();}}
-        if(persistence_error.empty())for(auto& [id,run]:running)if(run.completion_received&&!dirty_threads.contains(id)&&!dirty_index)run.awaiting_completion=false;
+        if(persistence_error.empty())for(auto& [id,run]:running)if(!dirty_threads.contains(id)&&!dirty_index){
+            if(run.completion_received){run.awaiting_completion=false;if(run.notify_completion){notify_thread(id,false);run.notify_completion=false;}}
+            if(schedule_panel&&run.schedule_result_pending&&!run.schedule_delivery.empty()){
+                schedule_panel->completed_delivery(run.schedule_id,run.schedule_delivery,run.schedule_success,run.schedule_uncertain,run.schedule_status);run.schedule_id.clear();run.schedule_delivery.clear();run.schedule_result_pending=false;
+            }
+        }
         if(!closing&&(!dirty_threads.empty()||dirty_index)){save_timer.Stop();save_timer.Start();}
         if(!closing)update_composer();
     }
 
     void update_composer() {
         if (closing || selected.empty() || !writable) return;
+        if(quitting){send_button.IsEnabled(false);queue_button.IsEnabled(false);steer_button.IsEnabled(false);models_button.IsEnabled(false);return;}
         const auto& thread = workspace.thread(selected);
         if (thread.deleted_at) {
             providers.IsEnabled(false); composer.IsEnabled(false); send_button.IsEnabled(false); stop_button.IsEnabled(false);
@@ -956,22 +1459,22 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         composer.IsEnabled(true);
         const auto run = running.find(selected);
         const auto busy = run != running.end() && (run->second.awaiting_completion || run->second.session->busy());
-        const auto connected=thread.provider=="codex"||thread.provider=="claude"||thread.provider=="opencode";
+        const auto connected=provider_connected(thread);
         const auto has_input=!thread.draft.empty()||!thread.draft_attachments.empty();
         providers.IsEnabled(!busy); stop_button.IsEnabled(busy);
         models_button.IsEnabled(connected&&!busy);queue_button.IsEnabled(connected&&has_input);steer_button.IsEnabled(thread.provider=="codex"&&busy&&has_input);
         send_button.IsEnabled(connected&&!busy&&has_input&&thread.queued_inputs.empty());
         if (run != running.end() && !run->second.status.empty()) state.Text(winrt::to_hstring(run->second.status));
-        else if (connected) state.Text(thread.provider=="codex"?L"Codex · Ctrl+Enter sends.":thread.provider=="claude"?L"Claude Code · Ctrl+Enter sends.":L"OpenCode · Ctrl+Enter sends.");
-        else state.Text(L"This provider adapter is not available yet.");
-        if(!persistence_error.empty())state.Text(winrt::to_hstring(persistence_error));
+        else if (connected) state.Text(thread.provider=="codex"?L"Codex · Ctrl+Enter sends.":thread.provider=="claude"?L"Claude Code · Ctrl+Enter sends.":thread.provider=="cursor"?L"Cursor · Ctrl+Enter sends.":L"OpenCode · Ctrl+Enter sends.");
+        else state.Text(thread.provider=="cursor"?L"Open Accounts to verify and choose a Cursor profile.":L"This provider adapter is not available yet.");
+        if(!persistence_error.empty())state.Text(winrt::to_hstring(persistence_error));else if(!platform_error.empty())state.Text(winrt::to_hstring(platform_error));
     }
 
     void send_message() {
-        if (selected.empty() || !writable) return;
+        if (closing||quitting||selected.empty() || !writable) return;
         try {
             auto& thread = workspace.thread(selected);
-            if ((thread.provider!="codex"&&thread.provider!="claude"&&thread.provider!="opencode")||thread.deleted_at||(thread.draft.empty()&&thread.draft_attachments.empty()))return;
+            if (!provider_connected(thread)||thread.deleted_at||(thread.draft.empty()&&thread.draft_attachments.empty()))return;
             if(!thread.queued_inputs.empty())throw std::runtime_error("Resume or remove the saved queue before sending another message.");
             auto at = running.find(selected);
             if (at != running.end() && (at->second.awaiting_completion || at->second.session->busy())) return;
@@ -990,7 +1493,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             at->second.failed = false; at->second.status = winrt::to_string(label(L"Connecting", L"Connecting…"));
             transcript.Items().Append(message_row(thread.messages.back(),winrt::to_string(label(L"You", L"You"))));
             selecting = true; composer.Text(L""); selecting = false;
-            render_attachments();update_composer(); show_latest(); composer.Focus(xaml::FocusState::Programmatic);
+            render_attachments();update_composer(); show_latest(true); composer.Focus(xaml::FocusState::Programmatic);
         } catch (...) {report_exception();}
     }
 
@@ -1022,11 +1525,23 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                     try{
                     using Kind = coincide::SessionEvent::Kind;
                     switch (event.kind) {
+                    case Kind::account_scope:
+                        {
+                            coincide::NativeSession binding{run.provider,"pending",0,event.id,event.text};
+                            if(!coincide::valid_session_binding(binding)||binding.account_scope.empty())throw std::runtime_error("The provider returned invalid verified account routing metadata.");
+                            run.profile_id=binding.profile_id;run.account_scope=binding.account_scope;
+                            const auto session=std::find_if(thread.sessions.begin(),thread.sessions.end(),[&](const auto& value){return value.provider==run.provider;});
+                            if(session!=thread.sessions.end()){
+                                if(!session->account_scope.empty()&&(session->account_scope!=run.account_scope||session->profile_id!=run.profile_id))throw std::runtime_error("The verified provider account differs from this saved conversation.");
+                                session->profile_id=run.profile_id;session->account_scope=run.account_scope;dirty_threads.insert(id);
+                            }
+                            break;
+                        }
                     case Kind::session:
                         {
                             const auto previous = std::find_if(thread.sessions.begin(), thread.sessions.end(), [&](const auto& s) {return s.provider == run.provider && s.id == event.id;});
                             const auto acknowledged = previous == thread.sessions.end() ? 0 : previous->acknowledged_messages;
-                            workspace.remember_session(id, {run.provider,event.id,acknowledged});dirty_threads.insert(id);break;
+                            workspace.remember_session(id, {run.provider,event.id,acknowledged,run.account_scope.empty()&&previous!=thread.sessions.end()?previous->profile_id:run.profile_id,run.account_scope.empty()&&previous!=thread.sessions.end()?previous->account_scope:run.account_scope});dirty_threads.insert(id);break;
                         }
                     case Kind::started:
                         run.completion_received=false;run.status = run.provider+" is working…"; break;
@@ -1050,7 +1565,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                     }
                     case Kind::prompt:
                         workspace.note_activity(id,coincide::Workspace::now_seconds(),true);dirty_index=true;
-                        run.prompts.insert_or_assign(event.id, event); changed_prompts = changed_prompts || selected == id;
+                        run.prompts.insert_or_assign(event.id, event); changed_prompts = changed_prompts || selected == id;notify_thread(id,true);
                         run.status = run.provider=="codex"?"Codex is waiting for your response.":"Claude Code is waiting for your response."; break;
                     case Kind::resolved:
                         run.prompts.erase(event.id); changed_prompts = changed_prompts || selected == id; break;
@@ -1063,7 +1578,9 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                             const auto session = std::find_if(thread.sessions.begin(), thread.sessions.end(), [&](const auto& s) {return s.provider == run.provider;});
                             if (session != thread.sessions.end()) session->acknowledged_messages = thread.messages.size();
                         }
-                        dirty_threads.insert(id);run.completion_received=true;new_completion=true;break;
+                        dirty_threads.insert(id);run.completion_received=true;new_completion=true;
+                        if(!run.schedule_delivery.empty()&&!run.schedule_result_pending){run.schedule_success=event.text=="completed"&&!run.failed;run.schedule_uncertain=event.text!="completed"&&event.text!="interrupted";run.schedule_status=run.status;run.schedule_result_pending=true;}
+                        run.notify_completion=true;break;
                     }
                     }catch(...){run.failed=true;dirty_threads.insert(id);report_exception();}
                 }
@@ -1117,7 +1634,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 const auto extra = params.GetNamedValue(L"additionalPermissions", coincide::rpc_json::JsonValue::CreateNullValue());
                 if (extra.ValueType() == coincide::rpc_json::JsonValueType::Object) description += L"\nAdditional permissions: " + std::wstring(extra.Stringify());
                 identify(detail, L"ApprovalDetails");
-                detail.Text(winrt::hstring(description)); card.Children().Append(detail);
+                detail.Text(winrt::hstring(description));controls::ScrollViewer details;details.MaxHeight(120);details.VerticalScrollBarVisibility(controls::ScrollBarVisibility::Auto);details.Content(detail);card.Children().Append(details);
+                controls::StackPanel decisions_row;decisions_row.Orientation(controls::Orientation::Horizontal);decisions_row.Spacing(8);
                 bool allow = file_change && has_file_details;
                 const auto decisions = params.GetNamedValue(L"availableDecisions", coincide::rpc_json::JsonValue::CreateNullValue());
                 if (!file_change && decisions.ValueType() == coincide::rpc_json::JsonValueType::Array) {
@@ -1128,14 +1646,15 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 if (allow) {
                     auto accept = button(L"Allow", L"Allow", L"AllowApproval");
                     accept.Click([this, thread, id](const auto&, const auto&) {answer_prompt(thread, id, "{\"decision\":\"accept\"}");});
-                    card.Children().Append(accept);
+                    decisions_row.Children().Append(accept);
                 }
                 auto decline = button(L"Deny", L"Deny", L"DenyApproval");
                 decline.Click([this, thread, id](const auto&, const auto&) {answer_prompt(thread, id, "{\"decision\":\"decline\"}");});
-                card.Children().Append(decline);
+                decisions_row.Children().Append(decline);card.Children().Append(decisions_row);
             }
             prompts_view.Children().Append(card);
         }
+        show_latest();
     }
 
     void history(bool redo) {
@@ -1164,17 +1683,21 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         else MessageBoxW(nullptr, message.c_str(), L"Coincide", MB_OK | MB_ICONERROR);
     }
 
-    winrt::fire_and_forget show_status() {
-        auto lifetime = get_strong();
-        try {
-            controls::ContentDialog dialog;
-            dialog.XamlRoot(root.XamlRoot());
-            dialog.Title(winrt::box_value(label(L"Settings", L"Settings")));
-            dialog.Content(winrt::box_value(L"This Windows preview includes Codex, Claude Code and OpenCode adapters, conversation and project controls, model settings, queues, native questions, Markdown, attachments, Git, browser and terminal panels. Closing the window stops its agent and terminal processes. Real signed-in conversations and complete feature parity are still being validated."));
-            dialog.CloseButtonText(label(L"Close", L"Close"));
+    winrt::fire_and_forget show_status(){
+        auto lifetime=get_strong();if(dialog_open)co_return;dialog_open=true;
+        std::shared_ptr<coincide::ComputerUsePanel> computer_settings;
+        try{
+            auto panel=coincide::PreferencesPanel::create(preferences,workspace.projects);controls::ContentDialog dialog;dialog.XamlRoot(root.XamlRoot());dialog.Title(winrt::box_value(label(L"Settings",L"Settings")));
+            controls::Grid frame;controls::RowDefinition heading;heading.Height({1,xaml::GridUnitType::Auto});frame.RowDefinitions().Append(heading);frame.RowDefinitions().Append(controls::RowDefinition{});
+            controls::TextBlock validation;identify(validation,L"PreferencesValidationError");validation.TextWrapping(xaml::TextWrapping::Wrap);validation.IsTextSelectionEnabled(true);if(!preferences_writable)validation.Text(winrt::to_hstring(preferences_error));frame.Children().Append(validation);controls::Grid::SetRow(panel->view(),1);frame.Children().Append(panel->view());dialog.Content(frame);
+            if(!fixture_preview){ensure_computer_use();computer_settings=coincide::ComputerUsePanel::create(data_directory()/L"ComputerUse",computer_use,[weak=get_weak()](coincide::ComputerUsePanel::Change change,const std::string& id){if(const auto self=weak.get();self&&!self->closing){if(change==coincide::ComputerUsePanel::Change::master){if(self->tool_bridge)for(const auto& thread:self->workspace.threads)self->tool_bridge->disable(thread.id,coincide::app_tools::Channel::computer_use);}else if(!id.empty())self->ensure_thread_tools(id);}});if(!selected.empty())computer_settings->select_thread(selected,workspace.thread(selected).title);controls::TabViewItem tab;tab.Header(winrt::box_value(coincide::ui_text(L"Computer Use")));tab.IsClosable(false);tab.Content(computer_settings->view());panel->view().TabItems().Append(tab);}
+            dialog.PrimaryButtonText(label(L"Save",L"Save"));dialog.CloseButtonText(label(L"Cancel",L"Cancel"));dialog.IsPrimaryButtonEnabled(preferences_writable);
+            auto save=dialog.PrimaryButtonClick(winrt::auto_revoke,[this,panel,validation](const auto&,const controls::ContentDialogButtonClickEventArgs& args){try{validation.Text(L"");apply_preferences(panel->values());}catch(const winrt::hresult_error& error){args.Cancel(true);validation.Text(error.message());}catch(const std::exception& error){args.Cancel(true);validation.Text(winrt::to_hstring(error.what()));}});
             co_await dialog.ShowAsync();
-        } catch (...) { report_exception(); }
+        }catch(...){if(!closing)report_exception();}
+        if(computer_settings)computer_settings->close();dialog_open=false;
     }
+
 };
 } // namespace
 
@@ -1183,6 +1706,36 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         winrt::init_apartment(winrt::apartment_type::single_threaded);
         int argc{};
         auto argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if(argv&&argc>=2&&std::wstring_view(argv[1])==L"--computer-use-helper"){
+            if(argc!=3){LocalFree(argv);return 2;}const std::wstring value(argv[2]);
+            if(value.empty()||value.size()>10||value.find_first_not_of(L"0123456789")!=std::wstring::npos){LocalFree(argv);return 2;}
+            const auto owner=std::stoull(value);LocalFree(argv);if(!owner||owner>MAXDWORD)return 2;
+            return coincide::computer_use::computer_use_helper_main(static_cast<DWORD>(owner));
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--schedule-tool-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::schedule_tool_tests(report);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--tool-context-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::tool_context_tests(report);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--app-tool-bridge-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::app_tool_bridge_tests(report);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--git-management-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::git_management_tests(report);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--computer-use-settings-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::computer_use_settings_tests(report);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--computer-use-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::computer_use_tests(report);
+        }
+        if(argv&&argc==4&&std::wstring_view(argv[1])==L"--computer-use-process-tests"){
+            const auto report=std::filesystem::path(argv[2]),fixture=std::filesystem::path(argv[3]);LocalFree(argv);return coincide::computer_use_process_tests(report,fixture);
+        }
+        if(argv&&argc==4&&std::wstring_view(argv[1])==L"--computer-use-desktop-lease-tests"){
+            const auto report=std::filesystem::path(argv[2]),fixture=std::filesystem::path(argv[3]);LocalFree(argv);return coincide::computer_use_desktop_lease_tests(report,fixture);
+        }
         if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--store-tests") {
             const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
             return coincide::store_tests(report);
@@ -1243,12 +1796,45 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         if(argv&&argc==3&&std::wstring_view(argv[1])==L"--acp-terminal-fixture"){
             const auto mode=std::wstring(argv[2]);LocalFree(argv);return coincide::acp_terminal_fixture(mode);
         }
+        if(argv&&argc>=5&&std::wstring_view(argv[1])==L"--provider-account-fixture"){
+            const auto result=coincide::provider_account_fixture(argc,argv);LocalFree(argv);return result;
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--provider-accounts-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::provider_accounts_tests(report);
+        }
+        if(argv&&argc==4&&std::wstring_view(argv[1])==L"--voice-tests"){
+            const auto report=std::filesystem::path(argv[2]),fixture=std::filesystem::path(argv[3]);LocalFree(argv);return coincide::voice_tests(report,fixture);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--voice-settings-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::voice_settings_tests(report);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--notifications-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::windows_notifications_tests(report);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--instructions-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::instruction_tests(report);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--imports-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::import_tests(report);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--import-store-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::import_store_tests(report);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--preferences-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::preferences_tests(report);
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--desktop-services-tests"){
+            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::desktop_services_tests(report);
+        }
         if(argv&&argc==3&&std::wstring_view(argv[1])==L"--credential-tests"){
             const auto report=std::filesystem::path(argv[2]);LocalFree(argv);return coincide::credential_tests(report);
         }
-        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--question-tests"){
-            const auto report=std::filesystem::path(argv[2]);LocalFree(argv);int result=1;winrt::com_ptr<App> application;
-            xaml::Application::Start([&](auto&&){application=winrt::make_self<App>(true);application->question_test_report=report;application->question_test_result=&result;});return result;
+        if(argv&&argc==3&&(std::wstring_view(argv[1])==L"--question-tests"||std::wstring_view(argv[1])==L"--schedule-panel-tests"||std::wstring_view(argv[1])==L"--preferences-panel-tests"||std::wstring_view(argv[1])==L"--instruction-import-panel-tests"||std::wstring_view(argv[1])==L"--provider-accounts-panel-tests"||std::wstring_view(argv[1])==L"--voice-panel-tests"||std::wstring_view(argv[1])==L"--computer-use-panel-tests"||std::wstring_view(argv[1])==L"--git-panel-tests"||std::wstring_view(argv[1])==L"--terminal-panel-tests")){
+            const auto suite=std::wstring_view(argv[1])==L"--terminal-panel-tests"?"terminal-panel":std::wstring_view(argv[1])==L"--git-panel-tests"?"git-panel":std::wstring_view(argv[1])==L"--computer-use-panel-tests"?"computer-use-panel":std::wstring_view(argv[1])==L"--voice-panel-tests"?"voice-panel":std::wstring_view(argv[1])==L"--provider-accounts-panel-tests"?"provider-accounts-panel":std::wstring_view(argv[1])==L"--schedule-panel-tests"?"schedule-panel":std::wstring_view(argv[1])==L"--preferences-panel-tests"?"preferences-panel":std::wstring_view(argv[1])==L"--instruction-import-panel-tests"?"instruction-import-panel":"question";const auto report=std::filesystem::path(argv[2]);LocalFree(argv);int result=1;winrt::com_ptr<App> application;
+            xaml::Application::Start([&](auto&&){application=winrt::make_self<App>(true);application->question_test_report=report;application->question_test_result=&result;application->native_ui_suite=suite;});return result;
+        }
+        if(argv&&argc==3&&std::wstring_view(argv[1])==L"--claude-account-fixture"){
+            const auto mode=std::wstring(argv[2]);LocalFree(argv);return coincide::claude_account_fixture(mode);
         }
         if(argv&&argc==3&&std::wstring_view(argv[1])==L"--claude-session-fixture"){
             const auto mode=std::wstring(argv[2]);LocalFree(argv);return coincide::claude_session_fixture(mode);
@@ -1261,7 +1847,8 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             const auto mode = std::wstring(argv[2]); LocalFree(argv);
             return coincide::rpc_fixture(mode);
         }
-        const auto fixture = argv && argc == 2 && std::wstring_view(argv[1]) == L"--codex-fixture-preview";
+        const auto desktop_test=argv&&argc==2&&std::wstring_view(argv[1])==L"--desktop-fixture-preview";
+        const auto fixture = desktop_test||(argv && argc == 2 && std::wstring_view(argv[1]) == L"--codex-fixture-preview");
         if (fixture && GetEnvironmentVariableW(L"COINCIDE_DATA_DIR", nullptr, 0) <= 1) {
             throw std::runtime_error("Protocol fixture previews require an explicit isolated test data directory.");
         }
@@ -1269,7 +1856,7 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         // Keep the programmatic application (including its metadata provider and callbacks) alive
         // for the complete dispatcher loop, independently of generated XAML application glue.
         winrt::com_ptr<App> application;
-        xaml::Application::Start([&application, fixture](auto&&) { application = winrt::make_self<App>(fixture); });
+        xaml::Application::Start([&application, fixture,desktop_test](auto&&) { application = winrt::make_self<App>(fixture,desktop_test); });
         return 0;
     } catch (const winrt::hresult_error& error) {
         diagnostic(error.message());

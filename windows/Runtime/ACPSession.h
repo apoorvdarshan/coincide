@@ -1,5 +1,6 @@
 #pragma once
 #include "ACPProtocol.h"
+#include "ACPCursorSettings.h"
 #include "ACPTerminals.h"
 #include "AgentAccountScope.h"
 #include "ClaudeProtocol.h"
@@ -8,10 +9,19 @@
 #include <unordered_set>
 
 namespace coincide {
+struct ACPVerifiedAccount {
+    std::string profile_id, scope, identity_source, label, credential_revision;
+};
 struct ACPLaunchOptions {
     AgentAccountScope account;
     std::vector<std::wstring> command_prefix;
     WindowsProcess::Environment environment;
+    std::filesystem::path cursor_settings_file;
+    std::shared_ptr<ACPFileSystem> profile_lease;
+    std::string provider, profile_id;
+    std::filesystem::path executable;
+    std::function<ACPVerifiedAccount(const std::shared_ptr<std::atomic_bool>&)> verify_account;
+    std::function<std::string()> credential_revision;
 };
 // ACP v1 and the v2 acknowledgement/idle lifecycle, on the shared owned Windows JSON-RPC transport.
 // Client filesystem/terminal requests always carry the native session identity. Approval mode asks
@@ -19,14 +29,14 @@ struct ACPLaunchOptions {
 class ACPSession : public AgentSession {
 public:
     ACPSession(std::string provider, CodexLaunch launch, ACPLaunchOptions options = {})
-        : provider_(std::move(provider)), launch_(std::move(launch)), options_(std::move(options)), worker_([this] {run();}) {}
+        : provider_(std::move(provider)), launch_(std::move(launch)), options_(std::move(options)), saved_session_(!launch_.session_id.empty()), worker_([this] {run();}) {}
     ~ACPSession() override {shutdown();}
     bool send(CodexTurn turn) override {
-        std::lock_guard lock(mutex_); if (stopping_ || active_ || !queued_.empty() || !valid(turn)) return false;
-        input_ = std::move(turn); active_ = true; busy_ = true; cancel_ = false; paused_ = false; cv_.notify_one(); return true;
+        std::lock_guard lock(mutex_); if (stopping_ || active_ || catalog_running_ || !queued_.empty() || !valid(turn)) return false;
+        input_ = std::move(turn); active_ = true; busy_ = true; cancel_ = false; account_cancel_->store(false); paused_ = false; cv_.notify_one(); return true;
     }
     bool busy() const noexcept override {return busy_;}
-    void interrupt() noexcept override {std::lock_guard lock(mutex_); paused_ = true; cancel_ = active_; if (!active_) busy_ = false; cv_.notify_one();}
+    void interrupt() noexcept override {std::lock_guard lock(mutex_); paused_ = true; refresh_=false;cancel_ = active_; account_cancel_->store(true); if (!active_&&!catalog_running_) busy_ = false; cv_.notify_one();}
     bool refresh_models() override {std::lock_guard lock(mutex_); if (stopping_) return false; refresh_ = true; cv_.notify_one(); return true;}
     bool queue(CodexTurn turn, std::string id) override {
         std::lock_guard lock(mutex_); const auto bytes = input_size(turn);
@@ -48,7 +58,7 @@ public:
         answer_bytes_ += response.size(); answers_.push_back({std::move(id), std::move(response)}); cv_.notify_one();
     }
     std::vector<SessionEvent> take_events() override {std::lock_guard lock(mutex_); auto result = std::move(events_); events_.clear(); event_bytes_ = 0; return result;}
-    void close() noexcept override {stopping_ = true; cv_.notify_all();}
+    void close() noexcept override {stopping_ = true; account_cancel_->store(true); cv_.notify_all();}
     void shutdown() noexcept override {close(); if (worker_.joinable()) worker_.join();}
 private:
     using Object = ACPProtocol::Object; using Array = ACPProtocol::Array; using Json = ACPProtocol::Json; using Kind = SessionEvent::Kind; using Clock = std::chrono::steady_clock;
@@ -57,12 +67,16 @@ private:
     struct Prompt {std::string method, kind; Object params, form;};
     static constexpr std::size_t limit = 64 * 1024 * 1024;
     std::string provider_; CodexLaunch launch_; ACPLaunchOptions options_;
+    bool saved_session_{}, scope_emitted_{};
+    std::optional<ACPVerifiedAccount> verified_account_;
+    const std::shared_ptr<std::atomic_bool> account_cancel_{std::make_shared<std::atomic_bool>(false)};
     mutable std::mutex mutex_; std::condition_variable cv_;
     std::optional<CodexTurn> input_; std::deque<AgentQueuedTurn> queued_; std::unordered_set<std::string> deliveries_; std::deque<std::string> delivery_history_;
     std::deque<std::pair<std::string, std::string>> answers_; std::deque<Incoming> incoming_; std::vector<SessionEvent> events_;
-    std::size_t queued_bytes_{}, event_bytes_{}, incoming_bytes_{}, answer_bytes_{}; bool active_{}, paused_{}, refresh_{};
+    std::size_t queued_bytes_{}, event_bytes_{}, incoming_bytes_{}, answer_bytes_{}; bool active_{}, paused_{}, refresh_{}, catalog_running_{};
     std::atomic<bool> stopping_{}, busy_{}, cancel_{}, overflow_{};
     std::unique_ptr<RpcConnection> connection_; std::unique_ptr<ACPFileSystem> files_; std::unique_ptr<ACPTerminals> terminals_;
+    std::unique_ptr<ACPCursorSettings> cursor_settings_;
     std::optional<CodexTurn> live_; Object initialized_{nullptr}, setup_{nullptr};
     AgentAccess process_access_{AgentAccess::approval};
     std::unordered_map<std::string, Prompt> prompts_;
@@ -75,6 +89,41 @@ private:
     static std::string uuid() {winrt::guid id{}; winrt::check_hresult(CoCreateGuid(reinterpret_cast<GUID*>(&id))); return winrt::to_string(winrt::to_hstring(id));}
     static std::size_t input_size(const CodexTurn& turn) {auto bytes = turn.text.size(); if (bytes > limit) return limit + 1; for (const auto& path : turn.image_paths) {if (path.size() > limit - bytes) return limit + 1; bytes += path.size();} return bytes;}
     static bool valid(const CodexTurn& turn) {return (!turn.text.empty() || !turn.image_paths.empty()) && input_size(turn) <= limit;}
+    bool fixture()const {
+        if(!launch_.fixture_account_reviewed||launch_.arguments.size()!=2||launch_.arguments.front()!=L"--acp-session-fixture")return false;
+        wchar_t executable[32768]{};const auto count=GetModuleFileNameW(nullptr,executable,32768);std::error_code error;
+        return count&&count<32768&&std::filesystem::equivalent(launch_.executable,std::filesystem::path(executable),error)&&!error;
+    }
+    static bool valid_scope(const std::string& value){return value.size()==64&&value.find_first_not_of("0123456789abcdef")==std::string::npos;}
+    void check_revision() {
+        if(stopping_||cancel_||account_cancel_->load())throw Cancelled{};
+        if(options_.credential_revision&&verified_account_&&options_.credential_revision()!=verified_account_->credential_revision)
+            throw RpcError("The ACP provider credentials changed before delivery. Verify the original account again; queued inputs remain paused.");
+    }
+    void verify_account() {
+        if(stopping_||cancel_||account_cancel_->load())throw Cancelled{};
+        const bool synthetic=fixture();ACPVerifiedAccount proof;
+        if(!synthetic&&(provider_!="cursor"||options_.provider!=provider_||!options_.profile_lease||options_.profile_id.empty()||!options_.verify_account||!options_.credential_revision||!valid_scope(options_.account.current)))
+            throw RpcError("Select a verified compatible provider profile before enabling this Windows ACP adapter");
+        if(!synthetic){std::error_code error;if(!std::filesystem::equivalent(launch_.executable,options_.executable,error)||error||launch_.arguments!=std::vector<std::wstring>{L"app-server"})throw RpcError("The ACP launch no longer matches its verified native provider installation");}
+        if(options_.verify_account) {
+            try {proof=options_.verify_account(account_cancel_);}catch(...){if(stopping_||cancel_||account_cancel_->load())throw Cancelled{};throw;}
+        } else if(synthetic) {
+            ACPFileSystem pin(launch_.cwd);proof.profile_id=launch_.profile_id;proof.scope=options_.account.current.empty()?AgentAccountScope::fingerprint(provider_,"synthetic-reviewed-acp-fixture",winrt::to_string(pin.root().wstring())):options_.account.current;
+            proof.identity_source="reviewed-acp-fixture";proof.credential_revision="fixture";
+        } else throw RpcError("The ACP provider has no current verified account identity");
+        if(stopping_||cancel_||account_cancel_->load())throw Cancelled{};
+        if(!valid_scope(proof.scope)||proof.profile_id!=launch_.profile_id||(!options_.profile_id.empty()&&proof.profile_id!=options_.profile_id)||proof.identity_source.empty()||proof.identity_source.size()>80||proof.label.size()>512||proof.credential_revision.empty()||proof.credential_revision.size()>512)throw RpcError("The ACP provider returned incompatible account/profile metadata");
+        if(!options_.account.current.empty()&&options_.account.current!=proof.scope)throw RpcError("The ACP account changed; select its original account before sending queued work");
+        if(!launch_.saved_profile_id.empty()&&launch_.saved_profile_id!=proof.profile_id)throw RpcError("This saved ACP conversation belongs to another local profile");
+        if(saved_session_&&!synthetic&&(launch_.saved_profile_id.empty()||launch_.saved_account_scope.empty()))throw RpcError("This saved ACP conversation needs explicit owner review of its original account before resume");
+        if((!launch_.saved_account_scope.empty()&&launch_.saved_account_scope!=proof.scope)||(!options_.account.saved.empty()&&options_.account.saved!=proof.scope))throw RpcError("This saved ACP conversation belongs to another provider account");
+        if(verified_account_&&verified_account_->scope!=proof.scope)throw RpcError("The ACP account changed; queued inputs were kept under their original account");
+        if(verified_account_&&verified_account_->credential_revision!=proof.credential_revision)stop_process();
+        options_.account.current=proof.scope;verified_account_=std::move(proof);check_revision();
+        if(!scope_emitted_){Object detail;put(detail,L"provider",provider_);put(detail,L"identity_source",verified_account_->identity_source);put(detail,L"label",verified_account_->label);
+            emit(Kind::account_scope,verified_account_->profile_id,verified_account_->scope,winrt::to_string(detail.Stringify()));scope_emitted_=true;}
+    }
     void retire_locked(const std::string& id) {delivery_history_.push_back(id); if (delivery_history_.size() > 4096) {deliveries_.erase(delivery_history_.front()); delivery_history_.pop_front();}}
     void emit_locked(Kind kind, std::string id, std::string body, std::string detail = {}) {
         const auto bytes = id.size() + body.size() + detail.size();
@@ -102,21 +151,30 @@ private:
     Object request(const std::string& method, const Object& params) {
         if (!connection_) throw RpcError("The ACP agent is not connected");
         auto future = connection_->call(method, winrt::to_string(params.Stringify()), launch_.request_timeout);
-        for (;;) {if (stopping_ || cancel_) throw Cancelled{}; pump(); if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {const auto result = Object::Parse(winrt::to_hstring(future.get())); pump(); return result;} wait();}
+        for (;;) {if (stopping_ || cancel_ || account_cancel_->load()) throw Cancelled{}; pump(); if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {const auto result = Object::Parse(winrt::to_hstring(future.get())); pump(); return result;} wait();}
     }
     void publish_models() {
         if (!initialized_) return; const auto value = ACPProtocol::catalog(setup_ ? setup_ : Object{}, initialized_);
         if (value.GetNamedArray(L"data").Size()) emit(Kind::models, {}, winrt::to_string(value.Stringify()));
     }
     void launch(AgentAccess access) {
+        if(!verified_account_)throw RpcError("The ACP account must be verified before starting its process");check_revision();
         stop_process(); files_ = std::make_unique<ACPFileSystem>(launch_.cwd); terminals_ = std::make_unique<ACPTerminals>(*files_);
+        if (provider_ == "cursor" && !cursor_settings_) {
+            if (options_.cursor_settings_file.empty()) throw RpcError("Select a verified Cursor profile before starting its Windows adapter");
+            cursor_settings_ = std::make_unique<ACPCursorSettings>(options_.cursor_settings_file);
+        }
         const auto custom = !launch_.arguments.empty() && launch_.arguments != std::vector<std::wstring>{L"app-server"}; auto arguments = launch_.arguments;
         if (!custom) {arguments = options_.command_prefix; const auto provider_arguments = ACPProtocol::arguments(provider_, access); arguments.insert(arguments.end(), provider_arguments.begin(), provider_arguments.end());}
+        auto environment = options_.environment;
+        if (cursor_settings_) environment.emplace_back(L"CURSOR_CONFIG_DIR", cursor_settings_->profile_directory().wstring());
+        ACPCursorSettings::Lease settings(cursor_settings_.get(), [this](const auto& warning) {emit(Kind::status, {}, warning);});
         connection_ = std::make_unique<RpcConnection>(launch_.executable, arguments, launch_.cwd,
             [this](auto method, auto body) {enqueue({{}, std::move(method), std::move(body), false});},
             [this](auto id, auto method, auto body) {enqueue({std::move(id), std::move(method), std::move(body), false});},
-            [this](auto body) {enqueue({{}, {}, std::move(body), true});}, options_.environment, true);
-        initialized_ = request("initialize", ACPProtocol::initialize(provider_));
+            [this](auto body) {enqueue({{}, {}, std::move(body), true});}, environment, true);
+        try {initialized_ = request("initialize", ACPProtocol::initialize(provider_)); settings.touch(current_model(initialized_.GetNamedObject(L"_meta", Object{}).GetNamedObject(L"modelState", Object{}))); settings.finish();}
+        catch (...) {connection_.reset(); throw;}
         const auto version = initialized_.GetNamedNumber(L"protocolVersion", 0);
         if (version != 1 && version != 2) throw RpcError("This ACP protocol version is not supported");
         generation_two_ = initialized_.HasKey(L"capabilities") || initialized_.HasKey(L"info"); process_access_ = access; publish_models();
@@ -126,7 +184,11 @@ private:
         if (!supported) throw RpcError("This ACP setting value is not advertised by the current account");
         if (text(option, L"currentValue") == value) return;
         Object params; put(params, L"sessionId", launch_.session_id); put(params, L"configId", text(option, L"id")); put(params, L"value", value);
-        const auto result = request("session/set_config_option", params);
+        ACPCursorSettings::Lease settings(cursor_settings_.get(), [this](const auto& warning) {emit(Kind::status, {}, warning);});
+        settings.touch(current_model(setup_)); if (text(option, L"category") == "model" || text(option, L"id") == "model") settings.touch(value);
+        Object result{nullptr};
+        try {result = request("session/set_config_option", params); settings.touch(current_model(result)); settings.finish();}
+        catch (...) {connection_.reset(); live_.reset(); throw;}
         if (result.HasKey(L"configOptions")) setup_.SetNamedValue(L"configOptions", result.GetNamedArray(L"configOptions"));
         else for (const auto& raw : setup_.GetNamedArray(L"configOptions", Array{})) if (text(raw.GetObject(), L"id") == text(option, L"id")) put(raw.GetObject(), L"currentValue", value);
     }
@@ -171,6 +233,7 @@ private:
         }
     }
     void connect(const CodexTurn& turn) {
+        verify_account();
         if (!launch_.session_id.empty()) options_.account.require_resume();
         const auto process_access = turn.plan ? AgentAccess::approval : turn.access;
         if (connection_ && process_access_ != process_access) stop_process();
@@ -183,7 +246,11 @@ private:
                 else if (caps.GetNamedBoolean(L"loadSession", false)) method = "session/load";
                 else throw RpcError("This ACP agent cannot reopen the saved conversation; it was not replaced");
             }
-            setup_ = request(method, params); const auto id = text(setup_, L"sessionId");
+            ACPCursorSettings::Lease settings(cursor_settings_.get(), [this](const auto& warning) {emit(Kind::status, {}, warning);});
+            check_revision();
+            try {setup_ = request(method, params); settings.touch(current_model(setup_)); settings.finish();}
+            catch (...) {connection_.reset(); throw;}
+            check_revision();const auto id = text(setup_, L"sessionId");
             if (launch_.session_id.empty()) {if (id.empty()) throw RpcError("ACP session/new returned no native session ID"); launch_.session_id = id;}
             else if (!id.empty() && id != launch_.session_id) throw RpcError("ACP returned a different conversation identity while resuming");
             if (options_.account.saved.empty() && !options_.account.current.empty()) options_.account.saved = options_.account.current;
@@ -209,6 +276,10 @@ private:
         return result;
     }
     bool owned(const Object& params) const {return !launch_.session_id.empty() && text(params, L"sessionId") == launch_.session_id;}
+    static std::string current_model(const Object& setup) {
+        if (const auto option = ACPProtocol::config(setup, "model", "model")) return text(*option, L"currentValue");
+        const auto models = setup.GetNamedObject(L"models", setup); return text(models, L"currentModelId");
+    }
     void client_request(const Incoming& frame, const Object& params) {
         if (!connection_) return;
         const auto reject = [&](const char* message, int code = -32602) {connection_->reject(frame.id, message, code);};
@@ -337,7 +408,9 @@ private:
         sent_ = idle_ = false; idle_reason_.clear(); failure_.clear(); current_ = uuid(); segment_.clear(); segment_text_.clear(); segment_message_.clear(); segment_number_ = 0; current_messages_.clear(); finalized_messages_.clear(); std::string outcome = "failed";
         try {
             emit(Kind::status, {}, "Connecting to the ACP agent…"); connect(turn); if (stopping_ || cancel_) throw Cancelled{};
-            Object params; put(params, L"sessionId", launch_.session_id); params.SetNamedValue(L"prompt", prompt(turn)); Object meta; put(meta, L"promptId", current_); put(meta, L"requestId", current_); params.SetNamedValue(L"_meta", meta);
+            check_revision();
+            const auto adapted=with_current_tool_context(launch_,turn);if(stopping_||cancel_)throw Cancelled{};
+            Object params; put(params, L"sessionId", launch_.session_id); params.SetNamedValue(L"prompt", prompt(adapted)); Object meta; put(meta, L"promptId", current_); put(meta, L"requestId", current_); params.SetNamedValue(L"_meta", meta);
             auto response = connection_->call("session/prompt", winrt::to_string(params.Stringify()), std::chrono::hours(24)); sent_ = true; reference_added_ = true; emit(Kind::started, current_);
             bool acknowledged{}; std::string reason;
             for (;;) {
@@ -364,14 +437,15 @@ private:
             while (!stopping_) {
                 std::optional<CodexTurn> turn; bool refresh{};
                 {std::unique_lock lock(mutex_); cv_.wait_for(lock, std::chrono::milliseconds(20), [&] {return stopping_ || input_ || refresh_ || (!paused_ && !queued_.empty());});
-                    if (stopping_) break; if (input_) turn.swap(input_); else if (refresh_) {refresh = true; refresh_ = false; cancel_ = false;}
-                    else if (!paused_ && !queued_.empty()) {emit_locked(Kind::input, queued_.front().id, queued_.front().turn.text, "queued"); auto next = std::move(queued_.front()); queued_.pop_front(); queued_bytes_ -= input_size(next.turn); retire_locked(next.id); turn = std::move(next.turn); active_ = true; busy_ = true; cancel_ = false;}}
+                    if (stopping_) break; if (input_) turn.swap(input_); else if (refresh_) {refresh = true; refresh_ = false; catalog_running_=true;busy_=true;cancel_ = false;account_cancel_->store(false);}
+                    else if (!paused_ && !queued_.empty()) {emit_locked(Kind::input, queued_.front().id, queued_.front().turn.text, "queued"); auto next = std::move(queued_.front()); queued_.pop_front(); queued_bytes_ -= input_size(next.turn); retire_locked(next.id); turn = std::move(next.turn); active_ = true; busy_ = true; cancel_ = false;account_cancel_->store(false);}}
                 if (turn) run_turn(std::move(*turn));
                 else if (refresh) {
-                    try {if (!connection_) launch(AgentAccess::approval); const auto models = ACPProtocol::catalog(setup_ ? setup_ : Object{}, initialized_); if (!models.GetNamedArray(L"data").Size()) throw RpcError("This ACP provider exposes its model catalog after a conversation starts"); emit(Kind::models, {}, winrt::to_string(models.Stringify()));}
+                    try {verify_account();if (!connection_) launch(AgentAccess::approval); const auto models = ACPProtocol::catalog(setup_ ? setup_ : Object{}, initialized_); if (!models.GetNamedArray(L"data").Size()) throw RpcError("This ACP provider exposes its model catalog after a conversation starts"); emit(Kind::models, {}, winrt::to_string(models.Stringify()));}
                     catch (const Cancelled&) {stop_process(); emit(Kind::catalog_error, {}, "The ACP model refresh was cancelled");}
                     catch (const std::exception& error) {stop_process(); emit(Kind::catalog_error, {}, error.what());}
                     catch (const winrt::hresult_error& error) {stop_process(); emit(Kind::catalog_error, {}, winrt::to_string(error.message()));}
+                    std::lock_guard lock(mutex_);catalog_running_=false;busy_=!paused_&&!queued_.empty();
                 } else if (connection_) {try {pump();} catch (...) {stop_process(); emit(Kind::status, {}, "The ACP agent disconnected; its saved conversation will be resumed on the next turn");}}
             }
         } catch (const std::exception& error) {try {emit(Kind::error, {}, error.what()); emit(Kind::completed, {}, "failed");} catch (...) {}}

@@ -105,7 +105,11 @@ inline int opencode_http_fixture(std::wstring_view mode) {
                     auto stale = frame(); put(stale, L"assistantMessageID", state->previous); stale.SetNamedValue(L"ordinal", Json::CreateNumberValue(0)); put(stale, L"delta", "STALE"); event("session.text.delta", stale); event("session.execution.succeeded", frame());
                 }
                 auto delivered = frame(); put(delivered, L"inboxID", state->current); event("session.inbox.delivered", delivered); event("session.execution.started", frame());
-                state->message = "assistant-" + std::to_string(++state->sequence);
+                state->message = "assistant-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(++state->sequence);
+                if(mode==L"context"){
+                    const auto boundary=input.find("</coincide_current_tools>\n\n");const auto original=boundary==std::string::npos?input:input.substr(boundary+27);
+                    if(original=="wait")return;finish(input);return;
+                }
                 if (!state->previous.empty()) {auto stale = frame(); put(stale, L"assistantMessageID", state->previous); stale.SetNamedValue(L"ordinal", Json::CreateNumberValue(0)); put(stale, L"delta", "STALE"); event("session.text.delta", stale);}
                 if (input == "wait") return;
                 if (input == "fail") {event("session.execution.failed", frame()); return;}

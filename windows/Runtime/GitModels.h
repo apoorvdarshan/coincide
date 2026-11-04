@@ -29,7 +29,7 @@ struct GitWorktree {
     std::string path, branch, head;
     bool main{}, locked{}, prunable{};
 };
-struct GitCheckpoint {std::string reference, commit; bool includes_untracked{true};};
+struct GitCheckpoint {std::string reference, commit; bool includes_untracked{true};std::string message,created_at;};
 
 namespace git_parse {
 inline std::vector<std::string_view> split(std::string_view input, char separator) {

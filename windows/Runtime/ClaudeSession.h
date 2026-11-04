@@ -1,6 +1,7 @@
 #pragma once
 #include "ClaudeProtocol.h"
 #include "WindowsProcess.h"
+#include "AgentAccountBinding.h"
 #include <objbase.h>
 #include <condition_variable>
 #include <deque>
@@ -12,7 +13,7 @@ namespace coincide {
 // The worker handles protocol/state; the writer may block without freezing WinUI or Stop deadlines.
 class ClaudeSession : public AgentSession {
 public:
-    explicit ClaudeSession(CodexLaunch launch) : launch_(std::move(launch)), conversation_exists_(!launch_.session_id.empty()), worker_([this] {run();}) {}
+    explicit ClaudeSession(CodexLaunch launch) : launch_(std::move(launch)), account_(launch_,"claude"), conversation_exists_(!launch_.session_id.empty()), worker_([this] {run();}) {}
     ~ClaudeSession() override {shutdown();}
     bool send(CodexTurn turn) override {
         std::lock_guard lock(mutex_);
@@ -67,6 +68,8 @@ private:
     struct Cancelled {};
     static constexpr std::size_t limit = 64 * 1024 * 1024;
     CodexLaunch launch_;
+    AgentAccountBinding account_;
+    std::string account_email_;
     mutable std::mutex mutex_, write_mutex_;
     std::condition_variable cv_, write_cv_;
     std::optional<CodexTurn> input_;
@@ -212,6 +215,7 @@ private:
         for (const auto* name : {L"CLAUDECODE", L"CLAUDE_CODE_ENTRYPOINT", L"CLAUDE_CODE_SESSION_ID", L"CLAUDE_CODE_CHILD_SESSION", L"CLAUDE_CODE_BRIDGE_SESSION_ID",
                 L"CLAUDE_CODE_MESSAGING_SOCKET", L"CLAUDE_CODE_MESSAGING_TOKEN", L"CLAUDE_CODE_SESSION_ATTENDED", L"CLAUDE_CODE_EXECPATH", L"CLAUDE_PID", L"CLAUDE_EFFORT"}) environment.emplace_back(name, std::nullopt);
         if (probe) {environment.emplace_back(L"ENABLE_CLAUDEAI_MCP_SERVERS", L"false"); environment.emplace_back(L"CLAUDE_CODE_AUTO_CONNECT_IDE", L"0"); environment.emplace_back(L"CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", L"1");}
+        const auto profile_environment=account_.environment();environment.insert(environment.end(),profile_environment.begin(),profile_environment.end());
         process_ = WindowsProcess::start(launch_.executable, args, launch_.cwd, [this](std::string line) {incoming(std::move(line));}, environment);
         writer_ = std::thread([this] {writer_loop(*process_);});
         Object request; put(request, L"subtype", "initialize");
@@ -221,11 +225,14 @@ private:
             const auto account = initialized.GetNamedObject(L"account", Object{});
             if (text(account, L"tokenSource") == "none" && text(account, L"email").empty() && (text(account, L"apiKeySource").empty() || text(account, L"apiKeySource") == "none")
                     && (text(account, L"apiProvider").empty() || text(account, L"apiProvider") == "firstParty")) throw RpcError("Sign in to Claude Code on this Windows account with claude auth login");
+            if(!account_.fixture()&&(text(account,L"email")!=account_email_||(!text(account,L"apiKeySource").empty()&&text(account,L"apiKeySource")!="none")||(!text(account,L"apiProvider").empty()&&text(account,L"apiProvider")!="firstParty")))
+                throw RpcError("Claude Code initialized with a different or unverified account. The conversation was not delivered.");
             live_ = turn;
         }
         return initialized;
     }
     void connect(const CodexTurn& turn) {
+        verify_account();
         if (process_ && process_->wait(std::chrono::milliseconds(0))) stop_process();
         if (!live_ || !process_ || live_->access != turn.access || (!live_->effort.empty() && turn.effort.empty())) {(void)launch(turn, false); return;}
         if (live_->model != turn.model) {Object request; put(request, L"subtype", "set_model"); put(request, L"model", turn.model.empty() ? "default" : turn.model); (void)control(request);}
@@ -238,6 +245,25 @@ private:
         }
         if (live_->plan != turn.plan) {Object request; put(request, L"subtype", "set_permission_mode"); put(request, L"mode", ClaudeProtocol::permission_mode(turn)); (void)control(request);}
         live_ = turn;
+    }
+    void verify_account() {
+        const auto environment=account_.environment();const auto before=account_.credential_revision();
+        // This command reads authentication metadata only, before constructing any --resume or
+        // --session-id stream process. It never starts a prompt, signs in or invokes a shell.
+        const auto arguments=account_.fixture()?std::vector<std::wstring>{L"--claude-account-fixture",launch_.arguments[1]}:std::vector<std::wstring>{L"auth",L"status",L"--json"};
+        std::mutex output_mutex;std::string output;
+        auto probe=WindowsProcess::start_bytes(launch_.executable,arguments,launch_.cwd,[&](std::string_view bytes){std::lock_guard lock(output_mutex);output.append(bytes);},128*1024,environment,true);probe->close_input();
+        const auto deadline=Clock::now()+std::min(launch_.request_timeout,std::chrono::milliseconds(std::chrono::seconds(45)));std::optional<WindowsProcess::Exit> exit;
+        while(!(exit=probe->wait(std::chrono::milliseconds(25)))) {
+            if(stopping_||cancel_){probe->stop();throw Cancelled{};}
+            if(Clock::now()>=deadline){probe->stop();throw RpcError("Claude account verification timed out before conversation delivery");}
+        }
+        if(exit->status!=0||exit->stdout_truncated||!exit->channel_error.empty())throw RpcError("Claude account verification failed before conversation delivery");
+        Object status{nullptr};if(!Object::TryParse(winrt::to_hstring(output),status))throw RpcError("Claude did not return verified account metadata; no conversation was delivered");
+        if(!status.GetNamedBoolean(L"loggedIn",false))throw RpcError("Sign in to Claude Code on this Windows account with claude auth login");
+        if(before!=account_.credential_revision())throw RpcError("Claude credentials changed during verification; verify the account again before continuing");
+        account_email_=text(status,L"email");
+        if(account_.accept(AgentAccountBinding::claude_subject(status),"claude-auth-status",account_email_))emit(Kind::account_scope,account_.profile_id(),account_.scope(),account_.detail());
     }
     void prompt(const Object& frame) {
         const auto id = text(frame, L"request_id"); const auto request = frame.GetNamedObject(L"request", Object{});
@@ -335,7 +361,8 @@ private:
         std::string outcome = "failed";
         try {
             emit(Kind::status, {}, "Connecting to Claude Code…"); connect(turn); if (stopping_ || cancel_) throw Cancelled{};
-            const auto user = ClaudeProtocol::user_message(turn, current_); sent_ = true; write(user); conversation_exists_ = true; emit(Kind::started, current_);
+            const auto adapted=with_current_tool_context(launch_,turn);if(stopping_||cancel_)throw Cancelled{};
+            const auto user = ClaudeProtocol::user_message(adapted, current_); sent_ = true; write(user); conversation_exists_ = true; emit(Kind::started, current_);
             bool interrupted{}; Clock::time_point deadline{};
             while (!done_) {
                 if (stopping_) throw Cancelled{};

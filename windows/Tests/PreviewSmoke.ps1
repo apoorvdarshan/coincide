@@ -1,6 +1,8 @@
 param(
     [string]$Executable = (Join-Path $PSScriptRoot '..\build\x64\Release\Coincide.exe'),
-    [string]$Results = (Join-Path $PSScriptRoot '..\build\ui-smoke')
+    [string]$Results = (Join-Path $PSScriptRoot '..\build\ui-smoke'),
+    [switch]$NativePanelsOnly,
+    [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel')][string]$NativeSuite
 )
 # Run in an interactive Windows desktop session. SSH's service session cannot validate a visible UI.
 $ErrorActionPreference = 'Stop'
@@ -42,6 +44,17 @@ foreach ($entry in @(@($first, 'Smoke A', 'END-A'), @($second, 'Smoke B', 'END-B
         version=1; id=$entry[0]; draft="Draft $($entry[1])"; messages=$messages; sessions=@()
     }
 }
+$scheduledThread = [Guid]::NewGuid().ToString('B')
+$scheduledTask = [Guid]::NewGuid().ToString('B')
+$due = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 10
+$threads += @{id=$scheduledThread; title='Schedule target'; project=''; provider='codex'; model=''; pinned=$false; archived=$false}
+Write-JsonFile (Join-Path $data "threads\$scheduledThread.json") @{version=1; id=$scheduledThread; draft='Keep this scheduled-thread draft'; messages=@(); sessions=@()}
+# An isolated, previously approved fixture task. --codex-fixture-preview forces every provider
+# child to the synthetic protocol fixture; no real account, model or user schedule is involved.
+Write-JsonFile (Join-Path $data 'scheduled-tasks.json') @{format='coincide.windows.schedules'; version=1; tasks=@(@{
+    id=$scheduledTask; threadID=$scheduledThread; name='Native schedule fixture'; prompt='hello'; awaitingApproval=$false; paused=$false; reviewRequired=$false;
+    recurrence=@{kind='once'; timeZone='UTC'; date=$due; hour=9; minute=0; weekday=2; intervalMinutes=0; cron=''; weekdays=@()}; nextRunAt=$due
+})}
 Write-JsonFile (Join-Path $data 'workspace.json') @{version=1; projects=@(); threads=$threads}
 $previousData = $env:COINCIDE_DATA_DIR
 $previousDiagnostics = $env:COINCIDE_DIAGNOSTICS_PATH
@@ -112,6 +125,7 @@ function Save-WindowEvidence {
 try {
     # The title identifies a protocol-fixture test, and this mode requires the isolated directory above.
     # Every provider response comes from the local fixture subprocess; no account or network is used.
+    if (!$NativePanelsOnly) {
     $process = Start-Process -FilePath $Executable -ArgumentList '--codex-fixture-preview' -PassThru
     Wait-Until { $process.Refresh(); $process.MainWindowHandle -ne [IntPtr]::Zero } 'No application window appeared.'
     $script:window = [Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
@@ -134,10 +148,17 @@ try {
         if (!$control) { throw "Cannot find $id" }
         $control.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
     }
-    function Set-Message([string]$text) {
-        $box = Find-Control $script:window 'Composer'
-        $box.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).SetValue($text)
+    function Set-ControlValue([string]$id,[string]$text) {
+        # Native XAML may recreate an automation peer while a prompt row changes size.
+        # Setting a value is idempotent; wait for the current editable peer, never retry Invoke.
+        Wait-Until {
+            $box=Find-Control $script:window $id
+            if(!$box){return $false}
+            try {$value=$box.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern);if(!$value){return $false};$value.SetValue($text);return $value.Current.Value -eq $text}
+            catch [Windows.Automation.ElementNotAvailableException] {return $false}
+        } "The native $id editor did not accept its owned fixture value."
     }
+    function Set-Message([string]$text) {Set-ControlValue 'Composer' $text}
     function Send-Message([string]$text) {
         Set-Message $text
         Wait-Until { (Find-Control $script:window 'Send').Current.IsEnabled } 'Send was not enabled for the Codex conversation.'
@@ -154,7 +175,7 @@ try {
     $replyMarker = ([string][char]0x4f60) + [char]0x597d
     Wait-Until { (Latest-IsVisible $replyMarker) -and !(Find-Control $script:window 'Stop').Current.IsEnabled } 'The Codex fixture reply was not displayed.'
     $index = Get-Content (Join-Path $data 'workspace.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    $codex = @($index.threads | Where-Object {$_.provider -eq 'codex'})
+    $codex = @($index.threads | Where-Object {$_.provider -eq 'codex' -and $_.id -ne $scheduledThread})
     if ($codex.Count -ne 1) { throw 'The Codex conversation was not saved in the index.' }
     $threadFile = Join-Path $data "threads\$($codex[0].id).json"
     $saved = Get-Content $threadFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -207,8 +228,7 @@ try {
 
     Send-Message 'question'
     Wait-Until { $null -ne (Find-Control $script:window 'QuestionAnswer') } 'No native question appeared.'
-    $answer = Find-Control $script:window 'QuestionAnswer'
-    $answer.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).SetValue('fixture-ui-answer')
+    Set-ControlValue 'QuestionAnswer' 'fixture-ui-answer'
     Invoke-Control 'SubmitAnswer'
     Wait-Until { (Latest-IsVisible 'fixture-ui-answer') -and !(Find-Control $script:window 'Stop').Current.IsEnabled } 'The question answer did not reach the fixture.'
     $checks += 'A native question submits the answer to its original request'
@@ -231,9 +251,25 @@ try {
     if ($list.FindAll([Windows.Automation.TreeScope]::Descendants, $sameTitle).Count -ne 2) { throw 'Identical conversation titles do not have separate accessible rows.' }
     $checks += 'Identical conversation titles retain separate accessible sidebar rows'
 
+    $scheduledFile = Join-Path $data "threads\$scheduledThread.json"
+    Wait-Until {
+        $scheduled = Get-Content $scheduledFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        $scheduleState = Get-Content (Join-Path $data 'scheduled-tasks.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $scheduled.messages.Count -eq 2 -and $scheduleState.tasks[0].lastOutcome -eq 'completed'
+    } 'The persisted scheduled fixture did not dispatch and finish through the real app controller.'
+    $scheduled = Get-Content $scheduledFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    # Wait-Until invokes its predicate in a child scope; reload the durable outcome for assertions.
+    $scheduleState = Get-Content (Join-Path $data 'scheduled-tasks.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($scheduled.draft -ne 'Keep this scheduled-thread draft' -or $scheduled.messages[0].text -ne 'hello' -or $scheduled.messages[1].text -notlike "*$replyMarker") { throw 'Scheduled delivery changed the draft or lost its prompt/final reply.' }
+    if ($scheduleState.tasks[0].inFlight -or $scheduleState.tasks[0].deliveryID) { throw 'A finished scheduled fixture retained an in-flight delivery token.' }
+    $checks += 'A persisted approved schedule dispatches through the app, preserves the draft and records completion'
+
+
+    }
     # These suites need the real user logon session: XAML controls and Credential Manager
     # cannot be accepted from an SSH service session. Each creates and removes only owned fixtures.
-    foreach ($suite in @('question', 'credential')) {
+    $nativeSuites=if($NativeSuite){@($NativeSuite)}else{@('question', 'credential', 'schedule-panel', 'preferences-panel', 'instruction-import-panel', 'provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel')}
+    foreach ($suite in $nativeSuites) {
         $report = Join-Path $Results "$suite-test-result.txt"
         Remove-Item $report -ErrorAction SilentlyContinue
         $fixtureProcess = Start-Process -FilePath $Executable -ArgumentList @("--$suite-tests", "`"$report`"") -PassThru
@@ -248,7 +284,10 @@ try {
     Write-JsonFile (Join-Path $Results 'result.json') @{passed=$true; checks=$checks; dataDirectory=$data}
 } catch {
     Save-WindowEvidence
-    Write-JsonFile (Join-Path $Results 'result.json') @{passed=$false; checks=$checks; error=$_.Exception.Message; dataDirectory=$data}
+    $failure=$_
+    # Preserve only the owned synthetic workspace so a failed native flow remains diagnosable.
+    try {if(Test-Path $data){Copy-Item $data (Join-Path $Results 'failed-fixture-data') -Recurse -Force}} catch { }
+    Write-JsonFile (Join-Path $Results 'result.json') @{passed=$false; checks=$checks; error=$failure.Exception.Message; scriptStack=$failure.ScriptStackTrace; dataDirectory=$data}
     throw
 } finally {
     if ($process -and !$process.HasExited) {

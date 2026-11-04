@@ -33,7 +33,7 @@ def labels():
         for match in re.finditer(r'\b(?:label|button|toolbar_button|action)\(\s*L' + literal + r'\s*,\s*L' + literal, source):
             resource, text = [json.loads('"' + value + '"') for value in match.groups()]
             result[resource] = text
-        for match in re.finditer(r'\bui_text\(\s*L' + literal, source):
+        for match in re.finditer(r'\b(?:ui_text|toggle|edit|add_page|link)\(\s*L' + literal, source):
             text = json.loads('"' + match.group(1) + '"')
             result[ui_key(text)] = text
         for match in re.finditer(r'(?:std::pair\{\s*|\{\s*)L' + literal + r'\s*,\s*L' + literal + r'\s*\}', source):

@@ -25,11 +25,8 @@ public:
         return result;
     }
     static std::filesystem::path discover(const std::string& provider) {
-        const auto statuses = scan();
-        const auto at = std::find_if(statuses.begin(), statuses.end(), [&](const auto& value) {return value.id == provider;});
-        if (at == statuses.end()) throw std::invalid_argument("Unknown agent provider");
-        if (at->installation != ProviderInstallation::windows_executable) throw std::runtime_error(at->detail);
-        return at->executable;
+        for(const auto& definition:definitions())if(definition.id==provider){const auto status=scan_one(definition,search_roots(),true);if(status.installation!=ProviderInstallation::windows_executable)throw std::runtime_error(status.detail);return status.executable;}
+        throw std::invalid_argument("Unknown agent provider");
     }
     static std::vector<std::filesystem::path> search_roots() {
         std::vector<std::filesystem::path> roots;

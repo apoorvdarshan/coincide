@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <root>
+  <data name="Accounts" xml:space="preserve">
+    <value>Konta</value>
+  </data>
+  <data name="Add local profile" xml:space="preserve">
+    <value>AddProviderProfile</value>
+  </data>
   <data name="AddProject" xml:space="preserve">
     <value>Dodaj projekt…</value>
+  </data>
+  <data name="AgentTools" xml:space="preserve">
+    <value>Agent tools</value>
   </data>
   <data name="AllThreads" xml:space="preserve">
     <value>All Threads</value>
@@ -24,6 +33,9 @@
   <data name="Cancel" xml:space="preserve">
     <value>Anuluj</value>
   </data>
+  <data name="Check status" xml:space="preserve">
+    <value>CheckProviderAccount</value>
+  </data>
   <data name="Close" xml:space="preserve">
     <value>Zamknij</value>
   </data>
@@ -44,6 +56,18 @@
   </data>
   <data name="Git" xml:space="preserve">
     <value>Git</value>
+  </data>
+  <data name="Grant access" xml:space="preserve">
+    <value>ComputerUseGrant</value>
+  </data>
+  <data name="ImportSessions" xml:space="preserve">
+    <value>Import Sessions</value>
+  </data>
+  <data name="ImportedSession" xml:space="preserve">
+    <value>Imported Session</value>
+  </data>
+  <data name="Instructions" xml:space="preserve">
+    <value>Instrukcje</value>
   </data>
   <data name="Message" xml:space="preserve">
     <value>Opis</value>
@@ -93,6 +117,9 @@
   <data name="Refresh" xml:space="preserve">
     <value>Odśwież</value>
   </data>
+  <data name="Release desktop" xml:space="preserve">
+    <value>ComputerUseRelease</value>
+  </data>
   <data name="Remove" xml:space="preserve">
     <value>Usuń</value>
   </data>
@@ -105,8 +132,17 @@
   <data name="Resume" xml:space="preserve">
     <value>Wznów</value>
   </data>
+  <data name="Retry saving disabled setting" xml:space="preserve">
+    <value>ComputerUseRetrySave</value>
+  </data>
+  <data name="Revoke access" xml:space="preserve">
+    <value>ComputerUseRevoke</value>
+  </data>
   <data name="Save" xml:space="preserve">
     <value>Zapisz</value>
+  </data>
+  <data name="Schedules" xml:space="preserve">
+    <value>Schedules</value>
   </data>
   <data name="Search" xml:space="preserve">
     <value>Szukaj</value>
@@ -126,6 +162,9 @@
   <data name="ShowArchived" xml:space="preserve">
     <value>Pokaż zarchiwizowane wątki</value>
   </data>
+  <data name="Sign in" xml:space="preserve">
+    <value>SignInProviderAccount</value>
+  </data>
   <data name="Snooze" xml:space="preserve">
     <value>Odłóż</value>
   </data>
@@ -144,8 +183,53 @@
   <data name="Terminal" xml:space="preserve">
     <value>Terminal</value>
   </data>
+  <data name="Text_000125d3e4d67ba0" xml:space="preserve">
+    <value>Finishing the repository operation before quitting…</value>
+  </data>
+  <data name="Text_01503d73cfbe08ad" xml:space="preserve">
+    <value>The verified profile was selected.</value>
+  </data>
+  <data name="Text_02a54a8c94b77916" xml:space="preserve">
+    <value>New worktree folder</value>
+  </data>
+  <data name="Text_02e6aeb6b7771acd" xml:space="preserve">
+    <value>Powtarzaj co</value>
+  </data>
+  <data name="Text_0359ce99f4f79118" xml:space="preserve">
+    <value>Saving creates an approval card. The schedule runs only after you explicitly approve the saved prompt and timing.</value>
+  </data>
+  <data name="Text_03b15a3ee7b50b5f" xml:space="preserve">
+    <value>Share terminal output only with this conversation. Access lasts until revoked or Coincide closes. Agents cannot type or execute commands through this connection.</value>
+  </data>
   <data name="Text_03f42eea72154959" xml:space="preserve">
     <value>Username</value>
+  </data>
+  <data name="Text_0487f33d9ddaabde" xml:space="preserve">
+    <value>Informacje</value>
+  </data>
+  <data name="Text_04e69db649437ee9" xml:space="preserve">
+    <value>Imported Session</value>
+  </data>
+  <data name="Text_061cc20e3432dead" xml:space="preserve">
+    <value>Wstrzymaj</value>
+  </data>
+  <data name="Text_0642714aeddc17c2" xml:space="preserve">
+    <value>An agent needs your response.</value>
+  </data>
+  <data name="Text_0673a0b3ae1a3a58" xml:space="preserve">
+    <value>Wait for the repository operation to finish before sending terminal input.</value>
+  </data>
+  <data name="Text_0911a156db3ad35b" xml:space="preserve">
+    <value>Approve schedule</value>
+  </data>
+  <data name="Text_099b18e1bd8a1154" xml:space="preserve">
+    <value>Godziny</value>
+  </data>
+  <data name="Text_0a11c2ffb8309d1a" xml:space="preserve">
+    <value>Nie znaleziono</value>
+  </data>
+  <data name="Text_0a6e2bfcd881949d" xml:space="preserve">
+    <value>Wyrażenie cron</value>
   </data>
   <data name="Text_0b978fa5dd3e4463" xml:space="preserve">
     <value>This navigation is blocked.</value>
@@ -153,8 +237,17 @@
   <data name="Text_0f811b617ba5423a" xml:space="preserve">
     <value>Oznacz jako zakończony</value>
   </data>
+  <data name="Text_1073223d7aac885a" xml:space="preserve">
+    <value>The conversation or draft changed. The transcript was discarded.</value>
+  </data>
   <data name="Text_11326fd2590f4e5e" xml:space="preserve">
     <value>Domyślny</value>
+  </data>
+  <data name="Text_12851f11f274a7fb" xml:space="preserve">
+    <value>Selected conversation</value>
+  </data>
+  <data name="Text_12861ac71662a3ee" xml:space="preserve">
+    <value>Create Worktree</value>
   </data>
   <data name="Text_12d6dde9b30c3093" xml:space="preserve">
     <value>Zamknij</value>
@@ -165,17 +258,62 @@
   <data name="Text_142e390b955f4f74" xml:space="preserve">
     <value>Working…</value>
   </data>
+  <data name="Text_14a47aa5e644806d" xml:space="preserve">
+    <value>Select a conversation to manage its schedules.</value>
+  </data>
+  <data name="Text_16db387578b99689" xml:space="preserve">
+    <value>Allow full access by default in new chats</value>
+  </data>
+  <data name="Text_17b5c0061baf42a4" xml:space="preserve">
+    <value>Default reasoning effort</value>
+  </data>
   <data name="Text_199f5853f4e718f7" xml:space="preserve">
     <value>Projekty</value>
+  </data>
+  <data name="Text_19f361adab1c6776" xml:space="preserve">
+    <value>Recording… Stop to transcribe, or Cancel to discard.</value>
   </data>
   <data name="Text_1e571a852c803bbc" xml:space="preserve">
     <value>Answer every required question before submitting.</value>
   </data>
+  <data name="Text_1ed5bb575207cece" xml:space="preserve">
+    <value>Tygodniowy</value>
+  </data>
+  <data name="Text_1ee35c64166b9bec" xml:space="preserve">
+    <value>Choose a profile, then check its status. Existing CLI logins are preserved.</value>
+  </data>
+  <data name="Text_200678f33346fc6e" xml:space="preserve">
+    <value>Inserted into draft</value>
+  </data>
+  <data name="Text_21995058eb0a1e32" xml:space="preserve">
+    <value>AddProviderProfile</value>
+  </data>
+  <data name="Text_227494b1230c5a55" xml:space="preserve">
+    <value>Worktree removal is unavailable in this window.</value>
+  </data>
   <data name="Text_232f88877550dfa9" xml:space="preserve">
     <value>Mikrofon</value>
   </data>
+  <data name="Text_23999f07a784c4f4" xml:space="preserve">
+    <value>Ready. Record starts the microphone only after you choose it.</value>
+  </data>
+  <data name="Text_240732794d597f70" xml:space="preserve">
+    <value>Tuesday</value>
+  </data>
+  <data name="Text_250a7fc28124c361" xml:space="preserve">
+    <value>Read only</value>
+  </data>
   <data name="Text_26f91b6796e33111" xml:space="preserve">
     <value>Przywróć</value>
+  </data>
+  <data name="Text_293aedd8bf1fd296" xml:space="preserve">
+    <value>Reviewed — resume future runs</value>
+  </data>
+  <data name="Text_2998563d980cf5b2" xml:space="preserve">
+    <value>Oczekuje na zatwierdzenie</value>
+  </data>
+  <data name="Text_2ccedee13720d916" xml:space="preserve">
+    <value>MIT License · Copyright 2026 Apoorv Darshan. Native Windows development builds are not signed public releases.</value>
   </data>
   <data name="Text_2ceb11be2290bb1b" xml:space="preserve">
     <value>Anuluj</value>
@@ -183,17 +321,80 @@
   <data name="Text_2d05099c8b47e2f0" xml:space="preserve">
     <value>Read and Write Files</value>
   </data>
+  <data name="Text_2e354c5165af4d70" xml:space="preserve">
+    <value>Use Track Remote Branch to create a local checkout.</value>
+  </data>
   <data name="Text_2ee366cbb0141712" xml:space="preserve">
     <value>Pozwól</value>
+  </data>
+  <data name="Text_30edcc4e98194755" xml:space="preserve">
+    <value>Windows did not release the microphone cleanly. Restart Coincide before recording again.</value>
+  </data>
+  <data name="Text_3153174500d06571" xml:space="preserve">
+    <value>Restore Checkpoint</value>
+  </data>
+  <data name="Text_319ccfc06c45f9a4" xml:space="preserve">
+    <value>Jednorazowo</value>
+  </data>
+  <data name="Text_31c4f8ab533d133d" xml:space="preserve">
+    <value>Select a local branch first.</value>
+  </data>
+  <data name="Text_31d653c51878aa90" xml:space="preserve">
+    <value>Default model ID</value>
   </data>
   <data name="Text_337dd38e3527e5d9" xml:space="preserve">
     <value>Copy to Composer</value>
   </data>
+  <data name="Text_33adf3cc8c3b4713" xml:space="preserve">
+    <value>Skrót</value>
+  </data>
   <data name="Text_33f85f24c0f5f008" xml:space="preserve">
     <value>Zapisz</value>
   </data>
+  <data name="Text_34bc4cc9fb5b7aa4" xml:space="preserve">
+    <value>Instrukcje</value>
+  </data>
+  <data name="Text_359b8da94e7c2bf7" xml:space="preserve">
+    <value>This conversation has no Computer Use access.</value>
+  </data>
+  <data name="Text_365e0ea3db8f9c26" xml:space="preserve">
+    <value>This conversation can inspect native windows.</value>
+  </data>
+  <data name="Text_36f0e292c4ded521" xml:space="preserve">
+    <value>Save voice settings before recording.</value>
+  </data>
+  <data name="Text_37522710280eddce" xml:space="preserve">
+    <value>Delete Branch</value>
+  </data>
+  <data name="Text_38059c4aedacfa00" xml:space="preserve">
+    <value>Delete Checkpoint</value>
+  </data>
+  <data name="Text_38c0cd9b7a567b9d" xml:space="preserve">
+    <value>Agent tools</value>
+  </data>
+  <data name="Text_3914cb410fca44d4" xml:space="preserve">
+    <value>Importuj</value>
+  </data>
   <data name="Text_394ac6bb96eecec0" xml:space="preserve">
     <value>Terminal display buffer limit reached.</value>
+  </data>
+  <data name="Text_399d6e9c8b38a349" xml:space="preserve">
+    <value>Cron</value>
+  </data>
+  <data name="Text_3a74160d60635df0" xml:space="preserve">
+    <value>No model selected</value>
+  </data>
+  <data name="Text_3abc86e625cc6b97" xml:space="preserve">
+    <value>Schedules in this conversation</value>
+  </data>
+  <data name="Text_3bb786d3b55ba37c" xml:space="preserve">
+    <value>Anulowano</value>
+  </data>
+  <data name="Text_3d2d8dcbafbaab7a" xml:space="preserve">
+    <value>Compare checkpoint with</value>
+  </data>
+  <data name="Text_3e00ba8ec988f9cf" xml:space="preserve">
+    <value>Preview Checkpoint</value>
   </data>
   <data name="Text_3e178098bb55daf3" xml:space="preserve">
     <value>Opis commitu</value>
@@ -213,17 +414,59 @@
   <data name="Text_44ef1526bf1d8106" xml:space="preserve">
     <value>Jutro</value>
   </data>
+  <data name="Text_44f87c21d186fcea" xml:space="preserve">
+    <value>Repeat</value>
+  </data>
+  <data name="Text_44fa1773e1e78784" xml:space="preserve">
+    <value>Saved</value>
+  </data>
+  <data name="Text_46a3d392a61a63f0" xml:space="preserve">
+    <value>Open Coincide from its tray icon. Quit stops its agents and terminals; interrupted schedules require review after relaunch.</value>
+  </data>
+  <data name="Text_47a9f592c61daa59" xml:space="preserve">
+    <value>Voice</value>
+  </data>
+  <data name="Text_4890edb184128d64" xml:space="preserve">
+    <value>Schedule proposals always require your approval in the Schedules panel. Computer Use permissions are managed separately in Settings.</value>
+  </data>
+  <data name="Text_499f3644e41825d9" xml:space="preserve">
+    <value>Keep Awake uses an app-owned sleep request. Windows, the lid policy or ASUS software can still request hibernation. Quit releases the request.</value>
+  </data>
   <data name="Text_4c2254c3453e1fca" xml:space="preserve">
     <value>Zarchiwizowane wątki</value>
   </data>
+  <data name="Text_4c9671058ab55d2b" xml:space="preserve">
+    <value>The conversation finished.</value>
+  </data>
+  <data name="Text_4d1422b9bc3d0a7e" xml:space="preserve">
+    <value>Codziennie</value>
+  </data>
+  <data name="Text_4d27276533f167f5" xml:space="preserve">
+    <value>Nie usłyszano mowy.</value>
+  </data>
+  <data name="Text_4e206ee507e440b6" xml:space="preserve">
+    <value>Wybierz plik…</value>
+  </data>
   <data name="Text_4e207ae69a6c4490" xml:space="preserve">
     <value>Enter URL</value>
+  </data>
+  <data name="Text_4ebe0a2ad2bb163e" xml:space="preserve">
+    <value>System language</value>
+  </data>
+  <data name="Text_4ed0f8cd13bc52ab" xml:space="preserve">
+    <value>Delete schedule</value>
+  </data>
+  <data name="Text_4f97b1ac351cdf90" xml:space="preserve">
+    <value>Enter sends; Shift+Enter inserts a line break</value>
   </data>
   <data name="Text_5360d33e7f91fb81" xml:space="preserve">
     <value>Wczytywanie…</value>
   </data>
   <data name="Text_53a526d5c80c3e28" xml:space="preserve">
     <value>Standardowa</value>
+  </data>
+  <data name="Text_54021588d84f7ed1" xml:space="preserve">
+    <value>Import Sessions</value>
   </data>
   <data name="Text_54d1b2a64667e32e" xml:space="preserve">
     <value>Camera</value>
@@ -234,14 +477,29 @@
   <data name="Text_5507b36022816801" xml:space="preserve">
     <value>Terminal input</value>
   </data>
+  <data name="Text_564b2e41be68de6e" xml:space="preserve">
+    <value>Agent tool access</value>
+  </data>
   <data name="Text_565adaaff41a281c" xml:space="preserve">
     <value>Window Management</value>
   </data>
   <data name="Text_57adf424d57c8a0f" xml:space="preserve">
     <value>Wyślij</value>
   </data>
+  <data name="Text_5825d709ca961b07" xml:space="preserve">
+    <value>Preparing microphone…</value>
+  </data>
+  <data name="Text_586fe03d90a0a5f2" xml:space="preserve">
+    <value>Szukaj sesji</value>
+  </data>
   <data name="Text_598a5dbb3832aa57" xml:space="preserve">
     <value>Dodaj projekt…</value>
+  </data>
+  <data name="Text_59eca5c3b90eef1b" xml:space="preserve">
+    <value>Obsługa komputera</value>
+  </data>
+  <data name="Text_5baa9bc2702f80df" xml:space="preserve">
+    <value>Selected days</value>
   </data>
   <data name="Text_5be3c6d61cd9182f" xml:space="preserve">
     <value>Powiadomienia</value>
@@ -254,6 +512,9 @@
   </data>
   <data name="Text_5e8250fb85d64c23" xml:space="preserve">
     <value>Zamknij</value>
+  </data>
+  <data name="Text_5ee7b60f847eee36" xml:space="preserve">
+    <value>Saturday</value>
   </data>
   <data name="Text_60320a18282b2b33" xml:space="preserve">
     <value>Zmień nazwę</value>
@@ -270,6 +531,9 @@
   <data name="Text_64b94e4bdb16dfc5" xml:space="preserve">
     <value>All Threads</value>
   </data>
+  <data name="Text_64ef2a6c2dd1d3d1" xml:space="preserve">
+    <value>Edycja</value>
+  </data>
   <data name="Text_6578b674c8c810cf" xml:space="preserve">
     <value>No Project</value>
   </data>
@@ -279,20 +543,68 @@
   <data name="Text_661045907dd942bc" xml:space="preserve">
     <value>Zatwierdź</value>
   </data>
+  <data name="Text_66dcbbc0355c2759" xml:space="preserve">
+    <value>Sunday</value>
+  </data>
+  <data name="Text_671dbe01f42f297a" xml:space="preserve">
+    <value>Następne uruchomienia</value>
+  </data>
+  <data name="Text_6849e258b7827aa4" xml:space="preserve">
+    <value>Local profile created. Sign in only when you are ready to approve the provider's browser page.</value>
+  </data>
+  <data name="Text_68db52366de956f2" xml:space="preserve">
+    <value>Polecenie zadania</value>
+  </data>
+  <data name="Text_6c10562f68801c89" xml:space="preserve">
+    <value>Selected profile</value>
+  </data>
+  <data name="Text_6c40036f33c26fc1" xml:space="preserve">
+    <value>Use Worktree</value>
+  </data>
+  <data name="Text_6cab772a3053c40e" xml:space="preserve">
+    <value>Override model defaults in this project</value>
+  </data>
+  <data name="Text_6cb3cd2447cb9c6d" xml:space="preserve">
+    <value>Favorite model IDs, one per line</value>
+  </data>
+  <data name="Text_6dbd35f7b7fe2484" xml:space="preserve">
+    <value>Preview a Claude Code or Codex conversation before importing. The original file stays unchanged; imported threads start in approval mode.</value>
+  </data>
+  <data name="Text_6f4c2c96b3efcd2a" xml:space="preserve">
+    <value>Check this profile's current compatible account before using it.</value>
+  </data>
+  <data name="Text_6f62b207f1adab07" xml:space="preserve">
+    <value>Computer Use is on. No conversation is selected.</value>
+  </data>
+  <data name="Text_6fd859b892ac9cb0" xml:space="preserve">
+    <value>Create a new branch</value>
+  </data>
   <data name="Text_7030546b1c47d2da" xml:space="preserve">
     <value>Show in File Explorer</value>
+  </data>
+  <data name="Text_72fb39ae70ed43d2" xml:space="preserve">
+    <value>Full access allows commands and file changes without asking. Defaults never change an existing conversation.</value>
   </data>
   <data name="Text_7405fd7d5819142e" xml:space="preserve">
     <value>Pełny dostęp</value>
   </data>
+  <data name="Text_74133cd943448e25" xml:space="preserve">
+    <value>Delivery was not confirmed. Review the conversation before resuming.</value>
+  </data>
   <data name="Text_7417792bbe720149" xml:space="preserve">
     <value>Przywróć</value>
   </data>
-  <data name="Text_7578ef6e9a65e338" xml:space="preserve">
-    <value>Stop the agent before changing the repository.</value>
+  <data name="Text_7543f42f6a135d28" xml:space="preserve">
+    <value>Select a conversation to grant access.</value>
   </data>
   <data name="Text_76293c58814dd2e9" xml:space="preserve">
     <value>Kopiuj kod</value>
+  </data>
+  <data name="Text_776dcedc065668bd" xml:space="preserve">
+    <value>One window for the coding agents you already use.</value>
+  </data>
+  <data name="Text_79296bd60f533fb0" xml:space="preserve">
+    <value>CPU threads</value>
   </data>
   <data name="Text_79e8cc71a5975b04" xml:space="preserve">
     <value>Opis</value>
@@ -300,11 +612,23 @@
   <data name="Text_7a07940a2b62f185" xml:space="preserve">
     <value>Gałąź</value>
   </data>
+  <data name="Text_7ab078c5a09ab558" xml:space="preserve">
+    <value>ComputerUseRelease</value>
+  </data>
   <data name="Text_7b7163270e57e8b4" xml:space="preserve">
     <value>Odśwież</value>
   </data>
+  <data name="Text_7b9d13ea440cd1d7" xml:space="preserve">
+    <value>Thursday</value>
+  </data>
   <data name="Text_7d736af6cd8199c8" xml:space="preserve">
     <value>Open a terminal for this conversation.</value>
+  </data>
+  <data name="Text_7f5869b3d14d7cbc" xml:space="preserve">
+    <value>Dostawca</value>
+  </data>
+  <data name="Text_80495269815e81b0" xml:space="preserve">
+    <value>Profile label</value>
   </data>
   <data name="Text_823190519895dcf1" xml:space="preserve">
     <value>Downloading…</value>
@@ -315,11 +639,38 @@
   <data name="Text_831262ec45aa79b1" xml:space="preserve">
     <value>Could not read text from the clipboard.</value>
   </data>
+  <data name="Text_8352c6fa87ade989" xml:space="preserve">
+    <value>Ctrl+Enter always sends. During an active turn it queues your message.</value>
+  </data>
   <data name="Text_850da60a15c7009a" xml:space="preserve">
     <value>Nowa karta</value>
   </data>
+  <data name="Text_85208064f7b81ba8" xml:space="preserve">
+    <value>Each run sends the prompt into this conversation with its current agent, model and access. Busy conversations receive only the latest pending run. Coincide must be open; missed runs are skipped.</value>
+  </data>
+  <data name="Text_8537fcae4b754448" xml:space="preserve">
+    <value>Worktree branch</value>
+  </data>
+  <data name="Text_85994a70cd39166c" xml:space="preserve">
+    <value>W toku</value>
+  </data>
+  <data name="Text_868a566fb9603774" xml:space="preserve">
+    <value>Klawiatura</value>
+  </data>
+  <data name="Text_891154308b5f7c33" xml:space="preserve">
+    <value>Use this provider by default in this project</value>
+  </data>
   <data name="Text_89118d3a7be870ca" xml:space="preserve">
     <value>Wznów</value>
+  </data>
+  <data name="Text_89ae02aa9d5f4734" xml:space="preserve">
+    <value>Whisper model</value>
+  </data>
+  <data name="Text_89af6f121c563240" xml:space="preserve">
+    <value>Use Ctrl, Shift or Alt with a letter, number or F1–F12. Clear a field to disable it. Editor shortcuts retain their text-editing behavior.</value>
+  </data>
+  <data name="Text_8a4ff2bd9c13498c" xml:space="preserve">
+    <value>Record</value>
   </data>
   <data name="Text_8b60bf2db1580306" xml:space="preserve">
     <value>Wątki</value>
@@ -327,8 +678,17 @@
   <data name="Text_8c12d8939e4e4834" xml:space="preserve">
     <value>Unstage</value>
   </data>
+  <data name="Text_8c6779721edd93a9" xml:space="preserve">
+    <value>Hidden model IDs, one per line</value>
+  </data>
   <data name="Text_8c7fc9051c0d8003" xml:space="preserve">
     <value>Terminal input limit reached or session closed.</value>
+  </data>
+  <data name="Text_8e6e61bcc3d05c09" xml:space="preserve">
+    <value>Native executable path</value>
+  </data>
+  <data name="Text_8f26e0f086cc2787" xml:space="preserve">
+    <value>Unit</value>
   </data>
   <data name="Text_8f4be9f086eb530f" xml:space="preserve">
     <value>Cofnij</value>
@@ -336,17 +696,68 @@
   <data name="Text_8fb36ad31d5c0382" xml:space="preserve">
     <value>Local Fonts</value>
   </data>
+  <data name="Text_9082c8006bafc3c5" xml:space="preserve">
+    <value>Imported</value>
+  </data>
+  <data name="Text_92b5f7e86bacd038" xml:space="preserve">
+    <value>First run date</value>
+  </data>
+  <data name="Text_92c081dd9af79a04" xml:space="preserve">
+    <value>Select a remote branch first.</value>
+  </data>
+  <data name="Text_92e65fdd4b72ae93" xml:space="preserve">
+    <value>ComputerUseGrant</value>
+  </data>
+  <data name="Text_9400cb7b4f9ce6c6" xml:space="preserve">
+    <value>No schedules in this conversation.</value>
+  </data>
+  <data name="Text_95406343a65299ae" xml:space="preserve">
+    <value>Offline dictation uses a locally installed whisper.cpp CLI and a model in Coincide's model folder. Audio is transcribed on this PC. Text is inserted into the original draft only; it is never sent automatically.</value>
+  </data>
   <data name="Text_955656e78a18bdcc" xml:space="preserve">
     <value>Exited</value>
   </data>
+  <data name="Text_95bc8722b2708f8b" xml:space="preserve">
+    <value>Wstrzymano</value>
+  </data>
+  <data name="Text_95d74db7ff0ae9aa" xml:space="preserve">
+    <value>New schedule</value>
+  </data>
+  <data name="Text_960e357aec877554" xml:space="preserve">
+    <value>Enable Computer Use</value>
+  </data>
+  <data name="Text_961c6fbdac61d3aa" xml:space="preserve">
+    <value>Computer Use is off.</value>
+  </data>
+  <data name="Text_965c503c3e42fdfe" xml:space="preserve">
+    <value>Enabled</value>
+  </data>
+  <data name="Text_96a5da285a9e2fe5" xml:space="preserve">
+    <value>Preview only. Instruction files are not executed or changed.</value>
+  </data>
   <data name="Text_970d041a28d1067d" xml:space="preserve">
     <value>Wypchnij</value>
+  </data>
+  <data name="Text_9777d224c8fab6f1" xml:space="preserve">
+    <value>Brak przyszłych wykonań</value>
+  </data>
+  <data name="Text_978464661758a212" xml:space="preserve">
+    <value>Friday</value>
+  </data>
+  <data name="Text_97a98f731b91f87d" xml:space="preserve">
+    <value>Review interrupted delivery</value>
+  </data>
+  <data name="Text_989495cdc8aa90fe" xml:space="preserve">
+    <value>ComputerUseRetrySave</value>
   </data>
   <data name="Text_9899f07ee811b5ca" xml:space="preserve">
     <value>1 hour</value>
   </data>
   <data name="Text_9b26ee7433b506fb" xml:space="preserve">
     <value>Open a browser tab to begin.</value>
+  </data>
+  <data name="Text_9bdbeae64e12a946" xml:space="preserve">
+    <value>Native executable overrides apply to this Windows app. Leave a path empty for discovery. Enabling a provider does not sign you in.</value>
   </data>
   <data name="Text_9c13a2548d254014" xml:space="preserve">
     <value>Gotowe</value>
@@ -357,6 +768,21 @@
   <data name="Text_9d8b8aa2b404c2c8" xml:space="preserve">
     <value>Ustawienia</value>
   </data>
+  <data name="Text_9e8e28a44ad464d1" xml:space="preserve">
+    <value>ComputerUseRevoke</value>
+  </data>
+  <data name="Text_9eaa6e7fbfd5cdd7" xml:space="preserve">
+    <value>Wednesday</value>
+  </data>
+  <data name="Text_9f5f87369390e0db" xml:space="preserve">
+    <value>Compare Checkpoints</value>
+  </data>
+  <data name="Text_9f85648909e7705f" xml:space="preserve">
+    <value>Nazwa zadania</value>
+  </data>
+  <data name="Text_9f9b794bd3d61346" xml:space="preserve">
+    <value>Track Remote Branch</value>
+  </data>
   <data name="Text_a0ca791d0f13f0e5" xml:space="preserve">
     <value>Archiwizuj</value>
   </data>
@@ -366,35 +792,104 @@
   <data name="Text_a20c185606f42958" xml:space="preserve">
     <value>Sensors</value>
   </data>
+  <data name="Text_a2a0957c540f74ab" xml:space="preserve">
+    <value>This conversation currently controls the desktop.</value>
+  </data>
+  <data name="Text_a36aef46efe431eb" xml:space="preserve">
+    <value>Modele</value>
+  </data>
   <data name="Text_a3b9964327605427" xml:space="preserve">
     <value>Wpisz adres HTTP lub HTTPS bez nazwy użytkownika i hasła.</value>
+  </data>
+  <data name="Text_a45a194b58837e4f" xml:space="preserve">
+    <value>Aktywne</value>
+  </data>
+  <data name="Text_a47b660ae8e7a832" xml:space="preserve">
+    <value>Dni robocze</value>
+  </data>
+  <data name="Text_a588118951643777" xml:space="preserve">
+    <value>Default speed tier</value>
+  </data>
+  <data name="Text_a7551ae0109d2164" xml:space="preserve">
+    <value>Punkty kontrolne</value>
+  </data>
+  <data name="Text_ab7d3a22ccbf21a0" xml:space="preserve">
+    <value>Loading instructions…</value>
   </data>
   <data name="Text_abd480ab5c691fa7" xml:space="preserve">
     <value>Rozumowanie</value>
   </data>
+  <data name="Text_ac9d80c3d9c0aade" xml:space="preserve">
+    <value>Keep active work running when the window closes</value>
+  </data>
+  <data name="Text_acae74732f544fca" xml:space="preserve">
+    <value>Dni</value>
+  </data>
   <data name="Text_ae5da213b7f896ed" xml:space="preserve">
     <value>Stage</value>
+  </data>
+  <data name="Text_ae6467645c5d5ef3" xml:space="preserve">
+    <value>The desktop is available.</value>
+  </data>
+  <data name="Text_ae7eb83a4e723ac5" xml:space="preserve">
+    <value>This conversation can inspect native windows and send input.</value>
+  </data>
+  <data name="Text_aed9c16a7eddcb50" xml:space="preserve">
+    <value>Review the conversation to check what already ran. Resuming schedules only future occurrences.</value>
   </data>
   <data name="Text_b055b780a919f111" xml:space="preserve">
     <value>Łączenie…</value>
   </data>
+  <data name="Text_b0b86b8ca6ab13bd" xml:space="preserve">
+    <value>Dostawcy</value>
+  </data>
   <data name="Text_b3d4f79d9d8b71e5" xml:space="preserve">
     <value>Wyślij</value>
+  </data>
+  <data name="Text_b3ef6811b862c8c9" xml:space="preserve">
+    <value>CheckProviderAccount</value>
+  </data>
+  <data name="Text_b46d3613edb66558" xml:space="preserve">
+    <value>Interval</value>
   </data>
   <data name="Text_b4b253c20d6919bb" xml:space="preserve">
     <value>New Branch</value>
   </data>
+  <data name="Text_b4e7361610c3c30e" xml:space="preserve">
+    <value>Refresh Models</value>
+  </data>
+  <data name="Text_b582b187159f68bb" xml:space="preserve">
+    <value>Uruchom o</value>
+  </data>
   <data name="Text_b5a14d20e2063f7f" xml:space="preserve">
     <value>Checkpoint</value>
   </data>
+  <data name="Text_b5d0adb0baba328a" xml:space="preserve">
+    <value>Language changes apply when you reopen Coincide.</value>
+  </data>
+  <data name="Text_b64c802763d498e1" xml:space="preserve">
+    <value>Reply font size</value>
+  </data>
   <data name="Text_b663fa25462d8aa9" xml:space="preserve">
     <value>Preparing preview…</value>
+  </data>
+  <data name="Text_b76b3aa54cc8a601" xml:space="preserve">
+    <value>Add or select a local provider profile.</value>
+  </data>
+  <data name="Text_b879392543a89272" xml:space="preserve">
+    <value>Reset keyboard shortcuts</value>
+  </data>
+  <data name="Text_b99af8f463fbfa26" xml:space="preserve">
+    <value>Save for approval</value>
   </data>
   <data name="Text_be9a2afda356a007" xml:space="preserve">
     <value>Read Clipboard</value>
   </data>
   <data name="Text_c0f4254f45363d61" xml:space="preserve">
     <value>Worktrees</value>
+  </data>
+  <data name="Text_c3ac225273c8316b" xml:space="preserve">
+    <value>Ogólne</value>
   </data>
   <data name="Text_c4525d2fe5250dbb" xml:space="preserve">
     <value>Switch Branch</value>
@@ -408,11 +903,23 @@
   <data name="Text_c82ec093ac725aca" xml:space="preserve">
     <value>The browser process stopped.</value>
   </data>
+  <data name="Text_c9261cecd5546990" xml:space="preserve">
+    <value>Czcionka odpowiedzi</value>
+  </data>
+  <data name="Text_c92f0fc51b31c60e" xml:space="preserve">
+    <value>Custom model IDs, one per line</value>
+  </data>
+  <data name="Text_c9757b387904aaba" xml:space="preserve">
+    <value>Time zone</value>
+  </data>
   <data name="Text_cac4c9636dbe7d3d" xml:space="preserve">
     <value>Nowy czat</value>
   </data>
   <data name="Text_cb6a9c1a1757adbc" xml:space="preserve">
     <value>Ty</value>
+  </data>
+  <data name="Text_cb85ddee44d77e9e" xml:space="preserve">
+    <value>Stop the agents and close their terminals before changing this repository or worktree.</value>
   </data>
   <data name="Text_cd104d19b5a0ef92" xml:space="preserve">
     <value>Plan</value>
@@ -423,6 +930,9 @@
   <data name="Text_cd225b15c0dda097" xml:space="preserve">
     <value>Create Branch</value>
   </data>
+  <data name="Text_ce9c449b1ea0acc3" xml:space="preserve">
+    <value>Keep Awake on battery too</value>
+  </data>
   <data name="Text_d001953bf6bcf290" xml:space="preserve">
     <value>Cofnij odłożenie</value>
   </data>
@@ -431,6 +941,15 @@
   </data>
   <data name="Text_d1bb1f13cc349256" xml:space="preserve">
     <value>Pokieruj</value>
+  </data>
+  <data name="Text_d4942995ed3dab21" xml:space="preserve">
+    <value>The confirmation could not be shown. No repository changes were made.</value>
+  </data>
+  <data name="Text_d5a79b5f1ddbd0c3" xml:space="preserve">
+    <value>Keep Awake while Coincide is running</value>
+  </data>
+  <data name="Text_d70e957037f58cd3" xml:space="preserve">
+    <value>Allow terminal status, output and interrupt</value>
   </data>
   <data name="Text_d8bbc6ae6b1e90b8" xml:space="preserve">
     <value>1 week</value>
@@ -441,6 +960,9 @@
   <data name="Text_d9cf21b33b26b096" xml:space="preserve">
     <value>Terminal is running.</value>
   </data>
+  <data name="Text_dac26646997609ea" xml:space="preserve">
+    <value>Notify when work finishes or needs a response</value>
+  </data>
   <data name="Text_db9694f31d64cfc8" xml:space="preserve">
     <value>Your answer</value>
   </data>
@@ -450,23 +972,74 @@
   <data name="Text_dc673e73b5c13aea" xml:space="preserve">
     <value>Usuń</value>
   </data>
+  <data name="Text_dc91fbc5acf8e4f5" xml:space="preserve">
+    <value>I understand the documented Antigravity account risk</value>
+  </data>
+  <data name="Text_dd5bb6d4e39f1205" xml:space="preserve">
+    <value>SignInProviderAccount</value>
+  </data>
+  <data name="Text_de483d657caae16e" xml:space="preserve">
+    <value>Remove Worktree</value>
+  </data>
+  <data name="Text_de84d8cdded66021" xml:space="preserve">
+    <value>Loading session preview…</value>
+  </data>
   <data name="Text_df8e15fc3771c1bf" xml:space="preserve">
     <value>Could not dismiss the question. Try again.</value>
+  </data>
+  <data name="Text_e0955919920ee87d" xml:space="preserve">
+    <value>Day</value>
   </data>
   <data name="Text_e24130f1123560a0" xml:space="preserve">
     <value>Szybkość</value>
   </data>
+  <data name="Text_e2d9b23cbf75b73d" xml:space="preserve">
+    <value>This conversation can inspect and capture native windows.</value>
+  </data>
   <data name="Text_e33355ddf7739b77" xml:space="preserve">
     <value>Full access allows commands and file changes without asking. Leave it off to require approval.</value>
   </data>
+  <data name="Text_e364de6132887260" xml:space="preserve">
+    <value>Keep the display on too</value>
+  </data>
+  <data name="Text_e376f1c3a929b34c" xml:space="preserve">
+    <value>Enable Voice</value>
+  </data>
+  <data name="Text_e3d1cce921ae26d5" xml:space="preserve">
+    <value>Default provider for new chats</value>
+  </data>
+  <data name="Text_e48bd9e6c2a3109d" xml:space="preserve">
+    <value>Konta</value>
+  </data>
+  <data name="Text_e53ab3f2dd7b578c" xml:space="preserve">
+    <value>Checkpoint message</value>
+  </data>
   <data name="Text_e66240ab33ffe32d" xml:space="preserve">
     <value>Przypnij lub odepnij wątek</value>
+  </data>
+  <data name="Text_e754804a0afa990c" xml:space="preserve">
+    <value>Waiting for this conversation</value>
   </data>
   <data name="Text_e7bee6e9a9b5394c" xml:space="preserve">
     <value>Private</value>
   </data>
   <data name="Text_e7bf49555654cbfb" xml:space="preserve">
     <value>Ustawienia modeli</value>
+  </data>
+  <data name="Text_e826eddf7869186d" xml:space="preserve">
+    <value>Global master (read only)</value>
+  </data>
+  <data name="Text_e8fc428c12cf0dea" xml:space="preserve">
+    <value>Brak przyszłych uruchomień. Wybierz późniejszą porę.</value>
+  </data>
+  <data name="Text_e972b82767254130" xml:space="preserve">
+    <value>Offline speech engine</value>
+  </data>
+  <data name="Text_e98ac7343c467ff4" xml:space="preserve">
+    <value>Another conversation currently controls the desktop.</value>
+  </data>
+  <data name="Text_e9ff6e9a514d8cf9" xml:space="preserve">
+    <value>Monday</value>
   </data>
   <data name="Text_ea47f4110bb2b0b3" xml:space="preserve">
     <value>Zdalne</value>
@@ -480,23 +1053,71 @@
   <data name="Text_eb14831998868b6b" xml:space="preserve">
     <value>Git</value>
   </data>
+  <data name="Text_ee0ec27fb03d880e" xml:space="preserve">
+    <value>Minuty</value>
+  </data>
   <data name="Text_ee2fcaedf9743ec6" xml:space="preserve">
     <value>Lokalizacja</value>
+  </data>
+  <data name="Text_ee76ff334a4a16ff" xml:space="preserve">
+    <value>Instrukcje globalne</value>
+  </data>
+  <data name="Text_eef696df53dffcc1" xml:space="preserve">
+    <value>Choose whisper-cli.exe…</value>
   </data>
   <data name="Text_ef95e345b26702fb" xml:space="preserve">
     <value>Deleted Threads</value>
   </data>
+  <data name="Text_efcf950b3cc4fc3b" xml:space="preserve">
+    <value>Język</value>
+  </data>
+  <data name="Text_f0e261e04eda82ff" xml:space="preserve">
+    <value>Wygląd</value>
+  </data>
   <data name="Text_f0e6f67c08e8527e" xml:space="preserve">
     <value>Could not save browser tabs.</value>
   </data>
+  <data name="Text_f2244667a444cf92" xml:space="preserve">
+    <value>UseProviderProfile</value>
+  </data>
+  <data name="Text_f2d616b20d62240d" xml:space="preserve">
+    <value>Schedules</value>
+  </data>
+  <data name="Text_f3c95fbc8093e5b0" xml:space="preserve">
+    <value>Defaults apply to</value>
+  </data>
+  <data name="Text_f5dac1f86c58f916" xml:space="preserve">
+    <value>All projects</value>
+  </data>
+  <data name="Text_f6c399e3730ba76a" xml:space="preserve">
+    <value>Edit schedule</value>
+  </data>
   <data name="Text_f6e1665c7022a1f8" xml:space="preserve">
     <value>Password</value>
+  </data>
+  <data name="Text_f8e484a5ee1dc9b1" xml:space="preserve">
+    <value>Rename Branch</value>
+  </data>
+  <data name="Text_f92789320708efed" xml:space="preserve">
+    <value>Next run</value>
+  </data>
+  <data name="Text_fa24a7a1eaf02308" xml:space="preserve">
+    <value>Plan by default in new chats</value>
+  </data>
+  <data name="Text_fb419463d301c7ac" xml:space="preserve">
+    <value>The scheduled turn finished. Review its conversation for details.</value>
   </data>
   <data name="Text_fc2490f62b243fa2" xml:space="preserve">
     <value>Navigation failed.</value>
   </data>
   <data name="Text_fda3e4a519cfc5ba" xml:space="preserve">
     <value>Zakończony</value>
+  </data>
+  <data name="Text_fe0172ddce73f897" xml:space="preserve">
+    <value>Transkrybowanie…</value>
+  </data>
+  <data name="Text_feae03c8b61454b4" xml:space="preserve">
+    <value>Voice is off until you enable it. No model or speech engine is downloaded automatically.</value>
   </data>
   <data name="ThreadActions" xml:space="preserve">
     <value>Thread actions</value>
@@ -515,6 +1136,12 @@
   </data>
   <data name="Unsnooze" xml:space="preserve">
     <value>Cofnij odłożenie</value>
+  </data>
+  <data name="Use profile" xml:space="preserve">
+    <value>UseProviderProfile</value>
+  </data>
+  <data name="Voice" xml:space="preserve">
+    <value>Voice</value>
   </data>
   <data name="You" xml:space="preserve">
     <value>Ty</value>
