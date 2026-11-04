@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="NewChat" xml:space="preserve">
+    <value>新增聊天</value>
+  </data>
+  <data name="AddProject" xml:space="preserve">
+    <value>加入專案…</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>搜尋</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>顯示已封存的對話</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>設定</value>
+  </data>
+  <data name="Archive" xml:space="preserve">
+    <value>封存</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>還原</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>重做</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>訊息</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>你</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>關閉</value>
+  </data>
+</root>

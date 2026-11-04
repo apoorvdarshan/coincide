@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="NewChat" xml:space="preserve">
+    <value>새 채팅</value>
+  </data>
+  <data name="AddProject" xml:space="preserve">
+    <value>프로젝트 추가…</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>검색</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>보관된 스레드 보기</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>설정</value>
+  </data>
+  <data name="Archive" xml:space="preserve">
+    <value>보관</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>실행 취소</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>실행 복귀</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>메시지</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>나</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>닫기</value>
+  </data>
+</root>

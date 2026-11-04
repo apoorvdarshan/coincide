@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="NewChat" xml:space="preserve">
+    <value>Yeni Sohbet</value>
+  </data>
+  <data name="AddProject" xml:space="preserve">
+    <value>Proje Ekle…</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>Ara</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>Arşivlenmiş Sohbetleri Göster</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>Ayarlar</value>
+  </data>
+  <data name="Archive" xml:space="preserve">
+    <value>Arşivle</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>Geri Al</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>Yinele</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>Mesaj</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>Siz</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>Kapat</value>
+  </data>
+</root>

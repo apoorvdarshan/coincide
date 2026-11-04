@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="NewChat" xml:space="preserve">
+    <value>Nieuwe chat</value>
+  </data>
+  <data name="AddProject" xml:space="preserve">
+    <value>Voeg project toe…</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>Zoek</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>Toon gearchiveerde threads</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>Instellingen</value>
+  </data>
+  <data name="Archive" xml:space="preserve">
+    <value>Archiveer</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>Herstel</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>Opnieuw</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>Bericht</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>Jij</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>Sluit</value>
+  </data>
+</root>

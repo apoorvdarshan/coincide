@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="NewChat" xml:space="preserve">
+    <value>Новий чат</value>
+  </data>
+  <data name="AddProject" xml:space="preserve">
+    <value>Додати проєкт…</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>Пошук</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>Показати архівовані чати</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>Параметри</value>
+  </data>
+  <data name="Archive" xml:space="preserve">
+    <value>Архівувати</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>Відмінити</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>Повторити</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>Повідомлення</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>Ви</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>Закрити</value>
+  </data>
+</root>

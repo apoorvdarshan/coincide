@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="NewChat" xml:space="preserve">
+    <value>新規チャット</value>
+  </data>
+  <data name="AddProject" xml:space="preserve">
+    <value>プロジェクトを追加…</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>検索</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>アーカイブしたスレッドを表示</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>設定</value>
+  </data>
+  <data name="Archive" xml:space="preserve">
+    <value>アーカイブ</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>取り消す</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>やり直す</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>メッセージ</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>あなた</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>閉じる</value>
+  </data>
+</root>

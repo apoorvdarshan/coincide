@@ -1,0 +1,38 @@
+name: Windows
+
+on:
+  pull_request:
+    paths: ['windows/**', 'Coincide/Resources/Localizable.xcstrings', '.github/workflows/windows.yml']
+  push:
+    branches: [main]
+    paths: ['windows/**', 'Coincide/Resources/Localizable.xcstrings', '.github/workflows/windows.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Windows native build and core tests
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check shared label resources
+        run: python windows/scripts/sync-resources.py --check
+      - name: Build and run core tests, then build WinUI
+        shell: pwsh
+        run: ./windows/build.ps1
+      - name: Save Windows development build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Coincide-Windows-x64-preview
+          path: windows/build/x64/Release/
+          if-no-files-found: error
+          retention-days: 7

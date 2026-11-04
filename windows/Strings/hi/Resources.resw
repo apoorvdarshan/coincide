@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="NewChat" xml:space="preserve">
+    <value>नई चैट</value>
+  </data>
+  <data name="AddProject" xml:space="preserve">
+    <value>प्रोजेक्ट जोड़ें…</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>खोजें</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>आर्काइव किए गए थ्रेड दिखाएँ</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>सेटिंग्ज़</value>
+  </data>
+  <data name="Archive" xml:space="preserve">
+    <value>आर्काइव करें</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>पूर्ववत करें</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>फिर से करें</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>संदेश</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>आप</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>बंद करें</value>
+  </data>
+</root>

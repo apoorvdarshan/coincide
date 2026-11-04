@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="NewChat" xml:space="preserve">
+    <value>Nowy czat</value>
+  </data>
+  <data name="AddProject" xml:space="preserve">
+    <value>Dodaj projekt…</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>Szukaj</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>Pokaż zarchiwizowane wątki</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>Ustawienia</value>
+  </data>
+  <data name="Archive" xml:space="preserve">
+    <value>Archiwizuj</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>Cofnij</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>Przywróć</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>Opis</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>Ty</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>Zamknij</value>
+  </data>
+</root>

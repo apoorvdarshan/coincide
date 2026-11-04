@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="NewChat" xml:space="preserve">
+    <value>Obrolan Baru</value>
+  </data>
+  <data name="AddProject" xml:space="preserve">
+    <value>Tambah Proyek…</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>Cari</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>Tampilkan Utas yang Diarsipkan</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>Pengaturan</value>
+  </data>
+  <data name="Archive" xml:space="preserve">
+    <value>Arsipkan</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>Urungkan</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>Ulangi</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>Pesan</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>Anda</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>Tutup</value>
+  </data>
+</root>

@@ -36,3 +36,9 @@ xcuserdata/
 # Python bytecode from scripts
 __pycache__/
 *.pyc
+
+# Native Windows development output (never the Mac app's data).
+/windows/build/
+/windows/App/obj/
+/windows/App/*.vcxproj.user
+/windows/.vs/

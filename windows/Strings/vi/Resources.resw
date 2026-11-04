@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="NewChat" xml:space="preserve">
+    <value>Cuộc trò chuyện mới</value>
+  </data>
+  <data name="AddProject" xml:space="preserve">
+    <value>Thêm dự án…</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>Tìm kiếm</value>
+  </data>
+  <data name="ShowArchived" xml:space="preserve">
+    <value>Hiển thị luồng đã lưu trữ</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>Cài đặt</value>
+  </data>
+  <data name="Archive" xml:space="preserve">
+    <value>Lưu trữ</value>
+  </data>
+  <data name="Undo" xml:space="preserve">
+    <value>Hoàn tác</value>
+  </data>
+  <data name="Redo" xml:space="preserve">
+    <value>Làm lại</value>
+  </data>
+  <data name="Message" xml:space="preserve">
+    <value>Tin nhắn</value>
+  </data>
+  <data name="You" xml:space="preserve">
+    <value>Bạn</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>Đóng</value>
+  </data>
+</root>
