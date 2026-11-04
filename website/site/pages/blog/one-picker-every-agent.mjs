@@ -27,6 +27,7 @@ export default {
     duration: "PT12S",
     contentUrl: "https://coincide.dev" + clip,
     embedUrl: "https://coincide.dev/blog/one-picker-every-agent#watch",
+    sameAs: "https://www.youtube.com/watch?v=hcIhkZ3NUQ4",
     width: 1920,
     height: 1088,
   }],
@@ -39,6 +40,8 @@ export default {
   </video>
   <figcaption>A 12-second edited workflow preview. No audio; demo conversation.</figcaption>
 </figure>
+
+<p>Also watch the <a href="https://www.youtube.com/watch?v=hcIhkZ3NUQ4">preview on YouTube</a>.</p>
 
 <h2 id="picker">The agent and model are one choice</h2>
 <p>Click the model button below the composer, or press <kbd>⇧</kbd><kbd>⌘</kbd><kbd>M</kbd>. The ${s.link("/features/model-picker", "picker")} has a search field, Favorites, and a tab for each agent. Choose a model and you also choose the agent that will handle the next turn.</p>
@@ -54,6 +57,11 @@ export default {
 
 <h2 id="shared">Shared today</h2>
 ${shared([
+  [
+    "YouTube",
+    "https://www.youtube.com/watch?v=hcIhkZ3NUQ4",
+    "the 12-second landscape preview"
+  ],
   [
     "Mastodon",
     "https://mastodon.social/@apoorvcodes/117555908072740731",
