@@ -7,9 +7,12 @@ updates:
     groups:
       # Coincide Remote's store-release callers (.github/workflows/ios-release.yml and store-checks.yml) pin one
       # commit with its "# vX.Y.Z" comment, so they move together in a pull request of their own. Other actions keep
-      # their own pull requests.
+      # their own pull requests unless grouped below.
       store-release:
         patterns: ["apoorvdarshan/store-release*"]
+      # CodeQL init and analyze must use the same version in each workflow.
+      codeql:
+        patterns: ["github/codeql-action*"]
     # Those pins run with the App Store Connect key and the signing identity: a new store-release release waits seven
     # days before it is proposed. Security updates never wait.
     cooldown:
