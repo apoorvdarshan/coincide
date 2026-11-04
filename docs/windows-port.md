@@ -4,6 +4,17 @@ Target: standalone, native C++/WinRT + WinUI 3 Windows desktop application. A Ma
 run agents. This is a full feature-port request, not permission to replace features with a remote-only client or a web shell.
 Baseline: the Mac application at `b54ad87`, including the thread-switch and image-click fixes in #229 and #230.
 
+## Verified development milestone
+
+- SSH access and the native C++ toolchain are working on the owner's Windows laptop.
+- The WinUI executable builds on that laptop; GitHub Windows runners also compile the application.
+- 27 workspace/core checks and 17 Windows storage checks pass on Windows.
+- Four native UI checks pass on the laptop: opening the latest row of a 1,500-message thread, switching to another
+  1,500-message thread without scrolling, keeping that thread's draft, and returning to the first thread without a blank view.
+- A screenshot and the native accessibility tree were inspected. The initial window and plain-text rows render.
+- Full parity is not complete. Agent execution is not implemented in this milestone, and the preview says so.
+- Source is pushed in draft PR #235. Check its current Windows CI result separately from the local results above.
+
 ## Platform decisions awaiting the owner's answer
 
 No decision below is treated as approval merely because development continues elsewhere.
@@ -28,14 +39,14 @@ needs both the relevant automated coverage and actual Windows verification befor
 
 | Feature group | Required behavior | Current state |
 |---|---|---|
-| Native foundation | Window, resize, DPI, keyboard, focus, accessibility | Initial WinUI source; Windows build/runtime pending |
+| Native foundation | Window, resize, DPI, keyboard, focus, accessibility | Initial native window builds and opens on Windows; broader input/DPI checks pending |
 | Projects and conversations | Projectless chats, search, rename, pin, archive, settle, snooze, delete, batch operations, undo/redo | Basic project/chat/archive model and UI; remaining operations pending |
-| Persistence | Fast index, lazy transcripts, drafts, crash-safe writes, recovery and forward compatibility | Initial isolated Windows store; storage regression tests and migration pending |
+| Persistence | Fast index, lazy transcripts, drafts, crash-safe writes, recovery and forward compatibility | Initial isolated store passes 17 Windows regression checks; full recovery/migration still pending |
 | Agents | Claude Code, Codex, Cursor, Grok Build, OpenCode, Antigravity; detect, sign in, catalogs and account selection | Not implemented; Windows availability must be verified individually |
 | Model controls | Favorites, hidden models, effort, speed, permissions, plan/build mode, project defaults | Not implemented |
 | Streaming runtime | Tools, approvals, questions, cancellation, steering, queueing and background work | Not implemented |
 | Provider handoff | Per-provider/per-thread session IDs, missed turns, reset/resume behavior and context limits | Initial bookkeeping tests; provider integration and bounded recap pending |
-| Transcript | Markdown, code, work logs, links, images, audio/video, media opening, previews and copy/selection | Native virtualized plain text only; media/rendering/long-history UI tests pending |
+| Transcript | Markdown, code, work logs, links, images, audio/video, media opening, previews and copy/selection | Virtualized plain text and four long-thread UI checks pass on Windows; rich content and full performance validation pending |
 | Composer | Attachments, mentions, slash commands, quotes, terminal/diff context and per-thread drafts | Drafts only; remaining composer behavior pending |
 | Git | Status/diffs, stage/commit/push, checkpoints/revert, worktrees and turn diffs | Not implemented |
 | Code hosting | GitHub native PR workspace; other supported forge CLIs/pages, checks, reviews and exact-head merges | Not implemented |

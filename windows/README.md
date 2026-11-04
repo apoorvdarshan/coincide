@@ -19,6 +19,11 @@ The script executes core regression tests and builds the unpackaged application.
 Do not copy just the EXE. `-CoreOnly` runs the core checks without building WinUI. ARM64 app builds can be requested
 with `-Architecture ARM64`; automated execution of ARM64 artifacts remains a separate validation task.
 
+The build runs 27 portable core checks and 17 Windows storage checks. In an **interactive desktop session**, run
+`./windows/Tests/PreviewSmoke.ps1` for the native long-thread switching and draft checks. It seeds two isolated
+1,500-message conversations, checks the latest rows without scrolling, records UI evidence, closes its own process,
+and removes its temporary conversation data. It does not use the owner's real conversations or an agent account.
+
 The initial preview keeps its data under `%LOCALAPPDATA%\Coincide Windows Preview`. Override `COINCIDE_DATA_DIR` for
 isolated tests. It does not import or rewrite an existing Mac data directory. The small workspace index loads at launch;
 each conversation's messages and draft load only when opened. Invalid/future-format files fail closed instead of being
