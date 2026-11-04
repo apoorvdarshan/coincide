@@ -5,13 +5,15 @@ namespace coincide {
 inline int bot_workspace_tests(const std::filesystem::path& report){
     const auto directory=std::filesystem::temp_directory_path()/winrt::to_hstring("CoincideBotWorkspace-"+new_id()).c_str();std::size_t checks{};
     const auto check=[&](bool value,const char* message){if(!value)throw std::runtime_error(message);++checks;};
+    // The runner's TEMP can contain a DOS 8.3 alias; BotStore persists the physical folder.
+    const auto same_folder=[](const std::string& saved,const std::filesystem::path& expected){std::error_code error;return std::filesystem::equivalent(std::filesystem::path(winrt::to_hstring(saved).c_str()),expected,error)&&!error;};
     try{
         const auto home=directory/L"home",custom=directory/L"custom";std::filesystem::create_directories(home);std::filesystem::create_directories(custom);
         {std::ofstream(custom/L"keep.txt")<<"owned fixture file";}
         WorkspaceStore store(directory);auto workspace=store.open();BotStore bots(directory/L"bots",home);bots.open();bots.ensure_starters({});auto bot=bots.records().front();
         bool busy{};std::vector<std::string> invalidated;BotWorkspace controller(workspace,store,bots,[&](const auto&){return busy;},[&](const auto& ids){invalidated=ids;});
         const auto id=controller.open(bots.plan(bot.id,{}));auto& first=workspace.thread(id);
-        check(first.bot_id==bot.id&&first.project_id==bots_container_id&&first.bot_folder==winrt::to_string(home.wstring()),"Opening a bot must persist its identity and Home working folder");
+        check(first.bot_id==bot.id&&first.project_id==bots_container_id&&first.bot_folder&&same_folder(*first.bot_folder,home),"Opening a bot must persist its identity and Home working folder");
         check(first.messages.empty()&&first.draft.empty()&&first.sessions.empty(),"Opening a bot must not send a greeting or start a provider");
         first.messages.push_back({new_id(),"user","Keep original history","codex"});first.draft="Keep this draft";first.model="saved-model";store.save_thread(first);store.save_index(workspace);
         WorkspaceStore reopened(directory);auto restored=reopened.open();reopened.load_thread(restored.thread(id));
@@ -27,12 +29,12 @@ inline int bot_workspace_tests(const std::filesystem::path& report){
         try{bots.save(bot,[&](const auto& change){controller.before_change(change);});}catch(...){rejected=true;}
         check(rejected&&!bots.find(bot.id)->folder&&invalidated.empty(),"A busy bot context edit must fail before metadata or sessions change");
         busy=false;bots.save(bot,[&](const auto& change){controller.before_change(change);});controller.recover_orphans();
-        check(invalidated.size()==2&&workspace.thread(id).bot_folder==*bot.folder,"Idle bot context changes must invalidate sessions and persist their current folder");
+        check(invalidated.size()==2&&workspace.thread(id).bot_folder&&same_folder(*workspace.thread(id).bot_folder,custom),"Idle bot context changes must invalidate sessions and persist their current folder");
         const auto transcript=directory/L"threads"/winrt::to_hstring(id+".json").c_str();const auto bytes=[&]{std::ifstream stream(transcript,std::ios::binary);return std::string(std::istreambuf_iterator<char>(stream),{});};const auto before=bytes();
         // Simulate interruption after bot metadata removal and before the workspace index write.
         bots.erase(bot.id);check(controller.recover_orphans(),"An erased bot's remaining histories must be recovered at the next metadata reconciliation");
         check(!workspace.thread(id).bot_id&&!workspace.thread(id).bot_folder&&workspace.thread(id).project_id,"Recovered histories must become ordinary project conversations");
-        check(workspace.project(*workspace.thread(id).project_id).path==*bot.folder,"Keeping a conversation must retain its original custom working folder");
+        check(same_folder(workspace.project(*workspace.thread(id).project_id).path,custom),"Keeping a conversation must retain its original custom working folder");
         check(bytes()==before&&workspace.thread(id).draft=="Keep this draft","Bot recovery must not rewrite transcript, draft or native session history");
         check(!bots.ensure_starters({})&&bots.records().empty(),"Removing Brulee must not recreate it on the next startup");
         auto second=bots.make_draft({});bots.save(second);const auto remove_id=controller.open(bots.plan(second.id,{}));

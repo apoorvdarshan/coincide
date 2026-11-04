@@ -59,7 +59,7 @@ The previous pushed checkpoint `1d124b4` passed Windows CI and its other applica
 above has been validated on the physical laptop; check PR #235 for its own exact-revision CI result. Required notices
 accompany the Windows build output. The fixture-only schedule clock now starts when its controller opens; a deliberate 12-second startup delay
 passes the real app scheduled-delivery flow without changing production missed-run behavior. CI subsequently exposed
-a Git mutation-observation fixture race, whose fix passes the expanded native panel run, then a PowerShell cold-start deadline in the advertised curl fixture. The latter now separates bounded shell readiness from its unchanged action deadline and passes all 102 bridge checks. Exact-revision CI is still required. Background-host app integration and remaining parity work continue.
+a Git mutation-observation fixture race, whose fix passes the expanded native panel run, then a PowerShell cold-start deadline in the advertised curl fixture. The latter now separates bounded shell readiness from its unchanged action deadline and passes all 102 bridge checks. CI then exposed bot fixture comparisons against the runner's DOS 8.3 path spelling. Those checks now compare physical folder identity and the focused 19-check suite passes on the laptop. Exact-revision CI is still required. Background-host app integration and remaining parity work continue.
 
 ## Previously pushed milestone (4008aa4)
 
