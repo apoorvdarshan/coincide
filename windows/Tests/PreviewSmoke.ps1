@@ -169,9 +169,9 @@ try {
 
     Send-Message 'file-approval'
     Wait-Until { $null -ne (Find-Control $script:window 'DenyApproval') } 'No file-change approval appeared.'
-    $cards = Find-Control $script:window 'AgentPrompts'
-    $details = $cards.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
-    if (!@($details | Where-Object {$_.Current.Name -like '*fixture.txt*'}).Count) { throw 'The file-change card omitted its path and diff.' }
+    # Layout-only StackPanels need not have accessibility peers. Inspect this app window's exposed controls.
+    $details = $script:window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+    if (!@($details | Where-Object {$_.Current.Name -like '*fixture.txt*' -and $_.Current.Name -like '*+after*'}).Count) { throw 'The file-change card omitted its path and diff.' }
     Invoke-Control 'DenyApproval'
     Wait-Until { !(Find-Control $script:window 'Stop').Current.IsEnabled } 'File-change denial did not finish.'
     $checks += 'File-change approval displays the proposed path and diff and requires an explicit decision'
