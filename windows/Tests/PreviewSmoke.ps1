@@ -110,7 +110,9 @@ function Save-WindowEvidence {
 }
 
 try {
-    $process = Start-Process -FilePath $Executable -PassThru
+    # The title identifies a protocol-fixture test, and this mode requires the isolated directory above.
+    # Every provider response comes from the local fixture subprocess; no account or network is used.
+    $process = Start-Process -FilePath $Executable -ArgumentList '--codex-fixture-preview' -PassThru
     Wait-Until { $process.Refresh(); $process.MainWindowHandle -ne [IntPtr]::Zero } 'No application window appeared.'
     $script:window = [Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
     [CoincideSmokeWindow]::SetForegroundWindow($process.MainWindowHandle) | Out-Null
@@ -126,6 +128,70 @@ try {
     Select-Thread 'Smoke A'
     Wait-Until { Latest-IsVisible 'END-A' } 'Returning to the first conversation left the transcript blank.'
     $checks += 'Returning to a long conversation renders without manual scrolling'
+
+    function Invoke-Control([string]$id) {
+        $control = Find-Control $script:window $id
+        if (!$control) { throw "Cannot find $id" }
+        $control.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+    }
+    function Set-Message([string]$text) {
+        $box = Find-Control $script:window 'Composer'
+        $box.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).SetValue($text)
+    }
+    function Send-Message([string]$text) {
+        Set-Message $text
+        Wait-Until { (Find-Control $script:window 'Send').Current.IsEnabled } 'Send was not enabled for the Codex conversation.'
+        Invoke-Control 'Send'
+    }
+    Invoke-Control 'NewChat'
+    Wait-Until { (Find-Control $script:window 'AgentStatus').Current.Name -like 'Codex*' } 'The new Codex conversation did not become available.'
+    Send-Message 'hello'
+    $replyMarker = ([string][char]0x4f60) + [char]0x597d
+    Wait-Until { (Latest-IsVisible $replyMarker) -and !(Find-Control $script:window 'Stop').Current.IsEnabled } 'The Codex fixture reply was not displayed.'
+    $index = Get-Content (Join-Path $data 'workspace.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $codex = @($index.threads | Where-Object {$_.provider -eq 'codex'})
+    if ($codex.Count -ne 1) { throw 'The Codex conversation was not saved in the index.' }
+    $threadFile = Join-Path $data "threads\$($codex[0].id).json"
+    $saved = Get-Content $threadFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($saved.messages.Count -ne 2 -or $saved.messages[1].text -notlike "*$replyMarker") { throw 'Streamed and completed items were duplicated or not persisted.' }
+    if ($saved.sessions[0].id -ne 'fixture-thread') { throw 'The native Codex session identity was not persisted.' }
+    $checks += 'Native Send streams Unicode, reconciles the final item, and saves the session without duplicates'
+
+    Send-Message 'approval'
+    Wait-Until { $null -ne (Find-Control $script:window 'DenyApproval') } 'No native approval card appeared.'
+    Select-Thread 'Smoke B'
+    if ($null -ne (Find-Control $script:window 'DenyApproval')) { throw 'Another thread displayed the Codex approval.' }
+    Select-Thread $codex[0].title
+    Wait-Until { $null -ne (Find-Control $script:window 'DenyApproval') } 'The pending approval was lost after switching threads.'
+    Invoke-Control 'DenyApproval'
+    Wait-Until { (Latest-IsVisible 'decline') -and !(Find-Control $script:window 'Stop').Current.IsEnabled } 'The denial did not reach the fixture.'
+    $checks += 'Approval remains with its thread and explicit denial reaches the subprocess'
+
+    Send-Message 'file-approval'
+    Wait-Until { $null -ne (Find-Control $script:window 'DenyApproval') } 'No file-change approval appeared.'
+    $cards = Find-Control $script:window 'AgentPrompts'
+    $details = $cards.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+    if (!@($details | Where-Object {$_.Current.Name -like '*fixture.txt*'}).Count) { throw 'The file-change card omitted its path and diff.' }
+    Invoke-Control 'DenyApproval'
+    Wait-Until { !(Find-Control $script:window 'Stop').Current.IsEnabled } 'File-change denial did not finish.'
+    $checks += 'File-change approval displays the proposed path and diff and requires an explicit decision'
+
+    Send-Message 'question'
+    Wait-Until { $null -ne (Find-Control $script:window 'QuestionAnswer') } 'No native question appeared.'
+    $answer = Find-Control $script:window 'QuestionAnswer'
+    $answer.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).SetValue('fixture-ui-answer')
+    Invoke-Control 'SubmitAnswer'
+    Wait-Until { (Latest-IsVisible 'fixture-ui-answer') -and !(Find-Control $script:window 'Stop').Current.IsEnabled } 'The question answer did not reach the fixture.'
+    $checks += 'A native question submits the answer to its original request'
+
+    Send-Message 'wait'
+    Wait-Until { (Find-Control $script:window 'AgentStatus').Current.Name -like '*working*' } 'The fixture turn did not start.'
+    Set-Message 'next draft'
+    Invoke-Control 'Stop'
+    Wait-Until { !(Find-Control $script:window 'Stop').Current.IsEnabled } 'Stop did not complete.'
+    $box = Find-Control $script:window 'Composer'
+    if ($box.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'next draft') { throw 'Stopping lost the draft typed during the turn.' }
+    $checks += 'Stop interrupts the active turn and preserves the next draft'
 
     Save-WindowEvidence
     Write-JsonFile (Join-Path $Results 'result.json') @{passed=$true; checks=$checks; dataDirectory=$data}

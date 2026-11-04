@@ -10,6 +10,8 @@ LABELS = {
     'NewChat': 'New Chat', 'AddProject': 'Add Project…', 'Search': 'Search',
     'ShowArchived': 'Show Archived Threads', 'Settings': 'Settings', 'Archive': 'Archive',
     'Undo': 'Undo', 'Redo': 'Redo', 'Message': 'Message', 'You': 'You', 'Close': 'Close',
+    'Send': 'Send', 'Stop': 'Stop', 'Ready': 'Ready', 'Allow': 'Allow', 'Deny': 'Deny',
+    'Submit': 'Submit', 'Dismiss': 'Dismiss', 'Connecting': 'Connecting…',
 }
 
 

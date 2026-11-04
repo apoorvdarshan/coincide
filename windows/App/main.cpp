@@ -8,6 +8,7 @@
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
+#include <winrt/Microsoft.UI.Xaml.Input.h>
 #include <winrt/Microsoft.UI.Xaml.XamlTypeInfo.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -21,6 +22,8 @@
 #include "../Tests/StoreTests.h"
 #include "../Tests/ProtocolTests.h"
 #include "../Tests/ConnectionTests.h"
+#include "../Runtime/CodexSession.h"
+#include "../Tests/SessionTests.h"
 #include <memory>
 
 namespace xaml = winrt::Microsoft::UI::Xaml;
@@ -68,6 +71,26 @@ std::filesystem::path data_directory() {
     return root / L"Coincide Windows Preview";
 }
 
+std::filesystem::path codex_executable() {
+    wchar_t path[32768]{};
+    const auto explicit_path = GetEnvironmentVariableW(L"COINCIDE_CODEX_EXE", path, 32768);
+    if (explicit_path >= 32768) throw std::runtime_error("The Codex executable path is too long");
+    if (explicit_path) {
+        if (!std::filesystem::is_regular_file(path)) throw std::runtime_error("The configured Codex executable does not exist.");
+        return path;
+    }
+    const auto found = SearchPathW(nullptr, L"codex.exe", nullptr, 32768, path, nullptr);
+    if (found && found < 32768) return path;
+    const auto count = GetEnvironmentVariableW(L"LOCALAPPDATA", path, 32768);
+    if (count && count < 32768) {
+        for (const auto& candidate : {std::filesystem::path(path) / L"Programs/Codex/codex.exe",
+                std::filesystem::path(path) / L"Microsoft/WinGet/Links/codex.exe"}) {
+            if (std::filesystem::is_regular_file(candidate)) return candidate;
+        }
+    }
+    throw std::runtime_error("Install the native Windows Codex CLI and sign in with codex login, then try again.");
+}
+
 struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     xaml::XamlTypeInfo::XamlControlsXamlMetaDataProvider metadata;
     xaml::Window window{nullptr};
@@ -79,7 +102,10 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     controls::TextBlock title{nullptr};
     controls::TextBlock state{nullptr};
     controls::ComboBox providers{nullptr};
+    controls::Button send_button{nullptr}, stop_button{nullptr};
+    controls::StackPanel prompts_view{nullptr};
     winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer save_timer{nullptr};
+    winrt::Microsoft::UI::Dispatching::DispatcherQueueTimer session_timer{nullptr};
     std::unique_ptr<coincide::WorkspaceStore> store;
     coincide::Workspace workspace;
     std::vector<std::string> visible;
@@ -87,8 +113,18 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     bool selecting{};
     bool archived{};
     bool writable{};
+    bool closing{};
+    bool fixture_preview{};
+    struct RunningThread {
+        std::unique_ptr<coincide::CodexSession> session;
+        std::unordered_map<std::string, coincide::SessionEvent> prompts;
+        std::string status;
+        bool failed{};
+    };
+    std::unordered_map<std::string, RunningThread> running;
+    std::unordered_set<std::string> dirty_threads;
 
-    App() {
+    explicit App(bool fixture = false) : fixture_preview(fixture) {
         diagnostic(L"Application constructed");
         UnhandledException([this](const auto&, const xaml::UnhandledExceptionEventArgs& args) {
             diagnostic(args.Message());
@@ -110,7 +146,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         Resources().MergedDictionaries().Append(controls::XamlControlsResources{});
         diagnostic(L"Control resources initialized");
         window = xaml::Window{};
-        window.Title(L"Coincide — Windows Preview");
+        window.Title(fixture_preview ? L"Coincide — Protocol Fixture Test" : L"Coincide — Windows Preview");
         window.AppWindow().Resize({1100, 780});
         root = controls::Grid{};
         auto left = controls::ColumnDefinition{}; left.Width({260, xaml::GridUnitType::Pixel});
@@ -225,6 +261,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 try {
                     workspace.thread(selected).provider = coincide::provider_ids[index];
                     store->save_index(workspace);
+                    update_composer();
                 } catch (...) { report_exception(); }
             }
         });
@@ -238,21 +275,50 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         composer.TextChanged([this](const auto&, const auto&) {
             if (selecting || selected.empty() || !writable) return;
             workspace.thread(selected).draft = winrt::to_string(composer.Text());
-            save_timer.Stop(); save_timer.Start();
+            dirty_threads.insert(selected); save_timer.Stop(); save_timer.Start(); update_composer();
+        });
+        composer.KeyDown([this](const auto&, const xaml::Input::KeyRoutedEventArgs& args) {
+            if (args.Key() == winrt::Windows::System::VirtualKey::Enter && (GetKeyState(VK_CONTROL) & 0x8000)) {
+                args.Handled(true); send_message();
+            }
         });
         compose.Children().Append(composer);
+        controls::StackPanel actions;
+        actions.Orientation(controls::Orientation::Horizontal); actions.Spacing(8);
+        send_button = button(L"Send", L"Send", L"Send"); send_button.IsEnabled(false);
+        send_button.Click([this](const auto&, const auto&) {send_message();});
+        stop_button = button(L"Stop", L"Stop", L"Stop"); stop_button.IsEnabled(false);
+        stop_button.Click([this](const auto&, const auto&) {
+            const auto at = running.find(selected);
+            if (at != running.end()) at->second.session->interrupt();
+        });
+        actions.Children().Append(send_button); actions.Children().Append(stop_button); compose.Children().Append(actions);
+        controls::ScrollViewer prompts_scroll;
+        prompts_scroll.MaxHeight(220);
+        prompts_scroll.VerticalScrollBarVisibility(controls::ScrollBarVisibility::Auto);
+        prompts_view = controls::StackPanel{}; prompts_view.Spacing(12); identify(prompts_view, L"AgentPrompts");
+        prompts_scroll.Content(prompts_view); compose.Children().Append(prompts_scroll);
         state = controls::TextBlock{};
+        identify(state, L"AgentStatus");
         state.TextWrapping(xaml::TextWrapping::Wrap);
-        // Explicit preview capability notice: no fake Send button or fabricated agent responses.
-        state.Text(L"Windows development preview: agent connections are not available in this build.");
+        state.Text(L"Select a conversation to begin.");
         compose.Children().Append(state);
         controls::Grid::SetRow(compose, 2);
         content.Children().Append(compose);
 
         save_timer = window.DispatcherQueue().CreateTimer();
         save_timer.Interval(std::chrono::milliseconds(400)); save_timer.IsRepeating(false);
-        save_timer.Tick([this](const auto&, const auto&) { save_current(); });
-        window.Closed([this](const auto&, const auto&) { save_timer.Stop(); save_current(); });
+        save_timer.Tick([this](const auto&, const auto&) { flush_dirty(); });
+        session_timer = window.DispatcherQueue().CreateTimer();
+        session_timer.Interval(std::chrono::milliseconds(40));
+        session_timer.Tick([this](const auto&, const auto&) { drain_sessions(); });
+        session_timer.Start();
+        window.Closed([this](const auto&, const auto&) {
+            closing = true; save_timer.Stop(); session_timer.Stop();
+            for (auto& [id, run] : running) {(void)id; run.session->close();}
+            for (auto& [id, run] : running) {(void)id; run.session->shutdown();}
+            drain_sessions(); flush_dirty(); save_current();
+        });
 
         try {
             store = std::make_unique<coincide::WorkspaceStore>(data_directory());
@@ -307,6 +373,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                 transcript.Items().Append(winrt::box_value(winrt::to_hstring(speaker + "\n" + m.text)));
             }
             selecting = false;
+            render_prompts(); update_composer();
             // Let WinUI lay out at the final width before requesting the latest virtualized row.
             window.DispatcherQueue().TryEnqueue([this, id] {
                 if (selected == id) show_latest();
@@ -329,6 +396,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if (!writable) return;
         try {
             coincide::Thread t;
+            t.provider = "codex";
             t.id = coincide::new_id(); t.title = winrt::to_string(label(L"NewChat", L"New Chat")); t.project_id = std::move(project);
             const auto id = t.id;
             workspace.add_thread(std::move(t));
@@ -369,6 +437,230 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         catch (...) { report_exception(); }
     }
 
+    void flush_dirty() {
+        auto ids = std::move(dirty_threads); dirty_threads.clear();
+        for (const auto& id : ids) {
+            try {store->save_thread(workspace.thread(id));}
+            catch (...) {dirty_threads.insert(id); report_exception();}
+        }
+    }
+
+    void update_composer() {
+        if (closing || selected.empty() || !writable) return;
+        const auto& thread = workspace.thread(selected);
+        const auto run = running.find(selected);
+        const auto busy = run != running.end() && run->second.session->busy();
+        providers.IsEnabled(!busy); stop_button.IsEnabled(busy);
+        send_button.IsEnabled(thread.provider == "codex" && !busy && !thread.draft.empty());
+        if (run != running.end() && !run->second.status.empty()) state.Text(winrt::to_hstring(run->second.status));
+        else if (thread.provider == "codex") state.Text(L"Codex · commands and file changes require approval. Ctrl+Enter sends.");
+        else state.Text(L"This provider is not connected in the Windows preview yet. Select Codex to begin.");
+    }
+
+    void send_message() {
+        if (selected.empty() || !writable) return;
+        try {
+            auto& thread = workspace.thread(selected);
+            if (thread.provider != "codex" || thread.draft.empty()) return;
+            auto at = running.find(selected);
+            if (at != running.end() && at->second.session->busy()) return;
+            if (at == running.end()) {
+                coincide::CodexLaunch launch;
+                if (fixture_preview) {
+                    wchar_t module[32768]{};
+                    if (!GetModuleFileNameW(nullptr, module, 32768)) winrt::throw_last_error();
+                    launch.executable = module; launch.arguments = {L"--codex-session-fixture", L"normal"};
+                } else launch.executable = codex_executable();
+                const auto native = std::find_if(thread.sessions.begin(), thread.sessions.end(), [](const auto& value) {return value.provider == "codex";});
+                if (native != thread.sessions.end()) launch.session_id = native->id;
+                else if (std::any_of(thread.messages.begin(), thread.messages.end(), [](const auto& value) {return value.role == "assistant";})) {
+                    throw std::runtime_error("Start a new chat for Codex. Importing this conversation's earlier context is not available yet.");
+                }
+                if (thread.project_id) {
+                    const auto project = std::find_if(workspace.projects.begin(), workspace.projects.end(), [&](const auto& p) {return p.id == *thread.project_id;});
+                    if (project == workspace.projects.end()) throw std::runtime_error("The conversation's project is missing.");
+                    launch.cwd = winrt::to_hstring(project->path).c_str();
+                } else {
+                    launch.cwd = data_directory() / L"workspaces" / winrt::to_hstring(thread.id).c_str();
+                    std::filesystem::create_directories(launch.cwd);
+                }
+                if (!std::filesystem::is_directory(launch.cwd)) throw std::runtime_error("The project folder is unavailable.");
+                RunningThread run;
+                run.session = std::make_unique<coincide::CodexSession>(std::move(launch));
+                at = running.emplace(selected, std::move(run)).first;
+            }
+            coincide::CodexTurn input;
+            input.text = thread.draft; input.model = thread.model;
+            const auto id = coincide::new_id();
+            thread.messages.push_back({id, "user", input.text, "codex"}); thread.draft.clear();
+            try {store->save_thread(thread);}
+            catch (...) {thread.draft = input.text; thread.messages.pop_back(); throw;}
+            if (!at->second.session->send(input)) {
+                thread.draft = input.text; thread.messages.pop_back(); store->save_thread(thread); return;
+            }
+            at->second.failed = false; at->second.status = winrt::to_string(label(L"Connecting", L"Connecting…"));
+            transcript.Items().Append(winrt::box_value(winrt::to_hstring(winrt::to_string(label(L"You", L"You")) + "\n" + input.text)));
+            selecting = true; composer.Text(L""); selecting = false;
+            update_composer(); show_latest(); composer.Focus(xaml::FocusState::Programmatic);
+        } catch (...) {report_exception();}
+    }
+
+    void upsert_output(coincide::Thread& thread, const coincide::SessionEvent& event) {
+        const auto role = event.kind == coincide::SessionEvent::Kind::tool ? "tool" : "assistant";
+        const auto id = "codex/" + event.id;
+        auto at = std::find_if(thread.messages.begin(), thread.messages.end(), [&](const auto& m) {return m.id == id;});
+        if (at == thread.messages.end()) {
+            thread.messages.push_back({id, role, event.text, "codex"}); at = std::prev(thread.messages.end());
+        } else if (event.kind == coincide::SessionEvent::Kind::text_delta) at->text += event.text;
+        else if (!event.text.empty()) at->text = event.text;
+        dirty_threads.insert(thread.id);
+        if (selected == thread.id && !closing) {
+            const auto row = static_cast<uint32_t>(std::distance(thread.messages.begin(), at));
+            const auto value = winrt::box_value(winrt::to_hstring("codex\n" + at->text));
+            if (row < transcript.Items().Size()) transcript.Items().SetAt(row, value);
+            else transcript.Items().Append(value);
+            show_latest();
+        }
+    }
+
+    void drain_sessions() {
+        bool changed_prompts{};
+        for (auto& [id, run] : running) {
+            try {
+                auto& thread = workspace.thread(id);
+                bool received_output{};
+                for (const auto& event : run.session->take_events()) {
+                    using Kind = coincide::SessionEvent::Kind;
+                    switch (event.kind) {
+                    case Kind::session:
+                        {
+                            const auto previous = std::find_if(thread.sessions.begin(), thread.sessions.end(), [&](const auto& s) {return s.provider == "codex" && s.id == event.id;});
+                            const auto acknowledged = previous == thread.sessions.end() ? 0 : previous->acknowledged_messages;
+                            workspace.remember_session(id, {"codex", event.id, acknowledged}); store->save_thread(thread); break;
+                        }
+                    case Kind::started:
+                        run.status = "Codex is working…"; break;
+                    case Kind::status: run.status = event.text; break;
+                    case Kind::text_delta: case Kind::text_complete: case Kind::tool:
+                        upsert_output(thread, event); received_output = true; break;
+                    case Kind::prompt:
+                        run.prompts.insert_or_assign(event.id, event); changed_prompts = changed_prompts || selected == id;
+                        run.status = "Codex is waiting for your response."; break;
+                    case Kind::resolved:
+                        run.prompts.erase(event.id); changed_prompts = changed_prompts || selected == id; break;
+                    case Kind::error:
+                        run.failed = true; run.status = event.text; break;
+                    case Kind::completed:
+                        run.prompts.clear(); changed_prompts = changed_prompts || selected == id;
+                        if (!run.failed) run.status = event.text == "interrupted" ? "Stopped" : winrt::to_string(label(L"Ready", L"Ready"));
+                        if (event.text == "completed") {
+                            const auto session = std::find_if(thread.sessions.begin(), thread.sessions.end(), [](const auto& s) {return s.provider == "codex";});
+                            if (session != thread.sessions.end()) session->acknowledged_messages = thread.messages.size();
+                        }
+                        store->save_thread(thread); dirty_threads.erase(id); break;
+                    }
+                }
+                if (received_output && !closing) {save_timer.Stop(); save_timer.Start();}
+            } catch (...) {report_exception();}
+        }
+        if (!closing) {if (changed_prompts) render_prompts(); update_composer();}
+    }
+
+    void answer_prompt(const std::string& thread, const std::string& id, const std::string& result) {
+        const auto at = running.find(thread);
+        if (at == running.end()) return;
+        at->second.session->respond(id, result);
+        at->second.prompts.erase(id); render_prompts();
+    }
+
+    void render_prompts() {
+        if (closing || !prompts_view) return;
+        prompts_view.Children().Clear();
+        const auto at = running.find(selected);
+        if (at == running.end()) return;
+        for (const auto& [id, event] : at->second.prompts) {
+            controls::StackPanel card; card.Spacing(6); identify(card, L"AgentPrompt");
+            controls::TextBlock detail;
+            detail.TextWrapping(xaml::TextWrapping::Wrap); detail.IsTextSelectionEnabled(true);
+            const auto params = coincide::rpc_json::JsonObject::Parse(winrt::to_hstring(event.text));
+            const auto thread = selected;
+            if (event.detail == "item/tool/requestUserInput") {
+                detail.Text(L"Codex has a question."); card.Children().Append(detail);
+                std::vector<std::pair<std::string, controls::Control>> fields;
+                for (const auto& raw : params.GetNamedArray(L"questions")) {
+                    const auto question = raw.GetObject();
+                    controls::TextBlock question_text;
+                    question_text.Text(question.GetNamedString(L"question")); question_text.TextWrapping(xaml::TextWrapping::Wrap);
+                    card.Children().Append(question_text);
+                    for (const auto& option : question.GetNamedArray(L"options", coincide::rpc_json::JsonArray{})) {
+                        controls::TextBlock choice;
+                        const auto value = option.GetObject();
+                        choice.Text(value.GetNamedString(L"label") + L" — " + value.GetNamedString(L"description", L""));
+                        choice.TextWrapping(xaml::TextWrapping::Wrap); card.Children().Append(choice);
+                    }
+                    controls::Control field{nullptr};
+                    if (question.GetNamedBoolean(L"isSecret", false)) field = controls::PasswordBox{};
+                    else field = controls::TextBox{};
+                    identify(field, L"QuestionAnswer");
+                    fields.emplace_back(winrt::to_string(question.GetNamedString(L"id")), field); card.Children().Append(field);
+                }
+                auto submit = button(L"Submit", L"Submit", L"SubmitAnswer");
+                submit.Click([this, thread, id, fields](const auto&, const auto&) {
+                    coincide::rpc_json::JsonObject result, answers;
+                    for (const auto& [key, field] : fields) {
+                        const auto secret = field.try_as<controls::PasswordBox>();
+                        const auto answer = secret ? secret.Password() : field.as<controls::TextBox>().Text();
+                        coincide::rpc_json::JsonArray values; values.Append(coincide::rpc_json::JsonValue::CreateStringValue(answer));
+                        coincide::rpc_json::JsonObject entry; entry.SetNamedValue(L"answers", values);
+                        answers.SetNamedValue(winrt::to_hstring(key), entry);
+                    }
+                    result.SetNamedValue(L"answers", answers); answer_prompt(thread, id, winrt::to_string(result.Stringify()));
+                });
+                card.Children().Append(submit);
+                auto dismiss = button(L"Dismiss", L"Dismiss", L"DismissQuestion");
+                dismiss.Click([this, thread, id](const auto&, const auto&) {answer_prompt(thread, id, "{\"answers\":{}}");});
+                card.Children().Append(dismiss);
+            } else {
+                const auto file_change = event.detail == "item/fileChange/requestApproval";
+                bool has_file_details{};
+                std::wstring description = file_change ? L"Codex wants to change files:\n" : L"Codex wants to run:\n";
+                if (!file_change) description += params.GetNamedString(L"command", L"");
+                else {
+                    const auto preview = params.GetNamedObject(L"fileChangePreview", coincide::rpc_json::JsonObject{});
+                    const auto changes = preview.GetNamedArray(L"changes", coincide::rpc_json::JsonArray{});
+                    has_file_details = changes.Size() > 0;
+                    for (const auto& raw : changes) {
+                        const auto change = raw.GetObject();
+                        description += std::wstring(change.GetNamedString(L"path", L"")) + L"\n" + std::wstring(change.GetNamedString(L"diff", L"")) + L"\n";
+                    }
+                }
+                const auto reason = params.GetNamedString(L"reason", L"");
+                if (!reason.empty()) description += L"\n" + std::wstring(reason);
+                const auto cwd = params.GetNamedString(L"cwd", L"");
+                if (!cwd.empty()) description += L"\n" + std::wstring(cwd);
+                const auto extra = params.GetNamedValue(L"additionalPermissions", coincide::rpc_json::JsonValue::CreateNullValue());
+                if (extra.ValueType() == coincide::rpc_json::JsonValueType::Object) description += L"\nAdditional permissions: " + std::wstring(extra.Stringify());
+                detail.Text(winrt::hstring(description)); card.Children().Append(detail);
+                bool allow = file_change && has_file_details;
+                const auto decisions = params.GetNamedValue(L"availableDecisions", coincide::rpc_json::JsonValue::CreateNullValue());
+                if (!file_change && decisions.ValueType() == coincide::rpc_json::JsonValueType::Array) {
+                    for (const auto& value : decisions.GetArray()) {
+                        if (value.ValueType() == coincide::rpc_json::JsonValueType::String && value.GetString() == L"accept") allow = true;
+                    }
+                } else if (!file_change) allow = true;
+                if (allow) {
+                    auto accept = button(L"Allow", L"Allow", L"AllowApproval");
+                    accept.Click([this, thread, id](const auto&, const auto&) {answer_prompt(thread, id, "{\"decision\":\"accept\"}");});
+                    card.Children().Append(accept);
+                }
+                auto decline = button(L"Deny", L"Deny", L"DenyApproval");
+                decline.Click([this, thread, id](const auto&, const auto&) {answer_prompt(thread, id, "{\"decision\":\"decline\"}");});
+                card.Children().Append(decline);
+            }
+            prompts_view.Children().Append(card);
+        }
+    }
+
     void history(bool redo) {
         if (!writable) return;
         try {
@@ -396,7 +688,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             controls::ContentDialog dialog;
             dialog.XamlRoot(root.XamlRoot());
             dialog.Title(winrt::box_value(label(L"Settings", L"Settings")));
-            dialog.Content(winrt::box_value(L"This Windows preview supports local projects, conversations, saved drafts, and archive undo/redo. Agent connections and other feature-parity work are still in development."));
+            dialog.Content(winrt::box_value(L"This Windows preview supports Codex conversations, streamed text, command/file approvals, questions, Stop, saved drafts, and archive undo/redo. Closing the window stops its agent processes. Other providers and feature-parity work are still in development."));
             dialog.CloseButtonText(label(L"Close", L"Close"));
             co_await dialog.ShowAsync();
         } catch (...) { report_exception(); }
@@ -421,15 +713,27 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
             return coincide::connection_tests(report);
         }
+        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--session-tests") {
+            const auto report = std::filesystem::path(argv[2]); LocalFree(argv);
+            return coincide::session_tests(report);
+        }
+        if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--codex-session-fixture") {
+            const auto mode = std::wstring(argv[2]); LocalFree(argv);
+            return coincide::codex_session_fixture(mode);
+        }
         if (argv && argc == 3 && std::wstring_view(argv[1]) == L"--rpc-fixture") {
             const auto mode = std::wstring(argv[2]); LocalFree(argv);
             return coincide::rpc_fixture(mode);
+        }
+        const auto fixture = argv && argc == 2 && std::wstring_view(argv[1]) == L"--codex-fixture-preview";
+        if (fixture && GetEnvironmentVariableW(L"COINCIDE_DATA_DIR", nullptr, 0) <= 1) {
+            throw std::runtime_error("Protocol fixture previews require an explicit isolated test data directory.");
         }
         if (argv) LocalFree(argv);
         // Keep the programmatic application (including its metadata provider and callbacks) alive
         // for the complete dispatcher loop, independently of generated XAML application glue.
         winrt::com_ptr<App> application;
-        xaml::Application::Start([&application](auto&&) { application = winrt::make_self<App>(); });
+        xaml::Application::Start([&application, fixture](auto&&) { application = winrt::make_self<App>(fixture); });
         return 0;
     } catch (const winrt::hresult_error& error) {
         diagnostic(error.message());

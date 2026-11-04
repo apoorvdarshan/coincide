@@ -33,4 +33,28 @@
   <data name="Close" xml:space="preserve">
     <value>Kapat</value>
   </data>
+  <data name="Send" xml:space="preserve">
+    <value>Gönder</value>
+  </data>
+  <data name="Stop" xml:space="preserve">
+    <value>Durdur</value>
+  </data>
+  <data name="Ready" xml:space="preserve">
+    <value>Hazır</value>
+  </data>
+  <data name="Allow" xml:space="preserve">
+    <value>İzin Ver</value>
+  </data>
+  <data name="Deny" xml:space="preserve">
+    <value>Reddet</value>
+  </data>
+  <data name="Submit" xml:space="preserve">
+    <value>Gönder</value>
+  </data>
+  <data name="Dismiss" xml:space="preserve">
+    <value>Kapat</value>
+  </data>
+  <data name="Connecting" xml:space="preserve">
+    <value>Bağlanıyor…</value>
+  </data>
 </root>

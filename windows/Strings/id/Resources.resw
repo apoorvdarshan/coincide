@@ -33,4 +33,28 @@
   <data name="Close" xml:space="preserve">
     <value>Tutup</value>
   </data>
+  <data name="Send" xml:space="preserve">
+    <value>Kirim</value>
+  </data>
+  <data name="Stop" xml:space="preserve">
+    <value>Hentikan</value>
+  </data>
+  <data name="Ready" xml:space="preserve">
+    <value>Siap</value>
+  </data>
+  <data name="Allow" xml:space="preserve">
+    <value>Izinkan</value>
+  </data>
+  <data name="Deny" xml:space="preserve">
+    <value>Tolak</value>
+  </data>
+  <data name="Submit" xml:space="preserve">
+    <value>Kirim</value>
+  </data>
+  <data name="Dismiss" xml:space="preserve">
+    <value>Abaikan</value>
+  </data>
+  <data name="Connecting" xml:space="preserve">
+    <value>Menghubungkan…</value>
+  </data>
 </root>

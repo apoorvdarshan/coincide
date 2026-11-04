@@ -33,4 +33,28 @@
   <data name="Close" xml:space="preserve">
     <value>बंद करें</value>
   </data>
+  <data name="Send" xml:space="preserve">
+    <value>भेजें</value>
+  </data>
+  <data name="Stop" xml:space="preserve">
+    <value>रोकें</value>
+  </data>
+  <data name="Ready" xml:space="preserve">
+    <value>तैयार</value>
+  </data>
+  <data name="Allow" xml:space="preserve">
+    <value>अनुमति दें</value>
+  </data>
+  <data name="Deny" xml:space="preserve">
+    <value>मना करें</value>
+  </data>
+  <data name="Submit" xml:space="preserve">
+    <value>सबमिट करें</value>
+  </data>
+  <data name="Dismiss" xml:space="preserve">
+    <value>खारिज करें</value>
+  </data>
+  <data name="Connecting" xml:space="preserve">
+    <value>कनेक्ट हो रहा है…</value>
+  </data>
 </root>

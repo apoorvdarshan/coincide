@@ -33,7 +33,7 @@ if (!$CoreOnly) {
     if (!(Test-Path $executable)) { throw 'MSBuild returned successfully but no Windows application was produced.' }
     Write-Output "Built: $executable"
     if ($Architecture -eq 'x64') {
-        foreach ($suite in @('store', 'protocol', 'connection')) {
+        foreach ($suite in @('store', 'protocol', 'connection', 'session')) {
             $report = Join-Path $root "build\$suite-test-result.txt"
             Remove-Item $report -ErrorAction SilentlyContinue
             $process = Start-Process -FilePath $executable -ArgumentList @("--$suite-tests", "`"$report`"") -PassThru

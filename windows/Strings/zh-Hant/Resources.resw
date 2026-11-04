@@ -33,4 +33,28 @@
   <data name="Close" xml:space="preserve">
     <value>關閉</value>
   </data>
+  <data name="Send" xml:space="preserve">
+    <value>傳送</value>
+  </data>
+  <data name="Stop" xml:space="preserve">
+    <value>停止</value>
+  </data>
+  <data name="Ready" xml:space="preserve">
+    <value>就緒</value>
+  </data>
+  <data name="Allow" xml:space="preserve">
+    <value>允許</value>
+  </data>
+  <data name="Deny" xml:space="preserve">
+    <value>拒絕</value>
+  </data>
+  <data name="Submit" xml:space="preserve">
+    <value>送出</value>
+  </data>
+  <data name="Dismiss" xml:space="preserve">
+    <value>忽略</value>
+  </data>
+  <data name="Connecting" xml:space="preserve">
+    <value>正在連線…</value>
+  </data>
 </root>

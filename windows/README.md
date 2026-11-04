@@ -19,11 +19,18 @@ The script executes core regression tests and builds the unpackaged application.
 Do not copy just the EXE. `-CoreOnly` runs the core checks without building WinUI. ARM64 app builds can be requested
 with `-Architecture ARM64`; automated execution of ARM64 artifacts remains a separate validation task.
 
-On Windows the build runs 71 workspace/process, 17 storage, 39 RPC/Codex protocol and 42 subprocess connection checks.
+On Windows the build runs 71 workspace/process, 17 storage, 39 RPC/Codex protocol, 42 subprocess connection, and
+32 Codex session lifecycle checks.
 The portable workspace/framing checks also compile without the Windows runtime. In an **interactive desktop session**, run
-`./windows/Tests/PreviewSmoke.ps1` for the native long-thread switching and draft checks. It seeds two isolated
-1,500-message conversations, checks the latest rows without scrolling, records UI evidence, closes its own process,
-and removes its temporary conversation data. It does not use the owner's real conversations or an agent account.
+`./windows/Tests/PreviewSmoke.ps1` for native long-thread switching, drafts, and Codex composer checks. It seeds two
+isolated 1,500-message conversations and uses an explicitly labeled subprocess fixture to exercise Send, Unicode
+streaming, command/file approval denial, questions, and Stop. It records UI evidence, closes its own process, and
+removes its temporary conversation data. It does not use real conversations or a provider account.
+
+On the physical Windows laptop, 199 automated checks and eight native UI checks passed. The last two file-approval
+lifecycle assertions and ninth native UI check were added afterwards; the follow-up laptop run was blocked by an SSH
+timeout. See the current CI result for the final source revision rather than treating that earlier run as validation
+of these additions.
 
 The initial preview keeps its data under `%LOCALAPPDATA%\Coincide Windows Preview`. Override `COINCIDE_DATA_DIR` for
 isolated tests. It does not import or rewrite an existing Mac data directory. The small workspace index loads at launch;
@@ -34,13 +41,22 @@ replaced. Files are written through a unique temporary file, flushed, and atomic
 
 Implemented in the development source: native window, folder picking, local projects and projectless chats,
 per-thread saved drafts, archive/undo/redo, provider selection, provider-scoped session bookkeeping, and a virtualized
-plain-text transcript. Provider execution and the full application feature set are still pending. The preview explicitly
-reports that agent connections are unavailable; it never fabricates agent output. No release or full-parity claim is made.
+plain-text transcript. Codex sessions now connect to the native Windows CLI, persist and resume their thread identity,
+stream replies, show explicit command/file approvals and questions, and support Stop. Send uses the button or Ctrl+Enter.
+Other providers and the rest of the parity checklist remain pending. No public release or full-parity claim is made.
+
+Install the native Windows Codex CLI and sign in with `codex login` before using a real conversation. The app searches
+for `codex.exe` on PATH and the per-user Codex/WinGet locations; `COINCIDE_CODEX_EXE` can select an explicit executable.
+Project chats use their project folder; projectless chats use an isolated workspace under the preview data directory.
+Switching threads preserves active work and unanswered requests. Closing the window stops its owned agent processes;
+a persistent background host is not implemented. Live sign-in and a real account conversation have not been verified.
 
 The runtime foundation starts an explicit executable without a shell, confines its descendants to an owned job,
 frames UTF-8 JSONL, and keeps pipe reads/writes off the UI thread. Protocol fixtures verify initialization, streamed
 notifications, explicit approval decisions, deadlines, and shutdown even when stdin is blocked. These checks do not
-sign in, run an agent turn, or spend account quota. Agent session orchestration and composer integration are pending.
+sign in, run a model turn, or spend account quota. Session fixtures additionally exercise failed authentication/resume,
+turn identity, stream reconciliation, request routing, early completion, startup cancellation, and ignored interrupts.
+Fixture output is available only under the explicitly labeled test flag; ordinary launches require the real CLI.
 
 Shared labels reuse the existing Mac string catalog in all its languages:
 

@@ -33,4 +33,28 @@
   <data name="Close" xml:space="preserve">
     <value>Chiudi</value>
   </data>
+  <data name="Send" xml:space="preserve">
+    <value>Invia</value>
+  </data>
+  <data name="Stop" xml:space="preserve">
+    <value>Interrompi</value>
+  </data>
+  <data name="Ready" xml:space="preserve">
+    <value>Pronto</value>
+  </data>
+  <data name="Allow" xml:space="preserve">
+    <value>Consenti</value>
+  </data>
+  <data name="Deny" xml:space="preserve">
+    <value>Nega</value>
+  </data>
+  <data name="Submit" xml:space="preserve">
+    <value>Invia</value>
+  </data>
+  <data name="Dismiss" xml:space="preserve">
+    <value>Ignora</value>
+  </data>
+  <data name="Connecting" xml:space="preserve">
+    <value>Connessione…</value>
+  </data>
 </root>

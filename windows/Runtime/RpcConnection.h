@@ -12,11 +12,12 @@ class RpcConnection {
 public:
     using Notification = std::function<void(std::string, std::string)>;
     using ServerRequest = std::function<void(std::string, std::string, std::string)>;
+    using Closed = std::function<void(std::string)>;
 
     RpcConnection(std::filesystem::path executable, std::vector<std::wstring> arguments,
-            std::filesystem::path cwd, Notification notification = {}, ServerRequest request = {})
+            std::filesystem::path cwd, Notification notification = {}, ServerRequest request = {}, Closed closed = {})
         : executable_(std::move(executable)), arguments_(std::move(arguments)), cwd_(std::move(cwd)),
-          notification_(std::move(notification)), request_(std::move(request)),
+          notification_(std::move(notification)), request_(std::move(request)), closed_(std::move(closed)),
           host_([this] { run(); }) {}
     ~RpcConnection() { shutdown(); }
     RpcConnection(const RpcConnection&) = delete;
@@ -52,6 +53,14 @@ public:
         submit(std::move(task));
     }
 
+    void reject(std::string id_json, const std::string& message) {
+        Task task;
+        task.action = [id=std::move(id_json), message](RpcPeer& peer, auto&) {
+            peer.respond_error(rpc_json::JsonValue::Parse(winrt::to_hstring(id)), -32601, message);
+        };
+        submit(std::move(task));
+    }
+
     // Nonblocking cancellation request. Destruction joins the owned workers after cancelling the child job.
     void close() noexcept {
         stopping_ = true;
@@ -74,6 +83,7 @@ private:
     std::filesystem::path cwd_;
     Notification notification_;
     ServerRequest request_;
+    Closed closed_;
     std::mutex incoming_mutex_, outgoing_mutex_;
     std::condition_variable incoming_cv_, outgoing_cv_;
     std::deque<std::string> lines_, writes_;
@@ -193,6 +203,11 @@ private:
         std::deque<Task> abandoned;
         {std::lock_guard lock(incoming_mutex_); abandoned.swap(tasks_); lines_.clear(); incoming_bytes_ = 0;}
         for (auto& task : abandoned) if (task.completion) {try {task.completion->set_exception(failure);} catch (...) {}}
+        if (closed_) {
+            try {std::rethrow_exception(failure);}
+            catch (const std::exception& error) {try {closed_(error.what());} catch (...) {}}
+            catch (...) {try {closed_("The agent connection closed");} catch (...) {}}
+        }
     }
 };
 } // namespace coincide

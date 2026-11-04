@@ -33,4 +33,28 @@
   <data name="Close" xml:space="preserve">
     <value>閉じる</value>
   </data>
+  <data name="Send" xml:space="preserve">
+    <value>送信</value>
+  </data>
+  <data name="Stop" xml:space="preserve">
+    <value>停止</value>
+  </data>
+  <data name="Ready" xml:space="preserve">
+    <value>準備完了</value>
+  </data>
+  <data name="Allow" xml:space="preserve">
+    <value>許可</value>
+  </data>
+  <data name="Deny" xml:space="preserve">
+    <value>拒否</value>
+  </data>
+  <data name="Submit" xml:space="preserve">
+    <value>送信</value>
+  </data>
+  <data name="Dismiss" xml:space="preserve">
+    <value>閉じる</value>
+  </data>
+  <data name="Connecting" xml:space="preserve">
+    <value>接続中…</value>
+  </data>
 </root>
