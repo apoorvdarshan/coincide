@@ -142,6 +142,11 @@ try {
         Set-Message $text
         Wait-Until { (Find-Control $script:window 'Send').Current.IsEnabled } 'Send was not enabled for the Codex conversation.'
         Invoke-Control 'Send'
+        # InvokePattern can return before the dispatcher handles the click. A previous identical reply
+        # and its idle controls are not evidence that this send has been accepted or completed.
+        Wait-Until {
+            (Find-Control $script:window 'Composer').GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -eq ''
+        } 'Send did not accept and clear the submitted draft.'
     }
     Invoke-Control 'NewChat'
     Wait-Until { (Find-Control $script:window 'AgentStatus').Current.Name -like 'Codex*' } 'The new Codex conversation did not become available.'

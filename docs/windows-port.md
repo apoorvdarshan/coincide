@@ -20,10 +20,13 @@ delivery route; neither replacement has been implemented or validated yet. These
   make WinUI's accessibility sibling traversal revisit the same item. Both transcript and sidebar have regression coverage.
 - Cached binding descriptors read the current target instead of retaining an earlier partial reply; the binding regression
   check covers this CI-discovered streaming failure.
+- The composer waits for UI completion and transcript persistence before accepting another turn. Native UI checks wait
+  for each submitted draft to clear before evaluating its reply, avoiding stale observations from a previous identical reply.
 - Screenshots and the native accessibility tree were inspected. Codex turn orchestration and the composer are connected;
   native session IDs persist and resume, and unsupported requests fail closed.
-- The native Windows Codex CLI 0.166.0 starts and exposes app-server tooling. Sign-in and a real account conversation
-  remain unverified. Other providers, rich content, and full parity remain pending.
+- The native Windows Codex CLI 0.166.0 starts and exposes app-server tooling. A normal app launch reports missing sign-in
+  correctly without fabricating output. Authorized unattended OAuth reached required phone verification, so a real account
+  conversation remains unverified. Other providers, rich content, and full parity remain pending.
 - The Mac thread-click focus fix passes 16 focused checks. Async-question rendering/answering passes 98 focused checks;
   these fixes are built and pushed but have not been installed into the running Mac app.
 - Source is tracked in draft PR #235. Check its current CI result separately from the local results above.

@@ -32,6 +32,8 @@ long histories, saved drafts, streaming/final-text reconciliation, repeated iden
 command/file approval denial, typed question answers, and Stop. Distinct view-model identities keep equal visible text
 from confusing WinUI's item lookup and accessibility traversal. Cached binding properties read their supplied target,
 so reused containers display the current streamed text. Check exact-head CI separately from these local results.
+The composer remains busy until completion has reached the UI and the transcript has been saved, preventing a fast
+subprocess from enabling another turn before the final reply is applied.
 
 The initial preview keeps its data under `%LOCALAPPDATA%\Coincide Windows Preview`. Override `COINCIDE_DATA_DIR` for
 isolated tests. It does not import or rewrite an existing Mac data directory. The small workspace index loads at launch;
@@ -50,7 +52,8 @@ Install the native Windows Codex CLI and sign in with `codex login` before using
 for `codex.exe` on PATH and the per-user Codex/WinGet locations; `COINCIDE_CODEX_EXE` can select an explicit executable.
 Project chats use their project folder; projectless chats use an isolated workspace under the preview data directory.
 Switching threads preserves active work and unanswered requests. Closing the window stops its owned agent processes;
-a persistent background host is not implemented. Live sign-in and a real account conversation have not been verified.
+a persistent background host is not implemented. A normal launch with the native CLI correctly reports missing sign-in
+without fabricating output. Unattended OAuth reached required phone verification; a real account conversation remains unverified.
 
 The runtime foundation starts an explicit executable without a shell, confines its descendants to an owned job,
 frames UTF-8 JSONL, and keeps pipe reads/writes off the UI thread. Protocol fixtures verify initialization, streamed

@@ -122,6 +122,8 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         std::unordered_map<std::string, coincide::SessionEvent> prompts;
         std::string status;
         bool failed{};
+        // The worker can finish before its final output reaches the UI and the store.
+        bool awaiting_completion{};
     };
     std::unordered_map<std::string, RunningThread> running;
     std::unordered_set<std::string> dirty_threads;
@@ -452,7 +454,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         if (closing || selected.empty() || !writable) return;
         const auto& thread = workspace.thread(selected);
         const auto run = running.find(selected);
-        const auto busy = run != running.end() && run->second.session->busy();
+        const auto busy = run != running.end() && (run->second.awaiting_completion || run->second.session->busy());
         providers.IsEnabled(!busy); stop_button.IsEnabled(busy);
         send_button.IsEnabled(thread.provider == "codex" && !busy && !thread.draft.empty());
         if (run != running.end() && !run->second.status.empty()) state.Text(winrt::to_hstring(run->second.status));
@@ -466,7 +468,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             auto& thread = workspace.thread(selected);
             if (thread.provider != "codex" || thread.draft.empty()) return;
             auto at = running.find(selected);
-            if (at != running.end() && at->second.session->busy()) return;
+            if (at != running.end() && (at->second.awaiting_completion || at->second.session->busy())) return;
             if (at == running.end()) {
                 coincide::CodexLaunch launch;
                 if (fixture_preview) {
@@ -501,6 +503,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             if (!at->second.session->send(input)) {
                 thread.draft = input.text; thread.messages.pop_back(); store->save_thread(thread); return;
             }
+            at->second.awaiting_completion = true;
             at->second.failed = false; at->second.status = winrt::to_string(label(L"Connecting", L"Connecting…"));
             transcript.Items().Append(coincide::display_item(winrt::to_string(label(L"You", L"You")) + "\n" + input.text));
             selecting = true; composer.Text(L""); selecting = false;
@@ -560,7 +563,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
                             const auto session = std::find_if(thread.sessions.begin(), thread.sessions.end(), [](const auto& s) {return s.provider == "codex";});
                             if (session != thread.sessions.end()) session->acknowledged_messages = thread.messages.size();
                         }
-                        store->save_thread(thread); dirty_threads.erase(id); break;
+                        store->save_thread(thread); dirty_threads.erase(id); run.awaiting_completion = false; break;
                     }
                 }
                 if (received_output && !closing) {save_timer.Stop(); save_timer.Start();}
