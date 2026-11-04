@@ -12,9 +12,8 @@
     <TargetPlatformVersion>$(WindowsTargetPlatformVersion)</TargetPlatformVersion>
     <WindowsTargetPlatformMinVersion>10.0.19041.0</WindowsTargetPlatformMinVersion>
     <AppContainerApplication>false</AppContainerApplication><AppxPackage>false</AppxPackage>
-    <ApplicationType>Windows Store</ApplicationType><ApplicationTypeRevision>10.0</ApplicationTypeRevision>
     <WindowsPackageType>None</WindowsPackageType><WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <RuntimeIdentifiers>win10-x64;win10-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifiers>win-x64;win-arm64;win10-x64;win10-arm64</RuntimeIdentifiers>
     <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
     <UseWinUI>true</UseWinUI><CppWinRTOptimized>true</CppWinRTOptimized>
     <RestoreProjectStyle>PackageReference</RestoreProjectStyle><NuGetTargetMoniker>native,Version=v0.0</NuGetTargetMoniker>
@@ -25,6 +24,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
     <ConfigurationType>Application</ConfigurationType><PlatformToolset>v145</PlatformToolset><CharacterSet>Unicode</CharacterSet>
+    <DesktopCompatible>true</DesktopCompatible>
     <PlatformToolset Condition="'$(VisualStudioVersion)'=='17.0'">v143</PlatformToolset>
     <UseDebugLibraries Condition="'$(Configuration)'=='Debug'">true</UseDebugLibraries>
     <UseDebugLibraries Condition="'$(Configuration)'!='Debug'">false</UseDebugLibraries>

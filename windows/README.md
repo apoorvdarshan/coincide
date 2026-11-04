@@ -6,8 +6,8 @@ The Mac application and its data are independent of this target. The feature-by-
 
 ## Build
 
-Install Visual Studio C++ Build Tools (2022 or 2026) with the C++ desktop workload, CMake tools, Windows SDK
-10.0.26100, and the C++ Windows application/UWP build tools. A desktop-C++-only installation cannot build WinUI.
+Install Visual Studio C++ Build Tools (2022 or 2026) with the C++ desktop workload, CMake tools, and Windows SDK
+10.0.26100. The programmatic WinUI shell is an unpackaged desktop application, not a UWP application.
 Run in PowerShell:
 
 ```powershell
