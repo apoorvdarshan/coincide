@@ -1036,11 +1036,23 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
     }
     void ensure_schedules(){
         if(schedule_panel||!writable)return;const auto weak=get_weak();
+        coincide::SchedulePanel::Clock clock;
+        // The synthetic protocol UI fixture owns a logical clock. Its ten-second occurrence
+        // starts when the controller opens, independent of cold WinUI/CI startup time.
+        // Normal application launches always use SchedulePanel's real system clock.
+        if(fixture_preview){
+            wchar_t epoch_text[32]{};const auto length=GetEnvironmentVariableW(L"COINCIDE_FIXTURE_SCHEDULE_EPOCH",epoch_text,32);
+            if(length&&length<32){const auto text=winrt::to_string(epoch_text);coincide::scheduling::Instant epoch{};
+                const auto parsed=std::from_chars(text.data(),text.data()+text.size(),epoch);
+                if(parsed.ec!=std::errc{}||parsed.ptr!=text.data()+text.size()||epoch<1||epoch>coincide::scheduling::maximum_instant-86400)throw std::runtime_error("Invalid owned schedule fixture epoch");
+                const auto start=GetTickCount64();clock=[epoch,start]{return epoch+static_cast<coincide::scheduling::Instant>((GetTickCount64()-start)/1000);};
+            }else if(length)throw std::runtime_error("Invalid owned schedule fixture epoch");
+        }
         schedule_panel=coincide::SchedulePanel::create(data_directory(),[weak]{
             std::unordered_set<std::string> busy;if(const auto self=weak.get())for(const auto& thread:self->workspace.threads)
                 if(self->thread_busy(thread.id)||!thread.queued_inputs.empty()||self->dirty_threads.contains(thread.id)||!self->persistence_error.empty()||self->repository_busy(thread))busy.insert(thread.id);
             return busy;
-        },[weak](const auto& intent){if(const auto self=weak.get())return self->dispatch_schedule(intent);return false;});
+        },[weak](const auto& intent){if(const auto self=weak.get())return self->dispatch_schedule(intent);return false;},std::move(clock));
         tool_views.Children().Append(schedule_panel->view());schedule_panel->view().Visibility(xaml::Visibility::Collapsed);
         if(!selected.empty())schedule_panel->select_thread(selected);
     }

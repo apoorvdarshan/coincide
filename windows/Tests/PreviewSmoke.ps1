@@ -1,6 +1,7 @@
 param(
     [string]$Executable = (Join-Path $PSScriptRoot '..\build\x64\Release\Coincide.exe'),
     [string]$Results = (Join-Path $PSScriptRoot '..\build\ui-smoke'),
+    [ValidateRange(0,30)][int]$FixtureStartupDelaySeconds = 0,
     [switch]$NativePanelsOnly,
     [ValidateSet('question','credential','schedule-panel','preferences-panel','instruction-import-panel','provider-accounts-panel','voice-panel','computer-use-panel','git-panel','terminal-panel')][string]$NativeSuite
 )
@@ -46,7 +47,8 @@ foreach ($entry in @(@($first, 'Smoke A', 'END-A'), @($second, 'Smoke B', 'END-B
 }
 $scheduledThread = [Guid]::NewGuid().ToString('B')
 $scheduledTask = [Guid]::NewGuid().ToString('B')
-$due = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 10
+$fixtureEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$due = $fixtureEpoch + 10
 $threads += @{id=$scheduledThread; title='Schedule target'; project=''; provider='codex'; model=''; pinned=$false; archived=$false}
 Write-JsonFile (Join-Path $data "threads\$scheduledThread.json") @{version=1; id=$scheduledThread; draft='Keep this scheduled-thread draft'; messages=@(); sessions=@()}
 # An isolated, previously approved fixture task. --codex-fixture-preview forces every provider
@@ -58,8 +60,12 @@ Write-JsonFile (Join-Path $data 'scheduled-tasks.json') @{format='coincide.windo
 Write-JsonFile (Join-Path $data 'workspace.json') @{version=1; projects=@(); threads=$threads}
 $previousData = $env:COINCIDE_DATA_DIR
 $previousDiagnostics = $env:COINCIDE_DIAGNOSTICS_PATH
+$previousFixtureEpoch = $env:COINCIDE_FIXTURE_SCHEDULE_EPOCH
 $env:COINCIDE_DATA_DIR = $data
 $env:COINCIDE_DIAGNOSTICS_PATH = Join-Path $Results 'startup.txt'
+# Only --codex-fixture-preview reads this clock. The real schedule store/controller/timer
+# still dispatches the persisted task; cold process startup cannot consume its occurrence.
+$env:COINCIDE_FIXTURE_SCHEDULE_EPOCH = [string]$fixtureEpoch
 $process = $null
 $checks = @()
 
@@ -126,6 +132,7 @@ try {
     # The title identifies a protocol-fixture test, and this mode requires the isolated directory above.
     # Every provider response comes from the local fixture subprocess; no account or network is used.
     if (!$NativePanelsOnly) {
+    if($FixtureStartupDelaySeconds){Start-Sleep -Seconds $FixtureStartupDelaySeconds}
     $process = Start-Process -FilePath $Executable -ArgumentList '--codex-fixture-preview' -PassThru
     Wait-Until { $process.Refresh(); $process.MainWindowHandle -ne [IntPtr]::Zero } 'No application window appeared.'
     $script:window = [Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
@@ -296,6 +303,7 @@ try {
     }
     $env:COINCIDE_DATA_DIR = $previousData
     $env:COINCIDE_DIAGNOSTICS_PATH = $previousDiagnostics
+    $env:COINCIDE_FIXTURE_SCHEDULE_EPOCH = $previousFixtureEpoch
     # Test data was created under the results directory, never the user's normal application data.
     Remove-Item -Recurse -Force $data
 }
