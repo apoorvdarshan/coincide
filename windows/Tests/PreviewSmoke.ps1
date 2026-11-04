@@ -14,6 +14,7 @@ public static class CoincideSmokeWindow {
     [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 }
 '@
 
@@ -84,6 +85,29 @@ function Latest-IsVisible([string]$marker) {
     }
     return $false
 }
+function Save-WindowEvidence {
+    if (!$process -or $process.HasExited -or !$script:window) { return }
+    try {
+        $elements=$script:window.FindAll([Windows.Automation.TreeScope]::Descendants,
+            [Windows.Automation.Condition]::TrueCondition)
+        $tree=@()
+        foreach($element in $elements) {
+            $current=$element.Current
+            $tree += @{name=$current.Name; id=$current.AutomationId; offscreen=$current.IsOffscreen;
+                type=$current.ControlType.ProgrammaticName; bounds=$current.BoundingRectangle.ToString()}
+        }
+        Write-JsonFile (Join-Path $Results 'controls.json') $tree
+        if ([CoincideSmokeWindow]::GetForegroundWindow() -ne $process.MainWindowHandle) { return }
+        $rect = New-Object CoincideSmokeWindow+Rect
+        if (![CoincideSmokeWindow]::GetWindowRect($process.MainWindowHandle, [ref]$rect)) { return }
+        $bitmap = New-Object Drawing.Bitmap(($rect.Right-$rect.Left), ($rect.Bottom-$rect.Top))
+        $graphics = [Drawing.Graphics]::FromImage($bitmap)
+        try {
+            $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+            $bitmap.Save((Join-Path $Results 'preview.png'), [Drawing.Imaging.ImageFormat]::Png)
+        } finally { $graphics.Dispose(); $bitmap.Dispose() }
+    } catch { }
+}
 
 try {
     $process = Start-Process -FilePath $Executable -PassThru
@@ -103,16 +127,10 @@ try {
     Wait-Until { Latest-IsVisible 'END-A' } 'Returning to the first conversation left the transcript blank.'
     $checks += 'Returning to a long conversation renders without manual scrolling'
 
-    $rect = New-Object CoincideSmokeWindow+Rect
-    if (![CoincideSmokeWindow]::GetWindowRect($process.MainWindowHandle, [ref]$rect)) { throw 'Cannot locate the preview window.' }
-    $bitmap = New-Object Drawing.Bitmap(($rect.Right-$rect.Left), ($rect.Bottom-$rect.Top))
-    $graphics = [Drawing.Graphics]::FromImage($bitmap)
-    try {
-        $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
-        $bitmap.Save((Join-Path $Results 'preview.png'), [Drawing.Imaging.ImageFormat]::Png)
-    } finally { $graphics.Dispose(); $bitmap.Dispose() }
+    Save-WindowEvidence
     Write-JsonFile (Join-Path $Results 'result.json') @{passed=$true; checks=$checks; dataDirectory=$data}
 } catch {
+    Save-WindowEvidence
     Write-JsonFile (Join-Path $Results 'result.json') @{passed=$false; checks=$checks; error=$_.Exception.Message; dataDirectory=$data}
     throw
 } finally {

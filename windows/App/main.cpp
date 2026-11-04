@@ -12,6 +12,7 @@
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Dispatching.h>
+#include <winrt/Microsoft.UI.Windowing.h>
 #include <winrt/Microsoft.Windows.ApplicationModel.Resources.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.UI.h>
@@ -87,12 +88,12 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
 
     App() {
         diagnostic(L"Application constructed");
-        Resources().MergedDictionaries().Append(controls::XamlControlsResources{});
         UnhandledException([this](const auto&, const xaml::UnhandledExceptionEventArgs& args) {
             diagnostic(args.Message());
             args.Handled(true);
             show_error(args.Message());
         });
+        diagnostic(L"Application handlers registered");
     }
 
     xaml::Markup::IXamlType GetXamlType(const winrt::Windows::UI::Xaml::Interop::TypeName& name) {
@@ -103,8 +104,12 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
 
     void OnLaunched(const xaml::LaunchActivatedEventArgs&) {
         diagnostic(L"OnLaunched");
+        if (window) return;
+        Resources().MergedDictionaries().Append(controls::XamlControlsResources{});
+        diagnostic(L"Control resources initialized");
         window = xaml::Window{};
         window.Title(L"Coincide — Windows Preview");
+        window.AppWindow().Resize({1100, 780});
         root = controls::Grid{};
         auto left = controls::ColumnDefinition{}; left.Width({260, xaml::GridUnitType::Pixel});
         root.ColumnDefinitions().Append(left);
@@ -195,6 +200,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
 
         transcript = controls::ListView{};
         identify(transcript, L"Transcript");
+        transcript.Loaded([this](const auto&, const auto&) { show_latest(); });
         transcript.SelectionMode(controls::ListViewSelectionMode::None);
         transcript.HorizontalContentAlignment(xaml::HorizontalAlignment::Stretch);
         transcript.ItemTemplate(xaml::Markup::XamlReader::Load(
@@ -250,11 +256,13 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             store = std::make_unique<coincide::WorkspaceStore>(data_directory());
             workspace = store->open();
             writable = true;
+            diagnostic(hstring{L"Workspace threads: " + std::to_wstring(workspace.threads.size())});
         } catch (...) {
             writable = false;
             report_exception();
         }
         window.Activate();
+        diagnostic(L"Window activated");
         refresh_sidebar();
         if (!visible.empty()) open_thread(visible.front());
     }
@@ -284,6 +292,7 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
         try {
             auto& t = workspace.thread(id);
             store->load_thread(t);
+            diagnostic(hstring{L"Loaded messages: " + std::to_wstring(t.messages.size())});
             selecting = true;
             selected = id;
             title.Text(winrt::to_hstring(t.title));
@@ -298,12 +307,20 @@ struct App : xaml::ApplicationT<App, xaml::Markup::IXamlMetadataProvider> {
             selecting = false;
             // Let WinUI lay out at the final width before requesting the latest virtualized row.
             window.DispatcherQueue().TryEnqueue([this, id] {
-                if (selected != id || transcript.Items().Size() == 0) return;
-                transcript.UpdateLayout();
-                transcript.ScrollIntoView(transcript.Items().GetAt(transcript.Items().Size() - 1));
+                if (selected == id) show_latest();
             });
             refresh_sidebar();
         } catch (...) { selecting = false; report_exception(); }
+    }
+
+    void show_latest() {
+        // The first dispatcher callback can run before the window's initial measure/arrange.
+        // Loaded handles that case; already-loaded thread switches use the same path after layout.
+        if (!transcript || !transcript.IsLoaded() || transcript.Items().Size() == 0) return;
+        transcript.UpdateLayout();
+        if (transcript.ActualHeight() <= 0 || transcript.ActualWidth() <= 0) return;
+        transcript.ScrollIntoView(transcript.Items().GetAt(transcript.Items().Size() - 1));
+        diagnostic(hstring{L"Transcript height: " + std::to_wstring(transcript.ActualHeight())});
     }
 
     void create_thread(std::optional<std::string> project = std::nullopt) {
@@ -395,7 +412,10 @@ int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             return coincide::store_tests(report);
         }
         if (argv) LocalFree(argv);
-        xaml::Application::Start([](auto&&) { winrt::make<App>(); });
+        // Keep the programmatic application (including its metadata provider and callbacks) alive
+        // for the complete dispatcher loop, independently of generated XAML application glue.
+        winrt::com_ptr<App> application;
+        xaml::Application::Start([&application](auto&&) { application = winrt::make_self<App>(); });
         return 0;
     } catch (const winrt::hresult_error& error) {
         diagnostic(error.message());
